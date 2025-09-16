@@ -130,8 +130,8 @@ class CombinedDeliveryTest {
                 // Password (via KDF)
                 .addPasswordRecipient(password, /* iterations */ 200_000, /* saltLen */ 16, /* kekBytes */ 32)
                 // and some decoys
-                .addRecipient(CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, decoy1rsa.getPublic()))
-                .addRecipient(CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, decoy2rsa.getPublic()));
+                .addRecipientDecoy(CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, decoy1rsa.getPublic()))
+                .addRecipientDecoy(CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, decoy2rsa.getPublic()));
 
         // shuffle all the recipients
         multi.shuffle();

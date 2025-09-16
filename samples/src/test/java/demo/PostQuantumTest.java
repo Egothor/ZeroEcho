@@ -79,28 +79,54 @@ class PostQuantumTest {
 
     @Test
     void pqcSdkLevelAPI() throws GeneralSecurityException, IOException {
-        // Sample message to encrypt
+        // Create a random sample message to be encrypted
         byte[] msg = randomBytes(100);
-
+        // Generate a post-quantum key pair (Kyber, here wrapped as ML-KEM)
         KeyPair kp = generateKyberKeys();
 
-        DataContent dccb = DataContentChainBuilder.encrypt().add(PlainBytesBuilder.builder().bytes(msg))
-                .add(KemDataContentBuilder.builder().kem("ML-KEM").recipientPublic(kp.getPublic())
+        DataContent dccb = DataContentChainBuilder.encrypt()
+                // Start the chain with a plain byte array as input
+                .add(PlainBytesBuilder.builder().bytes(msg))
+                // Add a KEM (Key Encapsulation Mechanism) stage
+                .add(KemDataContentBuilder.builder()
+                        // Select a KEM-capable algorithm: ML-KEM (Kyber variant)
+                        .kem("ML-KEM")
+                        // Encrypt to this recipient’s public key
+                        .recipientPublic(kp.getPublic())
+                        // Derive a shared secret and expand/obfuscate it using HKDF-SHA256
                         .hkdfSha256("KEM-demo".getBytes(StandardCharsets.US_ASCII))
-                        .withAes(AesDataContentBuilder.builder().modeGcm(128).withHeader()))
+                        // Use the derived secret as a key for AES
+                        .withAes(AesDataContentBuilder.builder()
+                                // Configure AES in GCM mode with a 128-bit authentication tag
+                                .modeGcm(128)
+                                // Store auxiliary parameters (e.g., random IV) inside the stream header
+                                .withHeader()))
                 .build();
 
         byte[] encrypted;
         try (InputStream encryptedStream = dccb.getStream()) {
-            // Consume the encrypted data into memory
+            // Consume the encrypted output stream into memory
             encrypted = readAll(encryptedStream);
         }
 
-        // Decryption
-        dccb = DataContentChainBuilder.decrypt().add(PlainBytesBuilder.builder().bytes(encrypted))
-                .add(KemDataContentBuilder.builder().kem("ML-KEM").recipientPrivate(kp.getPrivate())
+        // Now decrypt the message
+        dccb = DataContentChainBuilder.decrypt()
+                // Start with the encrypted byte array as input
+                .add(PlainBytesBuilder.builder().bytes(encrypted))
+                // Add the KEM stage again, matching the encryption parameters
+                .add(KemDataContentBuilder.builder()
+                        // Use the same KEM algorithm that was used for encryption
+                        .kem("ML-KEM")
+                        // Provide the recipient’s private key for decapsulation
+                        .recipientPrivate(kp.getPrivate())
+                        // Re-derive the shared secret with the same HKDF-SHA256 label
                         .hkdfSha256("KEM-demo".getBytes(StandardCharsets.US_ASCII))
-                        .withAes(AesDataContentBuilder.builder().modeGcm(128).withHeader()))
+                        // Use the secret to unlock AES payload decryption
+                        .withAes(AesDataContentBuilder.builder()
+                                // AES in GCM mode with a 128-bit tag, consistent with encryption
+                                .modeGcm(128)
+                                // Read auxiliary parameters (IV, etc.) back from the header
+                                .withHeader()))
                 .build();
 
         byte[] decrypted;

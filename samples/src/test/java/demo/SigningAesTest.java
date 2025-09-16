@@ -96,27 +96,35 @@ class SigningAesTest {
     void aesRoundStESdkLevelAPI() throws GeneralSecurityException, IOException {
         LOG.info("aesRoundSmarterSdkLevelAPI - Sign then Encrypt");
 
-        // Sample message to encrypt
+        // Create a random sample message to be encrypted
         byte[] msg = randomBytes(100);
-
+        // Configure AES in GCM mode with a 128-bit authentication tag. A fresh 256-bit
+        // AES key will be generated automatically, and runtime parameters (IV, AAD)
+        // will be written into the header.
         AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
 
-        // RSA-4096 keys (use registry for convenience)
+        // Generate RSA-4096 key pair (retrieved via algorithm registry for convenience)
         KeyPair rsa = generateRsaKeys();
 
-        // Tag engines (SHA-256, saltLen=32)
+        // Configure PSS signature parameters: SHA-256 hash, salt length = 32 bytes
         RsaSigSpec pss = RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32);
+        // Create signing engine (RSA-PSS with private key)
         TagEngine<Signature> tagEnc = TagEngineBuilder.rsaSign(rsa.getPrivate(), pss).get();
+        // Create verification engine (RSA-PSS with public key)
         TagEngine<Signature> tagDec = TagEngineBuilder.rsaVerify(rsa.getPublic(), pss).get();
 
-        // The builder stores generated IV and AAD inside the stream header
-        DataContent dccb = DataContentChainBuilder.encrypt().add(PlainBytesBuilder.builder().bytes(msg))
-                // sign the data
+        // Build the encryption pipeline
+        DataContent dccb = DataContentChainBuilder.encrypt()
+                // Input: raw message bytes
+                .add(PlainBytesBuilder.builder().bytes(msg))
+                // Sign the data with RSA-PSS (trailer attached to the stream)
                 .add(new TagTrailerDataContentBuilder<>(tagEnc).bufferSize(8192))
-                // and then encrypt
+                // Encrypt everything using AES-GCM (IV + AAD stored in the header)
                 .add(aesBuilder).build();
 
+        // Retrieve and log the generated AES key in hex (for demonstration only)
         SecretKey key = aesBuilder.generatedKey();
+        // In production, keys should never be logged or exposed
         LOG.log(Level.INFO, "SDK-smart: AES256 key generated {0}", Strings.toShortHexString(key.getEncoded()));
 
         byte[] encrypted;
@@ -125,10 +133,15 @@ class SigningAesTest {
             encrypted = readAll(encryptedStream);
         }
 
-        dccb = DataContentChainBuilder.decrypt().add(PlainBytesBuilder.builder().bytes(encrypted))
-                // Use the same AES key for decryption; IV and AAD are restored from the header
+        // Build the decryption pipeline
+        dccb = DataContentChainBuilder.decrypt()
+                // Input: encrypted byte array
+                .add(PlainBytesBuilder.builder().bytes(encrypted))
+                // AES-GCM decryption using the same key; IV and AAD are restored automatically
+                // from the header
                 .add(AesDataContentBuilder.builder().importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
-                // the decrypted stream must be verified
+                // Verify the RSA-PSS signature trailer at the end of the stream (configured to
+                // throw on mismatch)
                 .add(new TagTrailerDataContentBuilder<>(tagDec).bufferSize(8192).throwOnMismatch())
                 // Build the pipeline
                 .build();
@@ -146,26 +159,28 @@ class SigningAesTest {
     void aesRoundEtSSdkLevelAPI() throws GeneralSecurityException, IOException {
         LOG.info("aesRoundSmarterSdkLevelAPI - Encrypt then Sign");
 
-        // Sample message to encrypt
+        // Create a random sample message to be encrypted
         byte[] msg = randomBytes(100);
 
         AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
 
-        // RSA-4096 keys (use registry for convenience)
+        // Generate RSA-4096 key pair (retrieved via algorithm registry for convenience)
         KeyPair rsa = generateRsaKeys();
 
-        // Tag engines (SHA-256, saltLen=32)
+        // Configure PSS signature parameters: SHA-256 hash, salt length = 32 bytes
         RsaSigSpec pss = RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32);
         TagEngine<Signature> tagEnc = TagEngineBuilder.rsaSign(rsa.getPrivate(), pss).get();
         TagEngine<Signature> tagDec = TagEngineBuilder.rsaVerify(rsa.getPublic(), pss).get();
 
-        // The builder stores generated IV and AAD inside the stream header
-        DataContent dccb = DataContentChainBuilder.encrypt().add(PlainBytesBuilder.builder().bytes(msg))
-                // encrypt
+        // Build the encryption pipeline
+        DataContent dccb = DataContentChainBuilder.encrypt()
+                // Input: raw message bytes
+                .add(PlainBytesBuilder.builder().bytes(msg))
+                // Encrypt everything using AES-GCM (IV + AAD stored in the header)
                 .add(aesBuilder)
-                // and then sign
+                // Sign the encrypted data with RSA-PSS (trailer attached to the stream)
                 .add(new TagTrailerDataContentBuilder<>(tagEnc).bufferSize(8192))
-                //
+                // Build the pipeline
                 .build();
 
         SecretKey key = aesBuilder.generatedKey();
@@ -177,10 +192,17 @@ class SigningAesTest {
             encrypted = readAll(encryptedStream);
         }
 
-        dccb = DataContentChainBuilder.decrypt().add(PlainBytesBuilder.builder().bytes(encrypted))
-                // the stream must be verified, but encryption still runs as data flows through
+        // Build the decryption pipeline
+        dccb = DataContentChainBuilder.decrypt()
+                // Input: encrypted byte array
+                .add(PlainBytesBuilder.builder().bytes(encrypted))
+                // Verify the RSA-PSS signature trailer at the end of the stream.
+                // The pipeline is configured to throw an exception if verification fails.
+                // Verification happens while the data continues flowing into the decryptor,
+                // so the consumer can fully process plaintext only if the signature is valid.
                 .add(new TagTrailerDataContentBuilder<>(tagDec).bufferSize(8192).throwOnMismatch())
-                // Use the same AES key for decryption; IV and AAD are restored from the header
+                // AES-GCM decryption using the same key; IV and AAD are restored automatically
+                // from the header
                 .add(AesDataContentBuilder.builder().importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
                 // Build the pipeline
                 .build();
