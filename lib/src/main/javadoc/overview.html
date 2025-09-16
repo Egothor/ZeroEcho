@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ZeroEcho Library Overview</title>
+</head>
+<body>
+<h1>ZeroEcho Library</h1>
+
+<p>
+  ZeroEcho is a layered cryptography library delivered as the <code>lib</code> module. It exposes a minimal
+  core of cryptographic primitives and a higher-level SDK of composition tools. The design favors clear
+  separation of responsibilities, safe defaults, and extensibility for future algorithms and pipelines.
+</p>
+
+<!-- CRYPTO_CATALOG_TABLE -->
+
+<h2>Layering</h2>
+<ul>
+  <li><b>Core</b> (<code>zeroecho.core</code>): low-level cryptographic engine.
+    This includes algorithm definitions, stateful contexts, registry and metadata, specification and SPI
+    contracts, and selected helpers required by algorithms (e.g., I/O, marshalling, tagging, auditing, policies).
+  </li>
+  <li><b>SDK</b> (<code>zeroecho.sdk</code>): developer-facing composition layer built on the core.
+    It provides content abstractions, fluent builders (both generic and per-algorithm), utilities for
+    multi-recipient or composed flows, and supporting helpers used by those builders.
+  </li>
+</ul>
+
+<h2>Package map (lib)</h2>
+<ul>
+  <li><b>zeroecho.core</b>
+    <ul>
+      <li><b>alg</b>: concrete algorithms and small shared helpers used by algorithms.</li>
+      <li><b>context</b>: stateful operation interfaces (encryption, signatures, digests, MAC, agreement, KEM, and related variants).</li>
+      <li><b>spec</b> / <b>spi</b>: specification objects and construction/factory contracts.</li>
+      <li><b>policy</b> / <b>audit</b> / <b>err</b> / <b>annotation</b>: cross-cutting concerns within the core.</li>
+      <li><b>io</b> / <b>marshal</b> / <b>tag</b>: helpers used by algorithms and contexts at runtime.</li>
+      <li>(root): provider/registry surface and core metadata.</li>
+    </ul>
+  </li>
+  <li><b>zeroecho.sdk</b>
+    <ul>
+      <li><b>content</b>: content abstractions, basic implementations, and export facilities.</li>
+      <li><b>builders</b>: composition APIs, including generic builders and per-algorithm builders.</li>
+      <li><b>guard</b>: utilities for multi-recipient and other composed workflows.</li>
+      <li><b>io</b> / <b>logging</b>: supporting helpers used by the SDK layer and applications.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2>Design principles</h2>
+<ul>
+  <li><b>Stratification</b>: the core remains focused on algorithms and correctness; the SDK focuses on developer ergonomics and composition.</li>
+  <li><b>Composability</b>: data flows are constructed through builders and content abstractions with predictable, chainable behavior.</li>
+  <li><b>Extensibility</b>: new algorithms, formats, and flows can be added with minimal impact on existing code.</li>
+  <li><b>Safety</b>: role-based binding and policy checks promote safe defaults and clear intent.</li>
+</ul>
+
+<h2>Intended use</h2>
+<p>
+  Third-party applications depend on the <code>lib</code> module. Most integrations work at the SDK layer to compose
+  data pipelines, while the core layer provides the cryptographic foundation and guarantees. The project’s
+  structure and documentation aim to make entry points, responsibilities, and extension points explicit.
+</p>
+
+</body>
+</html>

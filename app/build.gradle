@@ -1,0 +1,59 @@
+plugins {
+    id 'buildlogic.java-application-conventions'
+    id 'com.palantir.git-version'
+}
+
+group 'org.egothor'
+
+dependencies {
+    implementation 'org.apache.commons:commons-text'
+    implementation 'commons-cli:commons-cli'
+    implementation project(':lib')
+	// might be removed if I move BC ops to the lib
+	testImplementation 'org.bouncycastle:bcpkix-jdk18on'
+}
+
+application {
+    // Define the main class for the application.
+    mainClass = 'zeroecho.ZeroEcho'
+}
+
+jar {
+    manifest {
+        attributes(
+            'Main-Class': application.mainClass,
+            'Implementation-Title': rootProject.name,
+            'Implementation-Version': "${version}"
+        )
+    }
+
+    from sourceSets.main.output
+
+    dependsOn configurations.runtimeClasspath
+
+    // Include each JAR dependency
+    configurations.runtimeClasspath.findAll { it.exists() && it.name.endsWith('.jar') }.each { jarFile ->
+        def jarName = jarFile.name.replaceAll(/\.jar$/, '')
+
+        from(zipTree(jarFile)) {
+            // Exclude signature-related files
+            exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+
+            // Rename license/notice files to avoid conflicts
+            eachFile { file ->
+                if (file.path ==~ /META-INF\/(LICENSE|NOTICE)(\..*)?/) {
+                    file.path = "META-INF/licenses-from-${jarName}/${file.name}"
+                }
+            }
+
+            includeEmptyDirs = false
+        }
+    }
+
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+javadoc {
+    options.links("https://www.egothor.org/javadoc/zeroecho/lib")
+}
+

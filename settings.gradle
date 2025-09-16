@@ -1,0 +1,14 @@
+pluginManagement {
+    plugins {
+        id 'com.palantir.git-version' version '4.0.0'  // Define the plugin version globally
+    }
+}
+
+plugins {
+    // Apply the foojay-resolver plugin to allow automatic download of JDKs
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
+}
+
+rootProject.name = 'ZeroEcho'
+
+include('app', 'lib', 'samples')

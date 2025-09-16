@@ -1,0 +1,56 @@
+plugins {
+    id 'buildlogic.java-library-conventions'
+    id 'com.palantir.git-version'
+}
+
+group 'org.egothor'
+
+dependencies {
+	implementation 'org.bouncycastle:bcpkix-jdk18on'
+	implementation 'org.egothor:conflux'
+	implementation 'org.apache.commons:commons-imaging'
+}
+
+
+def generatedDir = layout.buildDirectory.dir("generated/docs").get().asFile
+def staticOverview = file("src/main/javadoc/overview.html")
+def overviewCss = file("src/main/javadoc/css/overview.css")
+
+tasks.register('generateCryptoTable', JavaExec) {
+    group = 'documentation'
+    description = 'Generates the Crypto Catalog table fragment'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'zeroecho.core.util.GenerateCryptoCatalogTable'
+    args file("$generatedDir/crypto-catalog-table.html").absolutePath
+    dependsOn classes
+}
+
+tasks.register('composeOverview') {
+    group = 'documentation'
+    description = 'Produces a final overview.html by injecting the generated table into the static template'
+    inputs.file(staticOverview)
+    inputs.file("$generatedDir/crypto-catalog-table.html")
+    outputs.file("$generatedDir/overview.composed.html")
+    dependsOn tasks.named('generateCryptoTable')
+    doLast {
+        def template = staticOverview.getText('UTF-8')
+        def table = file("$generatedDir/crypto-catalog-table.html").getText('UTF-8')
+        def marker = "<!-- CRYPTO_CATALOG_TABLE -->"
+        if (!template.contains(marker)) {
+            throw new GradleException("Marker not found in ${staticOverview}: ${marker}")
+        }
+        def composed = template.replace(marker, table)
+        file("$generatedDir/overview.composed.html").setText(composed, 'UTF-8')
+    }
+}
+
+javadoc {
+    dependsOn tasks.named('composeOverview')
+    options.overview = file("$generatedDir/overview.composed.html")
+    options.encoding = 'UTF-8'
+    // options.stylesheetFile = overviewCss
+    options.addStringOption("-add-stylesheet", overviewCss.absolutePath)
+    
+    options.links("https://www.egothor.org/javadoc/conflux")
+    // options.overview = file("src/main/javadoc/overview.html")
+}

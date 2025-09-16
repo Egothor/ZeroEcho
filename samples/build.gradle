@@ -1,0 +1,45 @@
+plugins {
+    id 'java'
+}
+
+dependencies {
+    testImplementation(project(":lib"))
+    testImplementation 'org.egothor:conflux:[1.0,2.0)'
+    testImplementation("org.bouncycastle:bcpkix-jdk18on:1.81")
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+repositories {
+	// for conflux lib
+	maven {
+        name = "GiteaMaven"
+        url = uri("https://gitea.egothor.org/api/packages/Egothor/maven")
+    }
+
+    // Use Maven Central for resolving dependencies.
+    mavenCentral()
+}
+
+// Compile, but don't produce any artifacts
+tasks.named("jar").configure { enabled = false }
+tasks.named("javadoc").configure { enabled = false }
+tasks.named("assemble").configure { enabled = false }
+
+// Make these tests opt-in so they don’t run in normal CI builds
+tasks.named("test", Test) {
+    useJUnitPlatform {
+        includeTags("sample") // only run tests that are explicitly tagged as samples
+    }
+    // Only run if -PrunSamples is supplied
+    onlyIf {
+        project.hasProperty("runSamples")
+    }
+    
+    // Don't fail the build if zero tests match the tag
+    filter {
+        failOnNoMatchingTests = false
+    }
+}

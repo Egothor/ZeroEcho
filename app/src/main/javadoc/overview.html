@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ZeroEcho App Overview</title>
+</head>
+<body>
+<h1>ZeroEcho Command-Line App</h1>
+
+<p>
+  The ZeroEcho CLI is a streaming, security-first front end built on the <code>lib</code> module.
+  It exposes practical workflows for key management, hybrid/KEM envelopes, multi-recipient
+  protection, and covert payload embedding in JPEG EXIF metadata. The app favors explicit
+  configuration, safe defaults, and pipelines that avoid materializing large payloads.
+</p>
+
+<h2>Commands</h2>
+<ul>
+  <li><b>guard</b> - multi-recipient envelopes (public keys and/or passwords) with AES or ChaCha payloads.</li>
+  <li><b>kem</b> - hybrid encryption: derive a content key via a KEM (e.g., Kyber), then encrypt the payload (AES/ChaCha).</li>
+  <li><b>keystore</b> - manage a human-editable text keyring: list, generate, import, export.</li>
+  <li><b>covert</b> - embed or extract a binary payload in JPEG EXIF fields using configurable slots.</li>
+</ul>
+
+<h2>Global usage</h2>
+<p>
+  Each command supports <code>--help</code> for exact flags and examples. Inputs and outputs are streamed;
+  large files do not need to be fully loaded in memory.
+</p>
+
+<h2>I/O conventions</h2>
+<ul>
+  <li>Streams are processed lazily; errors in verification surface at end of stream.</li>
+  <li>Authenticated modes (AES-GCM, ChaCha20-Poly1305) are the default where applicable.</li>
+  <li>For hybrid flows, shared secrets from agreement/KEM are fed through a KDF before use.</li>
+</ul>
+
+<h2>Keyring format</h2>
+<p>
+  The keyring is a compact UTF-8 text file of entries with algorithm id, spec class, and encoded material.
+  It is intended to be versionable by humans but must be treated as sensitive data.
+</p>
+
+<h2>Security notes</h2>
+<ul>
+  <li>Prefer authenticated encryption and strong KEM parameter sets.</li>
+  <li>Protect keyrings with OS permissions; avoid committing them to VCS.</li>
+  <li>Export encrypted content when targeting untrusted destinations; do not embed secrets in cleartext scripts.</li>
+</ul>
+
+<h2>Exit codes and logging</h2>
+<ul>
+  <li>Commands return 0 on success; non-zero indicates failure.</li>
+  <li>Errors go to STDERR; enable verbose logging for diagnostics as needed.</li>
+</ul>
+
+<h2>Examples (illustrative)</h2>
+<pre>
+# Generate a signing key into a text keyring
+zeroecho keystore --keyring keyring.txt --generate --alg Ed25519 --alias signing
+
+# Hybrid envelope with a KEM-derived content key and AES-GCM payload
+zeroecho kem --encrypt --keyring keyring.txt --recipient alice --kem Kyber-768 --symmetric aes-gcm --tag-bits 128
+
+# Multi-recipient envelope (password + public key)
+zeroecho guard --encrypt --keyring keyring.txt --to-password s3cret --to-alias bob
+
+# Covert EXIF embedding
+zeroecho covert --embed --jpeg in.jpg --payload secret.bin --slots exif.usercomment --output out.jpg
+</pre>
+
+<h2>System requirements</h2>
+<ul>
+  <li>Java 21 or newer.</li>
+  <li>At least one JCA provider supplying the selected algorithms (e.g., JDK defaults, Bouncy Castle, a PQC provider).</li>
+</ul>
+</body>
+</html>

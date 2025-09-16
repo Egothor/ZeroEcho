@@ -1,0 +1,124 @@
+/*******************************************************************************
+ * Copyright (C) 2025, Leo Galambos
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ * 
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ * 
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ * 
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ * 
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+package zeroecho.core.context;
+
+import java.io.Closeable;
+import java.security.Key;
+
+import zeroecho.core.CryptoAlgorithm;
+
+/**
+ * Common interface for all cryptographic operation contexts.
+ *
+ * <p>
+ * A {@code CryptoContext} represents the active state of an algorithm bound to
+ * a specific key and optional parameters. Contexts encapsulate resources such
+ * as cipher instances, digest engines, or signature state machines. They are
+ * created by a {@link zeroecho.core.CryptoAlgorithm} for a particular
+ * {@link zeroecho.core.KeyUsage} role and remain valid until {@link #close()}
+ * is called.
+ * </p>
+ *
+ * <h2>Lifecycle</h2>
+ * <ul>
+ * <li>Contexts are created via {@code CryptoAlgorithm#create(...)} or the
+ * convenience methods in {@code CryptoAlgorithms}.</li>
+ * <li>They may wrap native or provider-managed resources that must be
+ * released.</li>
+ * <li>Once closed, a context must not be reused; callers should request a new
+ * one for subsequent operations.</li>
+ * </ul>
+ *
+ * <h2>Security considerations</h2>
+ * <ul>
+ * <li>Closing a context may attempt to destroy the underlying {@link Key} if it
+ * implements {@code javax.security.auth.Destroyable} and auditing is
+ * enabled.</li>
+ * <li>Applications should always call {@link #close()} promptly to avoid
+ * leaking key material or other sensitive state.</li>
+ * <li>Contexts are not guaranteed to be thread-safe; concurrent use should be
+ * avoided unless explicitly documented by the implementation.</li>
+ * </ul>
+ *
+ * <h2>Subtypes</h2> Concrete context kinds are represented by specialized
+ * subinterfaces:
+ * <ul>
+ * <li>{@link DigestContext} - unkeyed hash and XOF pipelines</li>
+ * <li>{@link EncryptionContext} - symmetric/asymmetric encryption and
+ * decryption streams</li>
+ * <li>{@link MacContext} - message authentication codes</li>
+ * <li>{@link SignatureContext} - digital signatures (sign/verify)</li>
+ * <li>{@link AgreementContext} - key agreement protocols</li>
+ * <li>{@link KemContext} - key encapsulation mechanisms (KEM)</li>
+ * </ul>
+ *
+ * @since 1.0
+ */
+public sealed interface CryptoContext extends Closeable
+        permits DigestContext, EncryptionContext, KemContext, MacContext, SignatureContext, AgreementContext {
+    /**
+     * Returns the algorithm that created this context.
+     *
+     * @return the algorithm definition that owns this context
+     */
+    CryptoAlgorithm algorithm();
+
+    /**
+     * Returns the key bound to this context.
+     *
+     * <p>
+     * For unkeyed contexts such as digests, this may be
+     * {@link zeroecho.core.NullKey#INSTANCE}.
+     * </p>
+     *
+     * @return the cryptographic key or sentinel bound to this context
+     */
+    Key key();
+
+    /**
+     * Closes this context and releases all associated resources.
+     *
+     * <p>
+     * Implementations should free provider state and native handles. If the bound
+     * key supports destruction, the library may attempt to invoke {@code destroy()}
+     * on it when auditing is enabled.
+     * </p>
+     *
+     * @throws java.io.IOException if the underlying provider encounters an I/O
+     *                             error during cleanup
+     */
+    @Override
+    void close() throws java.io.IOException;
+}
