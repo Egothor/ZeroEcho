@@ -101,7 +101,7 @@ class SigningAesTest {
 
         AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
 
-        // RSA-2048 keys (use registry for convenience)
+        // RSA-4096 keys (use registry for convenience)
         KeyPair rsa = generateRsaKeys();
 
         // Tag engines (SHA-256, saltLen=32)
@@ -151,7 +151,7 @@ class SigningAesTest {
 
         AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
 
-        // RSA-2048 keys (use registry for convenience)
+        // RSA-4096 keys (use registry for convenience)
         KeyPair rsa = generateRsaKeys();
 
         // Tag engines (SHA-256, saltLen=32)
