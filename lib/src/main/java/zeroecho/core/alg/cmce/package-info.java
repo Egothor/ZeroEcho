@@ -33,69 +33,57 @@
  * POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 /**
- * <h2>Classic McEliece (CMCE)</h2>
+ * Classic McEliece (CMCE) KEM integration and utilities.
  *
  * <p>
- * This package integrates the Classic McEliece cryptosystem, one of the oldest
- * and most studied code-based public-key cryptosystems. Originally proposed by
- * Robert McEliece in 1978, it is based on the hardness of decoding random
- * binary Goppa codes. Despite large public key sizes, the scheme has withstood
- * decades of cryptanalysis and remains unbroken by both classical and quantum
- * computers.
+ * This package adapts the Bouncy Castle PQC CMCE primitives to the core SPI. It
+ * provides the algorithm descriptor, a runtime KEM context, and key
+ * specifications for generation and import. The design keeps provider-specific
+ * details encapsulated behind factories while exposing clear roles and metadata
+ * to the higher layers.
  * </p>
  *
- * <h2>Post-quantum KEM</h2>
+ * <h2>Scope and responsibilities</h2>
+ * <ul>
+ * <li>Expose a concrete algorithm descriptor that registers CMCE KEM roles and
+ * a KEM-backed message-agreement adapter.</li>
+ * <li>Provide a runtime context that performs encapsulation and
+ * decapsulation.</li>
+ * <li>Define key specifications for key-pair generation and for importing X.509
+ * and PKCS#8 encodings.</li>
+ * </ul>
  *
+ * <h2>Components</h2>
+ * <ul>
+ * <li><b>Algorithm descriptor:</b> {@link zeroecho.core.alg.cmce.CmceAlgorithm}
+ * declares {@code ENCAPSULATE}/{@code DECAPSULATE} KEM roles and wires an
+ * {@code AGREEMENT} role through a KEM-based adapter. It also registers
+ * asymmetric key builders for generation and import. The provider requirement
+ * is the Bouncy Castle PQC provider under the standard name
+ * {@code "BCPQC"}.</li>
+ * <li><b>Runtime context:</b> {@link zeroecho.core.alg.cmce.CmceKemContext}
+ * holds state for encapsulation or decapsulation depending on which constructor
+ * is used.</li>
+ * <li><b>Key generation spec:</b> {@link zeroecho.core.alg.cmce.CmceKeyGenSpec}
+ * selects a CMCE parameter set (variant) used by the key-pair builder.</li>
+ * <li><b>Key import specs:</b> {@link zeroecho.core.alg.cmce.CmcePublicKeySpec}
+ * wraps X.509 public keys and {@link zeroecho.core.alg.cmce.CmcePrivateKeySpec}
+ * wraps PKCS#8 private keys; both are immutable and defensively copy their byte
+ * arrays.</li>
+ * </ul>
+ *
+ * <h2>Provider requirements</h2>
  * <p>
- * Classic McEliece has been selected by NIST in the post-quantum cryptography
- * standardization process for key encapsulation. Its primary appeal is
- * long-term confidence: no efficient attacks are known even in the quantum
- * setting. It provides IND-CCA2 security through a well-studied transform and
- * is especially suited for use cases where large public keys are acceptable but
- * extremely strong security margins are desired.
+ * The algorithm expects the Bouncy Castle PQC provider to be installed before
+ * use; the descriptor verifies this when generating or importing keys.
  * </p>
  *
- * <h2>Contents</h2>
+ * <h2>Thread-safety</h2>
  * <ul>
- * <li>{@link zeroecho.core.alg.cmce.CmceAlgorithm} – algorithm adapter exposing
- * CMCE as a KEM and agreement primitive.</li>
- * <li>{@link zeroecho.core.alg.cmce.CmceKemContext} – runtime context for
- * encapsulation and decapsulation.</li>
- * <li>{@link zeroecho.core.alg.cmce.CmceKeyGenSpec} – enumeration of
- * standardized CMCE parameter sets (variants).</li>
- * <li>{@link zeroecho.core.alg.cmce.CmcePublicKeySpec} – wrapper for
- * X.509-encoded public keys.</li>
- * <li>{@link zeroecho.core.alg.cmce.CmcePrivateKeySpec} – wrapper for
- * PKCS#8-encoded private keys.</li>
+ * <li>Algorithm descriptors are immutable and safe to share across
+ * threads.</li>
+ * <li>Runtime contexts are stateful and not thread-safe.</li>
  * </ul>
- *
- * <h2>Security properties</h2>
- * <ul>
- * <li>Underlying assumption: hardness of decoding binary Goppa codes.</li>
- * <li>Selected as a NIST post-quantum KEM standard (2022).</li>
- * <li>Public keys are large (hundreds of kilobytes), but ciphertexts and
- * secrets are compact.</li>
- * <li>Considered quantum-resistant and secure against known attacks.</li>
- * </ul>
- *
- * <h2>Usage</h2> <pre>{@code
- * // Select a variant (e.g., 8192128F for 256-bit security)
- * CmceKeyGenSpec spec = CmceKeyGenSpec.mceliece8192128f();
- * CmceAlgorithm alg = new CmceAlgorithm();
- * KeyPair kp = alg.asymmetricKeyBuilder(CmceKeyGenSpec.class).generateKeyPair(spec);
- *
- * // Encapsulation (sender)
- * try (CmceKemContext ctx = new CmceKemContext(alg, kp.getPublic())) {
- *   KemResult kem = ctx.encapsulate();
- *   byte[] ct = kem.ciphertext();
- *   byte[] secret = kem.secret();
- * }
- *
- * // Decapsulation (recipient)
- * try (CmceKemContext ctx = new CmceKemContext(alg, kp.getPrivate())) {
- *   byte[] secret = ctx.decapsulate(ct);
- * }
- * }</pre>
  *
  * @since 1.0
  */
