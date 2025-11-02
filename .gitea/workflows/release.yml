@@ -42,7 +42,8 @@ jobs:
           apt install -y rsync
 
       - name: Build and publish to Gitea Maven and JavaDoc to the website
-        run: ./gradlew clean publish uploadJavadoc --no-daemon -PgiteaToken=${{ secrets.CI_PUBLISH_TOKEN }} -PjavadocUser=${{ vars.JAVADOC_USER }} -PjavadocHost=${{ vars.JAVADOC_HOST }} -PjavadocPath=${{ vars.JAVADOC_PATH }} -PjavadocKeyPath=~/.ssh/id_rsa
+        run: ./gradlew clean publish --no-daemon -PgiteaToken=${{ secrets.CI_PUBLISH_TOKEN }}
+        # was run: ./gradlew clean publish uploadJavadoc --no-daemon -PgiteaToken=${{ secrets.CI_PUBLISH_TOKEN }} -PjavadocUser=${{ vars.JAVADOC_USER }} -PjavadocHost=${{ vars.JAVADOC_HOST }} -PjavadocPath=${{ vars.JAVADOC_PATH }} -PjavadocKeyPath=~/.ssh/id_rsa
 
       - name: Generate release notes
         id: notes
@@ -88,5 +89,5 @@ jobs:
       - name: Create Gitea Release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/libs/*.jar
+          files: app/build/distributions/*.tar app/build/distributions/*.zip
           body_path: /tmp/release_notes.md
