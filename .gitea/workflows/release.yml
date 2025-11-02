@@ -89,5 +89,7 @@ jobs:
       - name: Create Gitea Release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/distributions/*.tar app/build/distributions/*.zip
+          files: |
+            app/build/distributions/*.tar
+            app/build/distributions/*.zip
           body_path: /tmp/release_notes.md
