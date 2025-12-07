@@ -86,6 +86,7 @@ public class OutputToInputStreamAdapterTest {
         return new ByteArrayInputStream(baos.toByteArray());
     }
 
+    @Deprecated
     @Test
     public void testIncrementingAdapter() throws IOException {
         System.out.println("testIncrementingAdapter");
