@@ -59,12 +59,7 @@ public final class Strings {
      * truncated after 32 elements, followed by an ellipsis marker: {@code [...]}.
      * </p>
      * 
-     * <p>
-     * Examples:
-     * </p>
-     * 
-     * <pre>
-     * {@code
+     * <h4>Examples</h4> <pre>{@code
      * Strings.toShortString(null)        -> "null"
      * Strings.toShortString(new byte[0]) -> "[]"
      * Strings.toShortString(new byte[]{1, 2, 3})
@@ -118,7 +113,7 @@ public final class Strings {
      * <li>If {@code a} is empty, the string {@code "[]"} is returned.</li>
      * </ul>
      *
-     * <h2>Examples</h2> <pre>{@code
+     * <h4>Examples</h4> <pre>{@code
      * toShortHexString(null)                   -> "null"
      * toShortHexString(new byte[0])            -> "[]"
      * toShortHexString(new byte[]{0x01})       -> "[0x01]"

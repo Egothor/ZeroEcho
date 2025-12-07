@@ -48,10 +48,7 @@ import java.security.GeneralSecurityException;
  * envelope writes the identifier and a length-prefixed copy of the blob into
  * its header.
  *
- * <p>
- * Typical usage:
- * </p>
- * <pre>{@code
+ * <h2>Typical usage</h2> <pre>{@code
  * // RSA-OAEP recipient; the header will contain the id and the RSA-wrapped CEK
  * Recipient r = new MultiRecipientDataSourceBuilder.RsaOaepRecipient(rsaPublicKey);
  * byte[] entryBlob = r.buildRecipientEntry(cek);
@@ -67,7 +64,7 @@ public interface Recipient {
      * intentionally unusable for recovering the content-encryption key (CEK).
      * </p>
      *
-     * <h2>Security considerations</h2>
+     * <h4>Security considerations</h4>
      * <ul>
      * <li>Decoys prevent traffic analysis from revealing how many legitimate
      * recipients are present.</li>

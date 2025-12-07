@@ -78,7 +78,7 @@ public final class PasswordRecipient implements Recipient {
      * marked as a decoy to obscure the actual number of usable recipients.
      * </p>
      *
-     * <h2>Security considerations</h2>
+     * <h4>Security considerations</h4>
      * <ul>
      * <li>The caller should clear the {@code password} array after constructing the
      * recipient to minimize exposure in memory.</li>
