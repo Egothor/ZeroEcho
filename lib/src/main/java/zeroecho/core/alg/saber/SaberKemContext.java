@@ -39,6 +39,7 @@ import java.security.Key;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Objects;
 
 import javax.security.auth.DestroyFailedException;
@@ -182,8 +183,8 @@ public final class SaberKemContext implements KemContext {
                     .createKey(key.getEncoded());
             SABERKEMGenerator gen = new SABERKEMGenerator(new SecureRandom());
             SecretWithEncapsulation res = gen.generateEncapsulated(keyParam);
-            byte[] secret = res.getSecret();
-            byte[] ct = res.getEncapsulation();
+            byte[] secret = Arrays.copyOf(res.getSecret(), res.getSecret().length);
+            byte[] ct = Arrays.copyOf(res.getEncapsulation(), res.getEncapsulation().length);
             res.destroy();
             return new KemResult(ct, secret);
         } catch (DestroyFailedException e) {
