@@ -136,7 +136,7 @@
    <rule ref="category/java/codestyle.xml/UnnecessaryConstructor"/>
    <rule ref="category/java/codestyle.xml/UnnecessaryFullyQualifiedName"/>
    <rule ref="category/java/codestyle.xml/UnnecessaryImport"/>
-   <rule ref="category/java/codestyle.xml/UnnecessaryLocalBeforeReturn"/>
+   <!-- PMD 8.0.0: obsolete rule ref="category/java/codestyle.xml/UnnecessaryLocalBeforeReturn"/ -->
    <rule ref="category/java/codestyle.xml/UnnecessaryModifier"/>
    <rule ref="category/java/codestyle.xml/UnnecessaryReturn"/>
    <rule ref="category/java/codestyle.xml/UnnecessarySemicolon"/>
@@ -147,7 +147,6 @@
    <rule ref="category/java/codestyle.xml/UseShortArrayInitializer"/>
    <rule ref="category/java/codestyle.xml/UseUnderscoresInNumericLiterals"/>
    <rule ref="category/java/design.xml/AbstractClassWithoutAnyMethod"/>
-   <rule ref="category/java/design.xml/AvoidCatchingGenericException"/>
    <rule ref="category/java/design.xml/AvoidDeeplyNestedIfStmts"/>
    <rule ref="category/java/design.xml/AvoidRethrowingException"/>
    <rule ref="category/java/design.xml/AvoidThrowingNewInstanceOfSameException"/>
@@ -231,8 +230,11 @@
    <rule ref="category/java/errorprone.xml/AvoidAssertAsIdentifier"/>
    <rule ref="category/java/errorprone.xml/AvoidBranchingStatementAsLastInLoop"/>
    <rule ref="category/java/errorprone.xml/AvoidCallingFinalize"/>
-   <rule ref="category/java/errorprone.xml/AvoidCatchingNPE"/>
-   <rule ref="category/java/errorprone.xml/AvoidCatchingThrowable"/>
+   <rule ref="category/java/errorprone.xml/AvoidCatchingGenericException">
+      <properties>
+         <property name="typesThatShouldNotBeCaught" value="java.lang.RuntimeException,java.lang.Throwable,java.lang.Error" />
+      </properties>
+   </rule>
    <rule ref="category/java/errorprone.xml/AvoidDecimalLiteralsInBigDecimalConstructor"/>
    <rule ref="category/java/errorprone.xml/AvoidDuplicateLiterals">
      <properties>
@@ -245,7 +247,6 @@
    <rule ref="category/java/errorprone.xml/AvoidFieldNameMatchingTypeName"/>
    <rule ref="category/java/errorprone.xml/AvoidInstanceofChecksInCatchClause"/>
    <rule ref="category/java/errorprone.xml/AvoidLiteralsInIfCondition"/>
-   <rule ref="category/java/errorprone.xml/AvoidLosingExceptionInformation"/>
    <rule ref="category/java/errorprone.xml/AvoidMultipleUnaryOperators"/>
    <rule ref="category/java/errorprone.xml/AvoidUsingOctalValues"/>
    <rule ref="category/java/errorprone.xml/BrokenNullCheck"/>
@@ -313,7 +314,7 @@
    <rule ref="category/java/errorprone.xml/UnusedNullCheckInEquals"/>
    <rule ref="category/java/errorprone.xml/UseCorrectExceptionLogging"/>
    <rule ref="category/java/errorprone.xml/UseEqualsToCompareStrings"/>
-   <rule ref="category/java/errorprone.xml/UselessOperationOnImmutable"/>
+   <rule ref="category/java/errorprone.xml/UselessPureMethodCall" />
    <rule ref="category/java/errorprone.xml/UseLocaleWithCaseConversions"/>
    <rule ref="category/java/errorprone.xml/UseProperClassLoader"/>
    <rule ref="category/java/multithreading.xml/AvoidSynchronizedAtMethodLevel"/>

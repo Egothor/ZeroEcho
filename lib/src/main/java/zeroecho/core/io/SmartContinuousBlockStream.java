@@ -166,7 +166,7 @@ final class SmartContinuousBlockStream extends AbstractChunkTransformInputStream
                 out = outBuf = Arrays.copyOf(outBuf, outOff + finBlockSize); // NOPMD
             }
 
-            int written = cipher.doFinal(in, inOff, len, out, outOff); // NOPMD
+            int written = cipher.doFinal(in, inOff, len, out, outOff);
             return written;
 
             // return cipher.doFinal(in, inOff, len, out, outOff);

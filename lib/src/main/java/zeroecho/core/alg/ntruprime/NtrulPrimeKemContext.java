@@ -212,7 +212,7 @@ public final class NtrulPrimeKemContext implements KemContext {
                     .createKey(key.getEncoded());
             NTRULPRimeKEMExtractor ex = new NTRULPRimeKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("NTRULPRime decapsulate failed", e);
         }
     }

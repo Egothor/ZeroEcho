@@ -219,7 +219,7 @@ public final class CmceKemContext implements KemContext {
                     .createKey(key.getEncoded());
             CMCEKEMExtractor ex = new CMCEKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("CMCE decapsulate failed", e);
         }
     }

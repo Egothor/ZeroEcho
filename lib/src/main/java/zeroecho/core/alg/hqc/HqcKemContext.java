@@ -213,7 +213,7 @@ public final class HqcKemContext implements KemContext {
                     .createKey(key.getEncoded());
             HQCKEMExtractor ex = new HQCKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("HQC decapsulate failed", e);
         }
     }

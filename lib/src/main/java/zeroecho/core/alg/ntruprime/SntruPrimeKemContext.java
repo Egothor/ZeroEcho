@@ -218,7 +218,7 @@ public final class SntruPrimeKemContext implements KemContext {
                     .createKey(key.getEncoded());
             SNTRUPrimeKEMExtractor ex = new SNTRUPrimeKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("SNTRUPrime decapsulate failed", e);
         }
     }

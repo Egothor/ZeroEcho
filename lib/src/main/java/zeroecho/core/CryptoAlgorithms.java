@@ -518,7 +518,7 @@ public final class CryptoAlgorithms {
                     destroyed = true;
                 }
             }
-        } catch (Exception ignored) { // NOPMD
+        } catch (Exception ignored) {
             // swallow and report via audit only if destroyed
         }
         if (destroyed) {

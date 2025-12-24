@@ -186,7 +186,7 @@ public final class BikeKemContext implements KemContext {
                     .createKey(key.getEncoded());
             BIKEKEMExtractor ex = new BIKEKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("BIKE decapsulate failed", e);
         }
     }

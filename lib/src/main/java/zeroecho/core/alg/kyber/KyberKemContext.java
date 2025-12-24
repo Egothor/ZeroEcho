@@ -220,7 +220,7 @@ public final class KyberKemContext implements KemContext {
             MLKEMExtractor gen = new MLKEMExtractor(keyParam);
 
             return gen.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("Kyber decapsulate failed", e);
         }
     }

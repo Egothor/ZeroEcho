@@ -250,7 +250,7 @@ public final class NtruKemContext implements KemContext {
                     .createKey(key.getEncoded());
             NTRUKEMExtractor ex = new NTRUKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("NTRU decapsulate failed", e);
         }
     }

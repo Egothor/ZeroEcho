@@ -217,7 +217,7 @@ public final class SaberKemContext implements KemContext {
                     .createKey(key.getEncoded());
             SABERKEMExtractor ex = new SABERKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("SABER decapsulate failed", e);
         }
     }

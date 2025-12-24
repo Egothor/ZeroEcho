@@ -212,7 +212,7 @@ public final class FrodoKemContext implements KemContext {
                     .createKey(key.getEncoded());
             FrodoKEMExtractor ex = new FrodoKEMExtractor(keyParam);
             return ex.extractSecret(ciphertext);
-        } catch (Exception e) { // NOPMD
+        } catch (Exception e) {
             throw new IOException("Frodo decapsulate failed", e);
         }
     }
