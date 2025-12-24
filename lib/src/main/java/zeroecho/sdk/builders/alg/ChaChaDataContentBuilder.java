@@ -451,7 +451,7 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
                 ctx.put(ConfluxKeys.iv(algId), nonce);
             }
             if (v == Variant.AEAD) {
-                if (aad != null) {
+                if (aad != null) { // NOPMD
                     ctx.put(ConfluxKeys.aad(algId), aad);
                 }
             } else {

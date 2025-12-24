@@ -229,9 +229,9 @@ public abstract class TailStrippingInputStream extends InputStream {
             emitPos += chunk;
             if (emitPos == emitLen) {
                 // Emission finished; now it's safe to compact tail to start.
-                if (needCompactAfterEmit) {
+                if (needCompactAfterEmit) { // NOPMD
                     int remaining = accLen - emitLen; // this is the withheld tail (<= tailLen)
-                    if (remaining > 0) { // NOPMD
+                    if (remaining > 0) {
                         System.arraycopy(window, emitLen, window, 0, remaining);
                     }
                     accLen = remaining;
@@ -251,7 +251,7 @@ public abstract class TailStrippingInputStream extends InputStream {
                     // Whatever remains in window are the final tail bytes (<= tailLen).
                     byte[] tail = Arrays.copyOf(window, accLen);
 
-                    if (LOG.isLoggable(Level.FINE)) {
+                    if (LOG.isLoggable(Level.FINE)) { // NOPMD
                         LOG.log(Level.FINE, "tail found {0}", Strings.toShortString(tail));
                     }
                     tailProcessed = true;
@@ -286,7 +286,7 @@ public abstract class TailStrippingInputStream extends InputStream {
             System.arraycopy(window, emitPos, b, off, chunk);
             emitPos += chunk;
             if (emitPos == emitLen) {
-                if (needCompactAfterEmit) {
+                if (needCompactAfterEmit) { // NOPMD
                     int remaining = accLen - emitLen;
                     if (remaining > 0) {
                         System.arraycopy(window, emitLen, window, 0, remaining);

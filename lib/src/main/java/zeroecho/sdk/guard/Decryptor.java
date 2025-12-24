@@ -129,7 +129,7 @@ final class Decryptor implements PlainContent {
                     byte[] maybe = op.tryOpen(id, blob, material);
                     if (maybe != null) {
                         if (maybe.length > keyBytes) {
-                            if (LOG.isLoggable(Level.WARNING)) {
+                            if (LOG.isLoggable(Level.WARNING)) { // NOPMD
                                 LOG.log(Level.WARNING,
                                         "Suspicious material in field {0}: {1}/{2} finds the secret of length {3}, while {4} is a limit. Ignoring.",
                                         new Object[] { i, id, op.toString(), maybe.length, keyBytes }); // NOPMD

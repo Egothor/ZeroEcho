@@ -247,7 +247,7 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
             if (nonce == null) {
                 nonce = new byte[NONCE_LEN];
                 rnd.nextBytes(nonce);
-                if (ctx != null) {
+                if (ctx != null) { // NOPMD
                     ctx.put(ConfluxKeys.iv(id), nonce);
                 }
             } else if (nonce.length != NONCE_LEN) {
