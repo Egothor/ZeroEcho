@@ -70,6 +70,8 @@ import javax.crypto.SecretKey;
  * {@code key.getAlgorithm()} (for example, 512, 768, 1024 for ML-KEM;
  * 640/976/1344 for FrodoKEM) or from NIST security levels labeled as L1/L3/L5.
  * If neither is present, defaults to 128.</li>
+ * <li><b>ML-DSA</b>: estimated from the parameter set markers (44/65/87 mapped
+ * to 128/192/256, or L1/L3/L5).</li>
  * <li><b>SLH-DSA:</b> parse 128/192/256 from {@code key.getAlgorithm()}
  * similarly to SPHINCS+; else default 128.</li>
  * <li><b>SPHINCS+:</b> parses the parameter size 128/192/256 from the algorithm
@@ -125,6 +127,7 @@ public final class SecurityStrengthAdvisor { // NOPMD
     private static final Pattern HMAC_SHA_PATTERN = Pattern.compile("HMAC(?:-)?SHA(?:-)?(1|224|256|384|512)",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern SLHDSA_STRENGTH_PATTERN = Pattern.compile("(128|192|256)");
+    private static final Pattern MLDSA_SET_PATTERN = Pattern.compile("(44|65|87)");
 
     private SecurityStrengthAdvisor() {
     }
@@ -156,6 +159,7 @@ public final class SecurityStrengthAdvisor { // NOPMD
             case "ED25519" -> 128;
             case "ED448" -> 224;
             case "ML-KEM" -> kyberStrength(key);
+            case "ML-DSA", "MLDSA" -> mldsaStrength(key);
             case "BIKE" -> mapByNistLevel(key, 128, 192, 256);
             case "HQC" -> mapByNistLevel(key, 128, 192, 256);
             case "FRODO" -> frodoStrength(key);
@@ -444,5 +448,28 @@ public final class SecurityStrengthAdvisor { // NOPMD
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    private static int mldsaStrength(Key key) {
+        String a = safeAlgo(key);
+        String normalized = a.toLowerCase(Locale.ROOT).replace('_', '-');
+
+        Matcher m = MLDSA_SET_PATTERN.matcher(normalized);
+        if (m.find()) {
+            int set = parseIntSafe(m.group(1));
+            return switch (set) {
+                case 44 -> 128;
+                case 65 -> 192;
+                case 87 -> 256;
+                default -> 128;
+            };
+        }
+
+        int byLevel = mapByNistLevel(key, 128, 192, 256);
+        if (byLevel != 0) {
+            return byLevel;
+        }
+
+        return 128;
     }
 }

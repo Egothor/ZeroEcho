@@ -14,6 +14,7 @@ zeroecho.core.alg.frodo.FrodoAlgorithm
 zeroecho.core.alg.hmac.HmacAlgorithm
 zeroecho.core.alg.hqc.HqcAlgorithm
 zeroecho.core.alg.kyber.KyberAlgorithm
+zeroecho.core.alg.mldsa.MldsaAlgorithm
 zeroecho.core.alg.ntru.NtruAlgorithm
 zeroecho.core.alg.ntruprime.NtrulPrimeAlgorithm
 zeroecho.core.alg.ntruprime.SntruPrimeAlgorithm
