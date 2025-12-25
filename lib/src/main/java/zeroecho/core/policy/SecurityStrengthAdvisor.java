@@ -70,6 +70,8 @@ import javax.crypto.SecretKey;
  * {@code key.getAlgorithm()} (for example, 512, 768, 1024 for ML-KEM;
  * 640/976/1344 for FrodoKEM) or from NIST security levels labeled as L1/L3/L5.
  * If neither is present, defaults to 128.</li>
+ * <li><b>SLH-DSA:</b> parse 128/192/256 from {@code key.getAlgorithm()}
+ * similarly to SPHINCS+; else default 128.</li>
  * <li><b>SPHINCS+:</b> parses the parameter size 128/192/256 from the algorithm
  * string; otherwise defaults to 128.</li>
  * <li><b>EdDSA:</b> returns fixed strengths (Ed25519 -> 128, Ed448 ->
@@ -122,6 +124,7 @@ public final class SecurityStrengthAdvisor { // NOPMD
     private static final Pattern SPHINCS_STRENGTH_PATTERN = Pattern.compile("(128|192|256)");
     private static final Pattern HMAC_SHA_PATTERN = Pattern.compile("HMAC(?:-)?SHA(?:-)?(1|224|256|384|512)",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern SLHDSA_STRENGTH_PATTERN = Pattern.compile("(128|192|256)");
 
     private SecurityStrengthAdvisor() {
     }
@@ -161,6 +164,7 @@ public final class SecurityStrengthAdvisor { // NOPMD
             case "NTRU" -> ntruStrength(key);
             case "SNTRUPRIME" -> sntruPrimeStrength(key);
             case "NTRULPRIME" -> ntruLPrimeStrength(key);
+            case "SLH-DSA", "SLHDSA" -> slhDsaStrength(key);
             case "SPHINCS+", "SPHINCSPLUS" -> sphincsPlusStrength(key);
             case "DIGEST" -> 128;
             default -> 128;
@@ -353,6 +357,31 @@ public final class SecurityStrengthAdvisor { // NOPMD
             }
         }
         // Fallback if the parameter size is unknown
+        return 128;
+    }
+
+    private static int slhDsaStrength(Key key) {
+        // Provider strings observed: "SLH-DSA-SHAKE-128S", "slh-dsa-sha2-192f",
+        // sometimes with separators or additional tokens. We normalize and then parse.
+        String a = safeAlgo(key);
+        String normalized = a.toLowerCase(Locale.ROOT).replace('_', '-');
+
+        // Prefer explicit numeric strength markers (128/192/256) in the algorithm name.
+        Matcher m = SLHDSA_STRENGTH_PATTERN.matcher(normalized);
+        if (m.find()) {
+            int v = parseIntSafe(m.group(1));
+            if (v == 128 || v == 192 || v == 256) {
+                return v;
+            }
+        }
+
+        // Fall back to L1/L3/L5 markers when present.
+        int byLevel = mapByNistLevel(key, 128, 192, 256);
+        if (byLevel != 0) {
+            return byLevel;
+        }
+
+        // Conservative default.
         return 128;
     }
 
