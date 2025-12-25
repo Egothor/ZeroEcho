@@ -67,8 +67,9 @@
  * <li>{@link RsaEncDataContentBuilder} and {@link ElgamalEncDataContentBuilder}
  * - wrap asymmetric encryption.</li>
  * <li>{@link RsaSigDataContentBuilder}, {@link EcdsaDataContentBuilder},
- * {@link Ed25519DataContentBuilder}, {@link Ed448DataContentBuilder}, and
- * {@link SphincsPlusDataContentBuilder} - perform streaming signatures and
+ * {@link Ed25519DataContentBuilder}, {@link Ed448DataContentBuilder},
+ * {@link SphincsPlusDataContentBuilder}, {@link SlhDsaDataContentBuilder}, and
+ * {@link MldsaDataContentBuilder} - perform streaming signatures and
  * verification.</li>
  * <li>{@link KemDataContentBuilder} - implement KEM-first envelopes and inject
  * the derived key into a chosen symmetric payload builder.</li>
