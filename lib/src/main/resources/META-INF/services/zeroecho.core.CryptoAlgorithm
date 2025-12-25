@@ -19,5 +19,6 @@ zeroecho.core.alg.ntruprime.NtrulPrimeAlgorithm
 zeroecho.core.alg.ntruprime.SntruPrimeAlgorithm
 zeroecho.core.alg.rsa.RsaAlgorithm
 zeroecho.core.alg.saber.SaberAlgorithm
+zeroecho.core.alg.slhdsa.SlhDsaAlgorithm
 zeroecho.core.alg.sphincsplus.SphincsPlusAlgorithm
 zeroecho.core.alg.xdh.XdhAlgorithm
