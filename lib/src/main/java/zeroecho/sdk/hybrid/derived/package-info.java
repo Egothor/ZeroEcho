@@ -32,32 +32,36 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-package zeroecho.sdk.hybrid;
-
 /**
- * Base exception type for hybrid framework failures.
+ * Derived-key utilities for integrating hybrid KEX output with streaming
+ * builders.
+ *
+ * <p>
+ * This package provides a thin, SDK-level integration layer between hybrid key
+ * exchange ({@link zeroecho.sdk.hybrid.kex.HybridKexContext} /
+ * {@link zeroecho.sdk.hybrid.kex.HybridKexExporter}) and streaming data-content
+ * builders (for example AES/ChaCha/HMAC builders in
+ * {@link zeroecho.sdk.builders.alg}).
+ * </p>
+ *
+ * <p>
+ * The central concept is <b>derived material</b>: purpose-separated keying
+ * bytes (key, optional IV/nonce, optional AAD) derived via HKDF labels. The
+ * material is then applied to an existing builder via {@code applyTo(...)}
+ * which returns the same builder instance to preserve fluent pipeline
+ * construction.
+ * </p>
+ *
+ * <h2>Design goals</h2>
+ * <ul>
+ * <li>Keep cryptographic primitives unchanged; only inject derived
+ * parameters.</li>
+ * <li>Provide safe-by-construction key separation using labels and transcript
+ * binding.</li>
+ * <li>Preserve fluent builder usage by returning the original builder from
+ * {@code applyTo(...)}.</li>
+ * </ul>
  *
  * @since 1.0
  */
-public class HybridException extends Exception {
-    private static final long serialVersionUID = -3704484377176409054L;
-
-    /**
-     * Creates a new exception with a message.
-     *
-     * @param message error description
-     */
-    public HybridException(String message) {
-        super(message);
-    }
-
-    /**
-     * Creates a new exception with a message and a cause.
-     *
-     * @param message error description
-     * @param cause   underlying cause
-     */
-    public HybridException(String message, Throwable cause) {
-        super(message, cause);
-    }
-}
+package zeroecho.sdk.hybrid.derived;

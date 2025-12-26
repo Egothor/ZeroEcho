@@ -85,7 +85,7 @@ import zeroecho.core.spec.ContextSpec;
  * <h2>Error handling</h2>
  * <p>
  * Underlying context construction uses
- * {@link CryptoAlgorithms#create(String, KeyUsage, java.security.Key, Object)}
+ * {@link CryptoAlgorithms#create(String, KeyUsage, java.security.Key, ContextSpec)}
  * which may throw {@link IOException}. These factory methods propagate the
  * checked exception to keep failures explicit and auditable.
  * </p>
