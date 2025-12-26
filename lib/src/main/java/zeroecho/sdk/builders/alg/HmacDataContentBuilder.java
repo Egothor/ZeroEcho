@@ -254,6 +254,40 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
     }
 
     /**
+     * Returns the currently configured HMAC specification.
+     *
+     * <p>
+     * This accessor is intentionally read-only and exists to support safe
+     * integrations (for example hybrid-derived key injection) without duplicating
+     * the HMAC variant configuration outside of this builder.
+     * </p>
+     *
+     * @return current HMAC spec (never null)
+     * @since 1.0
+     */
+    public HmacSpec spec() {
+        return this.spec;
+    }
+
+    /**
+     * Returns a recommended HMAC key size (in bits) for the currently configured
+     * {@link #spec()}.
+     *
+     * <p>
+     * This is a convenience forwarding method to
+     * {@link HmacSpec#recommendedKeyBits()} and is intended as the default choice
+     * for derived-key integrations. Callers that intentionally need a non-default
+     * size may override it explicitly.
+     * </p>
+     *
+     * @return recommended key size in bits (positive, multiple of 8)
+     * @since 1.0
+     */
+    public int recommendedKeyBits() {
+        return this.spec.recommendedKeyBits();
+    }
+
+    /**
      * Switches the builder to MAC mode.
      *
      * @return {@code this} builder for chaining

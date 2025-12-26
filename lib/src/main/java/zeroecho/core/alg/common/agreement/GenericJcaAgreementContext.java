@@ -76,7 +76,7 @@ import zeroecho.core.context.AgreementContext;
  *
  * @since 1.0
  */
-public final class GenericJcaAgreementContext implements AgreementContext {
+public class GenericJcaAgreementContext implements AgreementContext {
     private final CryptoAlgorithm algorithm;
     private final PrivateKey privateKey;
     private final String jcaName; // e.g., "ECDH" or "XDH" (or "X25519"/"X448")

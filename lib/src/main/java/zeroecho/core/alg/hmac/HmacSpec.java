@@ -137,4 +137,50 @@ public final class HmacSpec implements ContextSpec, Describable {
     public String description() {
         return macName;
     }
+
+    /**
+     * Returns a recommended key size (in bits) for this HMAC variant.
+     *
+     * <p>
+     * HMAC is defined for keys of arbitrary length; this method therefore does not
+     * express a strict requirement. It provides a conservative,
+     * interoperability-friendly recommendation intended for default key derivation
+     * and key generation paths, especially where the caller does not want to
+     * manually select a key size.
+     * </p>
+     *
+     * <p>
+     * The recommendation follows common practice: use a key size at least equal to
+     * the underlying hash output length. For the built-in variants this yields:
+     * </p>
+     * <ul>
+     * <li>HmacSHA256 - 256 bits</li>
+     * <li>HmacSHA384 - 384 bits</li>
+     * <li>HmacSHA512 - 512 bits</li>
+     * </ul>
+     *
+     * <p>
+     * If this spec uses an unrecognized {@link #macName()} value, the method
+     * returns {@code 256} bits as a safe default and to avoid failing existing
+     * applications that rely on custom provider names. Applications with strict
+     * requirements should enforce their own policy and/or explicitly specify a key
+     * size.
+     * </p>
+     *
+     * @return recommended key size in bits (positive, multiple of 8)
+     * @since 1.0
+     */
+    public int recommendedKeyBits() {
+        return recommendedKeyBitsForMacName(macName);
+    }
+
+    private static int recommendedKeyBitsForMacName(String macName) {
+        return switch (macName) {
+            case "HmacSHA256" -> 256;
+            case "HmacSHA384" -> 384;
+            case "HmacSHA512" -> 512;
+            default -> 256;
+        };
+    }
+
 }

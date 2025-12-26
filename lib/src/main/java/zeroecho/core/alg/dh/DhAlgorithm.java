@@ -46,7 +46,10 @@ import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
 import zeroecho.core.alg.common.agreement.GenericJcaAgreementContext;
+import zeroecho.core.alg.common.agreement.GenericJcaMessageAgreementContext;
+import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.context.AgreementContext;
+import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spi.AsymmetricKeyBuilder;
 
 /**
@@ -132,6 +135,10 @@ public final class DhAlgorithm extends AbstractCryptoAlgorithm {
         capability(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, AgreementContext.class, PrivateKey.class,
                 DhSpec.class,
                 (PrivateKey k, DhSpec s) -> new GenericJcaAgreementContext(this, k, "DiffieHellman", null),
+                DhSpec::ffdhe2048);
+        capability(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, MessageAgreementContext.class, KeyPairKey.class,
+                DhSpec.class, (KeyPairKey k, DhSpec s) -> new GenericJcaMessageAgreementContext(this, k,
+                        "DiffieHellman", null, "DH", null),
                 DhSpec::ffdhe2048);
 
         registerAsymmetricKeyBuilder(DhSpec.class, new DhKeyGenBuilder(), DhSpec::ffdhe2048);

@@ -40,12 +40,15 @@ import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
 import zeroecho.core.alg.common.agreement.GenericJcaAgreementContext;
+import zeroecho.core.alg.common.agreement.GenericJcaMessageAgreementContext;
+import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.alg.ecdsa.EcdsaCurveSpec;
 import zeroecho.core.alg.ecdsa.EcdsaPrivateKeyBuilder;
 import zeroecho.core.alg.ecdsa.EcdsaPrivateKeySpec;
 import zeroecho.core.alg.ecdsa.EcdsaPublicKeyBuilder;
 import zeroecho.core.alg.ecdsa.EcdsaPublicKeySpec;
 import zeroecho.core.context.AgreementContext;
+import zeroecho.core.context.MessageAgreementContext;
 
 /**
  * <h2>Elliptic Curve Diffie-Hellman (ECDH) Algorithm</h2>
@@ -152,6 +155,10 @@ public final class EcdhAlgorithm extends AbstractCryptoAlgorithm {
                 EcdsaCurveSpec.class,
                 (PrivateKey k, EcdsaCurveSpec s) -> new GenericJcaAgreementContext(this, k, "ECDH", null),
                 () -> EcdsaCurveSpec.P256); // XXX spec is not used at all ?!?!
+        capability(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, MessageAgreementContext.class, KeyPairKey.class,
+                EcdsaCurveSpec.class, (KeyPairKey k, EcdsaCurveSpec s) -> new GenericJcaMessageAgreementContext(this, k,
+                        "ECDH", null, "EC", null),
+                () -> EcdsaCurveSpec.P256);
 
         // Reuse EC builders/importers
         registerAsymmetricKeyBuilder(EcdhCurveSpec.class, new EcdhKeyGenBuilder(), () -> EcdhCurveSpec.P256);
