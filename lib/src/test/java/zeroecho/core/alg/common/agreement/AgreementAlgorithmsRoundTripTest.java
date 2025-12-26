@@ -36,7 +36,6 @@ package zeroecho.core.alg.common.agreement;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
-import java.io.IOException;
 import java.math.BigInteger;
 import java.security.GeneralSecurityException;
 import java.security.InvalidKeyException;
@@ -88,20 +87,26 @@ public class AgreementAlgorithmsRoundTripTest {
         System.out.println(method + "...ok");
     }
 
+    private static void printCapabilityHeader(String algId, String branch, Capability cap) {
+        System.out.println("...algId=" + algId + ", branch=" + branch + ", ctxType=" + cap.contextType().getSimpleName()
+                + ", keyType=" + cap.keyType().getSimpleName() + ", specType=" + cap.specType().getSimpleName());
+    }
+
     private static String hex(byte[] b) {
         if (b == null) {
             return "null";
         }
         StringBuilder sb = new StringBuilder(b.length * 2);
-        for (byte v : b) {
+        for (int i = 0; i < b.length; i++) {
             if (sb.length() == 80) {
                 sb.append("...");
                 break;
             }
-            if ((v & 0xFF) < 16) {
+            int v = b[i] & 0xFF;
+            if (v < 16) {
                 sb.append('0');
             }
-            sb.append(Integer.toHexString(v & 0xFF));
+            sb.append(Integer.toHexString(v));
         }
         return sb.toString();
     }
@@ -118,8 +123,13 @@ public class AgreementAlgorithmsRoundTripTest {
 
     @BeforeAll
     static void setup() {
-        // If needed, install/activate providers (e.g., BouncyCastlePQCProvider) here.
-        BouncyCastleActivator.init();
+        // Optional: activate providers (e.g., BC/BCPQC) if present.
+        // Keep tests runnable even if BC is absent.
+        try {
+            BouncyCastleActivator.init();
+        } catch (Throwable ignore) {
+            // ignore
+        }
     }
 
     @Test
@@ -135,131 +145,254 @@ public class AgreementAlgorithmsRoundTripTest {
             }
 
             final List<Capability> caps = alg.listCapabilities();
-
             for (Capability cap : caps) {
                 if (cap.role() != KeyUsage.AGREEMENT) {
                     continue;
                 }
 
-                System.out.printf("   ...%s - AGREEMENT capability found", id);
+                System.out.println("...algId=" + id + " - AGREEMENT capability found");
 
                 final Class<?> ctxType = cap.contextType();
                 final Class<?> keyType = cap.keyType();
                 final Class<?> specType = cap.specType();
-                @SuppressWarnings("unused")
-                final ContextSpec defVal = cap.defaultSpec().get();
 
-                // System.out.printf(" ......type=[%s] key=[%s] spec=[%s] default=[%s]%n",
-                // ctxType, keyType, specType, defVal);
+                // --------------------------------------------------------------------
+                // MessageAgreementContext branch A: PAIR_MESSAGE (DH/XDH/ECDH-style)
+                //
+                // New extension:
+                // - contextType: MessageAgreementContext
+                // - keyType: KeyPairKey (wrapper for KeyPair, because capabilities require Key)
+                // - specType: ContextSpec (algorithm-specific agreement spec)
+                //
+                // Semantics:
+                // - getPeerMessage() returns local public key encoding (SPKI)
+                // - setPeerMessage(...) imports peer public key encoding
+                // --------------------------------------------------------------------
+                if (MessageAgreementContext.class.isAssignableFrom(ctxType) && keyType == KeyPairKey.class
+                        && ContextSpec.class.isAssignableFrom(specType)) {
 
-                // AGREEMENT (KEM-style) via MessageAgreementContext adapter
-                if (MessageAgreementContext.class.isAssignableFrom(ctxType)) {
+                    printCapabilityHeader(alg.id(), "PAIR_MESSAGE", cap);
 
-                    KeyPair bob = generateKeyPair(alg);
-                    if (bob == null) {
-                        System.out.println("   ...bob=null");
+                    ContextSpec spec = null;
+                    try {
+                        spec = cap.defaultSpec().get();
+                    } catch (Throwable ignore) {
+                        spec = tryExtractContextSpec(alg);
+                    }
+                    if (spec == null) {
+                        System.out.println("...spec=null (skip)");
                         continue;
                     }
 
-                    System.out.println("runAgreement(" + alg.id() + ", VoidSpec)");
-                    System.out.println("  Bob.public    " + keyInfo("key", bob.getPublic()));
-                    System.out.println("  Bob.private   " + keyInfo("key", bob.getPrivate()));
-
-                    // Alice (initiator): has Bob's public key
-                    MessageAgreementContext aliceCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT,
-                            bob.getPublic(), VoidSpec.INSTANCE);
-
-                    // Bob (responder): has his private key
-                    MessageAgreementContext bobCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT,
-                            bob.getPrivate(), VoidSpec.INSTANCE);
-
-                    // Initiator produces encapsulation message (ciphertext) to send
-                    byte[] enc = aliceCtx.getPeerMessage();
-                    // Responder consumes it
-                    bobCtx.setPeerMessage(enc);
-
-                    // Both derive the same shared secret
-                    byte[] kA = aliceCtx.deriveSecret();
-                    byte[] kB = bobCtx.deriveSecret();
-
-                    System.out.println("  KEM.ciphertext=" + hex(enc));
-                    System.out.println("  Alice.secret  =" + hex(kA));
-                    System.out.println("  Bob.secret    =" + hex(kB));
-
-                    assertArrayEquals(kA, kB, alg.id() + ": agreement secrets mismatch");
-                    System.out.println("...ok");
-
-                    try {
-                        aliceCtx.close();
-                    } catch (Exception ignored) {
+                    KeyPair alice = generateKeyPair(alg);
+                    KeyPair bob = generateKeyPair(alg);
+                    if (alice == null || bob == null) {
+                        System.out.println("...keypair=null (skip)");
+                        continue;
                     }
+
+                    System.out.println("...pair-message agreement roundtrip: algId=" + alg.id() + ", spec="
+                            + spec.getClass().getSimpleName());
+                    System.out.println("...Alice.public  " + keyInfo("key", alice.getPublic()));
+                    System.out.println("...Alice.private " + keyInfo("key", alice.getPrivate()));
+                    System.out.println("...Bob.public    " + keyInfo("key", bob.getPublic()));
+                    System.out.println("...Bob.private   " + keyInfo("key", bob.getPrivate()));
+
+                    KeyPairKey aliceKey = new KeyPairKey(alice);
+                    KeyPairKey bobKey = new KeyPairKey(bob);
+
+                    MessageAgreementContext aCtx = null;
+                    MessageAgreementContext bCtx = null;
+
                     try {
-                        bobCtx.close();
-                    } catch (Exception ignored) {
+                        aCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, aliceKey, spec);
+                        bCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bobKey, spec);
+
+                        byte[] aMsg = aCtx.getPeerMessage();
+                        byte[] bMsg = bCtx.getPeerMessage();
+
+                        aCtx.setPeerMessage(bMsg);
+                        bCtx.setPeerMessage(aMsg);
+
+                        byte[] zA = aCtx.deriveSecret();
+                        byte[] zB = bCtx.deriveSecret();
+
+                        System.out.println("...Alice.msg     =" + hex(aMsg));
+                        System.out.println("...Bob.msg       =" + hex(bMsg));
+                        System.out.println("...Alice.secret  =" + hex(zA));
+                        System.out.println("...Bob.secret    =" + hex(zB));
+
+                        assertArrayEquals(zA, zB, alg.id() + ": PAIR_MESSAGE secrets mismatch");
+                        System.out.println("...PAIR_MESSAGE...ok");
+                    } finally {
+                        if (aCtx != null) {
+                            try {
+                                aCtx.close();
+                            } catch (Exception ignored) {
+                                // ignore
+                            }
+                        }
+                        if (bCtx != null) {
+                            try {
+                                bCtx.close();
+                            } catch (Exception ignored) {
+                                // ignore
+                            }
+                        }
+                    }
+
+                    // For a given algorithm, one AGREEMENT capability is sufficient for the sweep.
+                    break;
+                }
+
+                // --------------------------------------------------------------------
+                // MessageAgreementContext branch B: KEM_ADAPTER (KEM-style adapter)
+                //
+                // Existing behavior:
+                // - initiator has recipient PublicKey (encapsulation)
+                // - responder has PrivateKey (decapsulation)
+                // - spec is VoidSpec
+                // --------------------------------------------------------------------
+                if (MessageAgreementContext.class.isAssignableFrom(ctxType)
+                        && (keyType == PublicKey.class || keyType == PrivateKey.class)) {
+
+                    printCapabilityHeader(alg.id(), "KEM_ADAPTER", cap);
+
+                    KeyPair bob = generateKeyPair(alg);
+                    if (bob == null) {
+                        System.out.println("...keypair=null (skip)");
+                        continue;
+                    }
+
+                    System.out.println("...kem-adapter agreement roundtrip: algId=" + alg.id() + ", spec=VoidSpec");
+                    System.out.println("...Bob.public    " + keyInfo("key", bob.getPublic()));
+                    System.out.println("...Bob.private   " + keyInfo("key", bob.getPrivate()));
+
+                    MessageAgreementContext aliceCtx = null;
+                    MessageAgreementContext bobCtx = null;
+
+                    try {
+                        // Alice (initiator): has Bob's public key
+                        aliceCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bob.getPublic(),
+                                VoidSpec.INSTANCE);
+
+                        // Bob (responder): has his private key
+                        bobCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(),
+                                VoidSpec.INSTANCE);
+
+                        // Initiator produces encapsulation message (ciphertext) to send
+                        byte[] enc = aliceCtx.getPeerMessage();
+                        // Responder consumes it
+                        bobCtx.setPeerMessage(enc);
+
+                        // Both derive the same shared secret
+                        byte[] kA = aliceCtx.deriveSecret();
+                        byte[] kB = bobCtx.deriveSecret();
+
+                        System.out.println("...KEM.ciphertext=" + hex(enc));
+                        System.out.println("...Alice.secret  =" + hex(kA));
+                        System.out.println("...Bob.secret    =" + hex(kB));
+
+                        assertArrayEquals(kA, kB, alg.id() + ": KEM_ADAPTER secrets mismatch");
+                        System.out.println("...KEM_ADAPTER...ok");
+                    } finally {
+                        if (aliceCtx != null) {
+                            try {
+                                aliceCtx.close();
+                            } catch (Exception ignored) {
+                                // ignore
+                            }
+                        }
+                        if (bobCtx != null) {
+                            try {
+                                bobCtx.close();
+                            } catch (Exception ignored) {
+                                // ignore
+                            }
+                        }
                     }
 
                     break;
                 }
 
-                // -------- Classic DH/XDH: AgreementContext + real ContextSpec --------
-                else if (AgreementContext.class.isAssignableFrom(ctxType)
-                        && ContextSpec.class.isAssignableFrom(specType) && keyType == PrivateKey.class) {
+                // --------------------------------------------------------------------
+                // AgreementContext branch C: CLASSIC_AGREEMENT (PrivateKey + ContextSpec)
+                // --------------------------------------------------------------------
+                if (AgreementContext.class.isAssignableFrom(ctxType) && keyType == PrivateKey.class
+                        && ContextSpec.class.isAssignableFrom(specType)) {
 
-                    KeyPair alice;
-                    KeyPair bob;
+                    printCapabilityHeader(alg.id(), "CLASSIC_AGREEMENT", cap);
 
-                    alice = generateKeyPair(alg);
-                    bob = generateKeyPair(alg);
-
-                    if (alice == null || bob == null) {
-                        continue;
-                    }
-
-                    // Prefer the capability's default ContextSpec if provided
                     ContextSpec spec = null;
                     try {
-                        ContextSpec def = cap.defaultSpec().get();
-                        spec = def;
+                        spec = cap.defaultSpec().get();
                     } catch (Throwable ignore) {
                         spec = tryExtractContextSpec(alg);
                     }
                     if (spec == null) {
+                        System.out.println("...spec=null (skip)");
                         continue;
                     }
 
-                    System.out.println("runAgreement(" + alg.id() + ", " + spec.getClass().getSimpleName() + ")");
-                    System.out.println("  Alice.public  " + keyInfo("key", alice.getPublic()));
-                    System.out.println("  Alice.private " + keyInfo("key", alice.getPrivate()));
-                    System.out.println("  Bob.public    " + keyInfo("key", bob.getPublic()));
-                    System.out.println("  Bob.private   " + keyInfo("key", bob.getPrivate()));
+                    KeyPair alice = generateKeyPair(alg);
+                    KeyPair bob = generateKeyPair(alg);
 
-                    // assertDhCompatible(alice.getPrivate(), bob.getPublic());
-                    // assertDhCompatible(bob.getPrivate(), alice.getPublic());
+                    if (alice == null || bob == null) {
+                        System.out.println("...keypair=null (skip)");
+                        continue;
+                    }
 
-                    AgreementContext aCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, alice.getPrivate(),
-                            spec);
-                    AgreementContext bCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(),
-                            spec);
-                    aCtx.setPeerPublic(bob.getPublic());
-                    bCtx.setPeerPublic(alice.getPublic());
+                    System.out.println("...classic agreement roundtrip: algId=" + alg.id() + ", spec="
+                            + spec.getClass().getSimpleName());
+                    System.out.println("...Alice.public  " + keyInfo("key", alice.getPublic()));
+                    System.out.println("...Alice.private " + keyInfo("key", alice.getPrivate()));
+                    System.out.println("...Bob.public    " + keyInfo("key", bob.getPublic()));
+                    System.out.println("...Bob.private   " + keyInfo("key", bob.getPrivate()));
 
-                    byte[] zA = aCtx.deriveSecret();
-                    byte[] zB = bCtx.deriveSecret();
+                    // Optional DH sanity check (only when both sides are DH keys).
+                    try {
+                        assertDhCompatible(alice.getPrivate(), bob.getPublic());
+                        assertDhCompatible(bob.getPrivate(), alice.getPublic());
+                    } catch (Throwable ignore) {
+                        // not DH, or provider-specific checks not applicable; continue anyway
+                    }
 
-                    System.out.println("  Alice.secret  =" + hex(zA));
-                    System.out.println("  Bob.secret    =" + hex(zB));
-
-                    assertArrayEquals(zA, zB, alg.id() + ": DH/XDH secrets mismatch");
-                    System.out.println("...ok");
+                    AgreementContext aCtx = null;
+                    AgreementContext bCtx = null;
 
                     try {
-                        aCtx.close();
-                    } catch (IOException ignore) {
+                        aCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, alice.getPrivate(), spec);
+                        bCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(), spec);
+
+                        aCtx.setPeerPublic(bob.getPublic());
+                        bCtx.setPeerPublic(alice.getPublic());
+
+                        byte[] zA = aCtx.deriveSecret();
+                        byte[] zB = bCtx.deriveSecret();
+
+                        System.out.println("...Alice.secret  =" + hex(zA));
+                        System.out.println("...Bob.secret    =" + hex(zB));
+
+                        assertArrayEquals(zA, zB, alg.id() + ": CLASSIC_AGREEMENT secrets mismatch");
+                        System.out.println("...CLASSIC_AGREEMENT...ok");
+                    } finally {
+                        if (aCtx != null) {
+                            try {
+                                aCtx.close();
+                            } catch (Exception ignored) {
+                                // ignore
+                            }
+                        }
+                        if (bCtx != null) {
+                            try {
+                                bCtx.close();
+                            } catch (Exception ignored) {
+                                // ignore
+                            }
+                        }
                     }
-                    try {
-                        bCtx.close();
-                    } catch (IOException ignore) {
-                    }
+
+                    // do not break: a single algorithm may have multiple agreement capabilities
                 }
             }
         }
@@ -271,19 +404,17 @@ public class AgreementAlgorithmsRoundTripTest {
     private static KeyPair generateKeyPair(CryptoAlgorithm alg) {
         try {
             for (CryptoAlgorithm.AsymBuilderInfo bi : alg.asymmetricBuildersInfo()) {
-                // System.out.println(" ...keyPair " + bi.getClass().getName());
                 if (bi.defaultKeySpec == null) {
-                    // System.out.println(" ......skip default = null --> it was for keyImport");
                     continue;
                 }
                 @SuppressWarnings("unchecked")
                 Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) bi.specType;
-                AsymmetricKeyBuilder<AlgorithmKeySpec> b = alg.asymmetricKeyBuilder(specType);
+                AsymmetricKeyBuilder<AlgorithmKeySpec> builder = alg.asymmetricKeyBuilder(specType);
                 AlgorithmKeySpec spec = (AlgorithmKeySpec) bi.defaultKeySpec;
-                // System.out.println(" ......generated from " + spec);
-                return b.generateKeyPair(spec);
+                return builder.generateKeyPair(spec);
             }
         } catch (Throwable ignore) {
+            // ignore
         }
         return null;
     }
@@ -300,6 +431,7 @@ public class AgreementAlgorithmsRoundTripTest {
                 }
             }
         } catch (Throwable ignore) {
+            // ignore
         }
         return null;
     }
@@ -315,15 +447,13 @@ public class AgreementAlgorithmsRoundTripTest {
         DHPrivateKey dhPriv = (DHPrivateKey) priv;
         DHPublicKey dhPub = (DHPublicKey) pub;
 
-        // 1) Parameter compatibility: same p,g and l-compatible (0 means "unspecified")
         DHParameterSpec a = dhPriv.getParams();
         DHParameterSpec b = dhPub.getParams();
         if (a == null || b == null) {
             throw new InvalidKeyException("Missing DH parameters on one of the keys");
         }
         if (!a.getP().equals(b.getP()) || !a.getG().equals(b.getG())) {
-            System.out.printf("   ...a.p=%s%n   ...b.p=%s%n   ...a.g=%s%n   ...b.g=%s%n", a.getP(), b.getP(), a.getG(),
-                    b.getG());
+            System.out.printf("...a.p=%s%n...b.p=%s%n...a.g=%s%n...b.g=%s%n", a.getP(), b.getP(), a.getG(), b.getG());
             throw new InvalidKeyException("Incompatible DH parameters: (p,g) differ");
         }
         int la = a.getL();
@@ -333,8 +463,6 @@ public class AgreementAlgorithmsRoundTripTest {
                     "Incompatible DH parameters: private value length (l) differs: " + la + " vs " + lb);
         }
 
-        // 2) Public value Y sanity check: 2 <= Y <= p-2 (reject trivial/small subgroup
-        // values)
         BigInteger p = a.getP();
         BigInteger y = dhPub.getY();
         if (y == null) {
@@ -345,12 +473,10 @@ public class AgreementAlgorithmsRoundTripTest {
             throw new InvalidKeyException("DH public value Y out of range");
         }
 
-        // 3) Trial doPhase to prove the pair actually works with the provider
         KeyAgreement ka = KeyAgreement.getInstance("DiffieHellman");
         try {
             ka.init(priv);
-            ka.doPhase(pub, true); // if this throws, they are not operationally compatible
-            // (we don't need the secret here; just proving doPhase succeeds)
+            ka.doPhase(pub, true);
         } catch (InvalidKeyException e) {
             throw new InvalidKeyException("KeyAgreement.doPhase failed: " + e.getMessage(), e);
         }

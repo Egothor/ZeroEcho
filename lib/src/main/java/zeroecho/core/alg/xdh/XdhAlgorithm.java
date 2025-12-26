@@ -46,7 +46,10 @@ import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
 import zeroecho.core.alg.common.agreement.GenericJcaAgreementContext;
+import zeroecho.core.alg.common.agreement.GenericJcaMessageAgreementContext;
+import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.context.AgreementContext;
+import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spi.AsymmetricKeyBuilder;
 
 /**
@@ -144,6 +147,11 @@ public final class XdhAlgorithm extends AbstractCryptoAlgorithm {
         capability(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, AgreementContext.class, PrivateKey.class,
                 XdhSpec.class,
                 (PrivateKey k, XdhSpec s) -> new GenericJcaAgreementContext(this, k, s.keyAgreementName(), null),
+                () -> XdhSpec.X25519);
+        // New capability: MessageAgreementContext over KeyPair
+        capability(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, MessageAgreementContext.class, KeyPairKey.class,
+                XdhSpec.class, (KeyPairKey k, XdhSpec s) -> new GenericJcaMessageAgreementContext(this, k,
+                        s.keyAgreementName(), null, "XDH", null),
                 () -> XdhSpec.X25519);
 
         registerAsymmetricKeyBuilder(XdhSpec.class, new XdhKeyGenBuilder(), () -> XdhSpec.X25519);
