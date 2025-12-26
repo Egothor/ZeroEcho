@@ -89,6 +89,14 @@ import zeroecho.core.spec.VoidSpec;
  * @since 1.0
  */
 public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
+    /**
+     * 
+     */
+    private static final String PUBLIC_KEY = "publicKey";
+    /**
+     * 
+     */
+    private static final String PRIVATE_KEY = "privateKey";
     private final Supplier<TagEngine<T>> factory;
 
     private TagEngineBuilder(Supplier<TagEngine<T>> factory) {
@@ -205,7 +213,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> ed25519Sign(final PrivateKey privateKey) {
-        Objects.requireNonNull(privateKey, "privateKey");
+        Objects.requireNonNull(privateKey, PRIVATE_KEY);
         return signature("Ed25519", privateKey, VoidSpec.INSTANCE);
     }
 
@@ -217,7 +225,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> ed25519Verify(final PublicKey publicKey) {
-        Objects.requireNonNull(publicKey, "publicKey");
+        Objects.requireNonNull(publicKey, PUBLIC_KEY);
         return signature("Ed25519", publicKey, VoidSpec.INSTANCE);
     }
 
@@ -236,7 +244,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> rsaSign(final PrivateKey privateKey, final RsaSigSpec spec) {
-        Objects.requireNonNull(privateKey, "privateKey");
+        Objects.requireNonNull(privateKey, PRIVATE_KEY);
         return signature("RSA", privateKey, spec == null ? RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32) : spec);
     }
 
@@ -255,7 +263,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> rsaVerify(final PublicKey publicKey, final RsaSigSpec spec) {
-        Objects.requireNonNull(publicKey, "publicKey");
+        Objects.requireNonNull(publicKey, PUBLIC_KEY);
         return signature("RSA", publicKey, spec == null ? RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32) : spec);
     }
 
@@ -273,7 +281,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> ecdsaSign(final PrivateKey privateKey, final EcdsaCurveSpec spec) {
-        Objects.requireNonNull(privateKey, "privateKey");
+        Objects.requireNonNull(privateKey, PRIVATE_KEY);
         final EcdsaCurveSpec s = spec == null ? EcdsaCurveSpec.P256 : spec;
         return signature("ECDSA", privateKey, s);
     }
@@ -292,7 +300,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> ecdsaVerify(final PublicKey publicKey, final EcdsaCurveSpec spec) {
-        Objects.requireNonNull(publicKey, "publicKey");
+        Objects.requireNonNull(publicKey, PUBLIC_KEY);
         final EcdsaCurveSpec s = spec == null ? EcdsaCurveSpec.P256 : spec;
         return signature("ECDSA", publicKey, s);
     }
@@ -305,7 +313,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> ecdsaP256Sign(final PrivateKey privateKey) {
-        Objects.requireNonNull(privateKey, "privateKey");
+        Objects.requireNonNull(privateKey, PRIVATE_KEY);
         return signature("ECDSA", privateKey, EcdsaCurveSpec.P256);
     }
 
@@ -317,7 +325,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> ecdsaP256Verify(final PublicKey publicKey) {
-        Objects.requireNonNull(publicKey, "publicKey");
+        Objects.requireNonNull(publicKey, PUBLIC_KEY);
         return signature("ECDSA", publicKey, EcdsaCurveSpec.P256);
     }
 
@@ -334,7 +342,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> sphincsPlusSign(final PrivateKey privateKey) {
-        Objects.requireNonNull(privateKey, "privateKey");
+        Objects.requireNonNull(privateKey, PRIVATE_KEY);
         return signature("SPHINCS+", privateKey, VoidSpec.INSTANCE);
     }
 
@@ -351,7 +359,81 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
     public static TagEngineBuilder<Signature> sphincsPlusVerify(final PublicKey publicKey) {
-        Objects.requireNonNull(publicKey, "publicKey");
+        Objects.requireNonNull(publicKey, PUBLIC_KEY);
         return signature("SPHINCS+", publicKey, VoidSpec.INSTANCE);
+    }
+
+    /**
+     * Creates a builder for an SLH-DSA signing engine.
+     *
+     * <p>
+     * SLH-DSA is the NIST-standardized hash-based signature scheme (FIPS 205). The
+     * concrete parameter set is encoded in the key material and interpreted by the
+     * underlying {@link CryptoAlgorithms} implementation.
+     * </p>
+     *
+     * @param privateKey private signing key; must not be {@code null}
+     * @return a builder that produces SLH-DSA signature engines in SIGN mode
+     * @throws NullPointerException if {@code privateKey} is {@code null}
+     */
+    public static TagEngineBuilder<Signature> slhDsaSign(final PrivateKey privateKey) {
+        Objects.requireNonNull(privateKey, PRIVATE_KEY);
+        return signature("SLH-DSA", privateKey, VoidSpec.INSTANCE);
+    }
+
+    /**
+     * Creates a builder for an SLH-DSA verification engine.
+     *
+     * <p>
+     * SLH-DSA is the NIST-standardized hash-based signature scheme (FIPS 205). The
+     * concrete parameter set is encoded in the key material and interpreted by the
+     * underlying {@link CryptoAlgorithms} implementation.
+     * </p>
+     *
+     * @param publicKey public verification key; must not be {@code null}
+     * @return a builder that produces SLH-DSA signature engines in VERIFY mode
+     * @throws NullPointerException if {@code publicKey} is {@code null}
+     */
+    public static TagEngineBuilder<Signature> slhDsaVerify(final PublicKey publicKey) {
+        Objects.requireNonNull(publicKey, PUBLIC_KEY);
+        return signature("SLH-DSA", publicKey, VoidSpec.INSTANCE);
+    }
+
+    /**
+     * Creates a builder for an ML-DSA signing engine.
+     *
+     * <p>
+     * ML-DSA is the NIST-standardized module-lattice signature scheme (FIPS 204).
+     * The concrete parameter set and any pre-hash variant is encoded in the key
+     * material and interpreted by the underlying {@link CryptoAlgorithms}
+     * implementation.
+     * </p>
+     *
+     * @param privateKey private signing key; must not be {@code null}
+     * @return a builder that produces ML-DSA signature engines in SIGN mode
+     * @throws NullPointerException if {@code privateKey} is {@code null}
+     */
+    public static TagEngineBuilder<Signature> mldsaSign(final PrivateKey privateKey) {
+        Objects.requireNonNull(privateKey, PRIVATE_KEY);
+        return signature("ML-DSA", privateKey, VoidSpec.INSTANCE);
+    }
+
+    /**
+     * Creates a builder for an ML-DSA verification engine.
+     *
+     * <p>
+     * ML-DSA is the NIST-standardized module-lattice signature scheme (FIPS 204).
+     * The concrete parameter set and any pre-hash variant is encoded in the key
+     * material and interpreted by the underlying {@link CryptoAlgorithms}
+     * implementation.
+     * </p>
+     *
+     * @param publicKey public verification key; must not be {@code null}
+     * @return a builder that produces ML-DSA signature engines in VERIFY mode
+     * @throws NullPointerException if {@code publicKey} is {@code null}
+     */
+    public static TagEngineBuilder<Signature> mldsaVerify(final PublicKey publicKey) {
+        Objects.requireNonNull(publicKey, PUBLIC_KEY);
+        return signature("ML-DSA", publicKey, VoidSpec.INSTANCE);
     }
 }

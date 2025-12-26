@@ -48,9 +48,7 @@ import javax.crypto.SecretKey;
 
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.CryptoAlgorithms;
-import zeroecho.core.alg.aes.AesKeyGenSpec;
 import zeroecho.core.alg.rsa.RsaKeyGenSpec;
 import zeroecho.core.alg.rsa.RsaSigSpec;
 import zeroecho.core.tag.TagEngine;
@@ -64,23 +62,6 @@ import zeroecho.sdk.content.api.DataContent;
 
 class SigningAesTest {
     private static final Logger LOG = Logger.getLogger(SigningAesTest.class.getName());
-
-    SecretKey generateAesKey() throws GeneralSecurityException {
-        // Locate the AES algorithm in the catalog
-        CryptoAlgorithm aes = CryptoAlgorithms.require("AES");
-        SecretKey key = aes
-                // Retrieve the builder that works with AesKeyGenSpec - the specification for
-                // AES key generation
-                .symmetricKeyBuilder(AesKeyGenSpec.class)
-                // Generate a secret key according to the AES256 specification
-                .generateSecret(AesKeyGenSpec.aes256());
-        // Log the generated key (truncated to short hex for readability)
-        LOG.log(Level.INFO, "AES256 key generated: {0}", Strings.toShortHexString(key.getEncoded()));
-
-        // or just: CryptoAlgorithms.generateSecret("AES", AesKeyGenSpec.aes256())
-
-        return key;
-    }
 
     KeyPair generateRsaKeys() throws GeneralSecurityException {
         KeyPair kp = CryptoAlgorithms.generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());

@@ -73,7 +73,9 @@
  * {@link zeroecho.sdk.builders.alg.EcdsaDataContentBuilder},
  * {@link zeroecho.sdk.builders.alg.Ed25519DataContentBuilder},
  * {@link zeroecho.sdk.builders.alg.Ed448DataContentBuilder},
- * {@link zeroecho.sdk.builders.alg.SphincsPlusDataContentBuilder}.</li>
+ * {@link zeroecho.sdk.builders.alg.SphincsPlusDataContentBuilder},
+ * {@link zeroecho.sdk.builders.alg.MldsaDataContentBuilder},
+ * {@link zeroecho.sdk.builders.alg.SlhDsaDataContentBuilder}.</li>
  * <li>MAC and digest: {@link zeroecho.sdk.builders.alg.HmacDataContentBuilder},
  * {@link zeroecho.sdk.builders.alg.DigestDataContentBuilder}.</li>
  * <li>KEM envelopes: {@link zeroecho.sdk.builders.alg.KemDataContentBuilder}
@@ -86,6 +88,11 @@
  * <li>{@link TagTrailerDataContentBuilder} - appends or verifies an
  * authentication tag carried as an input trailer using a
  * {@link zeroecho.core.tag.TagEngine}.</li>
+ * <li>{@link SignatureTrailerDataContentBuilder} - signature-specialized
+ * trailer builder intended to replace
+ * {@code TagTrailerDataContentBuilder<Signature>} in most signature use cases.
+ * It can wrap existing signature engines and construct single-algorithm and
+ * hybrid signature contexts.</li>
  * </ul>
  * </li>
  * </ul>
@@ -107,6 +114,9 @@
  * signatures or tags.</li>
  * <li>{@link TagTrailerDataContentBuilder} focuses on trailer-style tags with
  * explicit verify policies.</li>
+ * <li>{@link SignatureTrailerDataContentBuilder} provides the corresponding
+ * trailer functionality specialized for digital signatures, including hybrid
+ * signature construction.</li>
  * </ul>
  *
  * <h2>Typical usage</h2> <pre>{@code
