@@ -128,71 +128,71 @@ public final class Guard {
 
         // ---- operation selection
         final Option OPT_ENCRYPT = Option.builder("e").longOpt("encrypt").hasArg().argName("in-file")
-                .desc("Encrypt the given file").build();
+                .desc("Encrypt the given file").get();
         final Option OPT_DECRYPT = Option.builder("d").longOpt("decrypt").hasArg().argName("in-file")
-                .desc("Decrypt the given file").build();
+                .desc("Decrypt the given file").get();
         final OptionGroup OP = new OptionGroup().addOption(OPT_ENCRYPT).addOption(OPT_DECRYPT);
         OP.setRequired(true);
 
         // ---- common I/O
         final Option OPT_OUT = Option.builder("o").longOpt("output").hasArg().argName("out-file")
-                .desc("Output file (default: <in>.enc for encrypt, <in>.dec for decrypt)").build();
+                .desc("Output file (default: <in>.enc for encrypt, <in>.dec for decrypt)").get();
         final Option OPT_KEYRING = Option.builder().longOpt("keyring").hasArg().argName("keyring.txt")
-                .desc("KeyringStore file for aliases (required when aliases are used)").build();
+                .desc("KeyringStore file for aliases (required when aliases are used)").get();
 
         // ---- payload selection and parameters
         final Option OPT_ALG = Option.builder().longOpt("alg").hasArg().argName("name")
                 .desc("Payload: aes-gcm | aes-ctr | aes-cbc-pkcs7 | aes-cbc-nopad | chacha-aead | chacha-stream "
                         + "(default: aes-gcm)")
-                .build();
+                .get();
         final Option OPT_AAD_HEX = Option.builder("a").longOpt("aad-hex").hasArg().argName("hex")
-                .desc("Additional authenticated data as hex (AEAD modes)").build();
+                .desc("Additional authenticated data as hex (AEAD modes)").get();
         final Option OPT_TAG_BITS = Option.builder().longOpt("tag-bits").hasArg().argName("96..128")
-                .desc("AES-GCM tag length in bits (default 128)").build();
+                .desc("AES-GCM tag length in bits (default 128)").get();
         final Option OPT_NONCE_HEX = Option.builder().longOpt("nonce-hex").hasArg().argName("hex")
-                .desc("ChaCha nonce (12-byte hex)").build();
+                .desc("ChaCha nonce (12-byte hex)").get();
         final Option OPT_INIT_CTR = Option.builder().longOpt("init-ctr").hasArg().argName("int")
-                .desc("ChaCha stream initial counter (default 1)").build();
+                .desc("ChaCha stream initial counter (default 1)").get();
         final Option OPT_CTR = Option.builder().longOpt("ctr").hasArg().argName("int")
-                .desc("ChaCha stream counter override (propagated via context)").build();
+                .desc("ChaCha stream counter override (propagated via context)").get();
         final Option OPT_NO_HDR = Option.builder().longOpt("no-header")
-                .desc("Do not write or expect a symmetric header").build();
+                .desc("Do not write or expect a symmetric header").get();
 
         // ---- envelope parameters
         final Option OPT_CEK_BYTES = Option.builder().longOpt("cek-bytes").hasArg().argName("len")
-                .desc("Payload key (CEK) length in bytes (default 32)").build();
+                .desc("Payload key (CEK) length in bytes (default 32)").get();
         final Option OPT_MAX_RECIPS = Option.builder().longOpt("max-recipients").hasArg().argName("n")
-                .desc("Max recipients in the envelope header (default 64)").build();
+                .desc("Max recipients in the envelope header (default 64)").get();
         final Option OPT_MAX_ENTRY = Option.builder().longOpt("max-entry-len").hasArg().argName("bytes")
-                .desc("Max single recipient-entry length (default 1048576)").build();
+                .desc("Max single recipient-entry length (default 1048576)").get();
         final Option OPT_NO_SHUFFLE = Option.builder().longOpt("no-shuffle")
-                .desc("Disable shuffling of recipients (enabled by default)").build();
+                .desc("Disable shuffling of recipients (enabled by default)").get();
 
         // ---- recipients (real)
         final Option OPT_TO_ALIAS = Option.builder().longOpt("to-alias").hasArg().argName("alias")
-                .desc("Add recipient by alias from keyring (repeatable)").build();
+                .desc("Add recipient by alias from keyring (repeatable)").get();
         final Option OPT_TO_PSW = Option.builder().longOpt("to-psw").hasArg().argName("password")
-                .desc("Add password recipient (repeatable)").build();
+                .desc("Add password recipient (repeatable)").get();
         final Option OPT_PSW_ITER = Option.builder().longOpt("to-iter").hasArg().argName("n")
-                .desc("PBKDF2 iterations for password recipients (default 200000)").build();
+                .desc("PBKDF2 iterations for password recipients (default 200000)").get();
         final Option OPT_PSW_SALT = Option.builder().longOpt("to-salt-len").hasArg().argName("bytes")
-                .desc("PBKDF2 salt length for password recipients (default 16)").build();
+                .desc("PBKDF2 salt length for password recipients (default 16)").get();
         final Option OPT_PSW_KEK = Option.builder().longOpt("to-kek-bytes").hasArg().argName("bytes")
-                .desc("Derived KEK length for password recipients (default 32)").build();
+                .desc("Derived KEK length for password recipients (default 32)").get();
 
         // ---- decoys (all types)
         final Option OPT_DECOY_ALIAS = Option.builder().longOpt("decoy-alias").hasArg().argName("alias")
-                .desc("Add a decoy recipient from keyring (repeatable)").build();
+                .desc("Add a decoy recipient from keyring (repeatable)").get();
         final Option OPT_DECOY_PSW = Option.builder().longOpt("decoy-psw").hasArg().argName("password")
-                .desc("Add a decoy password recipient (repeatable)").build();
+                .desc("Add a decoy password recipient (repeatable)").get();
         final Option OPT_DECOY_PSW_RAND = Option.builder().longOpt("decoy-psw-rand").hasArg().argName("n")
-                .desc("Add N random decoy password recipients").build();
+                .desc("Add N random decoy password recipients").get();
 
         // ---- unlock (decrypt)
         final Option OPT_PRIV_ALIAS = Option.builder().longOpt("priv-alias").hasArg().argName("alias")
-                .desc("Unlock with private key from keyring").build();
+                .desc("Unlock with private key from keyring").get();
         final Option OPT_PASSWORD = Option.builder("p").longOpt("password").hasArg().argName("password")
-                .desc("Unlock with password").build();
+                .desc("Unlock with password").get();
 
         options.addOptionGroup(OP);
         options.addOption(OPT_OUT);

@@ -36,12 +36,14 @@ package zeroecho;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.io.IOException;
+
 import org.junit.jupiter.api.Test;
 
 class ZeroEchoTest {
 
     @Test
-    void testAsymetricOptionWithoutParamsReturnsOne() {
+    void testAsymetricOptionWithoutParamsReturnsOne() throws IOException {
         System.out.println("testAsymetricOptionWithoutParamsReturnsOne");
         int result = ZeroEcho.mainProcess(new String[] { "-A" });
         assertEquals(1, result, "Asymetric option without parameters should return 1 (error/help)");
@@ -49,7 +51,7 @@ class ZeroEchoTest {
     }
 
     @Test
-    void testAesPswOptionWithoutParamsReturnsOne() {
+    void testAesPswOptionWithoutParamsReturnsOne() throws IOException {
         System.out.println("testAesPswOptionWithoutParamsReturnsOne");
         int result = ZeroEcho.mainProcess(new String[] { "-P" });
         assertEquals(1, result, "AES-PSW option without parameters should return 1 (error/help)");
@@ -57,7 +59,7 @@ class ZeroEchoTest {
     }
 
     @Test
-    void testNoOptionReturnsOne() {
+    void testNoOptionReturnsOne() throws IOException {
         System.out.println("testNoOptionReturnsOne");
         int result = ZeroEcho.mainProcess(new String[] {});
         assertEquals(1, result, "No options should return 1 (error/help)");
@@ -65,7 +67,7 @@ class ZeroEchoTest {
     }
 
     @Test
-    void testInvalidOptionReturnsOne() {
+    void testInvalidOptionReturnsOne() throws IOException {
         System.out.println("testInvalidOptionReturnsOne");
         int result = ZeroEcho.mainProcess(new String[] { "-X" });
         assertEquals(1, result, "Invalid option should return 1 (error/help)");

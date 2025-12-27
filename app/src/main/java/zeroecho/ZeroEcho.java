@@ -41,12 +41,12 @@ import java.util.logging.Logger;
 
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
-import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.MissingOptionException;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.OptionGroup;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.cli.help.HelpFormatter;
 
 import zeroecho.sdk.util.BouncyCastleActivator;
 
@@ -98,8 +98,9 @@ public final class ZeroEcho {
      * prints the help message.
      *
      * @param args command-line arguments passed to the program
+     * @throws IOException If the output could not be written
      */
-    public static void main(final String[] args) {
+    public static void main(final String[] args) throws IOException {
         final int errorCode = mainProcess(args);
 
         if (errorCode == 0) {
@@ -116,15 +117,16 @@ public final class ZeroEcho {
      *
      * @param args command-line arguments passed to the program
      * @return error-code
+     * @throws IOException If the output could not be written
      */
-    public static int mainProcess(final String... args) {
-        final Option KEM_OPTION = Option.builder("E").longOpt("kem").desc("KEM encryption/decryption").build();
+    public static int mainProcess(final String... args) throws IOException {
+        final Option KEM_OPTION = Option.builder("E").longOpt("kem").desc("KEM encryption/decryption").get();
         final Option GUARD_OPTION = Option.builder("G").longOpt("guard")
-                .desc("multi-recipient encryption/decryption (keys+passwords), AES/ChaCha").build();
-        final Option KEYSTORE_OPTION = Option.builder("K").longOpt("ksm").desc("key store management").build();
-        final Option COVERT_OPTION = Option.builder("C").longOpt("covert").desc("covert channel processing").build();
+                .desc("multi-recipient encryption/decryption (keys+passwords), AES/ChaCha").get();
+        final Option KEYSTORE_OPTION = Option.builder("K").longOpt("ksm").desc("key store management").get();
+        final Option COVERT_OPTION = Option.builder("C").longOpt("covert").desc("covert channel processing").get();
         final Option TAG_OPTION = Option.builder("T").longOpt("tag")
-                .desc("tag subcommand (signature/digest; produce/verify)").build();
+                .desc("tag subcommand (signature/digest; produce/verify)").get();
 
         final OptionGroup OPERATION_GROUP = new OptionGroup();
         OPERATION_GROUP.addOption(GUARD_OPTION);
@@ -186,12 +188,12 @@ public final class ZeroEcho {
      * @param options The {@link Options} instance defining the available
      *                command-line options.
      * @return always {@code 1}
+     * @throws IOException If the output could not be written
      */
-    private static int help(final Options options) {
+    private static int help(final Options options) throws IOException {
         // automatically generate the help statement
-        final HelpFormatter formatter = new HelpFormatter();
-        formatter.setWidth(80);
-        formatter.printHelp(ZeroEcho.class.getName(), options);
+        final HelpFormatter formatter = HelpFormatter.builder().get();
+        formatter.printHelp(ZeroEcho.class.getName(), "", options, "", false);
 
         return 1;
     }

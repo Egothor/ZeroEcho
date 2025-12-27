@@ -167,49 +167,49 @@ public final class KeyStoreManagement { // NOPMD
     // ---------------------------------------------------------------------
 
     private static final Option KEYSTORE_OPTION = Option.builder("k").longOpt("keystore").hasArg().argName("file")
-            .desc("Path to keyring store").build();
+            .desc("Path to keyring store").get();
 
     private static final Option LIST_ALGORITHMS_OPTION = Option.builder().longOpt("list-algorithms")
-            .desc("List catalog algorithms with symmetric/asymmetric support").build();
+            .desc("List catalog algorithms with symmetric/asymmetric support").get();
 
     private static final Option LIST_ALIASES_OPTION = Option.builder().longOpt("list-aliases")
-            .desc("List aliases present in the keyring").build();
+            .desc("List aliases present in the keyring").get();
 
     private static final Option GENERATE_OPTION = Option.builder().longOpt("generate")
-            .desc("Generate a keypair or a secret").build();
+            .desc("Generate a keypair or a secret").get();
 
     private static final Option ALG_OPTION = Option.builder().longOpt("alg").hasArg().argName("id")
-            .desc("Algorithm id (e.g., RSA, Ed25519, AES, Frodo)").build();
+            .desc("Algorithm id (e.g., RSA, Ed25519, AES, Frodo)").get();
 
     private static final Option ALIAS_OPTION = Option.builder().longOpt("alias").hasArg().argName("name")
-            .desc("Alias base; for asymmetric, two entries will be written").build();
+            .desc("Alias base; for asymmetric, two entries will be written").get();
 
     private static final Option KIND_OPTION = Option.builder().longOpt("kind").hasArg().argName("sym|asym")
-            .desc("Force symmetric or asymmetric when algorithm supports both").build();
+            .desc("Force symmetric or asymmetric when algorithm supports both").get();
 
     private static final Option PUB_SUFFIX_OPTION = Option.builder().longOpt("pub-suffix").hasArg().argName("sfx")
-            .desc("Suffix for public alias (default .pub)").build();
+            .desc("Suffix for public alias (default .pub)").get();
 
     private static final Option PRV_SUFFIX_OPTION = Option.builder().longOpt("prv-suffix").hasArg().argName("sfx")
-            .desc("Suffix for private alias (default .prv)").build();
+            .desc("Suffix for private alias (default .prv)").get();
 
     private static final Option OVERWRITE_OPTION = Option.builder().longOpt("overwrite")
-            .desc("Overwrite existing aliases on conflict").build();
+            .desc("Overwrite existing aliases on conflict").get();
 
     private static final Option EXPORT_OPTION = Option.builder().longOpt("export")
-            .desc("Export selected aliases as a versioned text snippet").build();
+            .desc("Export selected aliases as a versioned text snippet").get();
 
     private static final Option IMPORT_OPTION = Option.builder().longOpt("import")
-            .desc("Import a versioned text snippet into the keyring").build();
+            .desc("Import a versioned text snippet into the keyring").get();
 
     private static final Option ALIASES_OPTION = Option.builder().longOpt("aliases").hasArg().argName("a,b,c")
-            .desc("Comma-separated aliases to export; empty means all").build();
+            .desc("Comma-separated aliases to export; empty means all").get();
 
     private static final Option OUTFILE_OPTION = Option.builder().longOpt("out").hasArg().argName("file|-")
-            .desc("Output file for export (default '-' for stdout)").build();
+            .desc("Output file for export (default '-' for stdout)").get();
 
     private static final Option INFILE_OPTION = Option.builder().longOpt("in").hasArg().argName("file|-")
-            .desc("Input file for import (default '-' for stdin)").build();
+            .desc("Input file for import (default '-' for stdin)").get();
 
     /** Prevents instantiation. */
     private KeyStoreManagement() {

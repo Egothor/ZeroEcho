@@ -48,10 +48,10 @@ import java.util.Objects;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.DefaultParser;
-import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.cli.help.HelpFormatter;
 
 import zeroecho.core.alg.digest.DigestSpec;
 import zeroecho.core.err.VerificationException;
@@ -103,28 +103,28 @@ public final class Tag { // NOPMD
 
     // ---- All options as constants
     private static final Option TYPE_OPT = Option.builder().longOpt("type").hasArg().argName("signature|digest")
-            .desc("tag primitive type").build();
+            .desc("tag primitive type").get();
 
     private static final Option MODE_OPT = Option.builder().longOpt("mode").hasArg().argName("produce|verify")
-            .desc("operation mode").build();
+            .desc("operation mode").get();
 
     private static final Option ALG_OPT = Option.builder().longOpt("alg").hasArg().argName("id")
-            .desc("algorithm id (signature: Ed25519/Ed448/ECDSA/RSA; digest: SHA-256/.../SHAKE256:N)").build();
+            .desc("algorithm id (signature: Ed25519/Ed448/ECDSA/RSA; digest: SHA-256/.../SHAKE256:N)").get();
 
     private static final Option KS_OPT = Option.builder().longOpt("ks").hasArg().argName("file")
-            .desc("keyring file (required for signature)").build();
+            .desc("keyring file (required for signature)").get();
 
     private static final Option PRIV_OPT = Option.builder().longOpt("priv").hasArg().argName("alias")
-            .desc("private key alias (signature + produce)").build();
+            .desc("private key alias (signature + produce)").get();
 
     private static final Option PUB_OPT = Option.builder().longOpt("pub").hasArg().argName("alias")
-            .desc("public key alias (signature + verify)").build();
+            .desc("public key alias (signature + verify)").get();
 
     private static final Option IN_OPT = Option.builder().longOpt("in").hasArg().argName("file|-")
-            .desc("input file or - for STDIN").build();
+            .desc("input file or - for STDIN").get();
 
     private static final Option OUT_OPT = Option.builder().longOpt("out").hasArg().argName("file|-")
-            .desc("output file or - for STDOUT").build();
+            .desc("output file or - for STDOUT").get();
 
     // ---- Allowed values and defaults (no enums)
     private static final String TYPE_SIGNATURE = "signature";
@@ -172,7 +172,7 @@ public final class Tag { // NOPMD
 
         if (!has(cli, TYPE_OPT) || !has(cli, MODE_OPT) || !has(cli, ALG_OPT) || !has(cli, IN_OPT)
                 || !has(cli, OUT_OPT)) {
-            new HelpFormatter().printHelp("zeroecho -T [options]", opts);
+            HelpFormatter.builder().get().printHelp("zeroecho -T [options]", "", opts, "", false);
             return 2;
         }
 

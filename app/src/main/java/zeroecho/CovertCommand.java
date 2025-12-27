@@ -132,17 +132,17 @@ public final class CovertCommand {
      * @throws ParseException if the arguments are invalid or incomplete
      */
     public static int main(String[] args, Options options) throws ParseException {
-        final Option EMBED_OPTION = Option.builder().longOpt("embed").desc("Embed a payload into a JPEG").build();
-        final Option EXTRACT_OPTION = Option.builder().longOpt("extract").desc("Extract a payload from a JPEG").build();
+        final Option EMBED_OPTION = Option.builder().longOpt("embed").desc("Embed a payload into a JPEG").get();
+        final Option EXTRACT_OPTION = Option.builder().longOpt("extract").desc("Extract a payload from a JPEG").get();
         final Option JPEG_OPTION = Option.builder().longOpt("jpeg").hasArg().argName("input.jpg")
-                .desc("Input JPEG file").required().build();
+                .desc("Input JPEG file").required().get();
         final Option PAYLOAD_OPTION = Option.builder().longOpt("payload").hasArg().argName("payload.dat")
-                .desc("Binary payload file to embed").build();
+                .desc("Binary payload file to embed").get();
         final Option OUTPUT_OPTION = Option.builder().longOpt("output").hasArg().argName("outputFile")
-                .desc("Output JPEG or payload file").required().build();
+                .desc("Output JPEG or payload file").required().get();
         final Option SLOTS_OPTION = Option.builder().longOpt("slots").hasArgs().valueSeparator(';')
                 .argName("slot1;slot2;...")
-                .desc("Custom EXIF slots (e.g. Exif.UserComment:4096;Exif.Custom/tag=700,ascii,64,exif:1024)").build();
+                .desc("Custom EXIF slots (e.g. Exif.UserComment:4096;Exif.Custom/tag=700,ascii,64,exif:1024)").get();
 
         OptionGroup modeGroup = new OptionGroup();
         modeGroup.addOption(EMBED_OPTION);
