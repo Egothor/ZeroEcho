@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.Thread.UncaughtExceptionHandler;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
@@ -71,11 +72,14 @@ final class PkiLogging {
     /**
      * Optional classpath resource for JUL configuration.
      */
-    static final String LOGGING_PROPERTIES_RESOURCE = "/zeroecho-pki-logging.properties";
+    private static final String LOGGING_PROPERTIES_RESOURCE = "/zeroecho-pki-logging.properties";
 
     private static final Logger LOG = Logger.getLogger(PkiLogging.class.getName());
 
-    private static volatile boolean configured;
+    /**
+     * One-shot guard ensuring JUL configuration is attempted at most once.
+     */
+    private static final AtomicBoolean CONFIGURED = new AtomicBoolean(false);
 
     private PkiLogging() {
         throw new AssertionError("No instances.");
@@ -88,30 +92,22 @@ final class PkiLogging {
      * This method is idempotent and safe to call multiple times.
      * </p>
      */
-    static void configureIfPresent() {
-        if (configured) {
+    /* default */ static void configureIfPresent() {
+        // Fast-path: already configured
+        if (!CONFIGURED.compareAndSet(false, true)) {
             return;
         }
-        synchronized (PkiLogging.class) {
-            if (configured) {
+
+        // getResourceAsStream() may return null; try-with-resources handles null safely
+        try (InputStream is = PkiLogging.class.getResourceAsStream(LOGGING_PROPERTIES_RESOURCE)) {
+            if (is == null) {
                 return;
             }
-
-            InputStream in = PkiLogging.class.getResourceAsStream(LOGGING_PROPERTIES_RESOURCE);
-            if (in == null) {
-                configured = true;
-                return;
-            }
-
-            try (InputStream is = in) {
-                LogManager.getLogManager().readConfiguration(is);
-                configured = true;
-                LOG.info("JUL configured from classpath resource.");
-            } catch (IOException ex) {
-                configured = true;
-                // Keep message generic; do not leak environment specifics.
-                LOG.log(Level.WARNING, "Failed to load JUL configuration; continuing with defaults.", ex);
-            }
+            LogManager.getLogManager().readConfiguration(is);
+            LOG.info("JUL configured from classpath resource.");
+        } catch (IOException ex) {
+            // Keep message generic; do not leak environment specifics.
+            LOG.log(Level.WARNING, "Failed to load JUL configuration; continuing with defaults.", ex);
         }
     }
 
@@ -125,15 +121,17 @@ final class PkiLogging {
      * secrets.
      * </p>
      */
-    static void installUncaughtExceptionHandler() {
-        UncaughtExceptionHandler handler = (Thread thread, Throwable throwable) -> {
+    /* default */ static void installUncaughtExceptionHandler() {
+        UncaughtExceptionHandler handler = (Thread thread, Throwable throwable) -> { // NOPMD
             Objects.requireNonNull(thread, "thread");
             Objects.requireNonNull(throwable, "throwable");
             Logger logger = Logger.getLogger(PkiApplication.class.getName());
-            logger.log(Level.SEVERE, "Uncaught exception in thread: " + thread.getName(), throwable);
+            if (logger.isLoggable(Level.SEVERE)) {
+                logger.log(Level.SEVERE, "Uncaught exception in thread: " + thread.getName(), throwable);
+            }
         };
 
-        Thread.setDefaultUncaughtExceptionHandler(handler);
+        Thread.setDefaultUncaughtExceptionHandler(handler); // NOPMD
     }
 
     /**
@@ -151,7 +149,7 @@ final class PkiLogging {
      * @throws NullPointerException if {@code logger} or {@code message} is
      *                              {@code null}
      */
-    static void emitShutdownMessage(Logger logger, String message) {
+    /* default */ static void emitShutdownMessage(Logger logger, String message) {
         Objects.requireNonNull(logger, "logger");
         Objects.requireNonNull(message, "message");
 
@@ -163,7 +161,7 @@ final class PkiLogging {
         for (java.util.logging.Handler handler : root.getHandlers()) {
             try {
                 handler.flush();
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException ignored) { // NOPMD
                 // Never throw during shutdown
             }
         }
@@ -172,7 +170,7 @@ final class PkiLogging {
         try {
             System.err.println(message);
             System.err.flush();
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ignored) { // NOPMD
             // Never throw during shutdown
         }
     }

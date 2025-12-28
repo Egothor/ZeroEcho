@@ -106,7 +106,6 @@ public final class SlhDsaKeyGenSpec implements AlgorithmKeySpec {
      * <p>
      * Bouncy Castle exposes "with hash" variants as distinct parameter specs, for
      * example {@code slh_dsa_sha2_128s_with_sha256}.
-     * :contentReference[oaicite:1]{index=1}
      * </p>
      *
      * <p>
@@ -183,7 +182,6 @@ public final class SlhDsaKeyGenSpec implements AlgorithmKeySpec {
      * <p>
      * This bypasses automatic mapping. The name must match a static field in
      * {@code org.bouncycastle.jcajce.spec.SLHDSAParameterSpec}.
-     * :contentReference[oaicite:2]{index=2}
      * </p>
      *
      * @param name field name in {@code SLHDSAParameterSpec}

@@ -82,7 +82,7 @@ public final class PkiApplication {
 
         LOG.info("ZeroEcho PKI starting.");
 
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> { // NOPMD
             Logger shutdownLogger = Logger.getLogger(PkiApplication.class.getName());
             PkiLogging.emitShutdownMessage(shutdownLogger, "ZeroEcho PKI stopping.");
         }, "zeroecho-pki-shutdown"));
@@ -90,7 +90,7 @@ public final class PkiApplication {
         try {
             // Intentionally no business logic yet. Bootstrap only.
             LOG.info("ZeroEcho PKI started (bootstrap only).");
-        } catch (RuntimeException ex) {
+        } catch (RuntimeException ex) { // NOPMD
             // Do not include user-provided inputs in the message; log the exception object.
             LOG.log(Level.SEVERE, "Fatal error during PKI bootstrap.", ex);
             throw ex;

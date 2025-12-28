@@ -48,10 +48,9 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * <p>
  * This builder maps {@link SlhDsaKeyGenSpec} to the appropriate
- * {@code org.bouncycastle.jcajce.spec.SLHDSAParameterSpec} constant.
- * :contentReference[oaicite:3]{index=3} Reflection is used to avoid a hard
- * dependency on any particular set of parameter constants across provider
- * versions.
+ * {@code org.bouncycastle.jcajce.spec.SLHDSAParameterSpec} constant. Reflection
+ * is used to avoid a hard dependency on any particular set of parameter
+ * constants across provider versions.
  * </p>
  *
  * @since 1.0
@@ -103,7 +102,6 @@ public final class SlhDsaKeyGenBuilder implements AsymmetricKeyBuilder<SlhDsaKey
 
         // Optional pre-hash suffix used by BC:
         // _with_sha256/_with_sha512/_with_shake128/_with_shake256
-        // :contentReference[oaicite:4]{index=4}
         String suffix = "";
         if (spec.preHash() != SlhDsaKeyGenSpec.PreHash.NONE) {
             suffix = "_with_" + spec.preHash().name().toLowerCase(Locale.ROOT);
