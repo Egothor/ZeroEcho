@@ -44,6 +44,8 @@ import zeroecho.pki.spi.ConfigurableProvider;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.audit.AuditSinkProvider;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreProvider;
 
@@ -54,15 +56,21 @@ import zeroecho.pki.spi.store.PkiStoreProvider;
  * This class provides deterministic selection and instantiation rules for
  * components discovered via {@link java.util.ServiceLoader}. It is designed to
  * scale as more SPIs are introduced (audit, publish, framework integrations,
- * etc.).
+ * crypto/workflows, etc.).
  * </p>
  *
  * <h2>System property conventions</h2>
- *
  * <ul>
  * <li>Select store provider: {@code -Dzeroecho.pki.store=&lt;id&gt;}</li>
  * <li>Configure store provider:
  * {@code -Dzeroecho.pki.store.&lt;key&gt;=&lt;value&gt;}</li>
+ * <li>Select audit provider: {@code -Dzeroecho.pki.audit=&lt;id&gt;}</li>
+ * <li>Configure audit provider:
+ * {@code -Dzeroecho.pki.audit.&lt;key&gt;=&lt;value&gt;}</li>
+ * <li>Select crypto workflow provider:
+ * {@code -Dzeroecho.pki.crypto.workflow=&lt;id&gt;}</li>
+ * <li>Configure crypto workflow provider:
+ * {@code -Dzeroecho.pki.crypto.workflow.&lt;key&gt;=&lt;value&gt;}</li>
  * </ul>
  *
  * <p>
@@ -80,13 +88,16 @@ public final class PkiBootstrap {
     private static final String PROP_AUDIT_BACKEND = "zeroecho.pki.audit";
     private static final String PROP_AUDIT_PREFIX = "zeroecho.pki.audit.";
 
+    private static final String PROP_CRYPTO_WORKFLOW_BACKEND = "zeroecho.pki.crypto.workflow";
+    private static final String PROP_CRYPTO_WORKFLOW_PREFIX = "zeroecho.pki.crypto.workflow.";
+
     private PkiBootstrap() {
         throw new AssertionError("No instances.");
     }
 
     /**
      * Opens a {@link PkiStore} using {@link PkiStoreProvider} discovered via
-     * {@link java.util.ServiceLoader}.
+     * ServiceLoader.
      *
      * <p>
      * Provider selection is deterministic and fail-fast:
@@ -112,19 +123,8 @@ public final class PkiBootstrap {
      * {@code "pki-store"} relative to the working directory.
      * </p>
      *
-     * <p>
-     * This method is suitable for CLI and server deployments. In DI containers
-     * (Spring, Micronaut, etc.), invoke it from managed components and close the
-     * returned store using the container lifecycle.
-     * </p>
-     *
      * @return opened store (never {@code null})
-     * @throws IllegalStateException    if provider selection is ambiguous or no
-     *                                  provider is available
-     * @throws IllegalArgumentException if required configuration is missing/invalid
-     * @throws RuntimeException         if allocation fails
      */
-
     public static PkiStore openStore() {
         String requestedId = System.getProperty(PROP_STORE_BACKEND);
 
@@ -169,7 +169,7 @@ public final class PkiBootstrap {
 
     /**
      * Opens an {@link AuditSink} using {@link AuditSinkProvider} discovered via
-     * {@link java.util.ServiceLoader}.
+     * ServiceLoader.
      *
      * <p>
      * Selection and configuration follow the same conventions as
@@ -177,11 +177,14 @@ public final class PkiBootstrap {
      * {@code zeroecho.pki.audit.} prefixed properties.
      * </p>
      *
+     * <p>
+     * Defaulting rules implemented by this bootstrap (policy, not SPI requirement):
+     * if no audit backend is specified, defaults to {@code stdout}. For
+     * {@code file} provider, if {@code root} is not specified, defaults to
+     * {@code "pki-audit"} relative to the working directory.
+     * </p>
+     *
      * @return opened audit sink (never {@code null})
-     * @throws IllegalStateException    if provider selection is ambiguous or no
-     *                                  provider is available
-     * @throws IllegalArgumentException if required configuration is missing/invalid
-     * @throws RuntimeException         if allocation fails
      */
     public static AuditSink openAudit() {
         String requestedId = System.getProperty(PROP_AUDIT_BACKEND);
@@ -192,7 +195,6 @@ public final class PkiBootstrap {
 
         AuditSinkProvider provider = SpiSelector.select(AuditSinkProvider.class, requestedId,
                 new SpiSelector.ProviderId<>() {
-
                     @Override
                     public String id(AuditSinkProvider p) {
                         return p.id();
@@ -202,16 +204,56 @@ public final class PkiBootstrap {
         Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_AUDIT_PREFIX);
 
         if ("file".equals(provider.id()) && !props.containsKey("root")) {
-            props.put("root", Path.of("pki-store").toString());
+            props.put("root", Path.of("pki-audit").toString());
         }
 
         ProviderConfig config = new ProviderConfig(provider.id(), props);
 
         if (LOG.isLoggable(Level.INFO)) {
-            LOG.info("Selected store provider: " + provider.id() + " (keys: " + props.keySet() + ")");
+            LOG.info("Selected audit provider: " + provider.id() + " (keys: " + props.keySet() + ")");
         }
 
         return provider.allocate(config);
+    }
 
+    /**
+     * Opens a {@link SignatureWorkflow} using {@link SignatureWorkflowProvider}
+     * discovered via ServiceLoader.
+     *
+     * <p>
+     * Conventions:
+     * </p>
+     * <ul>
+     * <li>Select provider: {@code -Dzeroecho.pki.crypto.workflow=&lt;id&gt;}</li>
+     * <li>Provider config:
+     * {@code -Dzeroecho.pki.crypto.workflow.&lt;key&gt;=&lt;value&gt;}</li>
+     * </ul>
+     *
+     * <p>
+     * Security note: configuration values may be sensitive and must not be logged.
+     * This bootstrap logs only provider ids and configuration keys.
+     * </p>
+     *
+     * @return opened signature workflow (never {@code null})
+     */
+    public static SignatureWorkflow openSignatureWorkflow() {
+        String requestedId = System.getProperty(PROP_CRYPTO_WORKFLOW_BACKEND);
+
+        SignatureWorkflowProvider provider = SpiSelector.select(SignatureWorkflowProvider.class, requestedId,
+                new SpiSelector.ProviderId<>() {
+                    @Override
+                    public String id(SignatureWorkflowProvider p) {
+                        return p.id();
+                    }
+                });
+
+        Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_CRYPTO_WORKFLOW_PREFIX);
+        ProviderConfig config = new ProviderConfig(provider.id(), props);
+
+        if (LOG.isLoggable(Level.INFO)) {
+            LOG.info("Selected crypto workflow provider: " + provider.id() + " (keys: " + props.keySet() + ")");
+        }
+
+        return provider.allocate(config);
     }
 }

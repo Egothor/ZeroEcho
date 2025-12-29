@@ -1,0 +1,97 @@
+/*******************************************************************************
+ * Copyright (C) 2025, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+package zeroecho.pki.impl.crypto.zeroecholib;
+
+import java.nio.file.Path;
+import java.util.Set;
+
+import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
+
+/**
+ * Production provider bridging PKI signature workflow to ZeroEcho lib based on
+ * {@code KeyringStore}.
+ *
+ * <p>
+ * Configuration keys:
+ * </p>
+ * <ul>
+ * <li>{@code keyringPath} (required): filesystem path to the KeyringStore
+ * file</li>
+ * <li>{@code keyRefPrefix} (optional, default {@code "zeroecho-lib:"})</li>
+ * <li>{@code requireComponentSuffix} (optional, default {@code true})</li>
+ * </ul>
+ *
+ * <h2>Security</h2>
+ * <p>
+ * Configuration values may be sensitive and must not be logged. This provider
+ * performs no value logging.
+ * </p>
+ */
+public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWorkflowProvider {
+
+    private static final String KEY_KEYRING_PATH = "keyringPath";
+    private static final String KEY_KEYREF_PREFIX = "keyRefPrefix";
+    private static final String KEY_REQUIRE_SUFFIX = "requireComponentSuffix";
+
+    @Override
+    public String id() {
+        return "zeroecho-lib";
+    }
+
+    @Override
+    public Set<String> supportedKeys() {
+        return Set.of(KEY_KEYRING_PATH, KEY_KEYREF_PREFIX, KEY_REQUIRE_SUFFIX);
+    }
+
+    @Override
+    public SignatureWorkflow allocate(ProviderConfig config) {
+        if (config == null) {
+            throw new IllegalArgumentException("config must not be null");
+        }
+
+        // Defensive hardening: fail fast if miswired config reaches this provider.
+        if (!id().equals(config.backendId())) {
+            throw new IllegalArgumentException("ProviderConfig backendId mismatch.");
+        }
+
+        String keyringPath = config.require(KEY_KEYRING_PATH);
+        String prefix = config.get(KEY_KEYREF_PREFIX).orElse("zeroecho-lib:");
+        boolean requireSuffix = config.get(KEY_REQUIRE_SUFFIX).map(Boolean::parseBoolean).orElse(Boolean.TRUE);
+
+        return new ZeroEchoLibSignatureWorkflow(id(), Path.of(keyringPath), prefix, requireSuffix);
+    }
+}

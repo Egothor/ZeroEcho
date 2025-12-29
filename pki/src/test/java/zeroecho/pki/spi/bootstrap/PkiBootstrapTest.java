@@ -116,7 +116,6 @@ public final class PkiBootstrapTest {
 
         // Per bootstrap: if no -Dzeroecho.pki.audit is set, default is "stdout".
         // This must work even if multiple audit providers exist.
-        // :contentReference[oaicite:1]{index=1}
         AuditSink sink = PkiBootstrap.openAudit();
         assertNotNull(sink);
 
