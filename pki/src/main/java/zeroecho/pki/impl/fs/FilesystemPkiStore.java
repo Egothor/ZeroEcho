@@ -147,6 +147,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             ensureVersionFile();
             this.historySeq = new AtomicLong(0L);
 
+            LOG.log(Level.INFO, "running in {0}", root);
+
         } catch (IOException e) {
             throw new IllegalStateException("failed to open filesystem store at " + root, e);
         }

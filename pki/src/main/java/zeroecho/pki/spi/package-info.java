@@ -36,9 +36,22 @@
  * Service Provider Interfaces (SPIs) for the PKI module.
  *
  * <p>
- * SPIs are used to plug in persistence, audit sinks, publishing targets, and
- * credential framework implementations. Public API types remain
- * framework-agnostic.
+ * SPIs are used to plug in persistence backends, audit sinks, publishing
+ * targets, and framework integrations while keeping the public PKI API
+ * framework-agnostic. Implementations are typically discovered via
+ * {@link java.util.ServiceLoader}.
+ * </p>
+ *
+ * <p>
+ * The SPI layer is suitable both for CLI and server deployments. In DI
+ * containers (Spring, Micronaut, etc.), ServiceLoader discovery can be invoked
+ * from managed beans, while lifecycle is controlled by the container.
+ * </p>
+ *
+ * <p>
+ * Backend configuration is passed as string properties through
+ * {@link zeroecho.pki.spi.ProviderConfig}. Configuration values may be
+ * sensitive and must not be logged.
  * </p>
  */
 package zeroecho.pki.spi;

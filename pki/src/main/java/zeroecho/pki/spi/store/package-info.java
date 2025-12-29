@@ -36,9 +36,23 @@
  * Persistence SPI for PKI state.
  *
  * <p>
- * Implementations persist CA entities, credentials, requests, revocations,
- * status objects, profiles, policy traces, publication records, and optionally
- * audit events. Storage must be deterministic and suitable for backup/restore.
+ * This package defines the authoritative persistence contract for PKI-managed
+ * state (CAs, credentials, requests, revocations, status objects, profiles,
+ * publications, and policy traces). Storage must be deterministic and suitable
+ * for backup/restore.
+ * </p>
+ *
+ * <p>
+ * Concrete persistence backends are instantiated via
+ * {@link java.util.ServiceLoader} using
+ * {@link zeroecho.pki.spi.store.PkiStoreProvider}. Backend configuration is
+ * provided through {@link zeroecho.pki.spi.ProviderConfig}.
+ * </p>
+ *
+ * <p>
+ * Security note: private key material must not be persisted. Configuration
+ * values may be sensitive (passwords/tokens/endpoints) and must not be logged
+ * by providers or bootstraps.
  * </p>
  */
 package zeroecho.pki.spi.store;

@@ -32,27 +32,31 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-package zeroecho.pki.spi;
+package zeroecho.pki.impl.audit;
 
-import zeroecho.pki.api.audit.AuditEvent;
+import java.util.Collections;
+import java.util.Set;
+
+import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.audit.AuditSink;
+import zeroecho.pki.spi.audit.AuditSinkProvider;
 
 /**
- * SPI for persisting audit events.
- *
- * <p>
- * Implementations must apply appropriate redaction policies and must never
- * write secrets.
- * </p>
+ * 
  */
-@FunctionalInterface
-public interface AuditSink {
+public class StdoutAuditSinkProvider implements AuditSinkProvider {
+    @Override
+    public String id() {
+        return "stdout";
+    }
 
-    /**
-     * Persists an audit event.
-     *
-     * @param event audit event
-     * @throws IllegalArgumentException if {@code event} is null
-     * @throws RuntimeException         if persistence fails
-     */
-    void record(AuditEvent event);
+    @Override
+    public Set<String> supportedKeys() {
+        return Collections.emptySet();
+    }
+
+    @Override
+    public AuditSink allocate(ProviderConfig config) {
+        return new StdoutAuditSink();
+    }
 }
