@@ -45,7 +45,7 @@ dependencies {
 
 pmd {
 	consoleOutput = true
-	toolVersion = '7.19.0'
+	toolVersion = '7.20.0'
 	sourceSets = [sourceSets.main]
 	ruleSetFiles = files(rootProject.file(".ruleset"))
 }

@@ -103,9 +103,9 @@ public class SignatureVerificationStrategy extends VerificationBiPredicate<Signa
 
             if (LOG.isLoggable(Level.FINE)) {
                 if (result) {
-                    LOG.log(Level.FINE, "PASS {0}", Strings.toShortString(b)); // NOPMD
+                    LOG.log(Level.FINE, "PASS {0}", Strings.toShortString(b));
                 } else {
-                    LOG.log(Level.FINE, "FAIL {0}", Strings.toShortString(b)); // NOPMD
+                    LOG.log(Level.FINE, "FAIL {0}", Strings.toShortString(b));
                 }
             }
 

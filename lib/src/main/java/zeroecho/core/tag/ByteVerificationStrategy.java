@@ -103,10 +103,10 @@ public class ByteVerificationStrategy extends VerificationBiPredicate<byte[]> {
 
         if (LOG.isLoggable(Level.FINE)) {
             if (r == 0) {
-                LOG.log(Level.FINE, "PASS {0} == {1}", // NOPMD
+                LOG.log(Level.FINE, "PASS {0} == {1}",
                         new Object[] { Strings.toShortString(a), Strings.toShortString(b) });
             } else {
-                LOG.log(Level.FINE, "FAIL {0} != {1}", // NOPMD
+                LOG.log(Level.FINE, "FAIL {0} != {1}",
                         new Object[] { Strings.toShortString(a), Strings.toShortString(b) });
             }
         }
