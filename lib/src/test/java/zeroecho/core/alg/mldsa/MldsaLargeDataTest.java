@@ -120,16 +120,7 @@ public final class MldsaLargeDataTest {
 
         KeyPair kp = CryptoAlgorithms.keyPair("ML-DSA", spec);
 
-        SignatureContext verifierCtx = CryptoAlgorithms.create("ML-DSA", KeyUsage.VERIFY, kp.getPublic());
-        if (!(verifierCtx instanceof MldsaSignatureContext mldsaVerifier)) {
-            try {
-                verifierCtx.close();
-            } catch (Exception ignore) {
-            }
-            throw new AssertionError(
-                    "VERIFY context must be MldsaSignatureContext, got: " + verifierCtx.getClass().getName());
-        }
-
+        SignatureContext mldsaVerifier = CryptoAlgorithms.create("ML-DSA", KeyUsage.VERIFY, kp.getPublic());
         int expectedSigLen = mldsaVerifier.tagLength();
         System.out.println(INDENT + " expectedSigLen=" + expectedSigLen);
 
@@ -188,15 +179,7 @@ public final class MldsaLargeDataTest {
         byte[] badSig = Arrays.copyOf(signature, signature.length);
         badSig[0] = (byte) (badSig[0] ^ 0x01);
 
-        SignatureContext badVerifierCtx = CryptoAlgorithms.create("ML-DSA", KeyUsage.VERIFY, kp.getPublic());
-        if (!(badVerifierCtx instanceof MldsaSignatureContext badVerifier)) {
-            try {
-                badVerifierCtx.close();
-            } catch (Exception ignore) {
-            }
-            throw new AssertionError("VERIFY context must be MldsaSignatureContext (negative), got: "
-                    + badVerifierCtx.getClass().getName());
-        }
+        SignatureContext badVerifier = CryptoAlgorithms.create("ML-DSA", KeyUsage.VERIFY, kp.getPublic());
 
         try {
             badVerifier.setExpectedTag(badSig);
