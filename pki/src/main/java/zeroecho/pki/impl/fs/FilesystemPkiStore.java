@@ -55,6 +55,7 @@ import java.util.logging.Logger;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.api.policy.PolicyTrace;
 import zeroecho.pki.api.profile.CertificateProfile;
 import zeroecho.pki.api.publication.PublicationRecord;
@@ -326,6 +327,46 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public Optional<PolicyTrace> getPolicyTrace(final PkiId decisionId) {
         Objects.requireNonNull(decisionId, "decisionId");
         return readOptional(this.paths.policyTracePath(decisionId), PolicyTrace.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // Workflow continuation state (orchestration)
+    // -------------------------------------------------------------------------
+
+    @Override
+    public void putWorkflowState(final WorkflowStateRecord record) {
+        Objects.requireNonNull(record, "record");
+
+        PkiId opId = record.opId();
+        Path current = this.paths.workflowCurrent(opId);
+
+        // Never log payload; writeWithHistory logs only type + safe identifiers.
+        writeWithHistory(this.paths.workflowHistoryDir(opId), current, FsCodec.encode(record),
+                this.options.workflowHistoryPolicy(), "WORKFLOW", FsUtil.safeId(opId));
+    }
+
+    @Override
+    public Optional<WorkflowStateRecord> getWorkflowState(final PkiId opId) {
+        Objects.requireNonNull(opId, "opId");
+        return readOptional(this.paths.workflowCurrent(opId), WorkflowStateRecord.class);
+    }
+
+    @Override
+    public void deleteWorkflowState(final PkiId opId) {
+        Objects.requireNonNull(opId, "opId");
+        Path current = this.paths.workflowCurrent(opId);
+
+        try {
+            Files.deleteIfExists(current);
+        } catch (IOException e) {
+            throw new IllegalStateException("failed to delete workflow state opId=" + FsUtil.safeId(opId), e);
+        }
+    }
+
+    @Override
+    public List<WorkflowStateRecord> listWorkflowStates() {
+        // List by operation directory (workflows/by-op/<opId>/current.bin)
+        return listCurrentRecords(this.paths.workflowRoot(), WorkflowStateRecord.class);
     }
 
     @Override

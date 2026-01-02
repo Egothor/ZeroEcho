@@ -58,7 +58,7 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
     /**
      * Public no-arg constructor required by {@link java.util.ServiceLoader}.
      */
-    public FilesystemPkiStoreProvider() { // NOPMD
+    public FilesystemPkiStoreProvider() {
         // no-op
     }
 

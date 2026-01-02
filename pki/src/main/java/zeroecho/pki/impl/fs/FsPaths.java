@@ -43,8 +43,16 @@ import zeroecho.pki.api.PkiId;
  * Deterministic path mapping for the filesystem PKI store.
  *
  * <p>
- * This class is internal to the reference implementation. It defines the
- * on-disk layout and centralizes naming conventions.
+ * This class is internal to the filesystem store implementation. It centralizes
+ * the on-disk layout so that path conventions remain stable and consistent
+ * across all entities and snapshot/export logic.
+ * </p>
+ *
+ * <p>
+ * The layout supports "mutable but auditable" entities by storing the latest
+ * version in {@link #CURRENT_FILE} and keeping immutable historical versions in
+ * a {@link #HISTORY_DIR} directory. This is required for snapshot export and
+ * forensic reconstruction.
  * </p>
  */
 final class FsPaths {
@@ -76,7 +84,12 @@ final class FsPaths {
         return this.root.resolve(LOCK_DIR).resolve(STORE_LOCK);
     }
 
+    // -------------------------------------------------------------------------
+    // CA (mutable with history)
+    // -------------------------------------------------------------------------
+
     /* default */ Path caDir(final PkiId caId) {
+        Objects.requireNonNull(caId, "caId");
         return this.root.resolve("cas").resolve(BY_ID).resolve(FsUtil.safeId(caId));
     }
 
@@ -88,7 +101,12 @@ final class FsPaths {
         return caDir(caId).resolve(HISTORY_DIR);
     }
 
+    // -------------------------------------------------------------------------
+    // Profiles (mutable with history)
+    // -------------------------------------------------------------------------
+
     /* default */ Path profileDir(final String profileId) {
+        Objects.requireNonNull(profileId, "profileId");
         return this.root.resolve("profiles").resolve(BY_ID).resolve(FsUtil.safeSegment(profileId));
     }
 
@@ -100,15 +118,30 @@ final class FsPaths {
         return profileDir(profileId).resolve(HISTORY_DIR);
     }
 
+    // -------------------------------------------------------------------------
+    // Credentials (immutable .bin)
+    // -------------------------------------------------------------------------
+
     /* default */ Path credentialPath(final PkiId credentialId) {
+        Objects.requireNonNull(credentialId, "credentialId");
         return this.root.resolve("credentials").resolve(BY_ID).resolve(FsUtil.safeId(credentialId) + ".bin");
     }
 
+    // -------------------------------------------------------------------------
+    // Requests (immutable .bin)
+    // -------------------------------------------------------------------------
+
     /* default */ Path requestPath(final PkiId requestId) {
+        Objects.requireNonNull(requestId, "requestId");
         return this.root.resolve("requests").resolve(BY_ID).resolve(FsUtil.safeId(requestId) + ".bin");
     }
 
+    // -------------------------------------------------------------------------
+    // Revocations (mutable with history)
+    // -------------------------------------------------------------------------
+
     /* default */ Path revocationDir(final PkiId credentialId) {
+        Objects.requireNonNull(credentialId, "credentialId");
         return this.root.resolve("revocations").resolve("by-credential").resolve(FsUtil.safeId(credentialId));
     }
 
@@ -120,15 +153,62 @@ final class FsPaths {
         return revocationDir(credentialId).resolve(HISTORY_DIR);
     }
 
+    // -------------------------------------------------------------------------
+    // Status objects (immutable .bin)
+    // -------------------------------------------------------------------------
+
     /* default */ Path statusObjectPath(final PkiId statusObjectId) {
+        Objects.requireNonNull(statusObjectId, "statusObjectId");
         return this.root.resolve("status").resolve(BY_ID).resolve(FsUtil.safeId(statusObjectId) + ".bin");
     }
 
+    // -------------------------------------------------------------------------
+    // Policy traces (immutable .bin)
+    // -------------------------------------------------------------------------
+
     /* default */ Path policyTracePath(final PkiId decisionId) {
+        Objects.requireNonNull(decisionId, "decisionId");
         return this.root.resolve("policy").resolve("by-decision").resolve(FsUtil.safeId(decisionId) + ".bin");
     }
 
+    // -------------------------------------------------------------------------
+    // Publications (immutable .bin)
+    // -------------------------------------------------------------------------
+
     /* default */ Path publicationPath(final PkiId publicationId) {
+        Objects.requireNonNull(publicationId, "publicationId");
         return this.root.resolve("publications").resolve(BY_ID).resolve(FsUtil.safeId(publicationId) + ".bin");
+    }
+
+    // -------------------------------------------------------------------------
+    // Workflow state (mutable with history)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Root directory for orchestrator workflow state records.
+     *
+     * <p>
+     * Workflow state is updated over time (progression of a long-running
+     * operation). Therefore, it follows the same "mutable but auditable" pattern as
+     * CA records and profiles: {@code current.bin} and {@code history/}.
+     * </p>
+     *
+     * @return workflows root directory (never {@code null})
+     */
+    /* default */ Path workflowRoot() {
+        return this.root.resolve("workflows").resolve("by-op");
+    }
+
+    /* default */ Path workflowDir(final PkiId opId) {
+        Objects.requireNonNull(opId, "opId");
+        return workflowRoot().resolve(FsUtil.safeId(opId));
+    }
+
+    /* default */ Path workflowCurrent(final PkiId opId) {
+        return workflowDir(opId).resolve(CURRENT_FILE);
+    }
+
+    /* default */ Path workflowHistoryDir(final PkiId opId) {
+        return workflowDir(opId).resolve(HISTORY_DIR);
     }
 }

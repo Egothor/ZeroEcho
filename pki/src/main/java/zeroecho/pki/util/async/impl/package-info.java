@@ -33,6 +33,26 @@
  * POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 /**
- * 
+ * Reference implementations for the generic async bus.
+ *
+ * <p>
+ * This package contains durability and recovery helpers (append-only line
+ * store) and a generic durable bus implementation.
+ * </p>
+ *
+ * <h2>Operational model</h2>
+ * <ul>
+ * <li>State is held in memory for speed.</li>
+ * <li>Transitions are appended to an on-disk log for restart recovery.</li>
+ * <li>Restart recovery replays the log and then relies on {@code sweep(...)} to
+ * synchronize open operations with their endpoints.</li>
+ * </ul>
+ *
+ * <h2>Security</h2>
+ * <p>
+ * Implementations must never log secrets, payloads, private keys, or internal
+ * cryptographic primitive state. Persisted content must contain only
+ * identifiers and non-sensitive status metadata.
+ * </p>
  */
-package zeroecho.pki.internal;
+package zeroecho.pki.util.async.impl;

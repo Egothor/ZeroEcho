@@ -39,38 +39,57 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Configuration for {@link FilesystemPkiStore}.
+ * Options for {@link FilesystemPkiStore}.
  *
  * <p>
- * This type is intentionally placed in an implementation package. It is not a
- * public PKI API contract. It exists to keep the {@code PkiStore} SPI stable,
- * while still allowing a professional-grade reference implementation to be
- * configured and tested.
+ * This options container configures the filesystem store behavior while keeping
+ * the {@code PkiStore} SPI stable. All options have deterministic semantics and
+ * should be suitable for tests and for reference deployments.
  * </p>
  *
+ * <h2>History tracking</h2>
  * <p>
- * All options have deterministic semantics.
+ * Some records are mutable and are therefore stored as {@code current.bin} with
+ * optional historical snapshots under {@code history/}. The individual history
+ * policies allow tuning the retention behavior without changing the store
+ * contract.
  * </p>
+ *
+ * @param caHistoryPolicy         history policy for CA records
+ * @param profileHistoryPolicy    history policy for certificate profiles
+ * @param revocationHistoryPolicy history policy for revocation records
+ * @param workflowHistoryPolicy   history policy for workflow continuation state
+ * @param strictSnapshotExport    whether snapshot export is strict
+ *                                (fail-closed)
  */
 public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
-        FsHistoryPolicy revocationHistoryPolicy, boolean strictSnapshotExport) {
+        FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport) {
 
     /**
      * Canonical constructor with validation.
+     *
+     * @throws NullPointerException if any history policy is {@code null}
      */
     public FsPkiStoreOptions {
         Objects.requireNonNull(caHistoryPolicy, "caHistoryPolicy");
         Objects.requireNonNull(profileHistoryPolicy, "profileHistoryPolicy");
         Objects.requireNonNull(revocationHistoryPolicy, "revocationHistoryPolicy");
+        Objects.requireNonNull(workflowHistoryPolicy, "workflowHistoryPolicy");
     }
 
     /**
      * Returns default options (history enabled with 90 days retention).
      *
+     * <p>
+     * The default is suitable for a reference deployment and for integration tests,
+     * but production systems may tune retention windows and cleanup strategies
+     * based on operational requirements.
+     * </p>
+     *
      * @return default options
      */
     public static FsPkiStoreOptions defaults() {
         FsHistoryPolicy ninetyDays = FsHistoryPolicy.onWrite(Optional.of(Duration.ofDays(90)));
-        return new FsPkiStoreOptions(ninetyDays, ninetyDays, ninetyDays, true);
+        return new FsPkiStoreOptions(ninetyDays, ninetyDays, ninetyDays, ninetyDays, true);
     }
 }

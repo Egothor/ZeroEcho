@@ -98,6 +98,9 @@ final class FsSnapshotExporter {
                     this.options.profileHistoryPolicy(), this.options.strictSnapshotExport());
             reconstructMutableTree(sourceRoot.resolve("revocations"), targetRoot.resolve("revocations"), at,
                     this.options.revocationHistoryPolicy(), this.options.strictSnapshotExport());
+            // reconstruct workflow continuation state from history
+            reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
+                    this.options.workflowHistoryPolicy(), this.options.strictSnapshotExport());
 
         } catch (IOException e) {
             throw new IllegalStateException("snapshot export failed", e);

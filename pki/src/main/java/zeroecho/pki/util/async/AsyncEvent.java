@@ -32,7 +32,34 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
+package zeroecho.pki.util.async;
+
+import java.util.Objects;
+import java.util.Optional;
+
 /**
- * 
+ * Event delivered to registered handlers whenever an operation status changes.
+ *
+ * @param <OpId>   operation identifier type
+ * @param <Owner>  operation owner type
+ * @param <Eid>    endpoint identifier type
+ * @param <Result> result type
+ * @param snapshot immutable operation metadata (never {@code null})
+ * @param status   new status (never {@code null})
+ * @param result   optional result; present only when
+ *                 {@link AsyncStatus#state()} is {@link AsyncState#SUCCEEDED}
  */
-package zeroecho.pki.internal.x509;
+public record AsyncEvent<OpId, Owner, Eid, Result>(AsyncOperationSnapshot<OpId, Owner, Eid> snapshot,
+        AsyncStatus status, Optional<Result> result) {
+
+    /**
+     * Creates an event.
+     *
+     * @throws IllegalArgumentException if any required field is null
+     */
+    public AsyncEvent {
+        Objects.requireNonNull(snapshot, "snapshot");
+        Objects.requireNonNull(status, "status");
+        Objects.requireNonNull(result, "result");
+    }
+}

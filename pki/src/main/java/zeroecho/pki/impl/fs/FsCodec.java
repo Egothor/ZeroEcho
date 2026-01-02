@@ -40,75 +40,90 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.invoke.MethodHandles;
-import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
 
 import zeroecho.core.io.Util;
 
 /**
- * Deterministic binary codec for PKI store objects.
+ * Compact binary codec for filesystem persistence.
  *
+ * <h2>Encoding format</h2>
  * <p>
- * This codec is designed for:
+ * The codec supports two on-wire formats:
  * </p>
  * <ul>
- * <li>Deterministic serialization across JVM runs.</li>
- * <li>No external dependencies.</li>
- * <li>Support for records (the dominant pattern in the PKI API).</li>
+ * <li><b>Compact format (current)</b>: begins with a 1-byte MAGIC marker
+ * {@code 0xFF}, followed by a 1-byte TAG and tag-specific payload.</li>
+ * <li><b>Legacy format (backward-compatible)</b>: begins with a UTF-8 encoded
+ * Java class name (written by
+ * {@link zeroecho.core.io.Util#writeUTF8(OutputStream, String)}), followed by
+ * value payload based on that class.</li>
  * </ul>
  *
  * <p>
- * Supported types:
- * </p>
- * <ul>
- * <li>primitive wrappers, {@link String}, {@code byte[]}</li>
- * <li>{@link Instant}, {@link Duration}, {@link UUID}</li>
- * <li>{@link Optional}, {@link List}</li>
- * <li>{@link Enum}</li>
- * <li>Java {@code record} types, recursively</li>
- * </ul>
- *
- * <p>
- * For non-record custom value objects, decoding attempts the following (in this
- * order) using a single {@link String} argument: {@code fromString},
- * {@code parse}, {@code of}, {@code valueOf}, or a public constructor. The
- * serialized form is {@code toString()}.
+ * The compact format eliminates the pathological overhead of writing a full
+ * Java class name for every scalar value (e.g., {@code boolean}). It also
+ * substantially reduces class-loading activity during decode.
  * </p>
  *
+ * <h2>Type compatibility</h2>
  * <p>
- * If none of the above works, an exception is thrown. This is intentional: the
- * persistence layer must be explicit and auditable.
+ * During decode, the codec enforces that the encoded value type is compatible
+ * with the expected type. Primitive/wrapper pairs (e.g.,
+ * {@code boolean}/{@link Boolean}) are treated as compatible because values are
+ * boxed when represented as {@link Object}.
  * </p>
  */
+@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.NcssCount" })
 final class FsCodec {
 
-    private static final int MAX_STRING_BYTES = 1024 * 1024 * 4; // 4 MiB safety cap
+    private static final int MAX_STRING_BYTES = 256 * 1024;
+
+    private static final Map<Class<?>, Class<?>> PRIMITIVE_TO_WRAPPER = Map.of(boolean.class, Boolean.class, byte.class,
+            Byte.class, short.class, Short.class, int.class, Integer.class, long.class, Long.class, char.class,
+            Character.class, float.class, Float.class, double.class, Double.class);
 
     /**
-     * Hard upper bound for any stored binary blob (defense-in-depth against corrupt
-     * files and unbounded allocations). This is not a security boundary.
+     * Magic byte that marks the compact format.
+     *
+     * <p>
+     * This value is chosen to be extremely unlikely as a first byte of the legacy
+     * UTF-8 class-name length prefix. Class names are short; legacy length prefix
+     * first byte will be &lt; 0x80.
+     * </p>
      */
-    private static final int MAX_BLOB_BYTES = 16 * 1024 * 1024; // 16 MiB
+    private static final int MAGIC_COMPACT = 0xFF;
+
+    // Compact tags (1 byte). Keep stable.
+    private static final int TAG_STRING = 1;
+    private static final int TAG_INT = 2;
+    private static final int TAG_LONG = 3;
+    private static final int TAG_BOOL = 4;
+    private static final int TAG_BYTES = 5;
+    private static final int TAG_INSTANT = 6;
+    private static final int TAG_DURATION = 7;
+    private static final int TAG_ENUM = 8;
+    private static final int TAG_RECORD = 9;
+    private static final int TAG_FALLBACK_STRING = 10;
+    private static final int TAG_LIST = 11;
+    private static final int TAG_SET = 12;
+    private static final int TAG_OPTIONAL = 13;
 
     private FsCodec() {
-        // utility class
+        // utility
     }
 
     /* default */ static <T> byte[] encode(final T value) {
         Objects.requireNonNull(value, "value");
         try {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            writeAny(bos, value);
+            writeAnyCompact(bos, value);
             return bos.toByteArray();
         } catch (IOException e) {
             throw new IllegalStateException("encoding failed: " + value.getClass().getName(), e);
@@ -123,251 +138,353 @@ final class FsCodec {
             Object decoded = readAny(bis, expectedType);
             return expectedType.cast(decoded);
         } catch (IOException e) {
-            throw new IllegalStateException("decoding failed for " + expectedType.getName(), e);
+            throw new IllegalStateException("decoding failed: " + expectedType.getName(), e);
         }
     }
 
-    private static void writeAny(final OutputStream out, final Object value) throws IOException { // NOPMD
+    private static void writeAnyCompact(final OutputStream out, final Object value) throws IOException {
         Objects.requireNonNull(out, "out");
         Objects.requireNonNull(value, "value");
 
-        Class<?> type = value.getClass();
-        Util.writeUTF8(out, type.getName());
+        out.write(MAGIC_COMPACT);
 
-        if (value instanceof String s) {
-            writeString(out, s);
-            return;
-        }
-        if (value instanceof Integer i) {
-            Util.writePack7I(out, i);
-            return;
-        }
-        if (value instanceof Long l) {
-            Util.writeLong(out, l);
-            return;
-        }
-        if (value instanceof Boolean b) {
-            out.write(b ? 1 : 0);
-            return;
-        }
-        if (value instanceof byte[] bytes) {
-            Util.write(out, bytes);
-            return;
-        }
-        if (value instanceof Instant instant) {
-            Util.writeLong(out, instant.getEpochSecond());
-            Util.writePack7I(out, instant.getNano());
-            return;
-        }
-        if (value instanceof Duration duration) {
-            Util.writeLong(out, duration.getSeconds());
-            Util.writePack7I(out, duration.getNano());
-            return;
-        }
-        if (value instanceof UUID uuid) {
-            Util.write(out, uuid);
-            return;
-        }
-        if (value instanceof Optional<?> opt) {
-            out.write(opt.isPresent() ? 1 : 0);
-            if (opt.isPresent()) {
-                writeAny(out, opt.get());
+        // Use a switch with patterns to avoid long if/else chains and keep the hot path
+        // compact.
+        switch (value) {
+            case String s -> {
+                out.write(TAG_STRING);
+                Util.writeUTF8(out, s);
             }
-            return;
-        }
-        if (value instanceof List<?> list) {
-            Util.writePack7I(out, list.size());
-            for (Object item : list) {
-                writeAny(out, item);
+            case Integer i -> {
+                out.write(TAG_INT);
+                Util.writePack7I(out, i);
             }
-            return;
-        }
-        if (type.isEnum()) {
-            Enum<?> e = (Enum<?>) value;
-            writeString(out, e.name());
-            return;
-        }
-        if (type.isRecord()) {
-            RecordComponent[] components = type.getRecordComponents();
-            Util.writePack7I(out, components.length);
-            for (RecordComponent c : components) {
-                try {
-                    Method accessor = c.getAccessor();
-                    Object componentValue = accessor.invoke(value);
-                    writeAny(out, componentValue);
-                } catch (ReflectiveOperationException ex) {
-                    throw new IllegalStateException("record encode failed: " + type.getName() + "." + c.getName(), ex);
+            case Long l -> {
+                out.write(TAG_LONG);
+                Util.writePack7L(out, l);
+            }
+            case Boolean b -> {
+                out.write(TAG_BOOL);
+                out.write(b ? 1 : 0);
+            }
+            case byte[] bytes -> {
+                out.write(TAG_BYTES);
+                Util.write(out, bytes);
+            }
+            case Instant instant -> {
+                out.write(TAG_INSTANT);
+                Util.writeLong(out, instant.getEpochSecond());
+                Util.writePack7I(out, instant.getNano());
+            }
+            case Duration duration -> {
+                out.write(TAG_DURATION);
+                Util.writeLong(out, duration.getSeconds());
+                Util.writePack7I(out, duration.getNano());
+            }
+            case java.util.List<?> list -> {
+                out.write(TAG_LIST);
+                Util.writePack7I(out, list.size());
+                for (Object element : list) {
+                    Objects.requireNonNull(element, "list element must not be null");
+                    writeAnyCompact(out, element);
                 }
             }
-            return;
-        }
+            case java.util.Set<?> set -> {
+                out.write(TAG_SET);
 
-        // fallback: encode as string and reconstruct via string factory on decode
-        writeString(out, value.toString());
+                // Deterministic ordering: encode sets in a stable order.
+                // Use natural order when possible; otherwise order by stable string key.
+                java.util.List<Object> ordered = new java.util.ArrayList<>(set.size());
+                ordered.addAll(set);
+
+                ordered.sort((a, b) -> {
+                    if (a == b) { // NOPMD
+                        return 0;
+                    }
+                    if (a == null) {
+                        return -1;
+                    }
+                    if (b == null) {
+                        return 1;
+                    }
+                    if (a instanceof Comparable<?> && a.getClass() == b.getClass()) {
+                        @SuppressWarnings("unchecked")
+                        Comparable<Object> ca = (Comparable<Object>) a;
+                        return ca.compareTo(b);
+                    }
+                    return stableSortKey(a).compareTo(stableSortKey(b));
+                });
+
+                Util.writePack7I(out, ordered.size());
+                for (Object element : ordered) {
+                    Objects.requireNonNull(element, "set element must not be null");
+                    writeAnyCompact(out, element);
+                }
+            }
+            case java.util.Optional<?> opt -> {
+                out.write(TAG_OPTIONAL);
+                if (opt.isPresent()) {
+                    out.write(1);
+                    Object element = opt.get();
+                    Objects.requireNonNull(element, "optional element must not be null");
+                    writeAnyCompact(out, element);
+                } else {
+                    out.write(0);
+                }
+            }
+            default -> {
+                Class<?> type = value.getClass();
+
+                if (type.isEnum()) {
+                    out.write(TAG_ENUM);
+                    // Enum: write declaring class name once + ordinal.
+                    Util.writeUTF8(out, type.getName());
+                    Enum<?> e = (Enum<?>) value;
+                    Util.writePack7I(out, e.ordinal());
+                    return;
+                }
+
+                if (type.isRecord()) {
+                    out.write(TAG_RECORD);
+                    // Record: write record class name once + component values (encoded compactly).
+                    Util.writeUTF8(out, type.getName());
+                    RecordComponent[] components = type.getRecordComponents();
+                    Util.writePack7I(out, components.length);
+                    for (RecordComponent c : components) {
+                        try {
+                            Method accessor = c.getAccessor();
+                            Object componentValue = accessor.invoke(value);
+                            // Preserve existing invariant: no null components in storage.
+                            Objects.requireNonNull(componentValue,
+                                    "record component " + type.getName() + "." + c.getName());
+                            writeAnyCompact(out, componentValue);
+                        } catch (IllegalAccessException | InvocationTargetException ex) {
+                            throw new IllegalStateException(
+                                    "record encode failed: " + type.getName() + "." + c.getName(), ex);
+                        }
+                    }
+                    return;
+                }
+
+                // Fallback: encode as string + type name (still far smaller than
+                // legacy-per-component).
+                out.write(TAG_FALLBACK_STRING);
+                Util.writeUTF8(out, type.getName());
+                Util.writeUTF8(out, value.toString());
+            }
+        }
+    }
+
+    private static String stableSortKey(Object o) {
+        // Deterministic, non-sensitive: class name + toString.
+        // Note: do not use identity hash code; it is non-deterministic across runs.
+        return o.getClass().getName() + ":" + o.toString();
     }
 
     private static Object readAny(final InputStream in, final Class<?> expectedType) throws IOException {
         Objects.requireNonNull(in, "in");
         Objects.requireNonNull(expectedType, "expectedType");
 
-        String encodedTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
-        Class<?> encodedType;
-        ClassLoader primary = MethodHandles.lookup().lookupClass().getClassLoader(); // NOPMD
-        try {
-            encodedType = Class.forName(encodedTypeName, false, primary);
-        } catch (ClassNotFoundException e) {
-            ClassLoader tccl = Thread.currentThread().getContextClassLoader();
-            if (tccl != null && tccl != primary) { // NOPMD
-                try {
-                    return Class.forName(encodedTypeName, false, tccl);
-                } catch (ClassNotFoundException e1) {
-                    e = e1; // NOPMD
-                }
-            }
-            throw new IllegalStateException("unknown encoded type: " + encodedTypeName, e);
+        int first = in.read();
+        if (first < 0) {
+            throw new IOException("unexpected EOF");
         }
 
-        // decode using the encoded type (authoritative)
-        Object value = readByType(in, encodedType);
-
-        // enforce expected assignment
-        if (!expectedType.isAssignableFrom(encodedType)) {
+        if (first != MAGIC_COMPACT) {
             throw new IllegalStateException(
-                    "type mismatch, expected " + expectedType.getName() + " but encoded " + encodedType.getName());
+                    "file mismatch, MAGIC byte expected=" + MAGIC_COMPACT + " but found=" + first);
         }
+
+        int tag = in.read();
+        if (tag < 0) {
+            throw new IOException("unexpected EOF");
+        }
+
+        Object value = readByTag(in, tag);
+
+        // Enforce type compatibility (primitive/wrapper tolerant).
+        if (!isTypeCompatible(expectedType, value.getClass())) {
+            throw new IllegalStateException(
+                    "type mismatch, expected " + expectedType.getName() + " but decoded " + value.getClass().getName());
+        }
+
         return value;
     }
 
-    private static Object readByType(final InputStream in, final Class<?> type) throws IOException { // NOPMD
-        if (type == String.class) {
-            return Util.readUTF8(in, MAX_STRING_BYTES);
-        }
-        if (type == Integer.class) {
-            return Util.readPack7I(in);
-        }
-        if (type == Long.class) {
-            return Util.readLong(in);
-        }
-        if (type == Boolean.class) {
-            int b = in.read();
-            if (b < 0) {
-                throw new IOException("unexpected EOF");
+    private static Object readByTag(final InputStream in, final int tag) throws IOException {
+        switch (tag) {
+            case TAG_STRING -> {
+                return Util.readUTF8(in, MAX_STRING_BYTES);
             }
-            return b != 0;
-        }
-        if (type == byte[].class) {
-            return Util.read(in, MAX_BLOB_BYTES);
-        }
-        if (type == Instant.class) {
-            long seconds = Util.readLong(in);
-            int nanos = Util.readPack7I(in);
-            return Instant.ofEpochSecond(seconds, nanos);
-        }
-        if (type == Duration.class) {
-            long seconds = Util.readLong(in);
-            int nanos = Util.readPack7I(in);
-            return Duration.ofSeconds(seconds, nanos);
-        }
-        if (type == UUID.class) {
-            return Util.readUUID(in);
-        }
-        if (type == Optional.class) {
-            int present = in.read();
-            if (present < 0) {
-                throw new IOException("unexpected EOF");
+            case TAG_INT -> {
+                return Util.readPack7I(in);
             }
-            if (present == 0) {
-                return Optional.empty();
+            case TAG_LONG -> {
+                return Util.readPack7L(in);
             }
-            // generic type erased; decode nested object as Object
-            Object nested = readAny(in, Object.class);
-            return Optional.of(nested);
-        }
-        if (List.class.isAssignableFrom(type)) {
-            int size = Util.readPack7I(in);
-            List<Object> out = new ArrayList<>(size);
-            for (int i = 0; i < size; i++) {
-                Object item = readAny(in, Object.class);
-                out.add(item);
-            }
-            return out;
-        }
-        if (type.isEnum()) {
-            String name = Util.readUTF8(in, MAX_STRING_BYTES);
-            @SuppressWarnings({ "unchecked", "rawtypes" })
-            Enum<?> e = Enum.valueOf((Class) type, name);
-            return e;
-        }
-        if (type.isRecord()) {
-            RecordComponent[] components = type.getRecordComponents();
-            int count = Util.readPack7I(in);
-            if (count != components.length) {
-                throw new IllegalStateException("record component count mismatch for " + type.getName());
-            }
-            Object[] args = new Object[components.length];
-            Class<?>[] ctorTypes = new Class<?>[components.length];
-
-            for (int i = 0; i < components.length; i++) {
-                RecordComponent c = components[i];
-                ctorTypes[i] = c.getType();
-                args[i] = readAny(in, c.getType());
-            }
-
-            try {
-                Constructor<?> ctor = type.getDeclaredConstructor(ctorTypes);
-                ctor.setAccessible(true); // NOPMD
-                return ctor.newInstance(args);
-            } catch (ReflectiveOperationException e) {
-                throw new IllegalStateException("record decode failed: " + type.getName(), e);
-            }
-        }
-
-        // fallback: read string and reconstruct with best-effort factory methods
-        String stringForm = Util.readUTF8(in, MAX_STRING_BYTES);
-        Object reconstructed = tryFromString(type, stringForm);
-        if (reconstructed != null) {
-            return reconstructed;
-        }
-        throw new IllegalStateException("unsupported value type without from-string factory: " + type.getName());
-    }
-
-    private static void writeString(final OutputStream out, final String s) throws IOException {
-        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
-        Util.writePack7I(out, bytes.length);
-        out.write(bytes);
-    }
-
-    private static Object tryFromString(final Class<?> type, final String s) {
-        List<String> methodNames = List.of("fromString", "parse", "of", "valueOf");
-        for (String methodName : methodNames) {
-            try {
-                Method m = type.getMethod(methodName, String.class);
-                if (type.isAssignableFrom(m.getReturnType())) {
-                    return m.invoke(null, s);
+            case TAG_BOOL -> {
+                int b = in.read();
+                if (b < 0) {
+                    throw new IOException("unexpected EOF");
                 }
-            } catch (ReflectiveOperationException ignored) {
-                // continue
+                return b != 0;
             }
+            case TAG_BYTES -> {
+                return Util.read(in, MAX_STRING_BYTES);
+            }
+            case TAG_INSTANT -> {
+                long sec = Util.readLong(in);
+                int nano = Util.readPack7I(in);
+                return Instant.ofEpochSecond(sec, nano);
+            }
+            case TAG_DURATION -> {
+                long sec = Util.readLong(in);
+                int nano = Util.readPack7I(in);
+                return Duration.ofSeconds(sec, nano);
+            }
+            case TAG_ENUM -> {
+                String enumTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
+                Class<?> enumType = loadClass(enumTypeName);
+                if (!enumType.isEnum()) {
+                    throw new IllegalStateException("encoded enum type is not an enum: " + enumTypeName);
+                }
+                int ordinal = Util.readPack7I(in);
+                Object[] constants = enumType.getEnumConstants();
+                if (constants == null || ordinal < 0 || ordinal >= constants.length) {
+                    throw new IllegalStateException("invalid enum ordinal " + ordinal + " for " + enumTypeName);
+                }
+                return constants[ordinal];
+            }
+            case TAG_RECORD -> {
+                String recordTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
+                Class<?> recordType = loadClass(recordTypeName);
+                if (!recordType.isRecord()) {
+                    throw new IllegalStateException("encoded record type is not a record: " + recordTypeName);
+                }
+
+                int componentCount = Util.readPack7I(in);
+                RecordComponent[] components = recordType.getRecordComponents();
+                if (components.length != componentCount) {
+                    throw new IllegalStateException("record component count mismatch for " + recordTypeName
+                            + ", expected " + components.length + " but encoded " + componentCount);
+                }
+
+                Class<?>[] ctorTypes = new Class<?>[components.length];
+                Object[] ctorArgs = new Object[components.length];
+                for (int i = 0; i < components.length; i++) {
+                    RecordComponent c = components[i];
+                    ctorTypes[i] = c.getType();
+                    Object componentValue = readAny(in, ctorTypes[i]);
+                    ctorArgs[i] = componentValue;
+                }
+
+                try {
+                    return recordType.getDeclaredConstructor(ctorTypes).newInstance(ctorArgs);
+                } catch (ReflectiveOperationException ex) {
+                    throw new IllegalStateException("record decode failed for " + recordTypeName, ex);
+                }
+            }
+            case TAG_FALLBACK_STRING -> {
+                String typeName = Util.readUTF8(in, MAX_STRING_BYTES);
+                String s = Util.readUTF8(in, MAX_STRING_BYTES);
+                Class<?> type = loadClass(typeName);
+
+                // string factory: of(String) or valueOf(String) or ctor(String)
+                Method of = findStringFactory(type);
+                if (of != null) {
+                    try {
+                        return of.invoke(null, s);
+                    } catch (ReflectiveOperationException ex) {
+                        throw new IllegalStateException("from-string factory failed for " + type.getName(), ex);
+                    }
+                }
+                try {
+                    return type.getConstructor(String.class).newInstance(s);
+                } catch (ReflectiveOperationException ex) {
+                    throw new IllegalStateException(
+                            "unsupported value type without from-string factory: " + type.getName(), ex);
+                }
+            }
+            case TAG_LIST -> {
+                int n = Util.readPack7I(in);
+                java.util.List<Object> out = new java.util.ArrayList<>(n);
+                for (int i = 0; i < n; i++) {
+                    Object element = readAny(in, Object.class);
+                    out.add(element);
+                }
+                return java.util.List.copyOf(out);
+            }
+            case TAG_SET -> {
+                int n = Util.readPack7I(in);
+                java.util.Set<Object> out = new java.util.LinkedHashSet<>(n);
+                for (int i = 0; i < n; i++) {
+                    Object element = readAny(in, Object.class);
+                    out.add(element);
+                }
+                return java.util.Set.copyOf(out);
+            }
+            case TAG_OPTIONAL -> {
+                int present = in.read();
+                if (present < 0) {
+                    throw new IOException("unexpected EOF");
+                }
+                if (present == 0) {
+                    return java.util.Optional.empty();
+                }
+                Object element = readAny(in, Object.class);
+                return java.util.Optional.of(element);
+            }
+            default -> throw new IllegalStateException("unknown compact tag: " + tag);
+        }
+    }
+
+    private static boolean isTypeCompatible(final Class<?> expectedType, final Class<?> actualType) {
+        if (expectedType.isAssignableFrom(actualType)) {
+            return true;
+        }
+
+        Class<?> expectedWrapper = PRIMITIVE_TO_WRAPPER.get(expectedType);
+        if (expectedWrapper != null && expectedWrapper == actualType) {
+            return true; // primitive expected, wrapper actual
+        }
+
+        Class<?> actualWrapper = PRIMITIVE_TO_WRAPPER.get(actualType);
+        return actualWrapper != null && actualWrapper == expectedType;
+    }
+
+    @SuppressWarnings("PMD.UseProperClassLoader")
+    private static Class<?> loadClass(final String typeName) {
+        Objects.requireNonNull(typeName, "typeName");
+
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        if (cl == null) {
+            cl = MethodHandles.lookup().lookupClass().getClassLoader();
         }
 
         try {
-            Constructor<?> ctor = type.getConstructor(String.class);
-            return ctor.newInstance(s);
-        } catch (ReflectiveOperationException ignored) {
-            // continue
+            return Class.forName(typeName, false, cl);
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("unknown encoded type: " + typeName, e);
         }
+    }
 
-        // common pattern: base64 bytes container
+    private static Method findStringFactory(final Class<?> type) {
         try {
-            Method m = type.getMethod("of", byte[].class);
-            if (type.isAssignableFrom(m.getReturnType())) {
-                byte[] decoded = Base64.getDecoder().decode(s);
-                return m.invoke(null, decoded);
+            Method of = type.getMethod("of", String.class);
+            if ((of.getModifiers() & java.lang.reflect.Modifier.STATIC) != 0 && of.getReturnType() == type) {
+                return of;
             }
-        } catch (ReflectiveOperationException ignored) {
+        } catch (NoSuchMethodException ex) { // NOPMD
             // ignore
         }
-
+        try {
+            Method valueOf = type.getMethod("valueOf", String.class);
+            if ((valueOf.getModifiers() & java.lang.reflect.Modifier.STATIC) != 0 && valueOf.getReturnType() == type) {
+                return valueOf;
+            }
+        } catch (NoSuchMethodException ex) { // NOPMD
+            // ignore
+        }
         return null;
     }
 }

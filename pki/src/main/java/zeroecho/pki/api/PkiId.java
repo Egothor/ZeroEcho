@@ -62,4 +62,9 @@ public record PkiId(String value) {
             throw new IllegalArgumentException("value must not be null/blank");
         }
     }
+
+    @Override
+    public String toString() {
+        return value;
+    }
 }

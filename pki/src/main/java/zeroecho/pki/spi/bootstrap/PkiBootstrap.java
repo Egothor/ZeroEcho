@@ -40,14 +40,18 @@ import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.spi.ConfigurableProvider;
 import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.async.AsyncBusProvider;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.audit.AuditSinkProvider;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreProvider;
+import zeroecho.pki.util.async.AsyncBus;
 
 /**
  * PKI bootstrap utilities for ServiceLoader-based components.
@@ -56,7 +60,7 @@ import zeroecho.pki.spi.store.PkiStoreProvider;
  * This class provides deterministic selection and instantiation rules for
  * components discovered via {@link java.util.ServiceLoader}. It is designed to
  * scale as more SPIs are introduced (audit, publish, framework integrations,
- * crypto/workflows, etc.).
+ * crypto/workflows, async orchestration, etc.).
  * </p>
  *
  * <h2>System property conventions</h2>
@@ -71,6 +75,9 @@ import zeroecho.pki.spi.store.PkiStoreProvider;
  * {@code -Dzeroecho.pki.crypto.workflow=&lt;id&gt;}</li>
  * <li>Configure crypto workflow provider:
  * {@code -Dzeroecho.pki.crypto.workflow.&lt;key&gt;=&lt;value&gt;}</li>
+ * <li>Select async bus provider: {@code -Dzeroecho.pki.async=&lt;id&gt;}</li>
+ * <li>Configure async bus provider:
+ * {@code -Dzeroecho.pki.async.&lt;key&gt;=&lt;value&gt;}</li>
  * </ul>
  *
  * <p>
@@ -90,6 +97,9 @@ public final class PkiBootstrap {
 
     private static final String PROP_CRYPTO_WORKFLOW_BACKEND = "zeroecho.pki.crypto.workflow";
     private static final String PROP_CRYPTO_WORKFLOW_PREFIX = "zeroecho.pki.crypto.workflow.";
+
+    private static final String PROP_ASYNC_BACKEND = "zeroecho.pki.async";
+    private static final String PROP_ASYNC_PREFIX = "zeroecho.pki.async.";
 
     private PkiBootstrap() {
         throw new AssertionError("No instances.");
@@ -117,13 +127,7 @@ public final class PkiBootstrap {
      * are never logged; only keys may be logged.
      * </p>
      *
-     * <p>
-     * Defaulting rules implemented by this bootstrap (policy, not SPI requirement):
-     * for {@code fs} provider, if {@code root} is not specified, defaults to
-     * {@code "pki-store"} relative to the working directory.
-     * </p>
-     *
-     * @return opened store (never {@code null})
+     * @return store (never {@code null})
      */
     public static PkiStore openStore() {
         String requestedId = System.getProperty(PROP_STORE_BACKEND);
@@ -152,39 +156,10 @@ public final class PkiBootstrap {
     }
 
     /**
-     * Logs provider help information (supported keys) for diagnostics.
-     *
-     * <p>
-     * This method is safe: it does not log configuration values.
-     * </p>
-     *
-     * @param provider provider (never {@code null})
-     */
-    public static <T> void logSupportedKeys(ConfigurableProvider<T> provider) {
-        Objects.requireNonNull(provider, "provider");
-        if (LOG.isLoggable(Level.FINE)) {
-            LOG.fine("Provider '" + provider.id() + "' supports keys: " + provider.supportedKeys());
-        }
-    }
-
-    /**
      * Opens an {@link AuditSink} using {@link AuditSinkProvider} discovered via
      * ServiceLoader.
      *
-     * <p>
-     * Selection and configuration follow the same conventions as
-     * {@link #openStore()}, using {@code -Dzeroecho.pki.audit=&lt;id&gt;} and
-     * {@code zeroecho.pki.audit.} prefixed properties.
-     * </p>
-     *
-     * <p>
-     * Defaulting rules implemented by this bootstrap (policy, not SPI requirement):
-     * if no audit backend is specified, defaults to {@code stdout}. For
-     * {@code file} provider, if {@code root} is not specified, defaults to
-     * {@code "pki-audit"} relative to the working directory.
-     * </p>
-     *
-     * @return opened audit sink (never {@code null})
+     * @return audit sink (never {@code null})
      */
     public static AuditSink openAudit() {
         String requestedId = System.getProperty(PROP_AUDIT_BACKEND);
@@ -220,21 +195,7 @@ public final class PkiBootstrap {
      * Opens a {@link SignatureWorkflow} using {@link SignatureWorkflowProvider}
      * discovered via ServiceLoader.
      *
-     * <p>
-     * Conventions:
-     * </p>
-     * <ul>
-     * <li>Select provider: {@code -Dzeroecho.pki.crypto.workflow=&lt;id&gt;}</li>
-     * <li>Provider config:
-     * {@code -Dzeroecho.pki.crypto.workflow.&lt;key&gt;=&lt;value&gt;}</li>
-     * </ul>
-     *
-     * <p>
-     * Security note: configuration values may be sensitive and must not be logged.
-     * This bootstrap logs only provider ids and configuration keys.
-     * </p>
-     *
-     * @return opened signature workflow (never {@code null})
+     * @return signature workflow (never {@code null})
      */
     public static SignatureWorkflow openSignatureWorkflow() {
         String requestedId = System.getProperty(PROP_CRYPTO_WORKFLOW_BACKEND);
@@ -248,6 +209,7 @@ public final class PkiBootstrap {
                 });
 
         Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_CRYPTO_WORKFLOW_PREFIX);
+
         ProviderConfig config = new ProviderConfig(provider.id(), props);
 
         if (LOG.isLoggable(Level.INFO)) {
@@ -255,5 +217,67 @@ public final class PkiBootstrap {
         }
 
         return provider.allocate(config);
+    }
+
+    /**
+     * Opens an async operation bus using {@link AsyncBusProvider} discovered via
+     * ServiceLoader.
+     *
+     * <p>
+     * Defaulting rule: if no backend id is specified, defaults to {@code file}.
+     * </p>
+     *
+     * <p>
+     * Configuration properties are read from {@link System#getProperties()} using
+     * the prefix {@code zeroecho.pki.async.}. Values are treated as sensitive and
+     * are never logged; only keys may be logged.
+     * </p>
+     *
+     * @return async bus (never {@code null})
+     */
+    public static AsyncBus<PkiId, Principal, String, Object> openAsyncBus() {
+        String requestedId = System.getProperty(PROP_ASYNC_BACKEND);
+
+        if (requestedId == null) {
+            requestedId = "file";
+        }
+
+        AsyncBusProvider provider = SpiSelector.select(AsyncBusProvider.class, requestedId,
+                new SpiSelector.ProviderId<>() {
+                    @Override
+                    public String id(AsyncBusProvider p) {
+                        return p.id();
+                    }
+                });
+
+        Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_ASYNC_PREFIX);
+
+        if ("file".equals(provider.id()) && !props.containsKey("logPath")) {
+            props.put("logPath", Path.of("pki-async").resolve("async.log").toString());
+        }
+
+        ProviderConfig config = new ProviderConfig(provider.id(), props);
+
+        if (LOG.isLoggable(Level.INFO)) {
+            LOG.info("Selected async bus provider: " + provider.id() + " (keys: " + props.keySet() + ")");
+        }
+
+        return provider.allocate(config);
+    }
+
+    /**
+     * Logs provider help information (supported keys) for diagnostics.
+     *
+     * <p>
+     * This method is safe: it does not log configuration values.
+     * </p>
+     *
+     * @param provider provider (never {@code null})
+     */
+    public static <T> void logSupportedKeys(ConfigurableProvider<T> provider) {
+        Objects.requireNonNull(provider, "provider");
+        if (LOG.isLoggable(Level.FINE)) {
+            LOG.fine("Provider '" + provider.id() + "' supports keys: " + provider.supportedKeys());
+        }
     }
 }

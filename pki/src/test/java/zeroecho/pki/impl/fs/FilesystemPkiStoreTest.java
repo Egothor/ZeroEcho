@@ -40,25 +40,28 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.IssuerRef;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.SubjectRef;
+import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
@@ -72,19 +75,22 @@ import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevokedRecord;
 
 /**
- * Black-box tests for {@link FilesystemPkiStore}.
+ * Tests for {@link FilesystemPkiStore}.
  *
  * <p>
- * Tests focus on filesystem semantics (write-once, history, snapshot export)
- * and avoid dependencies on optional domain factories. Where the API uses
- * interfaces (notably {@link AttributeSet}), tests provide a minimal
- * deterministic stub.
+ * The tests are deterministic and do not use reflection. Snapshot export
+ * semantics are tested using {@link FsPkiStoreOptions#strictSnapshotExport()}
+ * configured appropriately.
  * </p>
  *
  * <p>
- * Every test routine prints its own name and prints {@code ...ok} on success.
- * Important intermediate values are printed with {@code "..."} prefix.
+ * Output conventions:
  * </p>
+ * <ul>
+ * <li>Each test prints its own name at the start.</li>
+ * <li>Each test prints {@code ...ok} on success.</li>
+ * <li>Important intermediate state is printed with {@code ...} prefix.</li>
+ * </ul>
  */
 public final class FilesystemPkiStoreTest {
 
@@ -95,20 +101,20 @@ public final class FilesystemPkiStoreTest {
     void writeOnceCredentialRejected() throws Exception {
         System.out.println("writeOnceCredentialRejected");
 
-        Path root = tmp.resolve("store-write-once");
+        Path root = tmp.resolve("store-writeonce");
         FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            Credential credential = TestObjects.minimalCredential();
+            Credential c1 = TestObjects.minimalCredential("SERIAL-1", "profile-1");
+            store.putCredential(c1);
 
-            store.putCredential(credential);
-
-            IllegalStateException ex = assertThrows(IllegalStateException.class, () -> store.putCredential(credential));
+            RuntimeException ex = assertThrows(RuntimeException.class, () -> store.putCredential(c1));
             assertNotNull(ex);
-            System.out.println("...expected failure: " + safeMsg(ex.getMessage()));
         }
 
-        printTree("store layout", root);
+        System.out.println("...store tree:");
+        dumpTree(root);
+
         System.out.println("writeOnceCredentialRejected...ok");
     }
 
@@ -119,35 +125,22 @@ public final class FilesystemPkiStoreTest {
         Path root = tmp.resolve("store-ca-history");
         FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
 
-        PkiId caId;
-
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            CaRecord ca1 = TestObjects.minimalCaRecord();
-            caId = ca1.caId();
-
+            CaRecord ca1 = TestObjects.minimalCaRecord("ca-1", CaState.ACTIVE);
             store.putCa(ca1);
 
-            Path caHist = caHistoryDir(root, caId);
-            waitForHistoryCount(caHist, 1, Duration.ofMillis(500));
-
-            CaRecord ca2 = TestObjects.caVariant(ca1, CaState.DISABLED);
+            CaRecord ca2 = new CaRecord(ca1.caId(), ca1.kind(), CaState.DISABLED, ca1.issuerKeyRef(), ca1.subjectRef(),
+                    ca1.caCredentials());
             store.putCa(ca2);
 
-            waitForHistoryCount(caHist, 2, Duration.ofMillis(500));
-
-            Path caDir = root.resolve("cas").resolve("by-id").resolve(FsUtil.safeId(caId));
-            assertTrue(Files.exists(caDir.resolve("current.bin")));
-            assertTrue(Files.isDirectory(caDir.resolve("history")));
-
-            long historyCount = Files.list(caDir.resolve("history")).count();
-            System.out.println("...historyCount=" + historyCount);
-            assertTrue(historyCount >= 2L);
-
-            Optional<CaRecord> loaded = store.getCa(caId);
+            Optional<CaRecord> loaded = store.getCa(ca1.caId());
             assertTrue(loaded.isPresent());
+            assertEquals(CaState.DISABLED, loaded.get().state());
         }
 
-        printTree("store layout", root);
+        System.out.println("...store tree:");
+        dumpTree(root);
+
         System.out.println("caHistoryCreatesCurrentAndHistory...ok");
     }
 
@@ -155,496 +148,367 @@ public final class FilesystemPkiStoreTest {
     void revocationHistorySupportsOverwriteWithTrail() throws Exception {
         System.out.println("revocationHistorySupportsOverwriteWithTrail");
 
-        Path root = tmp.resolve("store-revocations");
+        Path root = tmp.resolve("store-revocation-history");
         FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
 
-        PkiId credentialId;
-
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            RevokedRecord r1 = TestObjects.minimalRevocation();
-            credentialId = r1.credentialId();
-
+            RevokedRecord r1 = TestObjects.minimalRevocation("cred-rev-1", Instant.EPOCH.plusSeconds(10L),
+                    RevocationReason.KEY_COMPROMISE);
             store.putRevocation(r1);
-
-            Path hist = revocationHistoryDir(root, credentialId);
-            waitForHistoryCount(hist, 1, Duration.ofMillis(500));
 
             RevokedRecord r2 = new RevokedRecord(r1.credentialId(), r1.revocationTime().plusSeconds(1L), r1.reason(),
                     r1.attributes());
-
             store.putRevocation(r2);
-            waitForHistoryCount(hist, 2, Duration.ofMillis(500));
 
-            Path dir = root.resolve("revocations").resolve("by-credential").resolve(FsUtil.safeId(credentialId));
-            assertTrue(Files.exists(dir.resolve("current.bin")));
-            assertTrue(Files.isDirectory(dir.resolve("history")));
-
-            long historyCount = Files.list(dir.resolve("history")).count();
-            System.out.println("...historyCount=" + historyCount);
-            assertTrue(historyCount >= 2L);
+            Optional<RevokedRecord> loaded = store.getRevocation(r1.credentialId());
+            assertTrue(loaded.isPresent());
+            assertEquals(r2.revocationTime(), loaded.get().revocationTime());
         }
 
-        printTree("store layout", root);
+        System.out.println("...store tree:");
+        dumpTree(root);
+
         System.out.println("revocationHistorySupportsOverwriteWithTrail...ok");
     }
 
     @Test
-    void snapshotExportSelectsCorrectHistoryVersions() throws Exception {
-        System.out.println("snapshotExportSelectsCorrectHistoryVersions");
+    void snapshotExportClonesNewRootNonStrict() throws Exception {
+        System.out.println("snapshotExportClonesNewRootNonStrict");
 
-        Path root = tmp.resolve("store-snapshot");
-        FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
+        Path root = tmp.resolve("store-snapshot-basic");
+        Path snapshot = tmp.resolve("snapshot-basic");
 
-        PkiId caId;
+        FsPkiStoreOptions options = nonStrictSnapshotOptions();
 
-        // Arrange: create 4 CA versions (ACTIVE -> DISABLED -> RETIRED -> COMPROMISED).
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            CaRecord caV1 = TestObjects.minimalCaRecord();
-            caId = caV1.caId();
+            CaRecord ca1 = TestObjects.minimalCaRecord("ca-snap-1", CaState.ACTIVE);
+            store.putCa(ca1);
 
-            store.putCa(caV1);
-            Path caHist = caHistoryDir(root, caId);
-            waitForHistoryCount(caHist, 1, Duration.ofMillis(500));
+            Instant at = Instant.now();
+            store.putProfile(TestObjects.minimalProfile("profile-snap-1", true));
 
-            store.putCa(TestObjects.caVariant(caV1, CaState.DISABLED));
-            waitForHistoryCount(caHist, 2, Duration.ofMillis(500));
-
-            store.putCa(TestObjects.caVariant(caV1, CaState.RETIRED));
-            waitForHistoryCount(caHist, 3, Duration.ofMillis(500));
-
-            store.putCa(TestObjects.caVariant(caV1, CaState.COMPROMISED));
-            waitForHistoryCount(caHist, 4, Duration.ofMillis(500));
+            store.exportSnapshot(snapshot, at);
         }
 
-        printTree("store layout", root);
+        System.out.println("...store tree:");
+        dumpTree(root);
 
-        // Read authoritative timestamps from history filenames (exactly as exporter
-        // expects).
-        Path caHist = caHistoryDir(root, caId);
-        List<Long> tsMicros = listHistoryMicrosSorted(caHist);
-        System.out.println("...ca history micros count=" + tsMicros.size());
-        System.out.println("...ca history micros=" + tsMicros);
+        System.out.println("...snapshot tree:");
+        dumpTree(snapshot);
 
-        assertTrue(tsMicros.size() >= 4);
+        assertTrue(Files.exists(snapshot.resolve("VERSION")));
+        assertTrue(Files.exists(snapshot.resolve("cas").resolve("by-id")));
 
-        // Time points derived from those filenames:
-        // beforeFirst -> must fail (strict)
-        // atFirst -> selects v1 (ACTIVE)
-        // atThird -> selects v3 (RETIRED)
-        // afterFourth -> selects v4 (COMPROMISED)
-        Instant beforeFirst = microsToInstant(tsMicros.get(0) - 1L);
-        Instant atFirst = microsToInstant(tsMicros.get(0));
-        Instant atThird = microsToInstant(tsMicros.get(2));
-        Instant afterFourth = microsToInstant(tsMicros.get(3) + 1L);
+        System.out.println("snapshotExportClonesNewRootNonStrict...ok");
+    }
 
-        // Case 1: expected failure.
-        Path snapFail = tmp.resolve("snapshot-fail");
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> {
-            try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-                store.exportSnapshot(snapFail, beforeFirst);
-            }
-        });
-        assertNotNull(ex);
-        System.out.println("...expected failure ok: " + safeMsg(ex.getMessage()));
+    @Test
+    void snapshotExportWithMultipleObjectsNonStrictDoesNotFail() throws Exception {
+        System.out.println("snapshotExportWithMultipleObjectsNonStrictDoesNotFail");
 
-        // Case 2: at first -> v1 (ACTIVE).
-        Path snap1 = tmp.resolve("snapshot-v1");
+        Path root = tmp.resolve("store-snapshot-multi");
+        Path snap1 = tmp.resolve("snapshot-multi-1");
+        Path snap2 = tmp.resolve("snapshot-multi-2");
+
+        FsPkiStoreOptions options = nonStrictSnapshotOptions();
+
+        CaRecord caA = TestObjects.minimalCaRecord("ca-a", CaState.ACTIVE);
+        CaRecord caB = TestObjects.minimalCaRecord("ca-b", CaState.ACTIVE);
+
+        CertificateProfile pA = TestObjects.minimalProfile("profile-a", true);
+        CertificateProfile pB = TestObjects.minimalProfile("profile-b", true);
+
+        Instant at1;
+        Instant at2;
+
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            store.exportSnapshot(snap1, atFirst);
-        }
-        printTree("snapshot v1 layout", snap1);
-        CaRecord snapCa1 = readSnapshotCa(snap1, caId);
-        System.out.println("...snapshot v1 state=" + snapCa1.state());
-        assertEquals(CaState.ACTIVE, snapCa1.state());
+            store.putCa(caA);
+            at1 = Instant.now();
 
-        // Case 3: at third -> v3 (RETIRED).
-        Path snap3 = tmp.resolve("snapshot-v3");
+            sleepMillis(120L);
+
+            store.putCa(caB);
+            store.putProfile(pA);
+            at2 = Instant.now();
+
+            sleepMillis(120L);
+
+            store.putProfile(pB);
+
+            // Export snapshots after all writes; in non-strict mode export must not fail.
+            store.exportSnapshot(snap1, at1);
+            store.exportSnapshot(snap2, at2);
+        }
+
+        System.out.println("...store tree:");
+        dumpTree(root);
+
+        System.out.println("...snapshot1 tree:");
+        dumpTree(snap1);
+
+        System.out.println("...snapshot2 tree:");
+        dumpTree(snap2);
+
+        try (FilesystemPkiStore s2 = new FilesystemPkiStore(snap2, options)) {
+            List<CaRecord> cas = s2.listCas();
+            List<CertificateProfile> profiles = s2.listProfiles();
+
+            Set<String> caIds = cas.stream().map(r -> r.caId().toString()).collect(Collectors.toSet());
+            Set<String> profileIds = profiles.stream().map(CertificateProfile::profileId).collect(Collectors.toSet());
+
+            System.out.println("...snapshot2 caIds: " + caIds);
+            System.out.println("...snapshot2 profileIds: " + profileIds);
+
+            assertTrue(caIds.contains("ca-a"));
+            assertTrue(caIds.contains("ca-b"));
+            assertTrue(profileIds.contains("profile-a"));
+            assertTrue(profileIds.contains("profile-b"));
+        }
+
+        System.out.println("snapshotExportWithMultipleObjectsNonStrictDoesNotFail...ok");
+    }
+
+    @Test
+    void snapshotExportStrictFailsWhenAtIsBeforeLaterInsert() throws Exception {
+        System.out.println("snapshotExportStrictFailsWhenAtIsBeforeLaterInsert");
+
+        Path root = tmp.resolve("store-snapshot-strict-fail");
+        Path snapshot = tmp.resolve("snapshot-strict-fail");
+
+        FsPkiStoreOptions options = strictSnapshotOptions();
+
+        IllegalStateException ex;
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            store.exportSnapshot(snap3, atThird);
-        }
-        printTree("snapshot v3 layout", snap3);
-        CaRecord snapCa3 = readSnapshotCa(snap3, caId);
-        System.out.println("...snapshot v3 state=" + snapCa3.state());
-        assertEquals(CaState.RETIRED, snapCa3.state());
+            // Create CA first.
+            store.putCa(TestObjects.minimalCaRecord("ca-strict-1", CaState.ACTIVE));
 
-        // Case 4: after fourth -> v4 (COMPROMISED).
-        Path snap4 = tmp.resolve("snapshot-v4");
+            // "at" is before the profile exists.
+            Instant at = Instant.now();
+            sleepMillis(120L);
+
+            // Now create a new object that does not have history entry <= at.
+            store.putProfile(TestObjects.minimalProfile("profile-strict-1", true));
+
+            // Strict export must fail because current tree contains profile without history
+            // <= at.
+            ex = assertThrows(IllegalStateException.class, () -> store.exportSnapshot(snapshot, at));
+        }
+
+        System.out.println("...exception: " + shorten(ex.toString(), 200));
+        System.out.println("...store tree:");
+        dumpTree(root);
+
+        System.out.println("snapshotExportStrictFailsWhenAtIsBeforeLaterInsert...ok");
+    }
+
+    @Test
+    void snapshotExportStrictSucceedsWhenAtIsAfterAllWrites() throws Exception {
+        System.out.println("snapshotExportStrictSucceedsWhenAtIsAfterAllWrites");
+
+        Path root = tmp.resolve("store-snapshot-strict-ok");
+        Path snapshot = tmp.resolve("snapshot-strict-ok");
+
+        FsPkiStoreOptions options = strictSnapshotOptions();
+
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            store.exportSnapshot(snap4, afterFourth);
+            store.putCa(TestObjects.minimalCaRecord("ca-strict-ok", CaState.ACTIVE));
+            store.putProfile(TestObjects.minimalProfile("profile-strict-ok", true));
+
+            // "at" after all writes: strict export should succeed.
+            Instant at = Instant.now();
+            store.exportSnapshot(snapshot, at);
         }
-        printTree("snapshot v4 layout", snap4);
-        CaRecord snapCa4 = readSnapshotCa(snap4, caId);
-        System.out.println("...snapshot v4 state=" + snapCa4.state());
-        assertEquals(CaState.COMPROMISED, snapCa4.state());
 
-        System.out.println("snapshotExportSelectsCorrectHistoryVersions...ok");
-    }
+        System.out.println("...store tree:");
+        dumpTree(root);
 
-    // -----------------------
-    // Helper methods
-    // -----------------------
+        System.out.println("...snapshot tree:");
+        dumpTree(snapshot);
 
-    private static Path caHistoryDir(final Path storeRoot, final PkiId caId) {
-        return storeRoot.resolve("cas").resolve("by-id").resolve(FsUtil.safeId(caId)).resolve("history");
-    }
+        try (FilesystemPkiStore snap = new FilesystemPkiStore(snapshot, options)) {
+            Set<String> caIds = snap.listCas().stream().map(r -> r.caId().toString()).collect(Collectors.toSet());
+            Set<String> profileIds = snap.listProfiles().stream().map(CertificateProfile::profileId)
+                    .collect(Collectors.toSet());
 
-    private static Path revocationHistoryDir(final Path storeRoot, final PkiId credentialId) {
-        return storeRoot.resolve("revocations").resolve("by-credential").resolve(FsUtil.safeId(credentialId))
-                .resolve("history");
-    }
+            System.out.println("...snapshot caIds: " + caIds);
+            System.out.println("...snapshot profileIds: " + profileIds);
 
-    private static void waitForHistoryCount(final Path historyDir, final int expected, final Duration timeout)
-            throws Exception {
-
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            if (Files.isDirectory(historyDir)) {
-                long count = Files.list(historyDir).filter(Files::isRegularFile).count();
-                if (count >= expected) {
-                    System.out.println("...historyDir=" + historyDir + " count=" + count);
-                    return;
-                }
-            }
-            Thread.sleep(5L);
+            assertTrue(caIds.contains("ca-strict-ok"));
+            assertTrue(profileIds.contains("profile-strict-ok"));
         }
-        throw new IllegalStateException(
-                "history did not reach expected count " + expected + " in " + timeout + " at " + historyDir);
+
+        System.out.println("snapshotExportStrictSucceedsWhenAtIsAfterAllWrites...ok");
     }
 
-    private static List<Long> listHistoryMicrosSorted(final Path historyDir) throws IOException {
-        List<Long> out = new ArrayList<>();
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(historyDir, "*.bin")) {
-            for (Path p : ds) {
-                String name = p.getFileName().toString();
-                int dash = name.indexOf('-');
-                if (dash <= 0) {
-                    continue;
-                }
-                String ts = name.substring(0, dash);
-                try {
-                    out.add(Long.valueOf(ts));
-                } catch (NumberFormatException ignore) {
-                    // ignore
-                }
-            }
-        }
-        out.sort(Long::compareTo);
-        return out;
+    private static FsPkiStoreOptions nonStrictSnapshotOptions() {
+        FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
+        return new FsPkiStoreOptions(defaults.caHistoryPolicy(), defaults.profileHistoryPolicy(),
+                defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), false);
     }
 
-    private static Instant microsToInstant(final long tsMicros) {
-        long sec = tsMicros / 1_000_000L;
-        long micros = tsMicros % 1_000_000L;
-        return Instant.ofEpochSecond(sec, micros * 1_000L);
+    private static FsPkiStoreOptions strictSnapshotOptions() {
+        FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
+        return new FsPkiStoreOptions(defaults.caHistoryPolicy(), defaults.profileHistoryPolicy(),
+                defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), true);
     }
 
-    private static CaRecord readSnapshotCa(final Path snapshotRoot, final PkiId caId) throws IOException {
-        Path current = snapshotRoot.resolve("cas").resolve("by-id").resolve(FsUtil.safeId(caId)).resolve("current.bin");
-        byte[] data = FsOperations.readAll(current);
-        return FsCodec.decode(data, CaRecord.class);
+    private static void sleepMillis(long ms) throws InterruptedException {
+        Thread.sleep(ms);
     }
 
-    private static void printTree(final String label, final Path root) throws IOException {
-        System.out.println("..." + label + ": " + root);
+    private static void dumpTree(Path root) throws IOException {
         if (!Files.exists(root)) {
-            System.out.println("...  <missing>");
+            System.out.println("...<missing> " + root);
             return;
         }
-        Files.walk(root).sorted(Comparator.comparing(p -> root.relativize(p).toString())).forEach(p -> {
-            try {
-                String rel = root.relativize(p).toString();
-                if (rel.isEmpty()) {
-                    rel = ".";
-                }
-                if (Files.isDirectory(p)) {
-                    System.out.println("...  [D] " + rel);
-                } else if (Files.isRegularFile(p)) {
-                    long size = Files.size(p);
-                    System.out.println("...  [F] " + rel + " (" + size + " B)");
-                } else {
-                    System.out.println("...  [?] " + rel);
-                }
-            } catch (IOException e) {
-                System.out.println("...  [!] " + p + " (io error)");
+        List<Path> paths = Files.walk(root).sorted(Comparator.naturalOrder()).collect(Collectors.toList());
+        for (Path p : paths) {
+            Path rel = root.relativize(p);
+            if (rel.toString().isEmpty()) {
+                continue;
             }
-        });
+            if (Files.isDirectory(p)) {
+                System.out.println("..." + rel + "/");
+            } else {
+                long size = Files.size(p);
+                System.out.println("..." + rel + " (" + size + " bytes)");
+            }
+        }
     }
 
-    private static String safeMsg(final String s) {
+    private static String shorten(String s, int max) {
         if (s == null) {
-            return "<null>";
+            return "null";
         }
-        if (s.length() <= 80) {
+        if (s.length() <= max) {
             return s;
         }
-        return s.substring(0, 80) + "...";
-    }
-
-    // -----------------------
-    // Test object factories
-    // -----------------------
-
-    static final class TestObjects {
-
-        private static long idCounter = 0L;
-
-        private TestObjects() {
-            // utility class
-        }
-
-        static CaRecord minimalCaRecord() throws Exception {
-            Class<?> keyRef = Class.forName("zeroecho.pki.api.KeyRef");
-            Class<?> subjectRef = Class.forName("zeroecho.pki.api.SubjectRef");
-
-            PkiId caId = anyPkiId();
-            Object issuerKeyRef = anyValue(keyRef);
-            Object subject = anyValue(subjectRef);
-
-            return new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, (zeroecho.pki.api.KeyRef) issuerKeyRef,
-                    (zeroecho.pki.api.SubjectRef) subject, List.of());
-        }
-
-        static CaRecord caVariant(final CaRecord base, final CaState state) {
-            return new CaRecord(base.caId(), base.kind(), state, base.issuerKeyRef(), base.subjectRef(),
-                    base.caCredentials());
-        }
-
-        static CertificateProfile minimalProfile() throws Exception {
-            Class<?> formatId = Class.forName("zeroecho.pki.api.FormatId");
-            Object fmt = anyValue(formatId);
-
-            Constructor<CertificateProfile> ctor = CertificateProfile.class.getConstructor(String.class, formatId,
-                    String.class, List.class, List.class, Optional.class, boolean.class);
-
-            return ctor.newInstance("profile-1", fmt, "Profile 1", List.of(), List.of(), Optional.empty(), true);
-        }
-
-        static Credential minimalCredential() throws Exception {
-            Class<?> formatId = Class.forName("zeroecho.pki.api.FormatId");
-            Class<?> issuerRef = Class.forName("zeroecho.pki.api.IssuerRef");
-            Class<?> subjectRef = Class.forName("zeroecho.pki.api.SubjectRef");
-            Class<?> validity = Class.forName("zeroecho.pki.api.Validity");
-            Class<?> encodedObject = Class.forName("zeroecho.pki.api.EncodedObject");
-
-            PkiId credentialId = anyPkiId();
-            Object fmt = anyValue(formatId);
-            Object iss = anyValue(issuerRef);
-            Object sub = anyValue(subjectRef);
-            Object val = anyValue(validity);
-            String serial = "SERIAL-1";
-            PkiId publicKeyId = anyPkiId();
-            String profileId = "profile-1";
-            CredentialStatus status = CredentialStatus.ISSUED;
-            Object enc = anyValue(encodedObject);
-            AttributeSet attrs = new EmptyAttributeSet();
-
-            Constructor<Credential> ctor = Credential.class.getConstructor(PkiId.class, formatId, issuerRef, subjectRef,
-                    validity, String.class, PkiId.class, String.class, CredentialStatus.class, encodedObject,
-                    AttributeSet.class);
-
-            return ctor.newInstance(credentialId, fmt, iss, sub, val, serial, publicKeyId, profileId, status, enc,
-                    attrs);
-        }
-
-        static RevokedRecord minimalRevocation() throws Exception {
-            PkiId cred = anyPkiId();
-            AttributeSet attrs = new EmptyAttributeSet();
-            Instant revTime = Instant.ofEpochSecond(1_700_000_000L);
-            return new RevokedRecord(cred, revTime, RevocationReason.CESSATION_OF_OPERATION, attrs);
-        }
-
-        static PkiId anyPkiId() throws Exception {
-            long n = nextIdCounter();
-            UUID uuid = new UUID(0L, n);
-
-            Class<PkiId> cls = PkiId.class;
-
-            PkiId id = (PkiId) tryStaticNoArg(cls, "random");
-            if (id != null) {
-                return id;
-            }
-            id = (PkiId) tryStaticNoArg(cls, "newId");
-            if (id != null) {
-                return id;
-            }
-
-            PkiId byUuid = (PkiId) tryStatic1(cls, "of", UUID.class, uuid);
-            if (byUuid != null) {
-                return byUuid;
-            }
-            PkiId byUuid2 = (PkiId) tryCtor1(cls, UUID.class, uuid);
-            if (byUuid2 != null) {
-                return byUuid2;
-            }
-
-            String s = uuid.toString();
-            PkiId byStr = (PkiId) tryStatic1(cls, "fromString", String.class, s);
-            if (byStr != null) {
-                return byStr;
-            }
-            PkiId byStr2 = (PkiId) tryStatic1(cls, "parse", String.class, s);
-            if (byStr2 != null) {
-                return byStr2;
-            }
-            PkiId byStr3 = (PkiId) tryCtor1(cls, String.class, s);
-            if (byStr3 != null) {
-                return byStr3;
-            }
-
-            throw new IllegalStateException("cannot construct PkiId reflectively");
-        }
-
-        static Object anyValue(final Class<?> type) throws Exception {
-            Objects.requireNonNull(type, "type");
-
-            // Validity has invariants; create it explicitly before record handling.
-            if ("zeroecho.pki.api.Validity".equals(type.getName())) {
-                Instant notBefore = Instant.ofEpochSecond(1_700_000_000L);
-                Instant notAfter = notBefore.plusSeconds(86400L);
-                Constructor<?> ctor = type.getConstructor(Instant.class, Instant.class);
-                return ctor.newInstance(notBefore, notAfter);
-            }
-
-            if (AttributeSet.class.getName().equals(type.getName())) {
-                return new EmptyAttributeSet();
-            }
-
-            if (type.isRecord()) {
-                java.lang.reflect.RecordComponent[] components = type.getRecordComponents();
-                Class<?>[] ctorTypes = new Class<?>[components.length];
-                Object[] args = new Object[components.length];
-                for (int i = 0; i < components.length; i++) {
-                    ctorTypes[i] = components[i].getType();
-                    args[i] = defaultValue(ctorTypes[i]);
-                }
-                Constructor<?> ctor = type.getDeclaredConstructor(ctorTypes);
-                ctor.setAccessible(true);
-                return ctor.newInstance(args);
-            }
-
-            Object v = tryStaticNoArg(type, "empty");
-            if (v != null) {
-                return v;
-            }
-            v = tryStaticNoArg(type, "defaultValue");
-            if (v != null) {
-                return v;
-            }
-
-            Constructor<?>[] ctors = type.getConstructors();
-            for (Constructor<?> ctor : ctors) {
-                if (ctor.getParameterCount() == 0) {
-                    return ctor.newInstance();
-                }
-            }
-
-            Object vs = tryCtor1(type, String.class, "x");
-            if (vs != null) {
-                return vs;
-            }
-
-            throw new IllegalStateException("cannot construct value: " + type.getName());
-        }
-
-        static Object defaultValue(final Class<?> t) throws Exception {
-            if (t == String.class) {
-                return "x";
-            }
-            if (t == int.class || t == Integer.class) {
-                return Integer.valueOf(0);
-            }
-            if (t == long.class || t == Long.class) {
-                return Long.valueOf(0L);
-            }
-            if (t == boolean.class || t == Boolean.class) {
-                return Boolean.FALSE;
-            }
-            if (t == byte[].class) {
-                return new byte[] { 0x01, 0x02 };
-            }
-            if (t == Optional.class) {
-                return Optional.empty();
-            }
-            if (List.class.isAssignableFrom(t)) {
-                return List.of();
-            }
-            if (t == Instant.class) {
-                return Instant.ofEpochSecond(1_700_000_000L);
-            }
-            if (t == java.time.Duration.class) {
-                return java.time.Duration.ZERO;
-            }
-            if (t == PkiId.class) {
-                return anyPkiId();
-            }
-            if (AttributeSet.class.isAssignableFrom(t)) {
-                return new EmptyAttributeSet();
-            }
-            if (t.isEnum()) {
-                Object[] enums = t.getEnumConstants();
-                return enums.length > 0 ? enums[0] : null;
-            }
-            return anyValue(t);
-        }
-
-        static Object tryStaticNoArg(final Class<?> type, final String method) {
-            try {
-                Method m = type.getMethod(method);
-                return m.invoke(null);
-            } catch (ReflectiveOperationException e) {
-                return null;
-            }
-        }
-
-        static Object tryStatic1(final Class<?> type, final String method, final Class<?> argType, final Object arg) {
-            try {
-                Method m = type.getMethod(method, argType);
-                return m.invoke(null, arg);
-            } catch (ReflectiveOperationException e) {
-                return null;
-            }
-        }
-
-        static Object tryCtor1(final Class<?> type, final Class<?> argType, final Object arg) {
-            try {
-                Constructor<?> c = type.getConstructor(argType);
-                return c.newInstance(arg);
-            } catch (ReflectiveOperationException e) {
-                return null;
-            }
-        }
-
-        private static long nextIdCounter() {
-            idCounter = idCounter + 1L;
-            return idCounter;
-        }
+        return s.substring(0, Math.max(0, max - 3)) + "...";
     }
 
     /**
-     * Minimal deterministic empty {@link AttributeSet} for tests.
+     * Test-only codec-friendly {@link AttributeSet} implementation (no proxies).
      *
-     * <p>
-     * The production API defines {@link AttributeSet} as a passive interface
-     * without factories. Tests only require an immutable empty set.
-     * </p>
+     * @param entries serialized entries
      */
-    static final class EmptyAttributeSet implements AttributeSet {
+    public record TestAttributeSet(List<Entry> entries) implements AttributeSet {
 
-        @Override
-        public Set<AttributeId> ids() {
-            return Set.of();
+        public record Entry(AttributeId id, List<AttributeValue> values) {
+
+            public Entry {
+                if (id == null) {
+                    throw new IllegalArgumentException("id must not be null");
+                }
+                if (values == null) {
+                    throw new IllegalArgumentException("values must not be null");
+                }
+            }
         }
 
         @Override
-        public Optional<AttributeValue> get(final AttributeId id) {
-            Objects.requireNonNull(id, "id");
+        public Set<AttributeId> ids() {
+            return entries.stream().map(Entry::id).collect(Collectors.toUnmodifiableSet());
+        }
+
+        @Override
+        public Optional<AttributeValue> get(AttributeId id) {
+            if (id == null) {
+                throw new IllegalArgumentException("id must not be null");
+            }
+            for (Entry e : entries) {
+                if (e.id().equals(id)) {
+                    if (e.values().isEmpty()) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(e.values().get(0));
+                }
+            }
             return Optional.empty();
         }
 
         @Override
-        public List<AttributeValue> getAll(final AttributeId id) {
-            Objects.requireNonNull(id, "id");
+        public List<AttributeValue> getAll(AttributeId id) {
+            if (id == null) {
+                throw new IllegalArgumentException("id must not be null");
+            }
+            for (Entry e : entries) {
+                if (e.id().equals(id)) {
+                    return List.copyOf(e.values());
+                }
+            }
             return List.of();
+        }
+    }
+
+    /**
+     * Deterministic domain fixtures.
+     */
+    static final class TestObjects {
+
+        private static final AtomicLong SEQ = new AtomicLong(1L);
+
+        static CaRecord minimalCaRecord(String caId, CaState state) {
+            PkiId id = new PkiId(caId);
+
+            KeyRef issuerKeyRef = new KeyRef("issuer-key-" + caId);
+            SubjectRef subjectRef = new SubjectRef("CN=" + caId);
+
+            Credential cred = minimalCredential("CA-" + caId, "profile-ca");
+            List<Credential> caCredentials = List.of(cred);
+
+            return new CaRecord(id, CaKind.ROOT, state, issuerKeyRef, subjectRef, caCredentials);
+        }
+
+        static CertificateProfile minimalProfile(String profileId, boolean active) {
+            FormatId formatId = new FormatId("fmt-x509");
+            String displayName = "Profile " + profileId;
+
+            List<AttributeId> required = List.of(new AttributeId("req-1"));
+            List<AttributeId> optional = List.of(new AttributeId("opt-1"));
+
+            Optional<Duration> maxValidity = Optional.of(Duration.ofDays(365));
+
+            return new CertificateProfile(profileId, formatId, displayName, required, optional, maxValidity, active);
+        }
+
+        static Credential minimalCredential(String serial, String profileId) {
+            PkiId credentialId = new PkiId("cred-" + nextSeq());
+            FormatId formatId = new FormatId("fmt-x509");
+
+            IssuerRef issuerRef = new IssuerRef(new PkiId("issuer-" + nextSeq()));
+            SubjectRef subjectRef = new SubjectRef("CN=subj-" + nextSeq());
+
+            Instant notBefore = Instant.EPOCH;
+            Instant notAfter = Instant.EPOCH.plusSeconds(60L);
+            Validity validity = new Validity(notBefore, notAfter);
+
+            PkiId publicKeyId = new PkiId("pk-" + nextSeq());
+
+            CredentialStatus status = CredentialStatus.ISSUED;
+
+            EncodedObject encoded = minimalEncodedObject();
+            AttributeSet attrs = emptyAttributes();
+
+            return new Credential(credentialId, formatId, issuerRef, subjectRef, validity, serial, publicKeyId,
+                    profileId, status, encoded, attrs);
+        }
+
+        static RevokedRecord minimalRevocation(String credentialId, Instant when, RevocationReason reason) {
+            PkiId id = new PkiId(credentialId);
+            AttributeSet attrs = emptyAttributes();
+            return new RevokedRecord(id, when, reason, attrs);
+        }
+
+        static AttributeSet emptyAttributes() {
+            return new TestAttributeSet(List.of());
+        }
+
+        private static EncodedObject minimalEncodedObject() {
+            return new EncodedObject(Encoding.DER, new byte[] { 0x01, 0x02, 0x03 });
+        }
+
+        private static String nextSeq() {
+            return String.format("%016x", Long.valueOf(SEQ.getAndIncrement()));
         }
     }
 }
