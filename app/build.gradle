@@ -3,7 +3,7 @@ plugins {
     id 'com.palantir.git-version'
 }
 
-group 'org.egothor'
+group='org.egothor'
 
 dependencies {
     implementation 'org.apache.commons:commons-text'

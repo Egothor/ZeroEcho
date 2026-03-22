@@ -108,11 +108,17 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * PublicKey pub = reloaded.getPublic("site-signing");
  * }</pre>
  */
-public final class KeyringStore {
+public final class KeyringStore { // NOPMD
 
     private static final String MAGIC_HEADER = "# KeyringStore v1";
     private static final String ENTRY_MARKER = "@entry";
     private static final String PREFIX_SPEC = "s."; // marks spec payload keys
+
+    /** Suffix used for persisted public key aliases. */
+    private static final String SUFFIX_PUBLIC = ".pub";
+
+    /** Suffix used for persisted private key aliases. */
+    private static final String SUFFIX_PRIVATE = ".priv";
 
     private final Map<String, Record> byAlias = new LinkedHashMap<>();
 
@@ -163,7 +169,7 @@ public final class KeyringStore {
      * @throws IllegalArgumentException if any argument is invalid
      */
     public void putPublic(String alias, String algorithmId, AlgorithmKeySpec importSpec) {
-        put(alias, algorithmId, Record.Kind.PUBLIC_KEY, importSpec);
+        put(withPublicSuffix(alias), algorithmId, Record.Kind.PUBLIC_KEY, importSpec);
     }
 
     /**
@@ -175,7 +181,7 @@ public final class KeyringStore {
      * @throws IllegalArgumentException if any argument is invalid
      */
     public void putPrivate(String alias, String algorithmId, AlgorithmKeySpec importSpec) {
-        put(alias, algorithmId, Record.Kind.PRIVATE_KEY, importSpec);
+        put(withPrivateSuffix(alias), algorithmId, Record.Kind.PRIVATE_KEY, importSpec);
     }
 
     /**
@@ -197,7 +203,13 @@ public final class KeyringStore {
      * @return true if an entry exists for the alias, false otherwise
      */
     public boolean contains(String alias) {
-        return byAlias.containsKey(alias);
+        if (alias == null) {
+            return false;
+        }
+        if (byAlias.containsKey(alias)) {
+            return true;
+        }
+        return byAlias.containsKey(withPublicSuffix(alias)) || byAlias.containsKey(withPrivateSuffix(alias));
     }
 
     /**
@@ -206,7 +218,11 @@ public final class KeyringStore {
      * @return a new list of aliases; the returned list is mutable but independent
      */
     public List<String> aliases() {
-        return new ArrayList<>(byAlias.keySet());
+        List<String> out = new ArrayList<>(byAlias.size());
+        for (String a : byAlias.keySet()) {
+            out.add(stripKnownSuffix(a));
+        }
+        return out;
     }
 
     /**
@@ -264,7 +280,7 @@ public final class KeyringStore {
      * @throws IllegalArgumentException if alias is missing or not a public key
      */
     public PublicWithId getPublicWithId(String alias) throws GeneralSecurityException {
-        Record r = require(alias, Record.Kind.PUBLIC_KEY);
+        Record r = require(withPublicSuffix(alias), Record.Kind.PUBLIC_KEY);
         AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
         PublicKey key = CryptoAlgorithms.publicKey(r.algorithm, spec);
         return new PublicWithId(r.algorithm, key);
@@ -280,7 +296,7 @@ public final class KeyringStore {
      * @throws IllegalArgumentException if alias is missing or not a private key
      */
     public PrivateWithId getPrivateWithId(String alias) throws GeneralSecurityException {
-        Record r = require(alias, Record.Kind.PRIVATE_KEY);
+        Record r = require(withPrivateSuffix(alias), Record.Kind.PRIVATE_KEY);
         AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
         PrivateKey key = CryptoAlgorithms.privateKey(r.algorithm, spec);
         return new PrivateWithId(r.algorithm, key);
@@ -319,7 +335,7 @@ public final class KeyringStore {
      *                                  a public key
      */
     public PublicKey getPublic(String alias) throws GeneralSecurityException {
-        Record r = require(alias, Record.Kind.PUBLIC_KEY);
+        Record r = require(withPublicSuffix(alias), Record.Kind.PUBLIC_KEY);
         AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
         return CryptoAlgorithms.publicKey(r.algorithm, spec);
     }
@@ -335,9 +351,42 @@ public final class KeyringStore {
      *                                  a private key
      */
     public PrivateKey getPrivate(String alias) throws GeneralSecurityException {
-        Record r = require(alias, Record.Kind.PRIVATE_KEY);
+        Record r = require(withPrivateSuffix(alias), Record.Kind.PRIVATE_KEY);
         AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
         return CryptoAlgorithms.privateKey(r.algorithm, spec);
+    }
+
+    private static String withPublicSuffix(String baseAlias) {
+        if (baseAlias == null || baseAlias.isBlank()) {
+            throw new IllegalArgumentException("alias");
+        }
+        if (baseAlias.endsWith(SUFFIX_PUBLIC)) {
+            return baseAlias;
+        }
+        return baseAlias + SUFFIX_PUBLIC;
+    }
+
+    private static String withPrivateSuffix(String baseAlias) {
+        if (baseAlias == null || baseAlias.isBlank()) {
+            throw new IllegalArgumentException("alias");
+        }
+        if (baseAlias.endsWith(SUFFIX_PRIVATE)) {
+            return baseAlias;
+        }
+        return baseAlias + SUFFIX_PRIVATE;
+    }
+
+    private static String stripKnownSuffix(String alias) {
+        if (alias == null) {
+            return null;
+        }
+        if (alias.endsWith(SUFFIX_PUBLIC)) {
+            return alias.substring(0, alias.length() - SUFFIX_PUBLIC.length());
+        }
+        if (alias.endsWith(SUFFIX_PRIVATE)) {
+            return alias.substring(0, alias.length() - SUFFIX_PRIVATE.length());
+        }
+        return alias;
     }
 
     /**
