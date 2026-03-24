@@ -1,69 +1,108 @@
 /*******************************************************************************
- * Copyright (C) 2025, Leo Galambos
+ * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
+ * 
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ * 
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- *
+ * 
  * 3. All advertising materials mentioning features or use of this software must
  *    display the following acknowledgement:
  *    This product includes software developed by the Egothor project.
- *
+ * 
  * 4. Neither the name of the copyright holder nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 /**
- * Reference crypto boundary provider backed by ZeroEcho lib and
- * {@code KeyringStore}.
+ * ZeroEcho-lib backed cryptographic workflow implementation for PKI signing and
+ * signature verification.
  *
  * <p>
- * This provider resolves {@link zeroecho.pki.api.KeyRef} values to key aliases
- * managed by {@code zeroecho.core.storage.KeyringStore}. Private key material
- * is never returned to PKI; it is materialized only inside the provider
- * implementation to perform signing.
+ * This package contains the ZeroEcho-lib based implementation of the PKI crypto
+ * boundary represented by {@link zeroecho.pki.spi.crypto.SignatureWorkflow}. It
+ * adapts PKI-facing workflow requests to ZeroEcho core cryptographic execution
+ * backed by {@link zeroecho.core.storage.KeyringStore}.
+ * </p>
+ *
+ * <p>
+ * The implementation resolves opaque {@link zeroecho.pki.api.KeyRef} values to
+ * provider-local keyring aliases, loads the corresponding key material within
+ * this boundary, performs signature generation or verification through ZeroEcho
+ * core cryptographic APIs, and returns workflow-oriented operation status
+ * objects to the PKI orchestration layer.
+ * </p>
+ *
+ * <h2>Architectural role</h2>
+ * <ul>
+ * <li>The package acts as an implementation-side crypto boundary, not as a
+ * generic public crypto API.</li>
+ * <li>Public workflow contracts remain defined in
+ * {@link zeroecho.pki.spi.crypto.SignatureWorkflow}.</li>
+ * <li>Private key material is never exported outside this package
+ * boundary.</li>
+ * <li>Key lookup and key loading are delegated to
+ * {@link zeroecho.core.storage.KeyringStore}.</li>
+ * </ul>
+ *
+ * <h2>Execution model</h2>
+ * <p>
+ * The current implementation uses an in-memory workflow registry and executes
+ * submitted sign and verify operations eagerly in the caller thread. Operation
+ * identifiers are still returned so that callers interact through the workflow
+ * contract rather than through direct cryptographic return values.
+ * </p>
+ *
+ * <p>
+ * Operation status and notification registrations are not durably persisted.
+ * They exist only for the lifetime of the provider instance.
  * </p>
  *
  * <h2>KeyRef mapping</h2>
  * <p>
- * This provider supports simple mappings intended for practical deployments:
+ * This package supports provider-specific key reference mappings intended for
+ * practical deployments, typically:
  * </p>
  * <ul>
- * <li>{@code zeroecho-lib:&lt;alias&gt;.prv} for signing</li>
- * <li>{@code zeroecho-lib:&lt;alias&gt;.pub} for verification</li>
+ * <li>{@code zeroecho-lib:&lt;alias&gt;.prv} for signing,</li>
+ * <li>{@code zeroecho-lib:&lt;alias&gt;.pub} for verification.</li>
  * </ul>
  *
  * <p>
- * The alias component may be a UUID string (recommended). The provider does not
- * require UUIDs by default, but a stricter mode can be enabled by
- * configuration.
+ * The alias component may be a UUID string, although the package does not
+ * require UUIDs unless stricter deployment policy is configured externally. PKI
+ * callers must still treat {@link zeroecho.pki.api.KeyRef} as opaque and must
+ * not rely on these internal parsing rules.
  * </p>
  *
- * <h2>Configuration</h2>
+ * <h2>Security considerations</h2>
  * <ul>
- * <li>{@code keyringPath} (required): path to the KeyringStore text file</li>
- * <li>{@code keyRefPrefix} (optional, default {@code "zeroecho-lib:"})</li>
- * <li>{@code requireComponentSuffix} (optional, default {@code true}): require
- * {@code .prv}/{@code .pub}</li>
+ * <li>Private keys are materialized only inside this implementation
+ * boundary.</li>
+ * <li>The package must not log key references, private key material, raw
+ * payload bytes, or raw signature bytes.</li>
+ * <li>Supported algorithm reporting is informational and does not by itself
+ * imply key availability or policy acceptance.</li>
+ * <li>The assurance of the workflow outcome depends on the integrity of the
+ * configured keyring content and on ZeroEcho core cryptographic
+ * implementations.</li>
  * </ul>
  */
 package zeroecho.pki.impl.crypto.zeroecholib;

@@ -1,0 +1,256 @@
+/*******************************************************************************
+ * Copyright (C) 2026, Leo Galambos
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ * 
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ * 
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ * 
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+package zeroecho.pki.impl.framework.x509.bc;
+
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
+
+import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.DefaultSignatureAlgorithmIdentifierFinder;
+
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.audit.AccessContext;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
+import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.core.async.PkiSigningBus.SignContinuation;
+import zeroecho.pki.util.async.AsyncState;
+
+/**
+ * {@link ContentSigner} implementation that delegates the actual signature
+ * operation to {@link PkiSigningBus}.
+ *
+ * <p>
+ * This class adapts the synchronous Bouncy Castle {@link ContentSigner}
+ * contract to the PKI runtime signing boundary represented by
+ * {@link PkiSigningBus}. Bouncy Castle writes the to-be-signed bytes into the
+ * output stream returned by {@link #getOutputStream()}, and when
+ * {@link #getSignature()} is invoked this signer submits the collected bytes to
+ * the PKI signing bus as a delegated sign workflow.
+ * </p>
+ *
+ * <p>
+ * Although the underlying signing path is modeled as a durable asynchronous
+ * workflow, this adapter exposes a synchronous caller experience required by
+ * Bouncy Castle. It therefore blocks in {@link #getSignature()} until the
+ * delegated workflow reaches a terminal state or until the configured
+ * time-to-live expires.
+ * </p>
+ *
+ * <h2>Execution model</h2>
+ * <ul>
+ * <li>The to-be-signed payload is accumulated fully in memory.</li>
+ * <li>A synthetic system owner and purpose are used to submit the signing
+ * operation.</li>
+ * <li>A fresh client operation identifier is generated for each signature
+ * request and canonicalized by the signing bus.</li>
+ * <li>The signer polls the bus by repeatedly calling
+ * {@link PkiSigningBus#sweep(Instant)} and {@link PkiSigningBus#status(PkiId)}
+ * until the workflow succeeds, fails, or times out.</li>
+ * <li>On successful completion or explicit failure, persisted workflow state is
+ * deleted through {@link PkiSigningBus#deleteWorkflowState(PkiId)} before the
+ * method returns or throws.</li>
+ * </ul>
+ *
+ * <h2>Security considerations</h2>
+ * <ul>
+ * <li>This class never accesses private key material directly.</li>
+ * <li>The buffered to-be-signed payload and the returned signature bytes are
+ * operationally sensitive and must not be logged.</li>
+ * <li>The generated operation identifier is an internal workflow handle and
+ * must not be treated as a durable business identifier outside the signing
+ * flow.</li>
+ * </ul>
+ *
+ * <h2>Thread-safety</h2>
+ * <p>
+ * Instances of this class are not thread-safe. Each instance maintains mutable
+ * in-memory state through its internal {@link ByteArrayOutputStream} and is
+ * intended for one certificate or CRL signing flow.
+ * </p>
+ */
+public final class PkiBusContentSigner implements ContentSigner {
+
+    private final PkiSigningBus bus;
+    private final KeyRef keyRef;
+    private final String algorithmId;
+    private final Duration ttl;
+
+    private final ByteArrayOutputStream baos;
+
+    /**
+     * Creates a signer that routes signature generation through the PKI signing
+     * bus.
+     *
+     * @param bus         signing bus used to submit and track the delegated sign
+     *                    workflow; must not be {@code null}
+     * @param keyRef      signing key reference used by the downstream signing
+     *                    boundary; must not be {@code null}
+     * @param algorithmId non-blank signature algorithm identifier in JCA naming
+     *                    form; must not be {@code null} or blank
+     * @param ttl         positive maximum time to wait for delegated signing
+     *                    completion; must not be {@code null}, zero, or negative
+     * @throws IllegalArgumentException if any argument violates the described
+     *                                  contract
+     */
+    public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, String algorithmId, Duration ttl) {
+        if (bus == null) {
+            throw new IllegalArgumentException("bus must not be null");
+        }
+        if (keyRef == null) {
+            throw new IllegalArgumentException("keyRef must not be null");
+        }
+        if (algorithmId == null || algorithmId.isBlank()) {
+            throw new IllegalArgumentException("algorithmId must not be null/blank");
+        }
+        if (ttl == null || ttl.isZero() || ttl.isNegative()) {
+            throw new IllegalArgumentException("ttl must be positive");
+        }
+        this.bus = bus;
+        this.keyRef = keyRef;
+        this.algorithmId = algorithmId;
+        this.ttl = ttl;
+        this.baos = new ByteArrayOutputStream();
+    }
+
+    /**
+     * Returns the ASN.1 algorithm identifier corresponding to the configured
+     * signature algorithm name.
+     *
+     * <p>
+     * This method is used by Bouncy Castle to encode signature algorithm metadata
+     * into the produced signed object.
+     * </p>
+     *
+     * @return ASN.1 signature algorithm identifier
+     * @throws RuntimeException if Bouncy Castle cannot resolve the configured
+     *                          signature algorithm identifier
+     */
+    @Override
+    public AlgorithmIdentifier getAlgorithmIdentifier() {
+        return new DefaultSignatureAlgorithmIdentifierFinder().find(algorithmId);
+    }
+
+    /**
+     * Returns the output stream used to collect the to-be-signed bytes.
+     *
+     * <p>
+     * Data written to this stream is buffered in memory until
+     * {@link #getSignature()} is called.
+     * </p>
+     *
+     * @return mutable in-memory output stream receiving the to-be-signed payload
+     */
+    @Override
+    public OutputStream getOutputStream() {
+        return baos;
+    }
+
+    /**
+     * Submits the buffered to-be-signed payload to the PKI signing bus and waits
+     * for the resulting signature bytes.
+     *
+     * <p>
+     * The method creates a synthetic system-owned signing workflow using purpose
+     * {@code X509_SIGN}, submits it to {@link PkiSigningBus}, and then polls the
+     * bus until one of the following terminal conditions occurs:
+     * </p>
+     * <ul>
+     * <li>the workflow succeeds and produces a signature result,</li>
+     * <li>the workflow fails,</li>
+     * <li>the configured TTL expires before completion.</li>
+     * </ul>
+     *
+     * <p>
+     * On successful completion, the signature bytes contained in the workflow
+     * result are returned. If the workflow reports success but no result is
+     * available, the method fails explicitly. On terminal success or failure, the
+     * persisted workflow state is deleted before the method returns or throws.
+     * </p>
+     *
+     * <p>
+     * This method does not retry with a new operation identifier and does not
+     * attempt recovery from workflow inconsistency beyond raising a
+     * {@link PkiException}.
+     * </p>
+     *
+     * @return raw signature bytes produced by the delegated sign workflow
+     * @throws PkiException if the signing workflow fails, if a successful workflow
+     *                      produces no signature result, or if signing does not
+     *                      complete within the configured TTL
+     */
+    @Override
+    public byte[] getSignature() {
+        byte[] tbs = baos.toByteArray();
+        EncodedObject payload = new EncodedObject(Encoding.BINARY, tbs);
+
+        Principal owner = new Principal("SYSTEM", "pki");
+        PkiId clientOpId = new PkiId("sign:" + Integer.toUnsignedString(System.identityHashCode(this)) + ":"
+                + Long.toUnsignedString(System.nanoTime()));
+        PkiId opId = bus.canonicalizeOperationId(clientOpId, owner);
+
+        AccessContext ac = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(), Optional.empty());
+        SignContinuation cont = new SignContinuation(ac, algorithmId, payload, keyRef, Encoding.BINARY,
+                Optional.empty());
+
+        bus.submitSign(opId, owner, keyRef, algorithmId, payload, ttl, Optional.of(cont.encode()));
+
+        Instant deadline = Instant.now().plus(ttl);
+        while (Instant.now().isBefore(deadline)) {
+            bus.sweep(Instant.now());
+            Optional<zeroecho.pki.util.async.AsyncStatus> st = bus.status(opId);
+            if (st.isPresent() && st.get().state() == AsyncState.SUCCEEDED) {
+                Optional<EncodedObject> res = bus.consumeResult(opId);
+                bus.deleteWorkflowState(opId);
+                if (res.isEmpty()) {
+                    throw new PkiException("Missing signature result");
+                }
+                return res.get().bytes();
+            }
+            if (st.isPresent() && st.get().state() == AsyncState.FAILED) {
+                bus.deleteWorkflowState(opId);
+                throw new PkiException("Signing failed");
+            }
+        }
+        throw new PkiException("Signing did not complete before TTL");
+    }
+}

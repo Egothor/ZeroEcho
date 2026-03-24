@@ -1,12 +1,12 @@
 /*******************************************************************************
- * Copyright (C) 2025, Leo Galambos
+ * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
  *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
  *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
@@ -17,20 +17,19 @@
  *    This product includes software developed by the Egothor project.
  *
  * 4. Neither the name of the copyright holder nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
@@ -80,7 +79,7 @@ import zeroecho.core.io.Util;
  * boxed when represented as {@link Object}.
  * </p>
  */
-@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.NcssCount" })
+@SuppressWarnings("PMD.CyclomaticComplexity")
 final class FsCodec {
 
     private static final int MAX_STRING_BYTES = 256 * 1024;
@@ -148,136 +147,168 @@ final class FsCodec {
 
         out.write(MAGIC_COMPACT);
 
-        // Use a switch with patterns to avoid long if/else chains and keep the hot path
-        // compact.
         switch (value) {
-            case String s -> {
-                out.write(TAG_STRING);
-                Util.writeUTF8(out, s);
-            }
-            case Integer i -> {
-                out.write(TAG_INT);
-                Util.writePack7I(out, i);
-            }
-            case Long l -> {
-                out.write(TAG_LONG);
-                Util.writePack7L(out, l);
-            }
-            case Boolean b -> {
-                out.write(TAG_BOOL);
-                out.write(b ? 1 : 0);
-            }
-            case byte[] bytes -> {
-                out.write(TAG_BYTES);
-                Util.write(out, bytes);
-            }
-            case Instant instant -> {
-                out.write(TAG_INSTANT);
-                Util.writeLong(out, instant.getEpochSecond());
-                Util.writePack7I(out, instant.getNano());
-            }
-            case Duration duration -> {
-                out.write(TAG_DURATION);
-                Util.writeLong(out, duration.getSeconds());
-                Util.writePack7I(out, duration.getNano());
-            }
-            case java.util.List<?> list -> {
-                out.write(TAG_LIST);
-                Util.writePack7I(out, list.size());
-                for (Object element : list) {
-                    Objects.requireNonNull(element, "list element must not be null");
-                    writeAnyCompact(out, element);
-                }
-            }
-            case java.util.Set<?> set -> {
-                out.write(TAG_SET);
-
-                // Deterministic ordering: encode sets in a stable order.
-                // Use natural order when possible; otherwise order by stable string key.
-                java.util.List<Object> ordered = new java.util.ArrayList<>(set.size());
-                ordered.addAll(set);
-
-                ordered.sort((a, b) -> {
-                    if (a == b) { // NOPMD
-                        return 0;
-                    }
-                    if (a == null) {
-                        return -1;
-                    }
-                    if (b == null) {
-                        return 1;
-                    }
-                    if (a instanceof Comparable<?> && a.getClass() == b.getClass()) {
-                        @SuppressWarnings("unchecked")
-                        Comparable<Object> ca = (Comparable<Object>) a;
-                        return ca.compareTo(b);
-                    }
-                    return stableSortKey(a).compareTo(stableSortKey(b));
-                });
-
-                Util.writePack7I(out, ordered.size());
-                for (Object element : ordered) {
-                    Objects.requireNonNull(element, "set element must not be null");
-                    writeAnyCompact(out, element);
-                }
-            }
-            case java.util.Optional<?> opt -> {
-                out.write(TAG_OPTIONAL);
-                if (opt.isPresent()) {
-                    out.write(1);
-                    Object element = opt.get();
-                    Objects.requireNonNull(element, "optional element must not be null");
-                    writeAnyCompact(out, element);
-                } else {
-                    out.write(0);
-                }
-            }
-            default -> {
-                Class<?> type = value.getClass();
-
-                if (type.isEnum()) {
-                    out.write(TAG_ENUM);
-                    // Enum: write declaring class name once + ordinal.
-                    Util.writeUTF8(out, type.getName());
-                    Enum<?> e = (Enum<?>) value;
-                    Util.writePack7I(out, e.ordinal());
-                    return;
-                }
-
-                if (type.isRecord()) {
-                    out.write(TAG_RECORD);
-                    // Record: write record class name once + component values (encoded compactly).
-                    Util.writeUTF8(out, type.getName());
-                    RecordComponent[] components = type.getRecordComponents();
-                    Util.writePack7I(out, components.length);
-                    for (RecordComponent c : components) {
-                        try {
-                            Method accessor = c.getAccessor();
-                            Object componentValue = accessor.invoke(value);
-                            // Preserve existing invariant: no null components in storage.
-                            Objects.requireNonNull(componentValue,
-                                    "record component " + type.getName() + "." + c.getName());
-                            writeAnyCompact(out, componentValue);
-                        } catch (IllegalAccessException | InvocationTargetException ex) {
-                            throw new IllegalStateException(
-                                    "record encode failed: " + type.getName() + "." + c.getName(), ex);
-                        }
-                    }
-                    return;
-                }
-
-                // Fallback: encode as string + type name (still far smaller than
-                // legacy-per-component).
-                out.write(TAG_FALLBACK_STRING);
-                Util.writeUTF8(out, type.getName());
-                Util.writeUTF8(out, value.toString());
-            }
+            case String s -> writeStringCompact(out, s);
+            case Integer i -> writeIntegerCompact(out, i);
+            case Long l -> writeLongCompact(out, l);
+            case Boolean b -> writeBooleanCompact(out, b);
+            case byte[] bytes -> writeBytesCompact(out, bytes);
+            case Instant instant -> writeInstantCompact(out, instant);
+            case Duration duration -> writeDurationCompact(out, duration);
+            case java.util.List<?> list -> writeListCompact(out, list);
+            case java.util.Set<?> set -> writeSetCompact(out, set);
+            case java.util.Optional<?> optional -> writeOptionalCompact(out, optional);
+            default -> writeComplexCompact(out, value);
         }
     }
 
-    private static String stableSortKey(Object o) {
-        // Deterministic, non-sensitive: class name + toString.
-        // Note: do not use identity hash code; it is non-deterministic across runs.
+    private static void writeStringCompact(final OutputStream out, final String value) throws IOException {
+        out.write(TAG_STRING);
+        Util.writeUTF8(out, value);
+    }
+
+    private static void writeIntegerCompact(final OutputStream out, final Integer value) throws IOException {
+        out.write(TAG_INT);
+        Util.writePack7I(out, value);
+    }
+
+    private static void writeLongCompact(final OutputStream out, final Long value) throws IOException {
+        out.write(TAG_LONG);
+        Util.writePack7L(out, value);
+    }
+
+    private static void writeBooleanCompact(final OutputStream out, final Boolean value) throws IOException {
+        out.write(TAG_BOOL);
+        out.write(value ? 1 : 0);
+    }
+
+    private static void writeBytesCompact(final OutputStream out, final byte[] value) throws IOException {
+        out.write(TAG_BYTES);
+        Util.write(out, value);
+    }
+
+    private static void writeInstantCompact(final OutputStream out, final Instant value) throws IOException {
+        out.write(TAG_INSTANT);
+        Util.writeLong(out, value.getEpochSecond());
+        Util.writePack7I(out, value.getNano());
+    }
+
+    private static void writeDurationCompact(final OutputStream out, final Duration value) throws IOException {
+        out.write(TAG_DURATION);
+        Util.writeLong(out, value.getSeconds());
+        Util.writePack7I(out, value.getNano());
+    }
+
+    private static void writeListCompact(final OutputStream out, final java.util.List<?> list) throws IOException {
+        out.write(TAG_LIST);
+        Util.writePack7I(out, list.size());
+        for (Object element : list) {
+            Objects.requireNonNull(element, "list element must not be null");
+            writeAnyCompact(out, element);
+        }
+    }
+
+    private static void writeSetCompact(final OutputStream out, final java.util.Set<?> set) throws IOException {
+        out.write(TAG_SET);
+
+        java.util.List<Object> ordered = new java.util.ArrayList<>(set.size());
+        ordered.addAll(set);
+        sortSetElementsDeterministically(ordered);
+
+        Util.writePack7I(out, ordered.size());
+        for (Object element : ordered) {
+            Objects.requireNonNull(element, "set element must not be null");
+            writeAnyCompact(out, element);
+        }
+    }
+
+    private static void sortSetElementsDeterministically(final java.util.List<Object> ordered) {
+        ordered.sort((a, b) -> {
+            if (a == b) { // NOPMD
+                return 0;
+            }
+            if (a == null) {
+                return -1;
+            }
+            if (b == null) {
+                return 1;
+            }
+            if (a instanceof Comparable<?> && a.getClass() == b.getClass()) {
+                @SuppressWarnings("unchecked")
+                Comparable<Object> comparable = (Comparable<Object>) a;
+                return comparable.compareTo(b);
+            }
+            return stableSortKey(a).compareTo(stableSortKey(b));
+        });
+    }
+
+    private static void writeOptionalCompact(final OutputStream out, final java.util.Optional<?> optional)
+            throws IOException {
+        out.write(TAG_OPTIONAL);
+        if (optional.isPresent()) {
+            out.write(1);
+            Object element = optional.get();
+            Objects.requireNonNull(element, "optional element must not be null");
+            writeAnyCompact(out, element);
+            return;
+        }
+        out.write(0);
+    }
+
+    private static void writeComplexCompact(final OutputStream out, final Object value) throws IOException {
+        Class<?> type = value.getClass();
+        if (type.isEnum()) {
+            writeEnumCompact(out, type, value);
+            return;
+        }
+        if (type.isRecord()) {
+            writeRecordCompact(out, type, value);
+            return;
+        }
+        writeFallbackStringCompact(out, type, value);
+    }
+
+    private static void writeEnumCompact(final OutputStream out, final Class<?> type, final Object value)
+            throws IOException {
+        out.write(TAG_ENUM);
+        Util.writeUTF8(out, type.getName());
+        Enum<?> enumValue = (Enum<?>) value;
+        Util.writePack7I(out, enumValue.ordinal());
+    }
+
+    private static void writeRecordCompact(final OutputStream out, final Class<?> type, final Object value)
+            throws IOException {
+        out.write(TAG_RECORD);
+        Util.writeUTF8(out, type.getName());
+
+        RecordComponent[] components = type.getRecordComponents();
+        Util.writePack7I(out, components.length);
+
+        for (RecordComponent component : components) {
+            Object componentValue = invokeRecordAccessor(type, component, value);
+            Objects.requireNonNull(componentValue, "record component " + type.getName() + "." + component.getName());
+            writeAnyCompact(out, componentValue);
+        }
+    }
+
+    private static Object invokeRecordAccessor(final Class<?> type, final RecordComponent component,
+            final Object value) {
+        try {
+            Method accessor = component.getAccessor();
+            return accessor.invoke(value);
+        } catch (IllegalAccessException | InvocationTargetException ex) {
+            throw new IllegalStateException("record encode failed: " + type.getName() + "." + component.getName(), ex);
+        }
+    }
+
+    private static void writeFallbackStringCompact(final OutputStream out, final Class<?> type, final Object value)
+            throws IOException {
+        out.write(TAG_FALLBACK_STRING);
+        Util.writeUTF8(out, type.getName());
+        Util.writeUTF8(out, value.toString());
+    }
+
+    private static String stableSortKey(final Object o) {
         return o.getClass().getName() + ":" + o.toString();
     }
 
@@ -302,7 +333,6 @@ final class FsCodec {
 
         Object value = readByTag(in, tag);
 
-        // Enforce type compatibility (primitive/wrapper tolerant).
         if (!isTypeCompatible(expectedType, value.getClass())) {
             throw new IllegalStateException(
                     "type mismatch, expected " + expectedType.getName() + " but decoded " + value.getClass().getName());
@@ -313,129 +343,169 @@ final class FsCodec {
 
     private static Object readByTag(final InputStream in, final int tag) throws IOException {
         switch (tag) {
-            case TAG_STRING -> {
-                return Util.readUTF8(in, MAX_STRING_BYTES);
-            }
-            case TAG_INT -> {
-                return Util.readPack7I(in);
-            }
-            case TAG_LONG -> {
-                return Util.readPack7L(in);
-            }
-            case TAG_BOOL -> {
-                int b = in.read();
-                if (b < 0) {
-                    throw new IOException("unexpected EOF");
-                }
-                return b != 0;
-            }
-            case TAG_BYTES -> {
-                return Util.read(in, MAX_STRING_BYTES);
-            }
-            case TAG_INSTANT -> {
-                long sec = Util.readLong(in);
-                int nano = Util.readPack7I(in);
-                return Instant.ofEpochSecond(sec, nano);
-            }
-            case TAG_DURATION -> {
-                long sec = Util.readLong(in);
-                int nano = Util.readPack7I(in);
-                return Duration.ofSeconds(sec, nano);
-            }
-            case TAG_ENUM -> {
-                String enumTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
-                Class<?> enumType = loadClass(enumTypeName);
-                if (!enumType.isEnum()) {
-                    throw new IllegalStateException("encoded enum type is not an enum: " + enumTypeName);
-                }
-                int ordinal = Util.readPack7I(in);
-                Object[] constants = enumType.getEnumConstants();
-                if (constants == null || ordinal < 0 || ordinal >= constants.length) {
-                    throw new IllegalStateException("invalid enum ordinal " + ordinal + " for " + enumTypeName);
-                }
-                return constants[ordinal];
-            }
-            case TAG_RECORD -> {
-                String recordTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
-                Class<?> recordType = loadClass(recordTypeName);
-                if (!recordType.isRecord()) {
-                    throw new IllegalStateException("encoded record type is not a record: " + recordTypeName);
-                }
-
-                int componentCount = Util.readPack7I(in);
-                RecordComponent[] components = recordType.getRecordComponents();
-                if (components.length != componentCount) {
-                    throw new IllegalStateException("record component count mismatch for " + recordTypeName
-                            + ", expected " + components.length + " but encoded " + componentCount);
-                }
-
-                Class<?>[] ctorTypes = new Class<?>[components.length];
-                Object[] ctorArgs = new Object[components.length];
-                for (int i = 0; i < components.length; i++) {
-                    RecordComponent c = components[i];
-                    ctorTypes[i] = c.getType();
-                    Object componentValue = readAny(in, ctorTypes[i]);
-                    ctorArgs[i] = componentValue;
-                }
-
-                try {
-                    return recordType.getDeclaredConstructor(ctorTypes).newInstance(ctorArgs);
-                } catch (ReflectiveOperationException ex) {
-                    throw new IllegalStateException("record decode failed for " + recordTypeName, ex);
-                }
-            }
-            case TAG_FALLBACK_STRING -> {
-                String typeName = Util.readUTF8(in, MAX_STRING_BYTES);
-                String s = Util.readUTF8(in, MAX_STRING_BYTES);
-                Class<?> type = loadClass(typeName);
-
-                // string factory: of(String) or valueOf(String) or ctor(String)
-                Method of = findStringFactory(type);
-                if (of != null) {
-                    try {
-                        return of.invoke(null, s);
-                    } catch (ReflectiveOperationException ex) {
-                        throw new IllegalStateException("from-string factory failed for " + type.getName(), ex);
-                    }
-                }
-                try {
-                    return type.getConstructor(String.class).newInstance(s);
-                } catch (ReflectiveOperationException ex) {
-                    throw new IllegalStateException(
-                            "unsupported value type without from-string factory: " + type.getName(), ex);
-                }
-            }
-            case TAG_LIST -> {
-                int n = Util.readPack7I(in);
-                java.util.List<Object> out = new java.util.ArrayList<>(n);
-                for (int i = 0; i < n; i++) {
-                    Object element = readAny(in, Object.class);
-                    out.add(element);
-                }
-                return java.util.List.copyOf(out);
-            }
-            case TAG_SET -> {
-                int n = Util.readPack7I(in);
-                java.util.Set<Object> out = new java.util.LinkedHashSet<>(n);
-                for (int i = 0; i < n; i++) {
-                    Object element = readAny(in, Object.class);
-                    out.add(element);
-                }
-                return java.util.Set.copyOf(out);
-            }
-            case TAG_OPTIONAL -> {
-                int present = in.read();
-                if (present < 0) {
-                    throw new IOException("unexpected EOF");
-                }
-                if (present == 0) {
-                    return java.util.Optional.empty();
-                }
-                Object element = readAny(in, Object.class);
-                return java.util.Optional.of(element);
-            }
-            default -> throw new IllegalStateException("unknown compact tag: " + tag);
+            case TAG_STRING:
+                return readStringCompact(in);
+            case TAG_INT:
+                return readIntegerCompact(in);
+            case TAG_LONG:
+                return readLongCompact(in);
+            case TAG_BOOL:
+                return readBooleanCompact(in);
+            case TAG_BYTES:
+                return readBytesCompact(in);
+            case TAG_INSTANT:
+                return readInstantCompact(in);
+            case TAG_DURATION:
+                return readDurationCompact(in);
+            case TAG_ENUM:
+                return readEnumCompact(in);
+            case TAG_RECORD:
+                return readRecordCompact(in);
+            case TAG_FALLBACK_STRING:
+                return readFallbackStringCompact(in);
+            case TAG_LIST:
+                return readListCompact(in);
+            case TAG_SET:
+                return readSetCompact(in);
+            case TAG_OPTIONAL:
+                return readOptionalCompact(in);
+            default:
+                throw new IllegalStateException("unknown compact tag: " + tag);
         }
+    }
+
+    private static String readStringCompact(final InputStream in) throws IOException {
+        return Util.readUTF8(in, MAX_STRING_BYTES);
+    }
+
+    private static int readIntegerCompact(final InputStream in) throws IOException {
+        return Util.readPack7I(in);
+    }
+
+    private static long readLongCompact(final InputStream in) throws IOException {
+        return Util.readPack7L(in);
+    }
+
+    private static boolean readBooleanCompact(final InputStream in) throws IOException {
+        int value = in.read();
+        if (value < 0) {
+            throw new IOException("unexpected EOF");
+        }
+        return value != 0;
+    }
+
+    private static byte[] readBytesCompact(final InputStream in) throws IOException {
+        return Util.read(in, MAX_STRING_BYTES);
+    }
+
+    private static Instant readInstantCompact(final InputStream in) throws IOException {
+        long seconds = Util.readLong(in);
+        int nanos = Util.readPack7I(in);
+        return Instant.ofEpochSecond(seconds, nanos);
+    }
+
+    private static Duration readDurationCompact(final InputStream in) throws IOException {
+        long seconds = Util.readLong(in);
+        int nanos = Util.readPack7I(in);
+        return Duration.ofSeconds(seconds, nanos);
+    }
+
+    private static Object readEnumCompact(final InputStream in) throws IOException {
+        String enumTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
+        Class<?> enumType = loadClass(enumTypeName);
+        if (!enumType.isEnum()) {
+            throw new IllegalStateException("encoded enum type is not an enum: " + enumTypeName);
+        }
+
+        int ordinal = Util.readPack7I(in);
+        Object[] constants = enumType.getEnumConstants();
+        if (constants == null || ordinal < 0 || ordinal >= constants.length) {
+            throw new IllegalStateException("invalid enum ordinal " + ordinal + " for " + enumTypeName);
+        }
+        return constants[ordinal];
+    }
+
+    private static Object readRecordCompact(final InputStream in) throws IOException {
+        String recordTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
+        Class<?> recordType = loadClass(recordTypeName);
+        if (!recordType.isRecord()) {
+            throw new IllegalStateException("encoded record type is not a record: " + recordTypeName);
+        }
+
+        int componentCount = Util.readPack7I(in);
+        RecordComponent[] components = recordType.getRecordComponents();
+        if (components.length != componentCount) {
+            throw new IllegalStateException("record component count mismatch for " + recordTypeName + ", expected "
+                    + components.length + " but encoded " + componentCount);
+        }
+
+        Class<?>[] constructorTypes = new Class<?>[components.length];
+        Object[] constructorArgs = new Object[components.length];
+        for (int i = 0; i < components.length; i++) {
+            RecordComponent component = components[i];
+            constructorTypes[i] = component.getType();
+            constructorArgs[i] = readAny(in, constructorTypes[i]);
+        }
+
+        try {
+            return recordType.getDeclaredConstructor(constructorTypes).newInstance(constructorArgs);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("record decode failed for " + recordTypeName, ex);
+        }
+    }
+
+    private static Object readFallbackStringCompact(final InputStream in) throws IOException {
+        String typeName = Util.readUTF8(in, MAX_STRING_BYTES);
+        String value = Util.readUTF8(in, MAX_STRING_BYTES);
+        Class<?> type = loadClass(typeName);
+
+        Method stringFactory = findStringFactory(type);
+        if (stringFactory != null) {
+            try {
+                return stringFactory.invoke(null, value);
+            } catch (ReflectiveOperationException ex) {
+                throw new IllegalStateException("from-string factory failed for " + type.getName(), ex);
+            }
+        }
+
+        try {
+            return type.getConstructor(String.class).newInstance(value);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("unsupported value type without from-string factory: " + type.getName(),
+                    ex);
+        }
+    }
+
+    private static Object readListCompact(final InputStream in) throws IOException {
+        int size = Util.readPack7I(in);
+        java.util.List<Object> out = new java.util.ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            Object element = readAny(in, Object.class);
+            out.add(element);
+        }
+        return java.util.List.copyOf(out);
+    }
+
+    private static Object readSetCompact(final InputStream in) throws IOException {
+        int size = Util.readPack7I(in);
+        java.util.Set<Object> out = new java.util.LinkedHashSet<>(size);
+        for (int i = 0; i < size; i++) {
+            Object element = readAny(in, Object.class);
+            out.add(element);
+        }
+        return java.util.Set.copyOf(out);
+    }
+
+    private static Object readOptionalCompact(final InputStream in) throws IOException {
+        int present = in.read();
+        if (present < 0) {
+            throw new IOException("unexpected EOF");
+        }
+        if (present == 0) {
+            return java.util.Optional.empty();
+        }
+        Object element = readAny(in, Object.class);
+        return java.util.Optional.of(element);
     }
 
     private static boolean isTypeCompatible(final Class<?> expectedType, final Class<?> actualType) {
@@ -445,7 +515,7 @@ final class FsCodec {
 
         Class<?> expectedWrapper = PRIMITIVE_TO_WRAPPER.get(expectedType);
         if (expectedWrapper != null && expectedWrapper == actualType) {
-            return true; // primitive expected, wrapper actual
+            return true;
         }
 
         Class<?> actualWrapper = PRIMITIVE_TO_WRAPPER.get(actualType);
@@ -477,6 +547,7 @@ final class FsCodec {
         } catch (NoSuchMethodException ex) { // NOPMD
             // ignore
         }
+
         try {
             Method valueOf = type.getMethod("valueOf", String.class);
             if ((valueOf.getModifiers() & java.lang.reflect.Modifier.STATIC) != 0 && valueOf.getReturnType() == type) {
@@ -485,6 +556,7 @@ final class FsCodec {
         } catch (NoSuchMethodException ex) { // NOPMD
             // ignore
         }
+
         return null;
     }
 }

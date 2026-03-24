@@ -1,36 +1,35 @@
 /*******************************************************************************
- * Copyright (C) 2025, Leo Galambos
+ * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
+ * 
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ * 
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- *
+ * 
  * 3. All advertising materials mentioning features or use of this software must
  *    display the following acknowledgement:
  *    This product includes software developed by the Egothor project.
- *
+ * 
  * 4. Neither the name of the copyright holder nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 package zeroecho.pki.util.async.impl;
 
@@ -59,24 +58,85 @@ import zeroecho.pki.util.async.codec.IdCodec;
 import zeroecho.pki.util.async.codec.ResultCodec;
 
 /**
- * Generic durable async bus implementation: in-memory state + append-only line
- * log for recovery.
+ * Generic durable implementation of {@link AsyncBus}.
  *
  * <p>
- * Log format is internal and versioned by a leading token. Corrupted lines are
- * ignored with a warning (without logging line content).
+ * This implementation combines:
  * </p>
+ * <ul>
+ * <li>an in-memory view of active operations, their last known statuses, and
+ * optionally persisted results,</li>
+ * <li>an append-only line store represented by
+ * {@link AppendOnlyLineStore},</li>
+ * <li>polling-based interaction with registered {@link AsyncEndpoint}
+ * instances,</li>
+ * <li>event dispatch to subscribed {@link AsyncHandler} observers.</li>
+ * </ul>
  *
- * <h2>No-secret logging</h2>
  * <p>
- * This implementation logs only operation ids (encoded) and types, never
- * payloads or serialized results.
+ * The append-only store is the durability boundary for operation snapshots,
+ * status transitions, and optionally results. On construction, the bus
+ * immediately replays the persisted log to reconstruct its in-memory state.
  * </p>
  *
- * @param <OpId>       operation id type
- * @param <Owner>      owner type
- * @param <EndpointId> endpoint id type
- * @param <Result>     result type
+ * <h2>Operational model</h2>
+ * <ul>
+ * <li>{@link #submit(Object, String, Object, Object, Instant, Duration)}
+ * creates a new operation snapshot, persists it together with an initial
+ * {@link AsyncState#SUBMITTED} status, and dispatches the corresponding
+ * event.</li>
+ * <li>{@link #sweep(Instant)} first expires overdue operations and then polls
+ * registered endpoints for non-terminal active operations.</li>
+ * <li>{@link #update(Object, AsyncStatus, Optional)} persists a status
+ * transition, optionally persists a result, dispatches an event, and applies
+ * terminal-state cleanup rules.</li>
+ * <li>{@link #consumeResult(Object)} returns a successful result once and then
+ * deletes the operation from the in-memory state.</li>
+ * </ul>
+ *
+ * <h2>Durability semantics</h2>
+ * <ul>
+ * <li>Operation snapshots are persisted as internal {@code S1} records.</li>
+ * <li>Status transitions are persisted as internal {@code T1} records.</li>
+ * <li>Results are persisted as internal {@code R1} records only when
+ * {@link ResultCodec#persistsResults()} returns {@code true}.</li>
+ * <li>The log format is internal to this implementation and versioned by the
+ * leading record token.</li>
+ * <li>Corrupted lines encountered during replay are ignored with a warning, and
+ * line contents themselves are not logged.</li>
+ * </ul>
+ *
+ * <h2>Lifecycle semantics</h2>
+ * <ul>
+ * <li>Non-success terminal operations are removed from the active-operation map
+ * as part of update or expiry processing, but their last terminal status is
+ * retained for diagnostics until explicit deletion or result consumption
+ * removes them.</li>
+ * <li>Successful operations may retain their result until
+ * {@link #consumeResult(Object)} is called.</li>
+ * <li>Expired operations are marked with {@link AsyncState#EXPIRED}, persisted,
+ * and removed from the active-operation map.</li>
+ * </ul>
+ *
+ * <h2>Logging and sensitive data</h2>
+ * <p>
+ * This implementation logs only safe operational metadata such as encoded
+ * operation ids, endpoint ids, and operation types. It never logs serialized
+ * payloads, result bodies, or raw persisted line contents.
+ * </p>
+ *
+ * <h2>Thread-safety</h2>
+ * <p>
+ * The main internal collections are wrapped in synchronized collection views.
+ * This provides basic shared-state protection for ordinary concurrent use, but
+ * callers should not treat this implementation as a lock-free or fully atomic
+ * coordination primitive across all compound operations.
+ * </p>
+ *
+ * @param <OpId>       operation identifier type
+ * @param <Owner>      operation owner type
+ * @param <EndpointId> endpoint identifier type
+ * @param <Result>     result value type
  */
 public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         implements AsyncBus<OpId, Owner, EndpointId, Result> {
@@ -100,13 +160,23 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
     private final List<AsyncHandler<OpId, Owner, EndpointId, Result>> handlers;
 
     /**
-     * Creates the bus and immediately replays persisted state.
+     * Creates the durable async bus and immediately replays persisted state from
+     * the append-only store.
      *
-     * @param opIdCodec     codec for operation ids (never {@code null})
-     * @param ownerCodec    codec for owners (never {@code null})
-     * @param endpointCodec codec for endpoints (never {@code null})
-     * @param resultCodec   codec for results (never {@code null})
-     * @param store         append-only store (never {@code null})
+     * <p>
+     * The supplied codecs define the stable serialization form used both for
+     * persistence and for safe logging of identifiers. Construction reconstructs
+     * in-memory operation snapshots, status history tail, and optionally persisted
+     * results by calling {@link #replay()}.
+     * </p>
+     *
+     * @param opIdCodec     codec for operation identifiers; must not be
+     *                      {@code null}
+     * @param ownerCodec    codec for owners; must not be {@code null}
+     * @param endpointCodec codec for endpoint identifiers; must not be {@code null}
+     * @param resultCodec   codec for result values; must not be {@code null}
+     * @param store         append-only persistence store; must not be {@code null}
+     * @throws NullPointerException if any argument is {@code null}
      */
     public DurableAsyncBus(IdCodec<OpId> opIdCodec, IdCodec<Owner> ownerCodec, IdCodec<EndpointId> endpointCodec,
             ResultCodec<Result> resultCodec, AppendOnlyLineStore store) {
@@ -125,6 +195,20 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         replay();
     }
 
+    /**
+     * Registers an endpoint under the supplied endpoint identifier.
+     *
+     * <p>
+     * Endpoint registration is purely in-memory and affects only future polling
+     * performed by {@link #sweep(Instant)}. Registering a new endpoint under an
+     * already existing identifier replaces the previous endpoint instance.
+     * </p>
+     *
+     * @param endpointId endpoint identifier; must not be {@code null}
+     * @param endpoint   endpoint implementation; must not be {@code null}
+     * @throws NullPointerException if {@code endpointId} or {@code endpoint} is
+     *                              {@code null}
+     */
     @Override
     public void registerEndpoint(EndpointId endpointId, AsyncEndpoint<OpId, Result> endpoint) {
         Objects.requireNonNull(endpointId, "endpointId");
@@ -136,6 +220,18 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         }
     }
 
+    /**
+     * Subscribes an event handler to async bus events.
+     *
+     * <p>
+     * The returned {@link AsyncRegistration} removes the handler when closed.
+     * Closing the registration is idempotent.
+     * </p>
+     *
+     * @param handler event handler to subscribe; must not be {@code null}
+     * @return registration handle used to unsubscribe the handler
+     * @throws NullPointerException if {@code handler} is {@code null}
+     */
     @Override
     public AsyncRegistration subscribe(AsyncHandler<OpId, Owner, EndpointId, Result> handler) {
         Objects.requireNonNull(handler, "handler");
@@ -154,6 +250,37 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         };
     }
 
+    /**
+     * Submits a new async operation.
+     *
+     * <p>
+     * Submission records:
+     * </p>
+     * <ul>
+     * <li>an {@link AsyncOperationSnapshot} in the active-operation map,</li>
+     * <li>an initial {@link AsyncState#SUBMITTED} status in the status map,</li>
+     * <li>a snapshot line and a status line in the append-only store,</li>
+     * <li>an {@link AsyncEvent} dispatched to subscribed handlers.</li>
+     * </ul>
+     *
+     * <p>
+     * The method does not invoke the endpoint immediately. Actual endpoint polling
+     * is performed later by {@link #sweep(Instant)}.
+     * </p>
+     *
+     * @param opId       operation identifier; must not be {@code null}
+     * @param type       non-blank operation type; must not be {@code null} or blank
+     * @param owner      operation owner; must not be {@code null}
+     * @param endpointId endpoint identifier to be used later for polling; must not
+     *                   be {@code null}
+     * @param createdAt  operation creation timestamp; must not be {@code null}
+     * @param ttl        positive operation TTL; must not be {@code null}, zero, or
+     *                   negative
+     * @return submitted operation snapshot
+     * @throws NullPointerException     if any mandatory argument is {@code null}
+     * @throws IllegalArgumentException if {@code type} is blank or {@code ttl} is
+     *                                  zero or negative
+     */
     @Override
     public AsyncOperationSnapshot<OpId, Owner, EndpointId> submit(OpId opId, String type, Owner owner,
             EndpointId endpointId, Instant createdAt, Duration ttl) {
@@ -194,6 +321,37 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         return snap;
     }
 
+    /**
+     * Applies a status update and an optional result to an existing operation.
+     *
+     * <p>
+     * Unknown operation identifiers are ignored intentionally. This allows
+     * idempotent or late updates to be safely dropped after cleanup.
+     * </p>
+     *
+     * <p>
+     * For known operations, the method:
+     * </p>
+     * <ul>
+     * <li>updates the last known status,</li>
+     * <li>persists the status line,</li>
+     * <li>optionally persists and stores the result,</li>
+     * <li>dispatches an event,</li>
+     * <li>applies terminal-state cleanup rules.</li>
+     * </ul>
+     *
+     * <p>
+     * Non-success terminal states remove the operation from the active-operation
+     * map immediately. Successful operations retain their result until
+     * {@link #consumeResult(Object)} is called.
+     * </p>
+     *
+     * @param opId   operation identifier; must not be {@code null}
+     * @param status new status; must not be {@code null}
+     * @param result optional result value associated with the status; must not be
+     *               {@code null}
+     * @throws NullPointerException if any argument is {@code null}
+     */
     @Override
     public void update(OpId opId, AsyncStatus status, Optional<Result> result) {
         Objects.requireNonNull(opId, "opId");
@@ -223,26 +381,61 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         dispatchEvent(opId, snap, status, result);
 
         if (status.isTerminal()) {
-            // keep snapshot+status until result consumed, but allow cleanup if no result
-            // exists
+            // keep terminal status for diagnostics and deterministic polling; only
+            // successful operations retain their result for later consumption
             if (status.state() != AsyncState.SUCCEEDED) { // NOPMD
-                deleteOperation(opId);
+                dropActiveOperation(opId);
             }
         }
     }
 
+    /**
+     * Returns the last known status for an operation.
+     *
+     * @param opId operation identifier; must not be {@code null}
+     * @return optional last known status, or an empty optional when the operation
+     *         is unknown
+     * @throws NullPointerException if {@code opId} is {@code null}
+     */
     @Override
     public Optional<AsyncStatus> status(OpId opId) {
         Objects.requireNonNull(opId, "opId");
         return Optional.ofNullable(lastStatus.get(opId));
     }
 
+    /**
+     * Returns the currently active snapshot for an operation.
+     *
+     * <p>
+     * Terminal operations that have already been dropped from the active map are
+     * therefore no longer visible through this method even if their terminal status
+     * may still be retained in {@link #status(Object)}.
+     * </p>
+     *
+     * @param opId operation identifier; must not be {@code null}
+     * @return optional active snapshot, or an empty optional when no active
+     *         snapshot is retained
+     * @throws NullPointerException if {@code opId} is {@code null}
+     */
     @Override
     public Optional<AsyncOperationSnapshot<OpId, Owner, EndpointId>> snapshot(OpId opId) {
         Objects.requireNonNull(opId, "opId");
         return Optional.ofNullable(active.get(opId));
     }
 
+    /**
+     * Returns and removes a previously stored successful result.
+     *
+     * <p>
+     * Result consumption is destructive. After a successful consume, the in-memory
+     * operation state is deleted completely through
+     * {@link #deleteOperation(Object)} to keep storage bounded.
+     * </p>
+     *
+     * @param opId operation identifier; must not be {@code null}
+     * @return optional result, or an empty optional when no result is available
+     * @throws NullPointerException if {@code opId} is {@code null}
+     */
     @Override
     public Optional<Result> consumeResult(OpId opId) {
         Objects.requireNonNull(opId, "opId");
@@ -262,6 +455,26 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         return Optional.of(r);
     }
 
+    /**
+     * Performs one maintenance and polling sweep.
+     *
+     * <p>
+     * The sweep has two phases:
+     * </p>
+     * <ol>
+     * <li>expire operations whose deadline has passed,</li>
+     * <li>poll non-terminal active operations through their registered
+     * endpoints.</li>
+     * </ol>
+     *
+     * <p>
+     * Endpoint failures are isolated and logged as warnings. They do not abort the
+     * sweep and do not fail other operations processed in the same pass.
+     * </p>
+     *
+     * @param now current sweep time; must not be {@code null}
+     * @throws NullPointerException if {@code now} is {@code null}
+     */
     @Override
     public void sweep(Instant now) {
         Objects.requireNonNull(now, "now");
@@ -319,6 +532,12 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         }
     }
 
+    /**
+     * Expires operations whose deadline has passed and emits the corresponding
+     * terminal status.
+     *
+     * @param now current sweep time; must not be {@code null}
+     */
     private void sweepExpired(Instant now) {
         List<Map.Entry<OpId, AsyncOperationSnapshot<OpId, Owner, EndpointId>>> entries = List.copyOf(active.entrySet());
         for (Map.Entry<OpId, AsyncOperationSnapshot<OpId, Owner, EndpointId>> e : entries) {
@@ -347,16 +566,45 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
 
             dispatchEvent(opId, snap, expired, Optional.empty());
 
-            deleteOperation(opId);
+            dropActiveOperation(opId);
         }
     }
 
-    private void deleteOperation(OpId opId) {
+    /**
+     * Removes an operation from the active-operation and result maps but keeps any
+     * retained status entry.
+     *
+     * @param opId operation identifier; must not be {@code null}
+     */
+    private void dropActiveOperation(OpId opId) {
         active.remove(opId);
-        lastStatus.remove(opId);
         results.remove(opId);
     }
 
+    /**
+     * Removes all in-memory state associated with an operation.
+     *
+     * @param opId operation identifier; must not be {@code null}
+     */
+    private void deleteOperation(OpId opId) {
+        dropActiveOperation(opId);
+        lastStatus.remove(opId);
+    }
+
+    /**
+     * Dispatches one async event to all currently subscribed handlers.
+     *
+     * <p>
+     * Handler failures are isolated and logged as warnings. A misbehaving handler
+     * must not prevent other handlers from receiving the event.
+     * </p>
+     *
+     * @param opId   operation identifier used only for safe logging; must not be
+     *               {@code null}
+     * @param snap   operation snapshot; must not be {@code null}
+     * @param status status being dispatched; must not be {@code null}
+     * @param result optional result value; must not be {@code null}
+     */
     private void dispatchEvent(OpId opId, AsyncOperationSnapshot<OpId, Owner, EndpointId> snap, AsyncStatus status,
             Optional<Result> result) {
 
@@ -374,6 +622,15 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         }
     }
 
+    /**
+     * Replays all persisted lines from the append-only store and reconstructs the
+     * in-memory state.
+     *
+     * <p>
+     * Unknown or corrupted records are ignored safely. Record contents are not
+     * logged.
+     * </p>
+     */
     private void replay() {
         List<String> lines = store.readAllLines();
         if (lines.isEmpty()) {
@@ -408,6 +665,13 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         }
     }
 
+    /**
+     * Applies one persisted snapshot record.
+     *
+     * @param line snapshot record line in internal {@code S1} format; must not be
+     *             {@code null}
+     * @throws RuntimeException if the line cannot be decoded
+     */
     private void applySnapshotLine(String line) {
         String[] parts = split(line, 7);
         // S1|opId|type|owner|endpoint|createdAt|expiresAt
@@ -423,6 +687,13 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         active.put(opId, snap);
     }
 
+    /**
+     * Applies one persisted status record.
+     *
+     * @param line status record line in internal {@code T1} format; must not be
+     *             {@code null}
+     * @throws RuntimeException if the line cannot be decoded
+     */
     private void applyStatusLine(String line) {
         String[] parts = split(line, 6);
         // T1|opId|state|updatedAt|detailCode|k=v&k=v
@@ -436,6 +707,13 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         lastStatus.put(opId, st);
     }
 
+    /**
+     * Applies one persisted result record when result persistence is enabled.
+     *
+     * @param line result record line in internal {@code R1} format; must not be
+     *             {@code null}
+     * @throws RuntimeException if the line cannot be decoded
+     */
     private void applyResultLine(String line) {
         if (!resultCodec.persistsResults()) {
             return;
@@ -447,12 +725,25 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         results.put(opId, r);
     }
 
+    /**
+     * Encodes one snapshot record line for persistence.
+     *
+     * @param snap snapshot to encode; must not be {@code null}
+     * @return encoded internal {@code S1} record line
+     */
     private String encodeSnapshotLine(AsyncOperationSnapshot<OpId, Owner, EndpointId> snap) {
         return REC_SNAPSHOT + "|" + opIdCodec.encode(snap.opId()) + "|" + snap.type() + "|"
                 + ownerCodec.encode(snap.owner()) + "|" + endpointCodec.encode(snap.endpointId()) + "|"
                 + snap.createdAt().toString() + "|" + snap.expiresAt().toString();
     }
 
+    /**
+     * Encodes one status record line for persistence.
+     *
+     * @param opId operation identifier; must not be {@code null}
+     * @param st   status to encode; must not be {@code null}
+     * @return encoded internal {@code T1} record line
+     */
     private String encodeStatusLine(OpId opId, AsyncStatus st) {
         String dc = st.detailCode().orElse("");
         String details = encodeDetails(st.details());
@@ -460,10 +751,23 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
                 + "|" + dc + "|" + details;
     }
 
+    /**
+     * Encodes one result record line for persistence.
+     *
+     * @param opId operation identifier; must not be {@code null}
+     * @param r    result value; must not be {@code null}
+     * @return encoded internal {@code R1} record line
+     */
     private String encodeResultLine(OpId opId, Result r) {
         return REC_RESULT + "|" + opIdCodec.encode(opId) + "|" + resultCodec.encode(r);
     }
 
+    /**
+     * Encodes a details map into the internal status-details token form.
+     *
+     * @param details details map; may be {@code null}
+     * @return encoded details token, never {@code null}
+     */
     private static String encodeDetails(Map<String, String> details) {
         if (details == null || details.isEmpty()) {
             return "";
@@ -480,6 +784,12 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         return sb.toString();
     }
 
+    /**
+     * Decodes the internal status-details token form into an immutable map.
+     *
+     * @param token encoded details token; may be {@code null}
+     * @return immutable decoded details map
+     */
     private static Map<String, String> decodeDetails(String token) {
         if (token == null || token.isBlank()) {
             return Map.of();
@@ -498,6 +808,12 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         return Map.copyOf(out);
     }
 
+    /**
+     * Escapes special characters used by the internal details encoding.
+     *
+     * @param s source string; may be {@code null}
+     * @return escaped string, never {@code null}
+     */
     private static String escape(String s) {
         if (s == null) {
             return "";
@@ -505,6 +821,12 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         return s.replace("\\", "\\\\").replace("&", "\\&").replace("=", "\\=");
     }
 
+    /**
+     * Reverses escaping applied by {@link #escape(String)}.
+     *
+     * @param s escaped string; may be {@code null}
+     * @return unescaped string, never {@code null}
+     */
     private static String unescape(String s) {
         if (s == null || s.isEmpty()) {
             return "";
@@ -525,6 +847,14 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         return sb.toString();
     }
 
+    /**
+     * Splits a persisted record line and validates the expected field count.
+     *
+     * @param line     persisted line; must not be {@code null}
+     * @param expected expected number of fields after splitting
+     * @return split parts
+     * @throws IllegalArgumentException if the number of fields does not match
+     */
     private static String[] split(String line, int expected) {
         String[] parts = line.split("\\|", -1);
         if (parts.length != expected) {
@@ -533,6 +863,12 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         return parts;
     }
 
+    /**
+     * Encodes an operation identifier for safe logging and truncates long values.
+     *
+     * @param opId operation identifier; may be {@code null}
+     * @return safe short log token
+     */
     private String safeOpId(OpId opId) {
         try {
             String s = opIdCodec.encode(opId);
@@ -545,6 +881,12 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         }
     }
 
+    /**
+     * Encodes an endpoint identifier for safe logging and truncates long values.
+     *
+     * @param endpointId endpoint identifier; may be {@code null}
+     * @return safe short log token
+     */
     private String safeEndpoint(EndpointId endpointId) {
         try {
             String s = endpointCodec.encode(endpointId);

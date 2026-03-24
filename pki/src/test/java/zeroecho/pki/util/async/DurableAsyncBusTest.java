@@ -1,36 +1,35 @@
 /*******************************************************************************
- * Copyright (C) 2025, Leo Galambos
+ * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
+ * 
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ * 
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- *
+ * 
  * 3. All advertising materials mentioning features or use of this software must
  *    display the following acknowledgement:
  *    This product includes software developed by the Egothor project.
- *
+ * 
  * 4. Neither the name of the copyright holder nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 package zeroecho.pki.util.async;
 
@@ -109,6 +108,51 @@ public class DurableAsyncBusTest {
         assertTrue(bus.status(opId).isEmpty());
 
         System.out.println("...ok");
+    }
+
+
+    @Test
+    public void failedStatus_remainsVisibleUntilExplicitPurge() {
+        System.out.println("failedStatus_remainsVisibleUntilExplicitPurge");
+
+        Path log = tempDir.resolve("async-failed.log");
+        System.out.println("...log=" + log.getFileName());
+
+        AppendOnlyLineStore store = new AppendOnlyLineStore(log);
+
+        DurableAsyncBus<PkiId, Principal, String, String> bus = new DurableAsyncBus<PkiId, Principal, String, String>(
+                PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL, PkiCodecs.STRING, ResultCodec.none(), store);
+
+        PkiId opId = new PkiId("op-failed");
+        Principal owner = new Principal("USER", "bob");
+        bus.registerEndpoint("endpoint-1", new AsyncEndpoint<PkiId, String>() {
+            @Override
+            public Optional<AsyncStatus> status(PkiId id) {
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<String> result(PkiId id) {
+                return Optional.empty();
+            }
+        });
+
+        bus.submit(opId, "SIGN", owner, "endpoint-1", Instant.parse("2025-01-01T00:00:00Z"), Duration.ofHours(1));
+
+        AsyncStatus failed = new AsyncStatus(AsyncState.FAILED, Instant.parse("2025-01-01T00:00:03Z"),
+                Optional.of("DENIED"), java.util.Map.of("reason", "operator-denied"));
+        bus.update(opId, failed, Optional.empty());
+
+        Optional<AsyncStatus> st = bus.status(opId);
+        System.out.println("...statusPresent=" + st.isPresent());
+        System.out.println("...snapshotPresent=" + bus.snapshot(opId).isPresent());
+        System.out.println("...state=" + (st.isPresent() ? st.get().state() : "<none>"));
+
+        assertTrue(st.isPresent());
+        assertEquals(AsyncState.FAILED, st.get().state());
+        assertTrue(bus.snapshot(opId).isEmpty());
+
+        System.out.println("failedStatus_remainsVisibleUntilExplicitPurge...ok");
     }
 
     @Test
