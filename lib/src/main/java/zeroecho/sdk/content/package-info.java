@@ -54,10 +54,6 @@
  * {@link zeroecho.sdk.content.builtin.PlainString},
  * {@link zeroecho.sdk.content.builtin.PlainFile}, and
  * {@link zeroecho.sdk.content.builtin.SecretPassword}.</li>
- * <li>{@link zeroecho.sdk.content.export} - export helpers and platform
- * deployers, such as {@link zeroecho.sdk.content.export.Base64Stream} and
- * exportable content that targets external destinations (for example, gallery
- * platforms) or script-based transports.</li>
  * </ul>
  *
  * <h2>Responsibilities</h2>

@@ -51,8 +51,8 @@ import org.apache.commons.cli.OptionGroup;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 
-import zeroecho.sdk.integrations.covert.jpeg.JpegExifEmbedder;
-import zeroecho.sdk.integrations.covert.jpeg.Slot;
+import zeroecho.ext.integrations.covert.jpeg.JpegExifEmbedder;
+import zeroecho.ext.integrations.covert.jpeg.Slot;
 
 /**
  * Command-line extension of ZeroEcho for covert embedding and extraction of

@@ -9,6 +9,7 @@ dependencies {
     implementation 'org.apache.commons:commons-text'
     implementation 'commons-cli:commons-cli'
     implementation project(':lib')
+    implementation project(':ext')
 	// might be removed if I move BC ops to the lib
 	testImplementation 'org.bouncycastle:bcpkix-jdk18on'
 }

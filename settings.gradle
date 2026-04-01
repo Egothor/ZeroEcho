@@ -11,4 +11,4 @@ plugins {
 
 rootProject.name = 'ZeroEcho'
 
-include('app', 'lib', 'pki', 'samples')
+include('app', 'ext', 'lib', 'pki', 'samples')
