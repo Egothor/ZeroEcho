@@ -233,6 +233,43 @@ public final class HybridKexBuilder {
     }
 
     /**
+     * Builds the configured classic agreement leg for the current builder state.
+     *
+     * <p>
+     * This method validates the classic-leg inputs required by the selected
+     * {@link ClassicMode} and returns the resulting {@link AgreementContext} ready
+     * for inclusion into a {@link HybridKexContext}. For
+     * {@link ClassicMode#CLASSIC_AGREEMENT}, the returned context is also bound to
+     * the configured peer public key.
+     * </p>
+     *
+     * @return classic agreement context derived from the configured classic-leg
+     *         state
+     * @throws IOException           if underlying context creation fails
+     * @throws IllegalStateException if the selected classic mode is missing
+     *                               required state
+     */
+    private AgreementContext buildClassicLeg() throws IOException {
+        if (classicMode == ClassicMode.CLASSIC_AGREEMENT) {
+            if (classicPrivate == null || classicPeerPublic == null) {
+                throw new IllegalStateException(
+                        "classic private key and peer public must be set for CLASSIC_AGREEMENT");
+            }
+            AgreementContext classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicPrivate,
+                    classicSpec);
+            classic.setPeerPublic(classicPeerPublic);
+            return classic;
+        }
+        if (classicMode == ClassicMode.PAIR_MESSAGE) {
+            if (classicKeyPair == null) {
+                throw new IllegalStateException("classic key pair must be set for PAIR_MESSAGE");
+            }
+            return CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicKeyPair, classicSpec);
+        }
+        throw new IllegalStateException("classic mode must be selected");
+    }
+
+    /**
      * Builds initiator-side context.
      *
      * @return initiator context
@@ -241,22 +278,7 @@ public final class HybridKexBuilder {
     public HybridKexContext buildInitiator() throws IOException {
         validateCommon();
 
-        AgreementContext classic;
-        if (classicMode == ClassicMode.CLASSIC_AGREEMENT) {
-            if (classicPrivate == null || classicPeerPublic == null) {
-                throw new IllegalStateException(
-                        "classic private key and peer public must be set for CLASSIC_AGREEMENT");
-            }
-            classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicPrivate, classicSpec);
-            classic.setPeerPublic(classicPeerPublic);
-        } else if (classicMode == ClassicMode.PAIR_MESSAGE) {
-            if (classicKeyPair == null) {
-                throw new IllegalStateException("classic key pair must be set for PAIR_MESSAGE");
-            }
-            classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicKeyPair, classicSpec);
-        } else {
-            throw new IllegalStateException("classic mode must be selected");
-        }
+        AgreementContext classic = buildClassicLeg();
 
         if (pqcPeerPublic == null) {
             throw new IllegalStateException("pqc peer public must be set for initiator");
@@ -279,22 +301,7 @@ public final class HybridKexBuilder {
     public HybridKexContext buildResponder() throws IOException {
         validateCommon();
 
-        AgreementContext classic;
-        if (classicMode == ClassicMode.CLASSIC_AGREEMENT) {
-            if (classicPrivate == null || classicPeerPublic == null) {
-                throw new IllegalStateException(
-                        "classic private key and peer public must be set for CLASSIC_AGREEMENT");
-            }
-            classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicPrivate, classicSpec);
-            classic.setPeerPublic(classicPeerPublic);
-        } else if (classicMode == ClassicMode.PAIR_MESSAGE) {
-            if (classicKeyPair == null) {
-                throw new IllegalStateException("classic key pair must be set for PAIR_MESSAGE");
-            }
-            classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicKeyPair, classicSpec);
-        } else {
-            throw new IllegalStateException("classic mode must be selected");
-        }
+        AgreementContext classic = buildClassicLeg();
 
         if (pqcPrivate == null) {
             throw new IllegalStateException("pqc private key must be set for responder");
