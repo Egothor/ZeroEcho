@@ -14,7 +14,6 @@ dependencies {
 	implementation 'org.egothor:conflux'
 	
 	testImplementation "org.mockito:mockito-core:5.23.0"
-	testImplementation "org.mockito:mockito-inline:5.2.0"
 	
 	mockitoAgent("org.mockito:mockito-core:5.23.0")  {
 		transitive = false
