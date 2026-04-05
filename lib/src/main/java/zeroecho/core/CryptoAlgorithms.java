@@ -49,6 +49,7 @@ import javax.crypto.SecretKey;
 
 import zeroecho.core.audit.AuditListener;
 import zeroecho.core.audit.AuditedContexts;
+import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.CryptoContext;
 import zeroecho.core.context.DigestContext;
 import zeroecho.core.context.EncryptionContext;
@@ -335,31 +336,37 @@ public final class CryptoAlgorithms {
 
         if (AUDIT_MODE == AuditMode.WRAP) {
             final AuditListener listener = AUDIT; // pass through the global listener
-            if (ctx instanceof SignatureContext) {
-                @SuppressWarnings("unchecked")
-                C out = (C) AuditedContexts.wrap(ctx, listener, role);
-                return out;
-            } else if (ctx instanceof EncryptionContext) {
-                @SuppressWarnings("unchecked")
-                C out = (C) AuditedContexts.wrap(ctx, listener, role);
-                return out;
-            } else if (ctx instanceof KemContext) {
-                @SuppressWarnings("unchecked")
-                C out = (C) AuditedContexts.wrap(ctx, listener, role);
-                return out;
-            } else if (ctx instanceof DigestContext) {
-                @SuppressWarnings("unchecked")
-                C out = (C) AuditedContexts.wrap(ctx, listener, role);
-                return out;
-            } else if (ctx instanceof MacContext) {
-                @SuppressWarnings("unchecked")
-                C out = (C) AuditedContexts.wrap(ctx, listener, role);
-                return out;
-            }
-            // Unknown context type: return as-is (no wrapping).
+            return switch (ctx) {
+                case SignatureContext signatureContext -> wrapForAudit(signatureContext, listener, role);
+                case EncryptionContext encryptionContext -> wrapForAudit(encryptionContext, listener, role);
+                case KemContext kemContext -> wrapForAudit(kemContext, listener, role);
+                case DigestContext digestContext -> wrapForAudit(digestContext, listener, role);
+                case MacContext macContext -> wrapForAudit(macContext, listener, role);
+                case AgreementContext agreementContext -> wrapForAudit(agreementContext, listener, role);
+            };
         }
 
         return ctx;
+    }
+
+    /**
+     * Returns the audited wrapper for the supplied context.
+     *
+     * <p>
+     * The returned context remains owned by the caller of the factory method. This
+     * helper does not acquire an additional resource requiring local cleanup.
+     * </p>
+     *
+     * @param <C>      context type
+     * @param context  source context
+     * @param listener audit listener
+     * @param role     key usage role
+     * @return audited wrapper
+     */
+    @SuppressWarnings("unchecked")
+    /* default */ static <C extends CryptoContext> C wrapForAudit(CryptoContext context, AuditListener listener,
+            KeyUsage role) {
+        return (C) AuditedContexts.wrap(context, listener, role);
     }
 
     /**

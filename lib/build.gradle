@@ -5,9 +5,20 @@ plugins {
 
 group='org.egothor'
 
+configurations {
+    mockitoAgent
+}
+
 dependencies {
 	api 'org.bouncycastle:bcpkix-jdk18on'
 	implementation 'org.egothor:conflux'
+	
+	testImplementation "org.mockito:mockito-core:5.23.0"
+	testImplementation "org.mockito:mockito-inline:5.2.0"
+	
+	mockitoAgent("org.mockito:mockito-core:5.23.0")  {
+		transitive = false
+	}
 }
 
 
@@ -52,4 +63,9 @@ javadoc {
     
     options.links("https://www.egothor.org/javadoc/conflux")
     // options.overview = file("src/main/javadoc/overview.html")
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs("-javaagent:${configurations.mockitoAgent.singleFile}")
 }
