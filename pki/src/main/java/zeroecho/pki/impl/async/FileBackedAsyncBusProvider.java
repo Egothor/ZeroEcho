@@ -37,6 +37,8 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.Principal;
@@ -71,6 +73,7 @@ import zeroecho.pki.util.async.impl.DurableAsyncBus;
  * </p>
  */
 public final class FileBackedAsyncBusProvider implements AsyncBusProvider {
+    private static final Logger LOG = Logger.getLogger(FileBackedAsyncBusProvider.class.getName());
 
     /**
      * Configuration key for the log file path.
@@ -87,13 +90,29 @@ public final class FileBackedAsyncBusProvider implements AsyncBusProvider {
         return Set.of(KEY_LOG_PATH);
     }
 
+    /**
+     * Validates configuration for the durable file-backed async bus provider.
+     *
+     * @param config provider configuration (never {@code null})
+     * @throws IllegalArgumentException if the configuration is invalid
+     */
+    @Override
+    public void validateConfig(final ProviderConfig config) {
+        AsyncBusProvider.super.validateConfig(config);
+        Map<String, String> props = config.properties();
+        String logPath = props.getOrDefault(KEY_LOG_PATH, Path.of("pki-async").resolve("async.log").toString());
+        Path.of(logPath);
+        for (String key : props.keySet()) {
+            if (!supportedKeys().contains(key) && LOG.isLoggable(Level.WARNING)) {
+                LOG.warning("Ignoring unknown async bus configuration key: " + key);
+            }
+        }
+    }
+
     @Override
     public AsyncBus<PkiId, Principal, String, Object> allocate(ProviderConfig config) {
         Objects.requireNonNull(config, "config");
-
-        if (!id().equals(config.backendId())) {
-            throw new IllegalArgumentException("ProviderConfig backendId mismatch.");
-        }
+        validateConfig(config);
 
         Map<String, String> props = config.properties();
         String logPath = props.getOrDefault(KEY_LOG_PATH, Path.of("pki-async").resolve("async.log").toString());

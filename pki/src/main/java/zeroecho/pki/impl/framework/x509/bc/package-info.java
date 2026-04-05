@@ -91,7 +91,9 @@
  * issuance and status-object generation remain intentionally unsupported until
  * concrete backend components are supplied. This allows bootstrap and runtime
  * composition to separate framework selection from full cryptographic and PKI
- * service wiring.
+ * service wiring. The package is exposed to runtime composition only through
+ * the framework SPI and its ServiceLoader provider; bootstrap code must not
+ * depend on these implementation classes directly.
  * </p>
  *
  * <h2>Security considerations</h2>

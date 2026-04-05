@@ -35,6 +35,7 @@ package zeroecho.pki.spi.bootstrap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
 import java.util.Properties;
@@ -44,8 +45,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.spi.audit.AuditSink;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.util.async.AsyncBus;
 
 /**
  * JUnit 5 tests for {@link PkiBootstrap}.
@@ -75,9 +81,15 @@ public final class PkiBootstrapTest {
 
         clearPrefix("zeroecho.pki.store.");
         clearPrefix("zeroecho.pki.audit.");
+        clearPrefix("zeroecho.pki.framework.");
+        clearPrefix("zeroecho.pki.async.");
+        clearPrefix("zeroecho.pki.crypto.workflow.");
 
         System.clearProperty("zeroecho.pki.store");
         System.clearProperty("zeroecho.pki.audit");
+        System.clearProperty("zeroecho.pki.framework");
+        System.clearProperty("zeroecho.pki.async");
+        System.clearProperty("zeroecho.pki.crypto.workflow");
 
         System.out.println("...tempDir=" + this.tempDir);
         System.out.println("...ok");
@@ -158,6 +170,125 @@ public final class PkiBootstrapTest {
         System.out.println("...auditClass=" + sinkClassName);
 
         assertEquals("zeroecho.pki.impl.audit.InMemoryAuditSink", sinkClassName);
+
+        System.out.println("...ok");
+    }
+
+    @Test
+    public void openAudit_memory_rejectsInvalidSize() {
+        System.out.println("openAudit_memory_rejectsInvalidSize");
+
+        System.setProperty("zeroecho.pki.audit", "memory");
+        System.setProperty("zeroecho.pki.audit.size", "abc");
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> PkiBootstrap.openAudit());
+        System.out.println("...message=" + exception.getMessage());
+        assertEquals("Configuration key 'size' must be an integer.", exception.getMessage());
+
+        System.out.println("...ok");
+    }
+
+    @Test
+    public void openCredentialFramework_explicitX509BcProvider() {
+        System.out.println("openCredentialFramework_explicitX509BcProvider");
+
+        System.setProperty("zeroecho.pki.framework", "x509-bc");
+
+        CredentialFramework framework = PkiBootstrap.openCredentialFramework();
+        assertNotNull(framework);
+
+        String frameworkClassName = framework.getClass().getName();
+        System.out.println("...frameworkClass=" + frameworkClassName);
+
+        assertEquals("zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework", frameworkClassName);
+
+        System.out.println("...ok");
+    }
+
+    @Test
+    public void openCredentialFramework_x509Bc_byDefault() {
+        System.out.println("openCredentialFramework_x509Bc_byDefault");
+
+        CredentialFramework framework = PkiBootstrap.openCredentialFramework();
+        assertNotNull(framework);
+
+        String frameworkClassName = framework.getClass().getName();
+        System.out.println("...frameworkClass=" + frameworkClassName);
+
+        assertEquals("zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework", frameworkClassName);
+
+        System.out.println("...ok");
+    }
+
+    @Test
+    public void openCredentialFramework_x509Bc_ignoresUnknownKey() {
+        System.out.println("openCredentialFramework_x509Bc_ignoresUnknownKey");
+
+        System.setProperty("zeroecho.pki.framework", "x509-bc");
+        System.setProperty("zeroecho.pki.framework.unused", "value");
+
+        CredentialFramework framework = PkiBootstrap.openCredentialFramework();
+        assertNotNull(framework);
+
+        String frameworkClassName = framework.getClass().getName();
+        System.out.println("...frameworkClass=" + frameworkClassName);
+
+        assertEquals("zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework", frameworkClassName);
+        System.out.println("...ok");
+    }
+
+    @Test
+    public void openAsync_file_usesTempLogPath() {
+        System.out.println("openAsync_file_usesTempLogPath");
+
+        System.setProperty("zeroecho.pki.async", "file");
+        System.setProperty("zeroecho.pki.async.logPath", this.tempDir.resolve("async").resolve("async.log").toString());
+
+        AsyncBus<PkiId, Principal, String, Object> bus = PkiBootstrap.openAsyncBus();
+        assertNotNull(bus);
+
+        String busClassName = bus.getClass().getName();
+        System.out.println("...asyncClass=" + busClassName);
+
+        assertEquals("zeroecho.pki.util.async.impl.DurableAsyncBus", busClassName);
+
+        System.out.println("...ok");
+    }
+
+    @Test
+    public void openSignatureWorkflow_zeroEchoLib_usesConfiguredKeyringPath() {
+        System.out.println("openSignatureWorkflow_zeroEchoLib_usesConfiguredKeyringPath");
+
+        System.setProperty("zeroecho.pki.crypto.workflow", "zeroecho-lib");
+        System.setProperty("zeroecho.pki.crypto.workflow.keyringPath",
+                this.tempDir.resolve("workflow").resolve("keyring.zek").toString());
+        System.setProperty("zeroecho.pki.crypto.workflow.keyRefPrefix", "test-prefix:");
+        System.setProperty("zeroecho.pki.crypto.workflow.requireComponentSuffix", "false");
+
+        SignatureWorkflow workflow = PkiBootstrap.openSignatureWorkflow();
+        assertNotNull(workflow);
+
+        String workflowClassName = workflow.getClass().getName();
+        System.out.println("...workflowClass=" + workflowClassName);
+
+        assertEquals("zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSignatureWorkflow", workflowClassName);
+
+        System.out.println("...ok");
+    }
+
+    @Test
+    public void providerValidation_rejectsBackendIdMismatch() {
+        System.out.println("providerValidation_rejectsBackendIdMismatch");
+
+        zeroecho.pki.impl.fs.FilesystemPkiStoreProvider provider = new zeroecho.pki.impl.fs.FilesystemPkiStoreProvider();
+        zeroecho.pki.spi.ProviderConfig config = new zeroecho.pki.spi.ProviderConfig("other",
+                java.util.Map.of("root", this.tempDir.resolve("store").toString()));
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> provider.validateConfig(config));
+        System.out.println("...message=" + exception.getMessage());
+        assertEquals("ProviderConfig backendId mismatch.", exception.getMessage());
 
         System.out.println("...ok");
     }

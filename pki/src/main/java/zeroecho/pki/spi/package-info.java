@@ -36,9 +36,9 @@
  *
  * <p>
  * SPIs are used to plug in persistence backends, audit sinks, publishing
- * targets, and framework integrations while keeping the public PKI API
- * framework-agnostic. Implementations are typically discovered via
- * {@link java.util.ServiceLoader}.
+ * targets, credential frameworks, and other integrations while keeping the
+ * public PKI API framework-agnostic. Implementations are typically discovered
+ * via {@link java.util.ServiceLoader}.
  * </p>
  *
  * <p>

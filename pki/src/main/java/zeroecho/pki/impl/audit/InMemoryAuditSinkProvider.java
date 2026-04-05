@@ -35,15 +35,27 @@ package zeroecho.pki.impl.audit;
 
 import java.util.Optional;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.audit.AuditSinkProvider;
 
 /**
- * 
+ * {@link AuditSinkProvider} for the in-memory audit sink.
+ *
+ * <p>
+ * Supported configuration keys:
+ * </p>
+ * <ul>
+ * <li>{@code size} - maximum retained event count (optional, positive
+ * integer)</li>
+ * </ul>
  */
 public class InMemoryAuditSinkProvider implements AuditSinkProvider {
+    private static final Logger LOG = Logger.getLogger(InMemoryAuditSinkProvider.class.getName());
+
     @Override
     public String id() {
         return "memory";
@@ -54,25 +66,54 @@ public class InMemoryAuditSinkProvider implements AuditSinkProvider {
         return Set.of("size");
     }
 
+    /**
+     * Validates configuration for the in-memory audit sink provider.
+     *
+     * @param config provider configuration (never {@code null})
+     * @throws IllegalArgumentException if the configuration contains an invalid
+     *                                  {@code size} value
+     */
     @Override
-    public AuditSink allocate(ProviderConfig config) {
-
+    public void validateConfig(final ProviderConfig config) {
+        AuditSinkProvider.super.validateConfig(config);
         Optional<String> sizeStr = config.get("size");
         if (sizeStr.isPresent()) {
-            return new InMemoryAuditSink(parseIntOrDefault(sizeStr.get(), InMemoryAuditSink.DEFAULT_MAX_EVENTS));
+            int size = parseInt(sizeStr.get(), "size");
+            if (size <= 0) {
+                throw new IllegalArgumentException("Configuration key 'size' must be positive.");
+            }
+        }
+        for (String key : config.properties().keySet()) {
+            if (!supportedKeys().contains(key) && LOG.isLoggable(Level.WARNING)) {
+                LOG.warning("Ignoring unknown audit sink configuration key: " + key);
+            }
+        }
+    }
+
+    @Override
+    public AuditSink allocate(ProviderConfig config) {
+        validateConfig(config);
+        Optional<String> sizeStr = config.get("size");
+        if (sizeStr.isPresent()) {
+            return new InMemoryAuditSink(parseInt(sizeStr.get(), "size"));
         } else {
             return new InMemoryAuditSink();
         }
     }
 
-    private static int parseIntOrDefault(String value, int defaultValue) {
-        if (value == null) {
-            return defaultValue;
-        }
+    /**
+     * Parses an integer configuration value.
+     *
+     * @param value   raw configuration value
+     * @param keyName configuration key name
+     * @return parsed integer value
+     * @throws IllegalArgumentException if the value is not a valid integer
+     */
+    private static int parseInt(final String value, final String keyName) {
         try {
             return Integer.parseInt(value);
         } catch (NumberFormatException ex) {
-            return defaultValue;
+            throw new IllegalArgumentException("Configuration key '" + keyName + "' must be an integer.", ex);
         }
     }
 }

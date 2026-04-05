@@ -36,15 +36,26 @@ package zeroecho.pki.impl.audit;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.audit.AuditSinkProvider;
 
 /**
- * 
+ * {@link AuditSinkProvider} for the file-backed audit sink.
+ *
+ * <p>
+ * Supported configuration keys:
+ * </p>
+ * <ul>
+ * <li>{@code root} - audit storage root directory (required)</li>
+ * </ul>
  */
 public class FileAuditSinkProvider implements AuditSinkProvider {
+    private static final Logger LOG = Logger.getLogger(FileAuditSinkProvider.class.getName());
+
     @Override
     public String id() {
         return "file";
@@ -55,9 +66,29 @@ public class FileAuditSinkProvider implements AuditSinkProvider {
         return Set.of("root");
     }
 
+    /**
+     * Validates configuration for the file-backed audit sink provider.
+     *
+     * @param config provider configuration (never {@code null})
+     * @throws IllegalArgumentException if the configuration is incomplete or
+     *                                  invalid
+     */
+    @Override
+    public void validateConfig(final ProviderConfig config) {
+        AuditSinkProvider.super.validateConfig(config);
+        String rootString = config.require("root");
+        Path.of(rootString);
+        for (String key : config.properties().keySet()) {
+            if (!supportedKeys().contains(key) && LOG.isLoggable(Level.WARNING)) {
+                LOG.warning("Ignoring unknown audit sink configuration key: " + key);
+            }
+        }
+    }
+
     @Override
     public AuditSink allocate(ProviderConfig config) {
         Objects.requireNonNull(config, "config");
+        validateConfig(config);
 
         String rootString = config.require("root");
         Path root = Path.of(rootString);

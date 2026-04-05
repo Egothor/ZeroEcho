@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.spi;
 
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -59,8 +60,10 @@ import java.util.Set;
  * Configuration is provided as string properties through
  * {@link ProviderConfig}. Providers must validate required keys and reject
  * invalid configurations with {@link IllegalArgumentException}. Unknown keys
- * must be ignored for forward compatibility. {@link #supportedKeys()} is
- * informational and may be used for diagnostics or help output.
+ * must be ignored for forward compatibility, but may be reported through
+ * provider-local diagnostic logging that names keys only.
+ * {@link #supportedKeys()} is informational and may be used for diagnostics or
+ * help output.
  * </p>
  *
  * <h2>Security</h2>
@@ -93,6 +96,37 @@ public interface ConfigurableProvider<T> {
      * @return supported configuration keys (never {@code null})
      */
     Set<String> supportedKeys();
+
+    /**
+     * Validates the provided configuration before allocation.
+     *
+     * <p>
+     * Implementations should use this hook to enforce backend-specific invariants
+     * such as required keys and key formats. The default implementation already
+     * verifies that {@link ProviderConfig#backendId()} matches {@link #id()}.
+     * Unknown keys should normally be ignored for forward compatibility, but may be
+     * reported through provider-local logging that names keys only and never logs
+     * values.
+     * </p>
+     *
+     * <p>
+     * The default implementation performs a null check and verifies that the
+     * supplied backend id matches {@link #id()}. Providers with additional
+     * requirements should override this method, invoke the default implementation,
+     * and then validate their own keys.
+     * </p>
+     *
+     * @param config configuration to validate (never {@code null})
+     * @throws NullPointerException     if {@code config} is {@code null}
+     * @throws IllegalArgumentException if the configuration is invalid
+     */
+    default void validateConfig(final ProviderConfig config) {
+        Objects.requireNonNull(config, "config");
+        if (!id().equals(config.backendId())) {
+            throw new IllegalArgumentException("ProviderConfig backendId mismatch.");
+        }
+
+    }
 
     /**
      * Allocates a new instance using the provided configuration.

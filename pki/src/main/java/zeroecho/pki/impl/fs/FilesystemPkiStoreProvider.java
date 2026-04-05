@@ -36,14 +36,15 @@ package zeroecho.pki.impl.fs;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import zeroecho.pki.spi.ProviderConfig;
-import zeroecho.pki.spi.audit.AuditSinkProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreProvider;
 
 /**
- * {@link AuditSinkProvider} for the filesystem-backed {@link PkiStore}.
+ * {@link PkiStoreProvider} for the filesystem-backed {@link PkiStore}.
  *
  * <p>
  * Supported configuration keys:
@@ -53,6 +54,7 @@ import zeroecho.pki.spi.store.PkiStoreProvider;
  * </ul>
  */
 public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
+    private static final Logger LOG = Logger.getLogger(FilesystemPkiStoreProvider.class.getName());
 
     /**
      * Public no-arg constructor required by {@link java.util.ServiceLoader}.
@@ -71,9 +73,41 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
         return Set.of("root");
     }
 
+    /**
+     * Validates configuration for the filesystem-backed PKI store provider.
+     *
+     * <p>
+     * Required configuration:
+     * </p>
+     * <ul>
+     * <li>{@code root}</li>
+     * </ul>
+     *
+     * <p>
+     * Unknown keys are ignored for forward compatibility and are reported by key
+     * name only.
+     * </p>
+     *
+     * @param config provider configuration (never {@code null})
+     * @throws IllegalArgumentException if the configuration is incomplete or
+     *                                  invalid
+     */
     @Override
-    public PkiStore allocate(ProviderConfig config) {
+    public void validateConfig(final ProviderConfig config) {
+        PkiStoreProvider.super.validateConfig(config);
+        String rootString = config.require("root");
+        Path.of(rootString);
+        for (String key : config.properties().keySet()) {
+            if (!supportedKeys().contains(key) && LOG.isLoggable(Level.WARNING)) {
+                LOG.warning("Ignoring unknown PKI store configuration key: " + key);
+            }
+        }
+    }
+
+    @Override
+    public PkiStore allocate(final ProviderConfig config) {
         Objects.requireNonNull(config, "config");
+        validateConfig(config);
 
         String rootString = config.require("root");
         Path root = Path.of(rootString);

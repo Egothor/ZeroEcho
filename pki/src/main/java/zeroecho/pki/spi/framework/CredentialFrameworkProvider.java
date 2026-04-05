@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.spi.framework;
 
-import java.util.Objects;
-
 import zeroecho.pki.spi.ConfigurableProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
@@ -44,6 +42,7 @@ import zeroecho.pki.spi.ProviderConfig;
  * <p>
  * The PKI runtime selects a framework provider using
  * {@link java.util.ServiceLoader} and instantiates it through
+ * {@link #validateConfig(ProviderConfig)} and
  * {@link #allocate(ProviderConfig)}. Provider selection is performed by
  * {@code PkiBootstrap} using configuration properties (similarly to store,
  * audit, async bus, and signature workflow providers).
@@ -65,7 +64,9 @@ public interface CredentialFrameworkProvider extends ConfigurableProvider<Creden
      * <p>
      * Implementations must validate that {@link ProviderConfig#backendId()} matches
      * {@link #id()}. A mismatch must be reported as
-     * {@link IllegalArgumentException}.
+     * {@link IllegalArgumentException}. Implementations should invoke
+     * {@link #validateConfig(ProviderConfig)} from this method so that the same
+     * enforcement applies even when a provider is used outside bootstrap.
      * </p>
      *
      * @param config provider configuration (never {@code null})
@@ -78,24 +79,4 @@ public interface CredentialFrameworkProvider extends ConfigurableProvider<Creden
     @Override
     CredentialFramework allocate(ProviderConfig config);
 
-    /**
-     * Enforces that the provided configuration is intended for this provider.
-     *
-     * <p>
-     * This helper is intended for defensive checks inside provider implementations.
-     * </p>
-     *
-     * @param provider provider instance (never {@code null})
-     * @param config   provider configuration (never {@code null})
-     * @throws NullPointerException     if any argument is {@code null}
-     * @throws IllegalArgumentException if the backend id does not match
-     */
-    static void requireIdMatch(final CredentialFrameworkProvider provider, final ProviderConfig config) {
-        Objects.requireNonNull(provider, "provider");
-        Objects.requireNonNull(config, "config");
-
-        if (!provider.id().equals(config.backendId())) {
-            throw new IllegalArgumentException("ProviderConfig backendId mismatch.");
-        }
-    }
 }

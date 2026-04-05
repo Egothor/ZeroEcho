@@ -48,6 +48,8 @@ import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.audit.AuditSinkProvider;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
+import zeroecho.pki.spi.framework.CredentialFramework;
+import zeroecho.pki.spi.framework.CredentialFrameworkProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreProvider;
 import zeroecho.pki.util.async.AsyncBus;
@@ -58,7 +60,7 @@ import zeroecho.pki.util.async.AsyncBus;
  * <p>
  * This class provides deterministic selection and instantiation rules for
  * components discovered via {@link java.util.ServiceLoader}. It is designed to
- * scale as more SPIs are introduced (audit, publish, framework integrations,
+ * scale as more SPIs are introduced (audit, publish, credential frameworks,
  * crypto/workflows, async orchestration, etc.).
  * </p>
  *
@@ -77,6 +79,10 @@ import zeroecho.pki.util.async.AsyncBus;
  * <li>Select async bus provider: {@code -Dzeroecho.pki.async=&lt;id&gt;}</li>
  * <li>Configure async bus provider:
  * {@code -Dzeroecho.pki.async.&lt;key&gt;=&lt;value&gt;}</li>
+ * <li>Select credential framework provider:
+ * {@code -Dzeroecho.pki.framework=&lt;id&gt;}</li>
+ * <li>Configure credential framework provider:
+ * {@code -Dzeroecho.pki.framework.&lt;key&gt;=&lt;value&gt;}</li>
  * </ul>
  *
  * <p>
@@ -99,6 +105,9 @@ public final class PkiBootstrap {
 
     private static final String PROP_ASYNC_BACKEND = "zeroecho.pki.async";
     private static final String PROP_ASYNC_PREFIX = "zeroecho.pki.async.";
+
+    private static final String PROP_FRAMEWORK_BACKEND = "zeroecho.pki.framework";
+    private static final String PROP_FRAMEWORK_PREFIX = "zeroecho.pki.framework.";
 
     private PkiBootstrap() {
         throw new AssertionError("No instances.");
@@ -259,6 +268,54 @@ public final class PkiBootstrap {
 
         if (LOG.isLoggable(Level.INFO)) {
             LOG.info("Selected async bus provider: " + provider.id() + " (keys: " + props.keySet() + ")");
+        }
+
+        return provider.allocate(config);
+    }
+
+    /**
+     * Opens a {@link CredentialFramework} using {@link CredentialFrameworkProvider}
+     * discovered via ServiceLoader.
+     * 
+     * <p>
+     * Provider selection is deterministic and fail-fast:
+     * </p>
+     * <ul>
+     * <li>If {@code -Dzeroecho.pki.framework=&lt;id&gt;} is specified, the provider
+     * with the matching id is selected.</li>
+     * <li>If no id is specified and exactly one provider exists, that provider is
+     * selected.</li>
+     * <li>If multiple providers exist and no id is specified, bootstrap fails as
+     * configuration is ambiguous.</li>
+     * </ul>
+     * 
+     * <p>
+     * Configuration properties are read from {@link System#getProperties()} using
+     * the prefix {@code zeroecho.pki.framework.}. Values are treated as sensitive
+     * and are never logged; only keys may be logged.
+     * </p>
+     * 
+     * @return credential framework (never {@code null})
+     * @throws IllegalArgumentException if unsupported configuration keys are
+     *                                  provided
+     * @throws IllegalStateException    if provider selection fails
+     */
+    public static CredentialFramework openCredentialFramework() {
+        String requestedId = System.getProperty(PROP_FRAMEWORK_BACKEND);
+
+        CredentialFrameworkProvider provider = SpiSelector.select(CredentialFrameworkProvider.class, requestedId,
+                new SpiSelector.ProviderId<>() {
+                    @Override
+                    public String id(CredentialFrameworkProvider p) {
+                        return p.id();
+                    }
+                });
+
+        Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_FRAMEWORK_PREFIX);
+        ProviderConfig config = new ProviderConfig(provider.id(), props);
+
+        if (LOG.isLoggable(Level.INFO)) {
+            LOG.info("Selected credential framework provider: " + provider.id() + " (keys: " + props.keySet() + ")");
         }
 
         return provider.allocate(config);

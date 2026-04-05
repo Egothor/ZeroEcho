@@ -35,15 +35,23 @@ package zeroecho.pki.impl.audit;
 
 import java.util.Collections;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.audit.AuditSinkProvider;
 
 /**
- * 
+ * {@link AuditSinkProvider} for the standard-output audit sink.
+ *
+ * <p>
+ * This provider accepts no provider-specific configuration keys.
+ * </p>
  */
 public class StdoutAuditSinkProvider implements AuditSinkProvider {
+    private static final Logger LOG = Logger.getLogger(StdoutAuditSinkProvider.class.getName());
+
     @Override
     public String id() {
         return "stdout";
@@ -54,8 +62,24 @@ public class StdoutAuditSinkProvider implements AuditSinkProvider {
         return Collections.emptySet();
     }
 
+    /**
+     * Validates configuration for the standard-output audit sink provider.
+     *
+     * @param config provider configuration (never {@code null})
+     */
+    @Override
+    public void validateConfig(final ProviderConfig config) {
+        AuditSinkProvider.super.validateConfig(config);
+        for (String key : config.properties().keySet()) {
+            if (!supportedKeys().contains(key) && LOG.isLoggable(Level.WARNING)) {
+                LOG.warning("Ignoring unknown audit sink configuration key: " + key);
+            }
+        }
+    }
+
     @Override
     public AuditSink allocate(ProviderConfig config) {
+        validateConfig(config);
         return new StdoutAuditSink();
     }
 }

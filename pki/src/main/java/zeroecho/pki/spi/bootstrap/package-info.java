@@ -36,8 +36,8 @@
  *
  * <p>
  * This package centralizes deterministic provider selection and a minimal
- * configuration convention for multiple SPIs (store, audit, publication, and
- * future components).
+ * configuration convention for multiple SPIs (store, audit, publication,
+ * credential frameworks, and future components).
  * </p>
  *
  * <p>

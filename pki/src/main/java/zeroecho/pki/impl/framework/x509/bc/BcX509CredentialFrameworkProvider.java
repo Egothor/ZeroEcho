@@ -34,6 +34,8 @@
 package zeroecho.pki.impl.framework.x509.bc;
 
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.framework.CredentialFramework;
@@ -73,7 +75,9 @@ import zeroecho.pki.spi.framework.CredentialFrameworkProvider;
  * The current implementation does not consume any provider-specific
  * configuration keys beyond backend selection through
  * {@link ProviderConfig#backendId()}. Consequently, {@link #supportedKeys()}
- * returns an empty set.
+ * returns an empty set and bootstrap will reject any
+ * {@code zeroecho.pki.framework.*} configuration keys other than the backend
+ * selector itself.
  * </p>
  *
  * <h2>Thread-safety</h2>
@@ -82,6 +86,8 @@ import zeroecho.pki.spi.framework.CredentialFrameworkProvider;
  * </p>
  */
 public final class BcX509CredentialFrameworkProvider implements CredentialFrameworkProvider {
+
+    private static final Logger LOG = Logger.getLogger(BcX509CredentialFrameworkProvider.class.getName());
 
     /**
      * Returns the stable provider identifier used to select this X.509 framework
@@ -111,6 +117,32 @@ public final class BcX509CredentialFrameworkProvider implements CredentialFramew
     }
 
     /**
+     * Validates configuration for the Bouncy Castle backed X.509 credential
+     * framework provider.
+     * 
+     * <p>
+     * This provider currently defines no provider-specific keys. Unknown keys are
+     * ignored for forward compatibility and are reported only by name through JUL
+     * warning output. The backend id must match {@link #id()}.
+     * </p>
+     * 
+     * @param config provider configuration used to select this backend; must not be
+     *               {@code null}
+     * @throws IllegalArgumentException if the backend id does not match this
+     *                                  provider identifier
+     */
+    @Override
+    public void validateConfig(final ProviderConfig config) {
+        CredentialFrameworkProvider.super.validateConfig(config);
+
+        for (String key : config.properties().keySet()) {
+            if (!supportedKeys().contains(key) && LOG.isLoggable(Level.WARNING)) {
+                LOG.warning("Ignoring unknown credential framework configuration key: " + key);
+            }
+        }
+    }
+
+    /**
      * Allocates a new Bouncy Castle backed X.509 credential framework instance.
      *
      * <p>
@@ -129,12 +161,7 @@ public final class BcX509CredentialFrameworkProvider implements CredentialFramew
      */
     @Override
     public CredentialFramework allocate(ProviderConfig config) {
-        if (config == null) {
-            throw new IllegalArgumentException("config must not be null");
-        }
-        if (!id().equals(config.backendId())) {
-            throw new IllegalArgumentException("ProviderConfig backendId mismatch");
-        }
+        validateConfig(config);
         return new BcX509CredentialFramework();
     }
 }

@@ -40,5 +40,13 @@
  * framework-specific fields. Framework-specific types must not leak into the
  * public API.
  * </p>
+ * 
+ * <p>
+ * Runtime selection and allocation of concrete framework implementations is
+ * performed through {@link java.util.ServiceLoader} and the
+ * {@code CredentialFrameworkProvider} SPI. Bootstrap configuration follows the
+ * same deterministic, fail-fast conventions as the other PKI SPIs.
+ * </p>
+ * 
  */
 package zeroecho.pki.spi.framework;
