@@ -44,12 +44,12 @@ import java.util.Objects;
 import javax.security.auth.DestroyFailedException;
 
 import org.bouncycastle.crypto.SecretWithEncapsulation;
-import org.bouncycastle.pqc.crypto.bike.BIKEKEMExtractor;
-import org.bouncycastle.pqc.crypto.bike.BIKEKEMGenerator;
-import org.bouncycastle.pqc.crypto.bike.BIKEPrivateKeyParameters;
-import org.bouncycastle.pqc.crypto.bike.BIKEPublicKeyParameters;
 import org.bouncycastle.pqc.crypto.util.PrivateKeyFactory;
 import org.bouncycastle.pqc.crypto.util.PublicKeyFactory;
+import org.bouncycastle.pqc.legacy.bike.BIKEKEMExtractor;
+import org.bouncycastle.pqc.legacy.bike.BIKEKEMGenerator;
+import org.bouncycastle.pqc.legacy.bike.BIKEPrivateKeyParameters;
+import org.bouncycastle.pqc.legacy.bike.BIKEPublicKeyParameters;
 
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.context.KemContext;
