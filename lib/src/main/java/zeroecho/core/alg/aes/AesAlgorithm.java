@@ -34,7 +34,7 @@
 package zeroecho.core.alg.aes;
 
 import java.security.GeneralSecurityException;
-import java.security.SecureRandom;
+import java.util.Arrays;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -45,7 +45,9 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.SymmetricKeyBuilder;
+import zeroecho.core.spi.SymmetricKeyGenerator;
+import zeroecho.core.spi.SymmetricKeyImporter;
+import zeroecho.sdk.util.RandomSupport;
 
 /**
  * AES algorithm registration and capability wiring.
@@ -85,49 +87,45 @@ public final class AesAlgorithm extends AbstractCryptoAlgorithm {
 
         // Context capabilities
         capability(AlgorithmFamily.SYMMETRIC, KeyUsage.ENCRYPT, EncryptionContext.class, SecretKey.class, AesSpec.class,
-                (SecretKey k, AesSpec s) -> new AesCipherContext(this, k, true, s, new SecureRandom()),
+                (SecretKey k, AesSpec s) -> new AesCipherContext(this, k, true, s, RandomSupport.getRandom()),
                 () -> AesSpec.gcm128(null));
 
         capability(AlgorithmFamily.SYMMETRIC, KeyUsage.DECRYPT, EncryptionContext.class, SecretKey.class, AesSpec.class,
-                (SecretKey k, AesSpec s) -> new AesCipherContext(this, k, false, s, new SecureRandom()),
+                (SecretKey k, AesSpec s) -> new AesCipherContext(this, k, false, s, RandomSupport.getRandom()),
                 () -> AesSpec.gcm128(null));
 
         capability(AlgorithmFamily.SYMMETRIC, KeyUsage.ENCRYPT, EncryptionContext.class, SecretKey.class,
                 VoidSpec.class, (SecretKey k, VoidSpec s) -> new AesCipherContext(this, k, true, AesSpec.gcm128(null),
-                        new SecureRandom()),
+                        RandomSupport.getRandom()),
                 () -> VoidSpec.INSTANCE);
 
         capability(AlgorithmFamily.SYMMETRIC, KeyUsage.DECRYPT, EncryptionContext.class, SecretKey.class,
                 VoidSpec.class, (SecretKey k, VoidSpec s) -> new AesCipherContext(this, k, false, AesSpec.gcm128(null),
-                        new SecureRandom()),
+                        RandomSupport.getRandom()),
                 () -> VoidSpec.INSTANCE);
 
         // Secret generation builder (AesKeyGenSpec)
-        registerSymmetricKeyBuilder(AesKeyGenSpec.class, new SymmetricKeyBuilder<>() {
+        registerSymmetricKeyGenerator(AesKeyGenSpec.class, new SymmetricKeyGenerator<>() {
             @Override
             public SecretKey generateSecret(AesKeyGenSpec spec) throws GeneralSecurityException {
                 KeyGenerator kg = KeyGenerator.getInstance("AES");
-                kg.init(spec.keySizeBits(), new SecureRandom());
+                kg.init(spec.keySizeBits(), RandomSupport.getRandom());
                 return kg.generateKey();
-            }
-
-            @Override
-            public SecretKey importSecret(AesKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Use AesKeyImportSpec for importing AES keys");
             }
         }, AesKeyGenSpec::aes256);
 
         // Secret import builder (AesKeyImportSpec)
-        registerSymmetricKeyBuilder(AesKeyImportSpec.class, new SymmetricKeyBuilder<>() {
-            @Override
-            public SecretKey generateSecret(AesKeyImportSpec spec) {
-                throw new UnsupportedOperationException("Use AesKeyGenSpec to generate AES keys");
-            }
+        registerSymmetricKeyImporter(AesKeyImportSpec.class, new SymmetricKeyImporter<>() {
 
             @Override
             public SecretKey importSecret(AesKeyImportSpec spec) {
-                return new SecretKeySpec(spec.key(), "AES");
+                byte[] key = spec.key();
+                try {
+                    return new SecretKeySpec(key, "AES");
+                } finally {
+                    Arrays.fill(key, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 }

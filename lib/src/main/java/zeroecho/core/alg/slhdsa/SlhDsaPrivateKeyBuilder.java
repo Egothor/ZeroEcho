@@ -35,36 +35,30 @@ package zeroecho.core.alg.slhdsa;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
 import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PrivateKeyImporter;
 
 /**
  * Builder for importing SLH-DSA private keys from encoded specifications.
  *
  * @since 1.0
  */
-public final class SlhDsaPrivateKeyBuilder implements AsymmetricKeyBuilder<SlhDsaPrivateKeySpec> {
+public final class SlhDsaPrivateKeyBuilder implements PrivateKeyImporter<SlhDsaPrivateKeySpec> {
 
     private static final String ALG = "SLH-DSA";
-
-    @Override
-    public KeyPair generateKeyPair(SlhDsaPrivateKeySpec spec) {
-        throw new UnsupportedOperationException("Generation not supported by this spec.");
-    }
-
-    @Override
-    public PublicKey importPublic(SlhDsaPrivateKeySpec spec) {
-        throw new UnsupportedOperationException("Use SlhDsaPublicKeySpec for public keys.");
-    }
 
     @Override
     public PrivateKey importPrivate(SlhDsaPrivateKeySpec spec) throws GeneralSecurityException {
         KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance(ALG)
                 : KeyFactory.getInstance(ALG, spec.providerName());
-        return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.encoded()));
+        byte[] encoded = spec.encoded();
+        try {
+            return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+        } finally {
+            Arrays.fill(encoded, (byte) 0);
+        }
     }
 }

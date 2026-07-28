@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
@@ -41,15 +43,12 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.Objects;
 
-import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.rsa.RsaEncSpec;
 import zeroecho.core.alg.rsa.RsaKeyGenSpec;
 import zeroecho.core.alg.rsa.RsaPrivateKeySpec;
 import zeroecho.core.alg.rsa.RsaPublicKeySpec;
 import zeroecho.core.context.EncryptionContext;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.EncryptedContent;
@@ -102,6 +101,7 @@ import zeroecho.sdk.content.api.PlainContent;
  * @see RsaKeyGenSpec
  */
 public final class RsaEncDataContentBuilder implements DataContentBuilder<DataContent> {
+    private final ZeroEchoSession session;
 
     private PublicKey publicKey;
     private PrivateKey privateKey;
@@ -114,7 +114,8 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
 
     private RsaEncSpec spec = RsaEncSpec.oaep(RsaEncSpec.Hash.SHA256); // default
 
-    private RsaEncDataContentBuilder() {
+    private RsaEncDataContentBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -127,8 +128,8 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
      *
      * @return a new {@code RsaEncDataContentBuilder} instance
      */
-    public static RsaEncDataContentBuilder builder() {
-        return new RsaEncDataContentBuilder();
+    public static RsaEncDataContentBuilder builder(ZeroEchoSession session) {
+        return new RsaEncDataContentBuilder(session);
     }
 
     /**
@@ -321,20 +322,18 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
     }
 
     private void resolveKeys() throws GeneralSecurityException {
-        CryptoAlgorithm alg = CryptoAlgorithms.require("RSA");
         if (genKeyPair) {
-            AsymmetricKeyBuilder<RsaKeyGenSpec> b = alg.asymmetricKeyBuilder(RsaKeyGenSpec.class);
-            KeyPair kp = b.generateKeyPair(keyGen);
+            KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("RSA", keyGen);
             this.publicKey = kp.getPublic();
             this.privateKey = kp.getPrivate();
         }
         if (importPrivatePkcs8 != null) {
-            AsymmetricKeyBuilder<RsaPrivateKeySpec> b = alg.asymmetricKeyBuilder(RsaPrivateKeySpec.class);
-            this.privateKey = b.importPrivate(new RsaPrivateKeySpec(importPrivatePkcs8));
+            this.privateKey = session.keyBuilders().asymmetric().importPrivate("RSA",
+                    new RsaPrivateKeySpec(importPrivatePkcs8));
         }
         if (importPublicX509 != null) {
-            AsymmetricKeyBuilder<RsaPublicKeySpec> b = alg.asymmetricKeyBuilder(RsaPublicKeySpec.class);
-            this.publicKey = b.importPublic(new RsaPublicKeySpec(importPublicX509));
+            this.publicKey = session.keyBuilders().asymmetric().importPublic("RSA",
+                    new RsaPublicKeySpec(importPublicX509));
         }
     }
 
@@ -347,7 +346,8 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
      * When {@link #getStream()} is invoked, this class creates an
      * {@link zeroecho.core.context.EncryptionContext} for the "RSA" algorithm in
      * {@link zeroecho.core.KeyUsage#ENCRYPT} role via
-     * {@link zeroecho.core.CryptoAlgorithms#create(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
+     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
      * attaches the upstream stream, and returns a pull-based stream that encrypts
      * on-the-fly using the configured {@link RsaEncSpec}.
      * </p>
@@ -355,7 +355,7 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
      * <h2>Thread-safety</h2> Instances are not thread-safe and must be used from a
      * single thread.
      */
-    private static final class Encrypt implements EncryptedContent {
+    private final class Encrypt implements EncryptedContent {
         private final PublicKey key;
         private final RsaEncSpec spec;
         private DataContent upstream;
@@ -394,7 +394,7 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "rsa encrypt: upstream not set");
-            EncryptionContext ctx = CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, key, spec); // NOPMD
+            EncryptionContext ctx = session.createContext("RSA", KeyUsage.ENCRYPT, key, spec); // NOPMD
             return ctx.attach(upstream.getStream());
         }
     }
@@ -408,7 +408,8 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
      * When {@link #getStream()} is invoked, this class creates an
      * {@link zeroecho.core.context.EncryptionContext} for the "RSA" algorithm in
      * {@link zeroecho.core.KeyUsage#DECRYPT} role via
-     * {@link zeroecho.core.CryptoAlgorithms#create(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
+     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
      * attaches the upstream stream, and returns a pull-based stream that decrypts
      * on-the-fly using the configured {@link RsaEncSpec}.
      * </p>
@@ -416,7 +417,7 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
      * <h2>Thread-safety</h2> Instances are not thread-safe and must be used from a
      * single thread.
      */
-    private static final class Decrypt implements PlainContent {
+    private final class Decrypt implements PlainContent {
         private final PrivateKey key;
         private final RsaEncSpec spec;
         private DataContent upstream;
@@ -455,7 +456,7 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "rsa decrypt: upstream not set");
-            EncryptionContext ctx = CryptoAlgorithms.create("RSA", KeyUsage.DECRYPT, key, spec); // NOPMD
+            EncryptionContext ctx = session.createContext("RSA", KeyUsage.DECRYPT, key, spec); // NOPMD
             return ctx.attach(upstream.getStream());
         }
     }

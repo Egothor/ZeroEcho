@@ -33,14 +33,12 @@
  ******************************************************************************/
 package zeroecho.sdk.hybrid.kex;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.security.Key;
 import java.security.PublicKey;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -129,10 +127,13 @@ import zeroecho.sdk.util.Kdf;
 public final class HybridKexContext implements MessageAgreementContext {
 
     private static final Logger LOG = Logger.getLogger(HybridKexContext.class.getName());
+    /* default */ static final int MAX_FRAME_BYTES = 65_536;
+    private static final int FRAME_HEADER_BYTES = Integer.BYTES * 2;
 
     private final HybridKexProfile profile;
     private final AgreementContext classic;
     private final MessageAgreementContext pqc;
+    private final SecretDeriver secretDeriver;
 
     private byte[] peerMessage;
 
@@ -146,9 +147,15 @@ public final class HybridKexContext implements MessageAgreementContext {
      * @since 1.0
      */
     public HybridKexContext(HybridKexProfile profile, AgreementContext classic, MessageAgreementContext pqc) {
+        this(profile, classic, pqc, Kdf::hkdfSha256);
+    }
+
+    /* default */ HybridKexContext(HybridKexProfile profile, AgreementContext classic,
+            MessageAgreementContext pqc, SecretDeriver secretDeriver) {
         this.profile = Objects.requireNonNull(profile, "profile");
         this.classic = Objects.requireNonNull(classic, "classic");
         this.pqc = Objects.requireNonNull(pqc, "pqc");
+        this.secretDeriver = Objects.requireNonNull(secretDeriver, "secretDeriver");
     }
 
     /**
@@ -316,26 +323,50 @@ public final class HybridKexContext implements MessageAgreementContext {
      */
     @Override
     public byte[] deriveSecret() {
-        byte[] classicSs = classic.deriveSecret();
-        byte[] pqcSs = pqc.deriveSecret();
-
-        byte[] ikm = new byte[classicSs.length + pqcSs.length];
-        System.arraycopy(classicSs, 0, ikm, 0, classicSs.length);
-        System.arraycopy(pqcSs, 0, ikm, classicSs.length, pqcSs.length);
-
+        byte[] classicSs = null;
+        byte[] pqcSs = null;
+        byte[] ikm = null;
         try {
-            byte[] out = Kdf.hkdfSha256(ikm, profile.hkdfSalt(), profile.hkdfInfo(), profile.outLenBytes());
+            classicSs = classic.deriveSecret();
+            pqcSs = pqc.deriveSecret();
+            int combinedLength = Math.addExact(classicSs.length, pqcSs.length);
+            ikm = new byte[combinedLength];
+            System.arraycopy(classicSs, 0, ikm, 0, classicSs.length);
+            System.arraycopy(pqcSs, 0, ikm, classicSs.length, pqcSs.length);
+            byte[] out = secretDeriver.derive(ikm, profile.hkdfSalt(), profile.hkdfInfo(), profile.outLenBytes());
             if (LOG.isLoggable(Level.FINE)) {
                 LOG.fine("HybridKexContext.deriveSecret(): derived OKM length=" + out.length);
             }
             return out;
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("HKDF-SHA256 failed", e);
+        } catch (ArithmeticException e) {
+            throw new IllegalStateException("Hybrid secret length exceeds supported array size", e);
         } finally {
             zeroize(classicSs);
             zeroize(pqcSs);
             zeroize(ikm);
         }
+    }
+
+    /**
+     * Package-private derivation seam used to verify cleanup on KDF failure.
+     */
+    /* default */
+    @FunctionalInterface
+    interface SecretDeriver {
+        /**
+         * Derives the final output from owned temporary hybrid input.
+         *
+         * @param ikm combined component secrets
+         * @param salt HKDF salt
+         * @param info HKDF context information
+         * @param outputLength requested output length
+         * @return derived output transferred to the caller
+         * @throws GeneralSecurityException if derivation fails
+         */
+        byte[] derive(byte[] ikm, byte[] salt, byte[] info, int outputLength)
+                throws GeneralSecurityException;
     }
 
     /**
@@ -394,40 +425,61 @@ public final class HybridKexContext implements MessageAgreementContext {
     // Encoding helpers
     // -------------------------------------------------------------------------
 
-    private static byte[] encode(byte[] classicMsg, byte[] pqcMsg) throws IOException {
+    /* default */ static byte[] encode(byte[] classicMsg, byte[] pqcMsg) throws IOException {
         byte[] c = (classicMsg == null) ? new byte[0] : classicMsg;
         byte[] p = (pqcMsg == null) ? new byte[0] : pqcMsg;
+        long frameLength = FRAME_HEADER_BYTES;
+        frameLength += c.length;
+        frameLength += p.length;
+        if (frameLength > MAX_FRAME_BYTES) {
+            throw new IOException("hybrid frame exceeds " + MAX_FRAME_BYTES + " bytes");
+        }
 
-        ByteArrayOutputStream bout = new ByteArrayOutputStream();
-        DataOutputStream out = new DataOutputStream(bout);
-
-        out.writeInt(c.length);
-        out.write(c);
-
-        out.writeInt(p.length);
-        out.write(p);
-
-        out.flush();
-        return bout.toByteArray();
+        ByteBuffer output = ByteBuffer.allocate((int) frameLength);
+        output.putInt(c.length);
+        output.put(c);
+        output.putInt(p.length);
+        output.put(p);
+        return output.array();
     }
 
-    private static Parts decode(byte[] msg) throws IOException {
-        DataInputStream in = new DataInputStream(new ByteArrayInputStream(msg));
+    /* default */ static Parts decode(byte[] msg) throws IOException {
+        Objects.requireNonNull(msg, "msg must not be null");
+        if (msg.length > MAX_FRAME_BYTES) {
+            throw new IOException("hybrid frame exceeds " + MAX_FRAME_BYTES + " bytes");
+        }
+        if (msg.length < FRAME_HEADER_BYTES) {
+            throw new IOException("truncated hybrid frame header");
+        }
 
-        int cLen = in.readInt();
+        int cLen = ByteBuffer.wrap(msg, 0, Integer.BYTES).getInt();
         if (cLen < 0) {
             throw new IOException("negative classic length");
         }
-        byte[] c = new byte[cLen];
-        in.readFully(c);
+        long pqcLengthOffset = Integer.BYTES;
+        pqcLengthOffset += cLen;
+        long payloadOffset = pqcLengthOffset + Integer.BYTES;
+        if (payloadOffset > msg.length) {
+            throw new IOException("truncated classic component");
+        }
 
-        int pLen = in.readInt();
+        int pLen = ByteBuffer.wrap(msg, (int) pqcLengthOffset, Integer.BYTES).getInt();
         if (pLen < 0) {
             throw new IOException("negative pqc length");
         }
-        byte[] p = new byte[pLen];
-        in.readFully(p);
+        long expectedLength = payloadOffset + pLen;
+        if (expectedLength > MAX_FRAME_BYTES) {
+            throw new IOException("declared hybrid frame exceeds " + MAX_FRAME_BYTES + " bytes");
+        }
+        if (expectedLength > msg.length) {
+            throw new IOException("truncated pqc component");
+        }
+        if (expectedLength < msg.length) {
+            throw new IOException("trailing bytes in hybrid frame");
+        }
 
+        byte[] c = Arrays.copyOfRange(msg, Integer.BYTES, (int) pqcLengthOffset);
+        byte[] p = Arrays.copyOfRange(msg, (int) payloadOffset, (int) expectedLength);
         return new Parts(c, p);
     }
 
@@ -457,6 +509,6 @@ public final class HybridKexContext implements MessageAgreementContext {
         }
     }
 
-    private record Parts(byte[] classicPart, byte[] pqcPart) {
+    /* default */ record Parts(byte[] classicPart, byte[] pqcPart) {
     }
 }

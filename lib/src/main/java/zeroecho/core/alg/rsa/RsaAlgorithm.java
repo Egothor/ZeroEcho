@@ -43,13 +43,16 @@ import java.security.PublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAKeyGenParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.context.SignatureContext;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * RSA algorithm binding for encryption/decryption and signature/verification.
@@ -80,14 +83,14 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * RsaAlgorithm rsa = new RsaAlgorithm();
  *
  * // Generate a new RSA-2048 key pair
- * KeyPair kp = rsa.asymmetricKeyBuilder(RsaKeyGenSpec.class)
+ * KeyPair kp = rsa.asymmetricKeyPairGenerator(RsaKeyGenSpec.class)
  *                 .generateKeyPair(RsaKeyGenSpec.rsa2048());
  *
  * // Encrypt with OAEP (SHA-256)
- * EncryptionContext enc = rsa.create(KeyUsage.ENCRYPT, kp.getPublic(), null);
+ * EncryptionContext enc = rsa.createContext(KeyUsage.ENCRYPT, kp.getPublic(), null);
  *
  * // Sign with PSS (SHA-256)
- * SignatureContext sig = rsa.create(KeyUsage.SIGN, kp.getPrivate(), null);
+ * SignatureContext sig = rsa.createContext(KeyUsage.SIGN, kp.getPrivate(), null);
  * }</pre>
  *
  * <p>
@@ -158,7 +161,7 @@ public final class RsaAlgorithm extends AbstractCryptoAlgorithm {
                 }, () -> RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32));
 
         // Key builders
-        registerAsymmetricKeyBuilder(RsaKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(RsaKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(RsaKeyGenSpec spec) throws GeneralSecurityException {
                 KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
@@ -167,52 +170,29 @@ public final class RsaAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params);
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(RsaKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Use RsaPublicKeySpec to import a public key.");
-            }
-
-            @Override
-            public PrivateKey importPrivate(RsaKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Use RsaPrivateKeySpec to import a private key.");
-            }
         }, RsaKeyGenSpec::rsa2048);
 
-        registerAsymmetricKeyBuilder(RsaPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(RsaPublicKeySpec spec) {
-                throw new UnsupportedOperationException("Generation not supported for encoded spec.");
-            }
+        registerPublicKeyImporter(RsaPublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(RsaPublicKeySpec spec) throws GeneralSecurityException {
                 KeyFactory kf = KeyFactory.getInstance("RSA");
                 return kf.generatePublic(new X509EncodedKeySpec(spec.encoded()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(RsaPublicKeySpec spec) {
-                throw new UnsupportedOperationException("Use RsaPrivateKeySpec for private keys.");
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(RsaPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(RsaPrivateKeySpec spec) {
-                throw new UnsupportedOperationException("Generation not supported for encoded spec.");
-            }
-
-            @Override
-            public PublicKey importPublic(RsaPrivateKeySpec spec) {
-                throw new UnsupportedOperationException("Use RsaPublicKeySpec for public keys.");
-            }
+        registerPrivateKeyImporter(RsaPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(RsaPrivateKeySpec spec) throws GeneralSecurityException {
                 KeyFactory kf = KeyFactory.getInstance("RSA");
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.encoded()));
+                byte[] encoded = spec.encoded();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 }

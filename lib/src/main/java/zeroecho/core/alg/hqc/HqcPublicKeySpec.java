@@ -73,7 +73,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * // Import into a PublicKey via HqcAlgorithm
  * HqcAlgorithm hqc = new HqcAlgorithm();
- * PublicKey pub = hqc.importPublic(spec);
+ * PublicKey pub = hqc.publicKeyImporter(HqcPublicKeySpec.class).importPublic(spec);
  *
  * // Serialize for transport
  * PairSeq serialized = HqcPublicKeySpec.marshal(spec);

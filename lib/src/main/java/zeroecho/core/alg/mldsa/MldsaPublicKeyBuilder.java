@@ -35,33 +35,19 @@ package zeroecho.core.alg.mldsa;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
-import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * Builder for importing ML-DSA public keys from encoded specifications.
  *
  * @since 1.0
  */
-public final class MldsaPublicKeyBuilder implements AsymmetricKeyBuilder<MldsaPublicKeySpec> {
+public final class MldsaPublicKeyBuilder implements PublicKeyImporter<MldsaPublicKeySpec> {
 
     private static final String ALG = "ML-DSA";
-
-    /**
-     * Generation is not supported by this spec.
-     *
-     * @param spec encoded public key spec
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public KeyPair generateKeyPair(MldsaPublicKeySpec spec) {
-        throw new UnsupportedOperationException("Generation not supported by this spec.");
-    }
 
     /**
      * Imports a public key from X.509 encoding.
@@ -76,17 +62,5 @@ public final class MldsaPublicKeyBuilder implements AsymmetricKeyBuilder<MldsaPu
         KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance(ALG)
                 : KeyFactory.getInstance(ALG, spec.providerName());
         return kf.generatePublic(new X509EncodedKeySpec(spec.encoded()));
-    }
-
-    /**
-     * Private key import is not supported by this spec.
-     *
-     * @param spec encoded public key spec
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public PrivateKey importPrivate(MldsaPublicKeySpec spec) {
-        throw new UnsupportedOperationException("Use MldsaPrivateKeySpec for private keys.");
     }
 }

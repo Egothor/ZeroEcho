@@ -47,7 +47,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.alg.kyber.KyberKeyGenSpec;
 import zeroecho.core.util.Strings;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
@@ -56,9 +55,11 @@ import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.util.BouncyCastleActivator;
+import zeroecho.sdk.ZeroEchoSession;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PostQuantumTest {
+    private final ZeroEchoSession session = new ZeroEchoSession();
     private static final Logger LOG = Logger.getLogger(PostQuantumTest.class.getName());
 
     @BeforeAll
@@ -67,7 +68,8 @@ class PostQuantumTest {
     }
 
     KeyPair generateKyberKeys() throws GeneralSecurityException {
-        KeyPair kp = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
+        KeyPair kp = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
 
         LOG.log(Level.INFO, "ML-KEM key public={0} private={1}",
                 new Object[] { Strings.toShortHexString(kp.getPublic().getEncoded()),
@@ -87,7 +89,7 @@ class PostQuantumTest {
                 // Start the chain with a plain byte array as input
                 .add(PlainBytesBuilder.builder().bytes(msg))
                 // Add a KEM (Key Encapsulation Mechanism) stage
-                .add(KemDataContentBuilder.builder()
+                .add(KemDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
                         // Select a KEM-capable algorithm: ML-KEM (Kyber variant)
                         .kem("ML-KEM")
                         // Encrypt to this recipient’s public key
@@ -95,7 +97,7 @@ class PostQuantumTest {
                         // Derive a shared secret and expand/obfuscate it using HKDF-SHA256
                         .hkdfSha256("KEM-demo".getBytes(StandardCharsets.US_ASCII))
                         // Use the derived secret as a key for AES
-                        .withAes(AesDataContentBuilder.builder()
+                        .withAes(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
                                 // Configure AES in GCM mode with a 128-bit authentication tag
                                 .modeGcm(128)
                                 // Store auxiliary parameters (e.g., random IV) inside the stream header
@@ -113,7 +115,7 @@ class PostQuantumTest {
                 // Start with the encrypted byte array as input
                 .add(PlainBytesBuilder.builder().bytes(encrypted))
                 // Add the KEM stage again, matching the encryption parameters
-                .add(KemDataContentBuilder.builder()
+                .add(KemDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
                         // Use the same KEM algorithm that was used for encryption
                         .kem("ML-KEM")
                         // Provide the recipient’s private key for decapsulation
@@ -121,7 +123,7 @@ class PostQuantumTest {
                         // Re-derive the shared secret with the same HKDF-SHA256 label
                         .hkdfSha256("KEM-demo".getBytes(StandardCharsets.US_ASCII))
                         // Use the secret to unlock AES payload decryption
-                        .withAes(AesDataContentBuilder.builder()
+                        .withAes(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
                                 // AES in GCM mode with a 128-bit tag, consistent with encryption
                                 .modeGcm(128)
                                 // Read auxiliary parameters (IV, etc.) back from the header

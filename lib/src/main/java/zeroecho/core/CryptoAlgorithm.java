@@ -33,32 +33,29 @@
  ******************************************************************************/
 package zeroecho.core;
 
-import java.io.IOException;
-import java.security.GeneralSecurityException;
 import java.security.Key;
-import java.security.KeyPair;
-import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumMap;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 
-import javax.crypto.SecretKey;
-
 import zeroecho.core.context.CryptoContext;
 import zeroecho.core.err.UnsupportedRoleException;
 import zeroecho.core.err.UnsupportedSpecException;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spec.ContextSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
-import zeroecho.core.spi.ContextConstructorKS;
-import zeroecho.core.spi.SymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.ContextFactoryKS;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
+import zeroecho.core.spi.SymmetricKeyGenerator;
+import zeroecho.core.spi.SymmetricKeyImporter;
 
 /**
  * Abstract base class for all cryptographic algorithm definitions in ZeroEcho.
@@ -70,8 +67,7 @@ import zeroecho.core.spi.SymmetricKeyBuilder;
  * signatures.</li>
  * <li>Roles: supported {@link KeyUsage} operations (e.g., ENCRYPT, SIGN) bound
  * to concrete {@link CryptoContext} constructors.</li>
- * <li>Key builders: factories for symmetric and asymmetric key material via
- * {@link SymmetricKeyBuilder} and {@link AsymmetricKeyBuilder}.</li>
+ * <li>Key operations: exact generation and import capabilities.</li>
  * </ul>
  *
  * <h2>Metadata</h2> Each algorithm instance is uniquely identified by
@@ -86,7 +82,7 @@ import zeroecho.core.spi.SymmetricKeyBuilder;
  * <h2>Roles and contexts</h2> Each algorithm may support multiple
  * {@link KeyUsage} roles. For each role, the algorithm binds a key type,
  * context type, and optional {@link ContextSpec}. When
- * {@link #create(KeyUsage, Key, ContextSpec)} is called:
+ * {@link #createContext(KeyUsage, Key, ContextSpec)} is called:
  * <ol>
  * <li>The binding for the role is located.</li>
  * <li>The supplied key and spec are validated against the expected types.</li>
@@ -94,15 +90,9 @@ import zeroecho.core.spi.SymmetricKeyBuilder;
  * factory.</li>
  * </ol>
  *
- * <h2>Key builders</h2>
- * <ul>
- * <li>Asymmetric builders: registered via {@link #registerAsymmetricKeyBuilder}
- * and accessed through {@link #asymmetricKeyBuilder(Class)} or convenience
- * methods like {@link #generateKeyPair(AlgorithmKeySpec)}.</li>
- * <li>Symmetric builders: registered via {@link #registerSymmetricKeyBuilder}
- * and accessed through {@link #symmetricKeyBuilder(Class)} or convenience
- * methods like {@link #generateSecret(AlgorithmKeySpec)}.</li>
- * </ul>
+ * <h2>Key operations</h2> Providers register generation and import operations
+ * independently. Lookup returns an interface that guarantees the requested
+ * operation.
  *
  * <h2>Provider model</h2> Each algorithm belongs to a {@code providerName},
  * allowing multiple providers (e.g., JCA, BouncyCastle, ZeroEcho-native) to
@@ -115,13 +105,16 @@ import zeroecho.core.spi.SymmetricKeyBuilder;
  *
  * <p>
  * <b>Security note:</b> Algorithms must enforce strong validation of keys and
- * specs during registration and {@link #create(KeyUsage, Key, ContextSpec)} to
+ * specs during registration and
+ * {@link #createContext(KeyUsage, Key, ContextSpec)} to
  * prevent downgrade or misuse attacks.
  * </p>
  *
  * @since 1.0
  */
 public abstract class CryptoAlgorithm { // NOPMD
+
+    private static final String SPEC_TYPE_NULL = "specType must not be null";
 
     private final String _id;
     private final String _displayName;
@@ -130,8 +123,18 @@ public abstract class CryptoAlgorithm { // NOPMD
 
     private final List<Capability> capabilities = new ArrayList<>();
     private final Map<KeyUsage, List<RoleBinding<?, ?, ?>>> ctxBindings = new EnumMap<>(KeyUsage.class);
-    private final Map<Class<? extends AlgorithmKeySpec>, AsymEntry<?>> asymBuilders = new HashMap<>();
-    private final Map<Class<? extends AlgorithmKeySpec>, SymEntry<?>> symBuilders = new HashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, AsymmetricKeyPairGenerator<?>> keyPairGenerators =
+            new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, PublicKeyImporter<?>> publicKeyImporters =
+            new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, PrivateKeyImporter<?>> privateKeyImporters =
+            new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, SymmetricKeyGenerator<?>> symmetricKeyGenerators =
+            new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, SymmetricKeyImporter<?>> symmetricKeyImporters =
+            new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, AlgorithmKeySpec> asymmetricDefaults = new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, AlgorithmKeySpec> symmetricDefaults = new LinkedHashMap<>();
 
     /**
      * Create a new algorithm with default priority and provider.
@@ -270,15 +273,15 @@ public abstract class CryptoAlgorithm { // NOPMD
         private final Class<C> ctxType;
         private final Class<K> keyType;
         private final Class<S> specType;
-        private final ContextConstructorKS<C, K, S> ctor;
+        private final ContextFactoryKS<C, K, S> factory;
         private final Supplier<? extends S> defaultSpec;
 
-        private RoleBinding(Class<C> ctxType, Class<K> keyType, Class<S> specType, ContextConstructorKS<C, K, S> ctor,
+        private RoleBinding(Class<C> ctxType, Class<K> keyType, Class<S> specType, ContextFactoryKS<C, K, S> factory,
                 Supplier<? extends S> defaultSpec) {
             this.ctxType = ctxType;
             this.keyType = keyType;
             this.specType = specType;
-            this.ctor = ctor;
+            this.factory = factory;
             this.defaultSpec = defaultSpec;
         }
 
@@ -293,7 +296,7 @@ public abstract class CryptoAlgorithm { // NOPMD
      * <p>
      * Concrete algorithms call this during construction to declare support for
      * specific roles (e.g., {@code ENCRYPT}, {@code VERIFY}). When
-     * {@link #create(KeyUsage, Key, ContextSpec)} is later invoked, the provided
+     * {@link #createContext(KeyUsage, Key, ContextSpec)} is later invoked, the provided
      * {@code key} and optional {@code spec} are matched against these bindings.
      * </p>
      *
@@ -309,9 +312,15 @@ public abstract class CryptoAlgorithm { // NOPMD
      * @param <S>         spec type
      * @throws NullPointerException if any class or factory argument is {@code null}
      */
-    protected final <C extends CryptoContext, K extends Key, S extends ContextSpec> void bind(KeyUsage role,
-            Class<C> ctxType, Class<K> keyType, Class<S> specType, ContextConstructorKS<C, K, S> factory,
+    protected final <C extends CryptoContext, K extends Key, S extends ContextSpec> void bindContext(KeyUsage role,
+            Class<C> ctxType, Class<K> keyType, Class<S> specType, ContextFactoryKS<C, K, S> factory,
             Supplier<? extends S> defaultSpec) {
+        Objects.requireNonNull(role, "role must not be null");
+        Objects.requireNonNull(ctxType, "ctxType must not be null");
+        Objects.requireNonNull(keyType, "keyType must not be null");
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        Objects.requireNonNull(factory, "factory must not be null");
+        Objects.requireNonNull(defaultSpec, "defaultSpec must not be null");
         ctxBindings.computeIfAbsent(role, r -> new ArrayList<>())
                 .add(new RoleBinding<>(ctxType, keyType, specType, factory, defaultSpec));
     }
@@ -367,13 +376,18 @@ public abstract class CryptoAlgorithm { // NOPMD
      * @throws UnsupportedSpecException if no binding accepts the provided key/spec
      * @throws IllegalStateException    if the factory returns an unexpected context
      *                                  type
-     * @throws IOException              if the factory encounters I/O while
-     *                                  constructing the context
      */
     @SuppressWarnings("unchecked")
-    public final <C extends CryptoContext, K extends Key, S extends ContextSpec> C create(KeyUsage role, K key, S spec)
-            throws IOException {
+    public final <C extends CryptoContext, K extends Key, S extends ContextSpec> C createContext(KeyUsage role, K key,
+            S spec) {
+        return createContextInternal(role, key, spec);
+    }
 
+    @SuppressWarnings("unchecked")
+    private <C extends CryptoContext, K extends Key, S extends ContextSpec> C createContextInternal(KeyUsage role,
+            K key, S spec) {
+        Objects.requireNonNull(role, "role must not be null");
+        Objects.requireNonNull(key, "key must not be null");
         List<RoleBinding<?, ?, ?>> list = ctxBindings.get(role);
         if (list == null || list.isEmpty()) {
             throw new UnsupportedRoleException(_id + " does not support role " + role);
@@ -381,8 +395,10 @@ public abstract class CryptoAlgorithm { // NOPMD
         for (RoleBinding<?, ?, ?> rb0 : list) {
             RoleBinding<C, K, S> rb = (RoleBinding<C, K, S>) rb0;
             if (rb.accepts(key, spec)) {
-                S resolved = (spec != null) ? spec : rb.defaultSpec.get();
-                C ctx = rb.ctor.create(key, resolved);
+                S resolved = (spec != null) ? spec
+                        : Objects.requireNonNull(rb.defaultSpec.get(), "defaultSpec value must not be null");
+                C ctx = Objects.requireNonNull(rb.factory.createContext(key, resolved),
+                        _id + " factory returned null");
                 // Enforce the declared context type contract:
                 if (!rb.ctxType.isInstance(ctx)) {
                     throw new IllegalStateException(_id + " factory returned " + ctx.getClass().getName()
@@ -395,451 +411,239 @@ public abstract class CryptoAlgorithm { // NOPMD
                 + (spec == null ? " (default spec)" : " and spec=" + spec.getClass().getName()));
     }
 
-    /**
-     * Immutable descriptor for an asymmetric builder registered with this
-     * algorithm.
-     * <p>
-     * Used for discovery and documentation (e.g., tool UIs).
-     * </p>
-     */
-    public static final class AsymBuilderInfo {
-        public final Class<? extends AlgorithmKeySpec> specType;
-        public final Object defaultKeySpec;
-
-        private AsymBuilderInfo(Class<? extends AlgorithmKeySpec> specType, Object defaultKeySpec) {
-            this.specType = specType;
-            this.defaultKeySpec = defaultKeySpec;
+    private <S extends AlgorithmKeySpec> S resolveDefault(Class<S> specType,
+            Supplier<? extends S> defaultSpecOrNull) {
+        if (defaultSpecOrNull == null) {
+            return null;
         }
+        S value = Objects.requireNonNull(defaultSpecOrNull.get(), "defaultSpec value must not be null");
+        if (!specType.isInstance(value)) {
+            throw new IllegalArgumentException("defaultSpec must be an instance of " + specType.getName());
+        }
+        return value;
     }
 
     /**
-     * Internal entry binding a registered asymmetric key builder to its default key
-     * specification supplier.
+     * Registers asymmetric key-pair generation for one exact specification class.
      *
-     * <p>
-     * Each {@code AsymEntry} is keyed by a specific {@link AlgorithmKeySpec}
-     * subtype. It holds the {@link AsymmetricKeyBuilder} instance capable of
-     * generating or importing keys for that spec, and an optional supplier that
-     * provides a safe default spec (if the algorithm wants to support "generate
-     * with defaults").
-     * </p>
+     * <p>The optional default is resolved and validated during registration.
+     * Registered generators must be safe for concurrent invocation after the
+     * algorithm is published.</p>
      *
-     * <h2>Usage</h2>
-     * <ul>
-     * <li>Created during calls to
-     * {@link #registerAsymmetricKeyBuilder(Class, AsymmetricKeyBuilder, Supplier)}.</li>
-     * <li>Looked up later by {@link #asymmetricKeyBuilder(Class)} and used by
-     * key-generation/import convenience methods such as
-     * {@link #generateKeyPair(AlgorithmKeySpec)}.</li>
-     * </ul>
-     *
-     * <h2>Thread-safety</h2> Immutable once constructed; safe to share between
-     * threads.
-     *
-     * @param <S> the type of {@link AlgorithmKeySpec} handled by this entry
-     */
-    private record AsymEntry<S extends AlgorithmKeySpec>(AsymmetricKeyBuilder<S> builder,
-            Supplier<? extends S> defaultKeySpec) {
-
-        /**
-         * Creates a new binding between a key builder and its optional default spec.
-         *
-         * @throws NullPointerException if {@code builder} is {@code null}
-         */
-        AsymEntry {
-            Objects.requireNonNull(builder, "builder must not be null");
-        }
-    }
-
-    /**
-     * Registers an asymmetric key builder for a specific spec type.
-     *
-     * <p>
-     * Concrete algorithms call this during construction. The {@code specType} acts
-     * as a key for later lookup and must be unique within this algorithm.
-     * </p>
-     *
-     * @param specType             the spec class accepted by {@code builder}
-     * @param builder              builder that can generate/import keys for
-     *                             {@code specType}
-     * @param defaultKeySpecOrNull optional supplier for a default spec (may be
-     *                             {@code null})
-     * @param <S>                  spec type
-     * @throws NullPointerException if {@code specType} or {@code builder} is
+     * @param specType exact specification class
+     * @param generator non-null generator
+     * @param defaultSpecOrNull optional default supplier, evaluated once
+     * @param <S> specification type
+     * @throws NullPointerException if a required argument or supplied default is
      *                              {@code null}
+     * @throws IllegalArgumentException if the supplied default has the wrong type
      */
-    protected final <S extends AlgorithmKeySpec> void registerAsymmetricKeyBuilder(Class<S> specType,
-            AsymmetricKeyBuilder<S> builder, Supplier<? extends S> defaultKeySpecOrNull) {
-        Objects.requireNonNull(specType, "specType must not be null");
-        asymBuilders.put(specType, new AsymEntry<>(builder, defaultKeySpecOrNull));
+    protected final <S extends AlgorithmKeySpec> void registerAsymmetricKeyPairGenerator(Class<S> specType,
+            AsymmetricKeyPairGenerator<S> generator, Supplier<? extends S> defaultSpecOrNull) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        keyPairGenerators.put(specType, Objects.requireNonNull(generator, "generator must not be null"));
+        asymmetricDefaults.put(specType, resolveDefault(specType, defaultSpecOrNull));
     }
 
     /**
-     * Returns the asymmetric key builder associated with the given spec type.
+     * Registers public-key import for one exact specification class.
      *
-     * @param specType spec class used as a lookup key
-     * @param <S>      spec type
-     * @return the registered {@link AsymmetricKeyBuilder}
-     * @throws IllegalArgumentException if no builder is registered for
-     *                                  {@code specType}
+     * @param specType exact specification class
+     * @param importer non-null importer safe for concurrent invocation
+     * @param <S> specification type
+     * @throws NullPointerException if an argument is {@code null}
      */
-    @SuppressWarnings("unchecked")
-    public final <S extends AlgorithmKeySpec> AsymmetricKeyBuilder<S> asymmetricKeyBuilder(Class<S> specType) {
-        AsymEntry<?> e = asymBuilders.get(specType);
-        if (e == null) {
-            throw new IllegalArgumentException(_id + " has no asymmetric key builder for " + specType.getName());
-        }
-        return (AsymmetricKeyBuilder<S>) e.builder;
+    protected final <S extends AlgorithmKeySpec> void registerPublicKeyImporter(Class<S> specType,
+            PublicKeyImporter<S> importer) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        publicKeyImporters.put(specType, Objects.requireNonNull(importer, "importer must not be null"));
     }
 
     /**
-     * Returns metadata about all registered asymmetric builders.
+     * Registers private-key import for one exact specification class.
      *
-     * <p>
-     * The default spec value is best-effort; suppliers may throw, in which case
-     * {@code defaultKeySpec} is reported as {@code null}.
-     * </p>
-     *
-     * @return immutable list of {@link AsymBuilderInfo} descriptors
+     * @param specType exact specification class
+     * @param importer non-null importer safe for concurrent invocation
+     * @param <S> specification type
+     * @throws NullPointerException if an argument is {@code null}
      */
-    public final List<AsymBuilderInfo> asymmetricBuildersInfo() {
-        List<AsymBuilderInfo> out = new ArrayList<>();
-        for (Map.Entry<Class<? extends AlgorithmKeySpec>, AsymEntry<?>> e : asymBuilders.entrySet()) {
-            Object def = null;
-            if (e.getValue().defaultKeySpec != null) {
-                try {
-                    def = e.getValue().defaultKeySpec.get();
-                } catch (Throwable t) { // NOPMD
-                    def = null;
-                }
-            }
-            out.add(new AsymBuilderInfo(e.getKey(), def));
-        }
-        return Collections.unmodifiableList(out);
+    protected final <S extends AlgorithmKeySpec> void registerPrivateKeyImporter(Class<S> specType,
+            PrivateKeyImporter<S> importer) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        privateKeyImporters.put(specType, Objects.requireNonNull(importer, "importer must not be null"));
     }
 
     /**
-     * Immutable descriptor for a symmetric key builder registered with this
-     * algorithm.
+     * Registers symmetric-key generation for one exact specification class.
      *
-     * <p>
-     * Each {@code SymBuilderInfo} describes the specification type that a
-     * {@link SymmetricKeyBuilder} can handle, along with an optional default
-     * specification object. These descriptors are used for discovery and
-     * documentation purposes, for example when rendering catalog information in
-     * tooling or UIs.
-     * </p>
+     * <p>The optional default is resolved and validated during registration.</p>
      *
-     * <h2>Usage</h2>
-     * <ul>
-     * <li>Produced by {@link #symmetricBuildersInfo()}.</li>
-     * <li>Displayed to clients for inspection and documentation, but not used
-     * directly in cryptographic operations.</li>
-     * </ul>
-     *
-     * <h2>Thread-safety</h2> Being a {@code record}, this type is immutable and
-     * safe to share between threads.
-     *
-     * @param specType       the specification type supported by the builder
-     * @param defaultKeySpec an optional default key specification instance, or
-     *                       {@code null} if no default is provided
-     */
-    public record SymBuilderInfo(Class<? extends AlgorithmKeySpec> specType, Object defaultKeySpec) {
-    }
-
-    /**
-     * Internal entry binding a registered symmetric key builder to its optional
-     * default key specification supplier.
-     *
-     * <p>
-     * Each {@code SymEntry} is keyed by a specific {@link AlgorithmKeySpec}
-     * subtype. It holds the {@link SymmetricKeyBuilder} instance capable of
-     * generating or importing keys for that spec, and a supplier that may produce a
-     * default spec when none is provided explicitly.
-     * </p>
-     *
-     * <h2>Usage</h2>
-     * <ul>
-     * <li>Created during calls to
-     * {@link #registerSymmetricKeyBuilder(Class, SymmetricKeyBuilder, Supplier)}.</li>
-     * <li>Looked up internally when methods such as
-     * {@link #generateSecret(AlgorithmKeySpec)} or
-     * {@link #importSecret(AlgorithmKeySpec)} are invoked.</li>
-     * </ul>
-     *
-     * <h2>Thread-safety</h2> Immutable and thread-safe by design as a
-     * {@code record}.
-     *
-     * @param builder        the builder instance that can create or import keys;
-     *                       must not be {@code null}
-     * @param defaultKeySpec supplier for a default specification, or {@code null}
-     *                       if no sensible default exists
-     * @param <S>            the type of {@link AlgorithmKeySpec} handled by this
-     *                       entry
-     */
-    private record SymEntry<S extends AlgorithmKeySpec>(SymmetricKeyBuilder<S> builder,
-            Supplier<? extends S> defaultKeySpec) {
-
-        /**
-         * Compact constructor that enforces non-null builder.
-         *
-         * @throws NullPointerException if {@code builder} is {@code null}
-         */
-        SymEntry {
-            Objects.requireNonNull(builder, "builder must not be null");
-        }
-    }
-
-    /**
-     * Registers a symmetric key builder for a specific spec type.
-     *
-     * @param specType             the spec class accepted by {@code builder}
-     * @param builder              builder that can generate/import keys for
-     *                             {@code specType}
-     * @param defaultKeySpecOrNull optional supplier for a default spec (may be
-     *                             {@code null})
-     * @param <S>                  spec type
-     * @throws NullPointerException if {@code specType} or {@code builder} is
+     * @param specType exact specification class
+     * @param generator non-null generator safe for concurrent invocation
+     * @param defaultSpecOrNull optional default supplier, evaluated once
+     * @param <S> specification type
+     * @throws NullPointerException if a required argument or supplied default is
      *                              {@code null}
+     * @throws IllegalArgumentException if the supplied default has the wrong type
      */
-    protected final <S extends AlgorithmKeySpec> void registerSymmetricKeyBuilder(Class<S> specType,
-            SymmetricKeyBuilder<S> builder, Supplier<? extends S> defaultKeySpecOrNull) {
-        Objects.requireNonNull(specType, "specType must not be null");
-        symBuilders.put(specType, new SymEntry<>(builder, defaultKeySpecOrNull));
+    protected final <S extends AlgorithmKeySpec> void registerSymmetricKeyGenerator(Class<S> specType,
+            SymmetricKeyGenerator<S> generator, Supplier<? extends S> defaultSpecOrNull) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        symmetricKeyGenerators.put(specType, Objects.requireNonNull(generator, "generator must not be null"));
+        symmetricDefaults.put(specType, resolveDefault(specType, defaultSpecOrNull));
     }
 
     /**
-     * Returns the symmetric key builder associated with the given spec type.
+     * Registers symmetric-key import for one exact specification class.
      *
-     * @param specType spec class used as a lookup key
-     * @param <S>      spec type
-     * @return the registered {@link SymmetricKeyBuilder}
-     * @throws IllegalArgumentException if no builder is registered for
-     *                                  {@code specType}
+     * @param specType exact specification class
+     * @param importer non-null importer safe for concurrent invocation
+     * @param <S> specification type
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    protected final <S extends AlgorithmKeySpec> void registerSymmetricKeyImporter(Class<S> specType,
+            SymmetricKeyImporter<S> importer) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        symmetricKeyImporters.put(specType, Objects.requireNonNull(importer, "importer must not be null"));
+    }
+
+    private IllegalArgumentException missing(String operation, Class<?> specType) {
+        return new IllegalArgumentException(_id + " has no " + operation + " for exact spec " + specType.getName());
+    }
+
+    /**
+     * Returns the asymmetric key-pair generator registered for an exact
+     * specification class.
+     *
+     * <p>The returned implementation may be shared and invoked concurrently.</p>
+     *
+     * @param specType exact specification class; subclasses are not matched
+     * @param <S> specification type
+     * @return registered generator
+     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws IllegalArgumentException if no generator is registered
      */
     @SuppressWarnings("unchecked")
-    public final <S extends AlgorithmKeySpec> SymmetricKeyBuilder<S> symmetricKeyBuilder(Class<S> specType) {
-        SymEntry<?> e = symBuilders.get(specType);
-        if (e == null) {
-            throw new IllegalArgumentException(_id + " has no symmetric key builder for " + specType.getName());
+    public final <S extends AlgorithmKeySpec> AsymmetricKeyPairGenerator<S> asymmetricKeyPairGenerator(
+            Class<S> specType) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        AsymmetricKeyPairGenerator<?> generator = keyPairGenerators.get(specType);
+        if (generator == null) {
+            throw missing("asymmetric key-pair generator", specType);
         }
-        return (SymmetricKeyBuilder<S>) e.builder;
+        return (AsymmetricKeyPairGenerator<S>) generator;
     }
 
     /**
-     * Returns metadata about all registered symmetric builders.
+     * Returns the public-key importer registered for an exact specification class.
      *
-     * <p>
-     * The default spec value is best-effort; suppliers may throw, in which case
-     * {@code defaultKeySpec} is reported as {@code null}.
-     * </p>
+     * <p>The returned implementation may be shared and invoked concurrently.</p>
      *
-     * @return immutable list of {@link SymBuilderInfo} descriptors
-     */
-    public final List<SymBuilderInfo> symmetricBuildersInfo() {
-        List<SymBuilderInfo> out = new ArrayList<>();
-        for (Map.Entry<Class<? extends AlgorithmKeySpec>, SymEntry<?>> e : symBuilders.entrySet()) {
-            Object def = null;
-            if (e.getValue().defaultKeySpec != null) {
-                try {
-                    def = e.getValue().defaultKeySpec.get();
-                } catch (Throwable t) { // NOPMD
-                    def = null;
-                }
-            }
-            out.add(new SymBuilderInfo(e.getKey(), def));
-        }
-        return Collections.unmodifiableList(out);
-    }
-
-    /**
-     * Generates a fresh symmetric {@link SecretKey} using the registered builder
-     * for {@code spec}.
-     *
-     * @param spec algorithm-specific key specification (must match a registered
-     *             symmetric builder)
-     * @param <S>  spec type
-     * @return newly generated secret key
-     * @throws NullPointerException     if {@code spec} is {@code null}
-     * @throws IllegalArgumentException if no symmetric builder is registered for
-     *                                  {@code spec.getClass()}
-     * @throws GeneralSecurityException if key generation fails or parameters are
-     *                                  unsupported
+     * @param specType exact specification class; subclasses are not matched
+     * @param <S> specification type
+     * @return registered importer
+     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws IllegalArgumentException if no importer is registered
      */
     @SuppressWarnings("unchecked")
-    public final <S extends AlgorithmKeySpec> SecretKey generateSecret(S spec) throws GeneralSecurityException {
-        Objects.requireNonNull(spec, "spec must not be null");
-        SymmetricKeyBuilder<S> b = symmetricKeyBuilder((Class<S>) spec.getClass());
-        return b.generateSecret(spec);
+    public final <S extends AlgorithmKeySpec> PublicKeyImporter<S> publicKeyImporter(Class<S> specType) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        PublicKeyImporter<?> importer = publicKeyImporters.get(specType);
+        if (importer == null) {
+            throw missing("public-key importer", specType);
+        }
+        return (PublicKeyImporter<S>) importer;
     }
 
     /**
-     * Imports an existing symmetric {@link SecretKey} using the registered builder
-     * for {@code spec}.
+     * Returns the private-key importer registered for an exact specification
+     * class.
      *
-     * @param spec algorithm-specific key specification including raw
-     *             material/format
-     * @param <S>  spec type
-     * @return wrapped secret key validated against the spec
-     * @throws NullPointerException     if {@code spec} is {@code null}
-     * @throws IllegalArgumentException if no symmetric builder is registered for
-     *                                  {@code spec.getClass()}
-     * @throws GeneralSecurityException if the material is invalid or does not match
-     *                                  the algorithm
+     * <p>The returned implementation may be shared and invoked concurrently.</p>
+     *
+     * @param specType exact specification class; subclasses are not matched
+     * @param <S> specification type
+     * @return registered importer
+     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws IllegalArgumentException if no importer is registered
      */
     @SuppressWarnings("unchecked")
-    public final <S extends AlgorithmKeySpec> SecretKey importSecret(S spec) throws GeneralSecurityException {
-        Objects.requireNonNull(spec, "spec must not be null");
-        SymmetricKeyBuilder<S> b = symmetricKeyBuilder((Class<S>) spec.getClass());
-        return b.importSecret(spec);
+    public final <S extends AlgorithmKeySpec> PrivateKeyImporter<S> privateKeyImporter(Class<S> specType) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        PrivateKeyImporter<?> importer = privateKeyImporters.get(specType);
+        if (importer == null) {
+            throw missing("private-key importer", specType);
+        }
+        return (PrivateKeyImporter<S>) importer;
     }
 
     /**
-     * Attempts to generate a {@link KeyPair} using the given asymmetric builder's
-     * default key spec. This method is fully generic and avoids raw types by
-     * capturing the concrete spec type parameter.
+     * Returns the symmetric-key generator registered for an exact specification
+     * class.
      *
-     * @param specType the spec class label used for diagnostics
-     * @param entry    the typed asymmetric builder entry
-     * @param <S>      concrete {@link AlgorithmKeySpec} type
-     * @return a freshly generated key pair
-     * @throws GeneralSecurityException if the supplier or builder fails
-     */
-    private <S extends AlgorithmKeySpec> KeyPair tryGenerateWithDefault(Class<? extends AlgorithmKeySpec> specType,
-            AsymEntry<S> entry) throws GeneralSecurityException {
-
-        if (entry.defaultKeySpec == null) {
-            throw new GeneralSecurityException("no default spec supplier");
-        }
-
-        final S spec;
-        try {
-            spec = entry.defaultKeySpec.get();
-        } catch (Throwable t) { // NOPMD
-            throw new GeneralSecurityException("defaultSpec supplier failed for " + specType.getSimpleName() + ": "
-                    + t.getClass().getSimpleName() + ": " + t.getMessage(), t);
-        }
-        if (spec == null) {
-            throw new GeneralSecurityException("defaultSpec supplier returned null for " + specType.getSimpleName());
-        }
-
-        // No raw types here: S is captured from entry.
-        return entry.builder.generateKeyPair(spec);
-    }
-
-    /**
-     * Generates a fresh {@link KeyPair} using the first asymmetric builder that
-     * successfully provides a default key specification.
+     * <p>The returned implementation may be shared and invoked concurrently.</p>
      *
-     * <p>
-     * This convenience method iterates over all registered asymmetric key builders
-     * that declare a non-null default {@link AlgorithmKeySpec} supplier. For each,
-     * it attempts to obtain the default spec and generate a key pair. If a builder
-     * fails (e.g., the builder only supports import or rejects the parameters), the
-     * method records the failure and continues with the next candidate.
-     * </p>
-     *
-     * <h4>Example</h4> <pre>{@code
-     * CryptoAlgorithm algo = CryptoAlgorithms.require("Ed25519");
-     * KeyPair kp = algo.generateKeyPair();
-     * }</pre>
-     *
-     * @return a newly generated key pair using a default spec from one of the
-     *         registered asymmetric builders
-     * @throws IllegalStateException    if no builder declares a default spec
-     *                                  supplier
-     * @throws GeneralSecurityException if all candidate builders fail to generate a
-     *                                  key pair; the exception message details
-     *                                  individual causes
-     */
-    public final KeyPair generateKeyPair() throws GeneralSecurityException {
-        StringBuilder reasons = new StringBuilder(128);
-        boolean attempted = false;
-
-        for (Map.Entry<Class<? extends AlgorithmKeySpec>, AsymEntry<?>> e : asymBuilders.entrySet()) {
-            AsymEntry<?> entry = e.getValue();
-            if (entry.defaultKeySpec == null) {
-                continue;
-            }
-            attempted = true;
-            try {
-                // Wildcard capture lets the compiler infer <S> without casts.
-                return tryGenerateWithDefault(e.getKey(), entry);
-            } catch (GeneralSecurityException ex) {
-                reasons.append(" - ").append(e.getKey().getSimpleName()).append(": ")
-                        .append(ex.getClass().getSimpleName()).append(": ").append(String.valueOf(ex.getMessage()))
-                        .append('\n');
-                // keep trying other builders
-            }
-        }
-
-        if (!attempted) {
-            throw new IllegalStateException(_id + " has no default asymmetric key spec");
-        }
-        throw new GeneralSecurityException(
-                _id + " failed to generate a default key pair. Reasons:\n" + reasons.toString().trim());
-    }
-
-    /**
-     * Generates a fresh {@link KeyPair} using the registered asymmetric builder for
-     * {@code spec}.
-     *
-     * @param spec algorithm-specific key specification (must match a registered
-     *             asymmetric builder)
-     * @param <S>  spec type
-     * @return newly generated key pair
-     * @throws NullPointerException     if {@code spec} is {@code null}
-     * @throws IllegalArgumentException if no asymmetric builder is registered for
-     *                                  {@code spec.getClass()}
-     * @throws GeneralSecurityException if key generation fails or parameters are
-     *                                  unsupported
+     * @param specType exact specification class; subclasses are not matched
+     * @param <S> specification type
+     * @return registered generator
+     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws IllegalArgumentException if no generator is registered
      */
     @SuppressWarnings("unchecked")
-    public final <S extends AlgorithmKeySpec> KeyPair generateKeyPair(S spec) throws GeneralSecurityException {
-        Objects.requireNonNull(spec, "spec must not be null");
-        AsymmetricKeyBuilder<S> b = asymmetricKeyBuilder((Class<S>) spec.getClass());
-        return b.generateKeyPair(spec);
+    public final <S extends AlgorithmKeySpec> SymmetricKeyGenerator<S> symmetricKeyGenerator(Class<S> specType) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        SymmetricKeyGenerator<?> generator = symmetricKeyGenerators.get(specType);
+        if (generator == null) {
+            throw missing("symmetric-key generator", specType);
+        }
+        return (SymmetricKeyGenerator<S>) generator;
     }
 
     /**
-     * Imports a {@link PublicKey} using the registered asymmetric builder for
-     * {@code spec}.
+     * Returns the symmetric-key importer registered for an exact specification
+     * class.
      *
-     * @param spec algorithm-specific key specification including encoded public
-     *             material/format
-     * @param <S>  spec type
-     * @return wrapped public key validated against the spec
-     * @throws NullPointerException     if {@code spec} is {@code null}
-     * @throws IllegalArgumentException if no asymmetric builder is registered for
-     *                                  {@code spec.getClass()}
-     * @throws GeneralSecurityException if the material is invalid or does not match
-     *                                  the algorithm
+     * <p>The returned implementation may be shared and invoked concurrently.</p>
+     *
+     * @param specType exact specification class; subclasses are not matched
+     * @param <S> specification type
+     * @return registered importer
+     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws IllegalArgumentException if no importer is registered
      */
     @SuppressWarnings("unchecked")
-    public final <S extends AlgorithmKeySpec> PublicKey importPublic(S spec) throws GeneralSecurityException {
-        Objects.requireNonNull(spec, "spec must not be null");
-        AsymmetricKeyBuilder<S> b = asymmetricKeyBuilder((Class<S>) spec.getClass());
-        return b.importPublic(spec);
+    public final <S extends AlgorithmKeySpec> SymmetricKeyImporter<S> symmetricKeyImporter(Class<S> specType) {
+        Objects.requireNonNull(specType, SPEC_TYPE_NULL);
+        SymmetricKeyImporter<?> importer = symmetricKeyImporters.get(specType);
+        if (importer == null) {
+            throw missing("symmetric-key importer", specType);
+        }
+        return (SymmetricKeyImporter<S>) importer;
     }
 
     /**
-     * Imports a {@link PrivateKey} using the registered asymmetric builder for
-     * {@code spec}.
+     * Returns deterministic metadata for every exact key operation.
      *
-     * @param spec algorithm-specific key specification including encoded private
-     *             material/format
-     * @param <S>  spec type
-     * @return wrapped private key validated against the spec
-     * @throws NullPointerException     if {@code spec} is {@code null}
-     * @throws IllegalArgumentException if no asymmetric builder is registered for
-     *                                  {@code spec.getClass()}
-     * @throws GeneralSecurityException if the material is invalid or does not match
-     *                                  the algorithm
+     * @return immutable metadata ordered by operation and specification class
      */
-    @SuppressWarnings("unchecked")
-    public final <S extends AlgorithmKeySpec> PrivateKey importPrivate(S spec) throws GeneralSecurityException {
-        Objects.requireNonNull(spec, "spec must not be null");
-        AsymmetricKeyBuilder<S> b = asymmetricKeyBuilder((Class<S>) spec.getClass());
-        return b.importPrivate(spec);
+    public final List<KeyOperationInfo> keyOperations() {
+        List<KeyOperationInfo> result = new ArrayList<>();
+        addOperationInfo(result, KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE, keyPairGenerators,
+                asymmetricDefaults);
+        addOperationInfo(result, KeyOperation.ASYMMETRIC_PUBLIC_IMPORT, publicKeyImporters, Map.of());
+        addOperationInfo(result, KeyOperation.ASYMMETRIC_PRIVATE_IMPORT, privateKeyImporters, Map.of());
+        addOperationInfo(result, KeyOperation.SYMMETRIC_GENERATE, symmetricKeyGenerators, symmetricDefaults);
+        addOperationInfo(result, KeyOperation.SYMMETRIC_IMPORT, symmetricKeyImporters, Map.of());
+        result.sort(Comparator.comparing(KeyOperationInfo::operation)
+                .thenComparing(info -> info.specType().getName()));
+        return List.copyOf(result);
+    }
+
+    private static void addOperationInfo(List<KeyOperationInfo> result, KeyOperation operation,
+            Map<Class<? extends AlgorithmKeySpec>, ?> operations,
+            Map<Class<? extends AlgorithmKeySpec>, AlgorithmKeySpec> defaults) {
+        for (Class<? extends AlgorithmKeySpec> specType : operations.keySet()) {
+            result.add(new KeyOperationInfo(operation, specType, defaults.get(specType)));
+        }
     }
 }

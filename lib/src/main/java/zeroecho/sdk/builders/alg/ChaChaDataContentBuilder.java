@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
@@ -43,8 +45,6 @@ import javax.crypto.SecretKey;
 import conflux.Ctx;
 import conflux.CtxInterface;
 import zeroecho.core.ConfluxKeys;
-import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.SymmetricHeaderCodec;
 import zeroecho.core.alg.chacha.ChaCha20Poly1305HeaderCodec;
@@ -56,7 +56,6 @@ import zeroecho.core.alg.chacha.ChaChaSpec;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.spi.ContextAware;
-import zeroecho.core.spi.SymmetricKeyBuilder;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.EncryptedContent;
@@ -144,6 +143,7 @@ import zeroecho.sdk.content.api.PlainContent;
  * @see SymmetricHeaderCodec
  */
 public final class ChaChaDataContentBuilder implements DataContentBuilder<DataContent> {
+    private final ZeroEchoSession session;
 
     private SecretKey secretKey;
     private ChaChaKeyGenSpec genSpec;
@@ -174,11 +174,12 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
      *
      * @return a new {@code ChaChaDataContentBuilder}
      */
-    public static ChaChaDataContentBuilder builder() {
-        return new ChaChaDataContentBuilder();
+    public static ChaChaDataContentBuilder builder(ZeroEchoSession session) {
+        return new ChaChaDataContentBuilder(session);
     }
 
-    private ChaChaDataContentBuilder() {
+    private ChaChaDataContentBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -537,17 +538,13 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
             return secretKey;
         }
         try {
-            CryptoAlgorithm algo = CryptoAlgorithms.require(algId);
             if (genSpec != null) {
-                SymmetricKeyBuilder<ChaChaKeyGenSpec> b = algo.symmetricKeyBuilder(ChaChaKeyGenSpec.class);
-                return b.generateSecret(genSpec);
+                return session.keyBuilders().symmetric().generate(algId, genSpec);
             }
             if (importSpec != null) {
-                SymmetricKeyBuilder<ChaChaKeyImportSpec> b = algo.symmetricKeyBuilder(ChaChaKeyImportSpec.class);
-                return b.importSecret(importSpec);
+                return session.keyBuilders().symmetric().importKey(algId, importSpec);
             }
-            SymmetricKeyBuilder<ChaChaKeyGenSpec> b = algo.symmetricKeyBuilder(ChaChaKeyGenSpec.class);
-            return b.generateSecret(ChaChaKeyGenSpec.chacha256());
+            return session.keyBuilders().symmetric().generate(algId, ChaChaKeyGenSpec.chacha256());
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("ChaCha key construction failed for " + algId, e);
         }
@@ -567,12 +564,13 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
      * <p>
      * The actual cipher work is delegated to an
      * {@link zeroecho.core.context.EncryptionContext} created through
-     * {@link zeroecho.core.CryptoAlgorithms#create(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}.
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
+     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}.
      * If the created context implements {@code ContextAware}, the configured
      * context is injected before the stream is attached.
      * </p>
      */
-    private static final class EncryptContent<S extends ContextSpec> implements EncryptedContent {
+    private final class EncryptContent<S extends ContextSpec> implements EncryptedContent {
         private final String algId;
         private final SecretKey key;
         private final S spec;
@@ -615,7 +613,7 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "encrypt: missing input content");
-            final EncryptionContext enc = CryptoAlgorithms.create(algId, KeyUsage.ENCRYPT, key, spec); // NOPMD
+            final EncryptionContext enc = session.createContext(algId, KeyUsage.ENCRYPT, key, spec); // NOPMD
             if (enc instanceof ContextAware ca) {
                 ca.setContext(ctx);
             }
@@ -637,12 +635,13 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
      * <p>
      * The actual cipher work is delegated to an
      * {@link zeroecho.core.context.EncryptionContext} created through
-     * {@link zeroecho.core.CryptoAlgorithms#create(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}.
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
+     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}.
      * If the created context implements {@code ContextAware}, the configured
      * context is injected before the stream is attached.
      * </p>
      */
-    private static final class DecryptContent<S extends ContextSpec> implements PlainContent {
+    private final class DecryptContent<S extends ContextSpec> implements PlainContent {
         private final String algId;
         private final SecretKey key;
         private final S spec;
@@ -686,7 +685,7 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "decrypt: missing input content");
-            final EncryptionContext dec = CryptoAlgorithms.create(algId, KeyUsage.DECRYPT, key, spec); // NOPMD
+            final EncryptionContext dec = session.createContext(algId, KeyUsage.DECRYPT, key, spec); // NOPMD
             if (dec instanceof ContextAware ca) {
                 ca.setContext(ctx);
             }

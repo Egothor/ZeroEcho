@@ -50,8 +50,9 @@
  * message-style agreement adapter where needed.</li>
  * <li>Provide a {@link zeroecho.core.context.KemContext} implementation bound
  * to either a public or private key for encapsulation or decapsulation.</li>
- * <li>Expose immutable specifications for key generation variants and encoded
- * key carriers with compact marshalling helpers.</li>
+ * <li>Expose immutable key-generation specifications and defensively copying
+ * encoded-key carriers with compact marshalling helpers; private-key carriers
+ * are destroyable.</li>
  * <li>Ensure operations are delegated to an available PQC provider and fail
  * fast if the provider is absent.</li>
  * </ul>

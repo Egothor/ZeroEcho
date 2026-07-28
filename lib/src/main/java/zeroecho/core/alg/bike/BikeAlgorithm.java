@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -56,7 +57,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * <h2>Integration of BIKE (Bit Flipping Key Encapsulation) algorithm</h2>
@@ -84,14 +87,14 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * BikeAlgorithm bike = new BikeAlgorithm();
  *
  * // Generate a key pair
- * KeyPair kp = bike.asymmetricKeyBuilder(BikeKeyGenSpec.class)
+ * KeyPair kp = bike.asymmetricKeyPairGenerator(BikeKeyGenSpec.class)
  *                  .generateKeyPair(BikeKeyGenSpec.bike256());
  *
  * // Encapsulation using recipient's public key
- * KemContext kemEnc = bike.create(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
+ * KemContext kemEnc = bike.createContext(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
  *
  * // Decapsulation using private key
- * KemContext kemDec = bike.create(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
+ * KemContext kemDec = bike.createContext(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
  * }</pre>
  *
  * @since 1.0
@@ -139,7 +142,7 @@ public final class BikeAlgorithm extends AbstractCryptoAlgorithm {
                             .build();
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(BikeKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(BikeKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(BikeKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
@@ -152,23 +155,9 @@ public final class BikeAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(BikeKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PrivateKey importPrivate(BikeKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
         }, BikeKeyGenSpec::bike256);
 
-        registerAsymmetricKeyBuilder(BikePublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(BikePublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPublicKeyImporter(BikePublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(BikePublicKeySpec spec) throws GeneralSecurityException {
@@ -176,31 +165,22 @@ public final class BikeAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("BIKE", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(BikePublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(BikePrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(BikePrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PublicKey importPublic(BikePrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPrivateKeyImporter(BikePrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(BikePrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("BIKE", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     /**

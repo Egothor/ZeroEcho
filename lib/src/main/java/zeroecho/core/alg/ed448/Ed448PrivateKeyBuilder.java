@@ -35,7 +35,6 @@ package zeroecho.core.alg.ed448;
 
 import zeroecho.core.alg.common.eddsa.AbstractEncodedPrivateKeyBuilder;
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
 
 /**
  * <h2>Ed448 Private Key Builder</h2>
@@ -66,8 +65,8 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * }</pre>
  *
  * <h2>Thread-safety</h2> Stateless and safe for concurrent use. Each call to
- * {@link AsymmetricKeyBuilder#importPrivate(AlgorithmKeySpec)
- * importPrivate(Ed448PrivateKeySpec)} creates a new
+ * {@link zeroecho.core.spi.PrivateKeyImporter#importPrivate(AlgorithmKeySpec)}
+ * creates a new
  * {@link java.security.KeyFactory}.
  *
  * @since 1.0

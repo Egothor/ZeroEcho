@@ -33,7 +33,6 @@
  ******************************************************************************/
 package zeroecho.core.tag;
 
-import java.io.IOException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
@@ -42,7 +41,6 @@ import java.util.function.Supplier;
 
 import javax.crypto.SecretKey;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.NullKey;
 import zeroecho.core.alg.digest.DigestSpec;
@@ -50,6 +48,7 @@ import zeroecho.core.alg.ecdsa.EcdsaCurveSpec;
 import zeroecho.core.alg.hmac.HmacSpec;
 import zeroecho.core.alg.rsa.RsaSigSpec;
 import zeroecho.core.spec.ContextSpec;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.core.spec.VoidSpec;
 
 /**
@@ -58,8 +57,8 @@ import zeroecho.core.spec.VoidSpec;
  *
  * <p>
  * Each {@code TagEngineBuilder} holds a factory that typically delegates to
- * {@link CryptoAlgorithms#create(String, KeyUsage, java.security.Key, ContextSpec)}
- * so that global policy and auditing are consistently enforced. A new engine
+ * {@link ZeroEchoSession#createContext(String, KeyUsage, java.security.Key, ContextSpec)}
+ * so that session policy and auditing are consistently enforced. A new engine
  * instance is created for each call to {@link #get()}.
  * </p>
  *
@@ -122,16 +121,11 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @param spec digest specification; may be {@code null} to select the default
      * @return a builder that produces digest-based {@link TagEngine} instances
      */
-    public static TagEngineBuilder<byte[]> digest(final DigestSpec spec) {
+    public static TagEngineBuilder<byte[]> digest(final ZeroEchoSession session, final DigestSpec spec) {
+        Objects.requireNonNull(session, "session");
         final DigestSpec s = spec == null ? DigestSpec.sha256() : spec;
-        return new TagEngineBuilder<>(() -> {
-            try {
-                // JcaDigestContext implements DigestContext extends TagEngine
-                return CryptoAlgorithms.create("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE, s);
-            } catch (IOException e) {
-                throw new IllegalStateException("Failed to create DIGEST TagEngine", e);
-            }
-        });
+        return new TagEngineBuilder<>(
+                () -> session.createContext("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE, s));
     }
 
     /**
@@ -146,17 +140,12 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces HMAC-based {@link TagEngine} instances
      * @throws NullPointerException if {@code key} is {@code null}
      */
-    public static TagEngineBuilder<byte[]> hmac(final SecretKey key, final HmacSpec spec) {
+    public static TagEngineBuilder<byte[]> hmac(final ZeroEchoSession session, final SecretKey key,
+            final HmacSpec spec) {
+        Objects.requireNonNull(session, "session");
         Objects.requireNonNull(key, "key");
         final HmacSpec s = spec == null ? HmacSpec.sha256() : spec;
-        return new TagEngineBuilder<>(() -> {
-            try {
-                // HmacMacContext implements MacContext extends TagEngine
-                return CryptoAlgorithms.create("HMAC", KeyUsage.MAC, key, s);
-            } catch (IOException e) {
-                throw new IllegalStateException("Failed to create HMAC TagEngine", e);
-            }
-        });
+        return new TagEngineBuilder<>(() -> session.createContext("HMAC", KeyUsage.MAC, key, s));
     }
 
     /**
@@ -181,8 +170,9 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @throws IllegalArgumentException if {@code key} is not a supported type
      * @throws NullPointerException     if {@code id} or {@code key} is {@code null}
      */
-    public static TagEngineBuilder<Signature> signature(final String id, final java.security.Key key,
-            final ContextSpec spec) {
+    public static TagEngineBuilder<Signature> signature(final ZeroEchoSession session, final String id,
+            final java.security.Key key, final ContextSpec spec) {
+        Objects.requireNonNull(session, "session");
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(key, "key");
 
@@ -193,15 +183,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
         }
 
         final ContextSpec s = spec == null ? VoidSpec.INSTANCE : spec;
-        return new TagEngineBuilder<>(() -> {
-            try {
-                // RsaSignatureContext / Ed25519SignatureContext implement SignatureContext
-                // extends TagEngine
-                return CryptoAlgorithms.create(id, role, key, s);
-            } catch (IOException e) {
-                throw new IllegalStateException("Failed to create " + id + " signature TagEngine", e);
-            }
-        });
+        return new TagEngineBuilder<>(() -> session.createContext(id, role, key, s));
     }
 
     /**
@@ -211,9 +193,10 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces Ed25519 signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> ed25519Sign(final PrivateKey privateKey) {
+    public static TagEngineBuilder<Signature> ed25519Sign(final ZeroEchoSession session,
+            final PrivateKey privateKey) {
         Objects.requireNonNull(privateKey, PRIVATE_KEY);
-        return signature("Ed25519", privateKey, VoidSpec.INSTANCE);
+        return signature(session, "Ed25519", privateKey, VoidSpec.INSTANCE);
     }
 
     /**
@@ -223,9 +206,10 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces Ed25519 signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> ed25519Verify(final PublicKey publicKey) {
+    public static TagEngineBuilder<Signature> ed25519Verify(final ZeroEchoSession session,
+            final PublicKey publicKey) {
         Objects.requireNonNull(publicKey, PUBLIC_KEY);
-        return signature("Ed25519", publicKey, VoidSpec.INSTANCE);
+        return signature(session, "Ed25519", publicKey, VoidSpec.INSTANCE);
     }
 
     /**
@@ -242,9 +226,11 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces RSA signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> rsaSign(final PrivateKey privateKey, final RsaSigSpec spec) {
+    public static TagEngineBuilder<Signature> rsaSign(final ZeroEchoSession session, final PrivateKey privateKey,
+            final RsaSigSpec spec) {
         Objects.requireNonNull(privateKey, PRIVATE_KEY);
-        return signature("RSA", privateKey, spec == null ? RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32) : spec);
+        return signature(session, "RSA", privateKey,
+                spec == null ? RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32) : spec);
     }
 
     /**
@@ -261,9 +247,11 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces RSA signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> rsaVerify(final PublicKey publicKey, final RsaSigSpec spec) {
+    public static TagEngineBuilder<Signature> rsaVerify(final ZeroEchoSession session, final PublicKey publicKey,
+            final RsaSigSpec spec) {
         Objects.requireNonNull(publicKey, PUBLIC_KEY);
-        return signature("RSA", publicKey, spec == null ? RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32) : spec);
+        return signature(session, "RSA", publicKey,
+                spec == null ? RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32) : spec);
     }
 
     /**
@@ -279,10 +267,11 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces ECDSA signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> ecdsaSign(final PrivateKey privateKey, final EcdsaCurveSpec spec) {
+    public static TagEngineBuilder<Signature> ecdsaSign(final ZeroEchoSession session, final PrivateKey privateKey,
+            final EcdsaCurveSpec spec) {
         Objects.requireNonNull(privateKey, PRIVATE_KEY);
         final EcdsaCurveSpec s = spec == null ? EcdsaCurveSpec.P256 : spec;
-        return signature("ECDSA", privateKey, s);
+        return signature(session, "ECDSA", privateKey, s);
     }
 
     /**
@@ -298,10 +287,11 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces ECDSA signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> ecdsaVerify(final PublicKey publicKey, final EcdsaCurveSpec spec) {
+    public static TagEngineBuilder<Signature> ecdsaVerify(final ZeroEchoSession session, final PublicKey publicKey,
+            final EcdsaCurveSpec spec) {
         Objects.requireNonNull(publicKey, PUBLIC_KEY);
         final EcdsaCurveSpec s = spec == null ? EcdsaCurveSpec.P256 : spec;
-        return signature("ECDSA", publicKey, s);
+        return signature(session, "ECDSA", publicKey, s);
     }
 
     /**
@@ -311,9 +301,10 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces ECDSA signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> ecdsaP256Sign(final PrivateKey privateKey) {
+    public static TagEngineBuilder<Signature> ecdsaP256Sign(final ZeroEchoSession session,
+            final PrivateKey privateKey) {
         Objects.requireNonNull(privateKey, PRIVATE_KEY);
-        return signature("ECDSA", privateKey, EcdsaCurveSpec.P256);
+        return signature(session, "ECDSA", privateKey, EcdsaCurveSpec.P256);
     }
 
     /**
@@ -323,9 +314,10 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * @return a builder that produces ECDSA signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> ecdsaP256Verify(final PublicKey publicKey) {
+    public static TagEngineBuilder<Signature> ecdsaP256Verify(final ZeroEchoSession session,
+            final PublicKey publicKey) {
         Objects.requireNonNull(publicKey, PUBLIC_KEY);
-        return signature("ECDSA", publicKey, EcdsaCurveSpec.P256);
+        return signature(session, "ECDSA", publicKey, EcdsaCurveSpec.P256);
     }
 
     /**
@@ -333,16 +325,17 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      *
      * <p>
      * Requires the BouncyCastle PQC provider and a registered "SPHINCS+" algorithm
-     * in {@link CryptoAlgorithms}.
+     * in the supplied {@link ZeroEchoSession}.
      * </p>
      *
      * @param privateKey private signing key; must not be {@code null}
      * @return a builder that produces SPHINCS+ signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> sphincsPlusSign(final PrivateKey privateKey) {
+    public static TagEngineBuilder<Signature> sphincsPlusSign(final ZeroEchoSession session,
+            final PrivateKey privateKey) {
         Objects.requireNonNull(privateKey, PRIVATE_KEY);
-        return signature("SPHINCS+", privateKey, VoidSpec.INSTANCE);
+        return signature(session, "SPHINCS+", privateKey, VoidSpec.INSTANCE);
     }
 
     /**
@@ -350,16 +343,17 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      *
      * <p>
      * Requires the BouncyCastle PQC provider and a registered "SPHINCS+" algorithm
-     * in {@link CryptoAlgorithms}.
+     * in the supplied {@link ZeroEchoSession}.
      * </p>
      *
      * @param publicKey public verification key; must not be {@code null}
      * @return a builder that produces SPHINCS+ signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> sphincsPlusVerify(final PublicKey publicKey) {
+    public static TagEngineBuilder<Signature> sphincsPlusVerify(final ZeroEchoSession session,
+            final PublicKey publicKey) {
         Objects.requireNonNull(publicKey, PUBLIC_KEY);
-        return signature("SPHINCS+", publicKey, VoidSpec.INSTANCE);
+        return signature(session, "SPHINCS+", publicKey, VoidSpec.INSTANCE);
     }
 
     /**
@@ -368,16 +362,17 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * <p>
      * SLH-DSA is the NIST-standardized hash-based signature scheme (FIPS 205). The
      * concrete parameter set is encoded in the key material and interpreted by the
-     * underlying {@link CryptoAlgorithms} implementation.
+     * algorithm resolved through the supplied {@link ZeroEchoSession}.
      * </p>
      *
      * @param privateKey private signing key; must not be {@code null}
      * @return a builder that produces SLH-DSA signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> slhDsaSign(final PrivateKey privateKey) {
+    public static TagEngineBuilder<Signature> slhDsaSign(final ZeroEchoSession session,
+            final PrivateKey privateKey) {
         Objects.requireNonNull(privateKey, PRIVATE_KEY);
-        return signature("SLH-DSA", privateKey, VoidSpec.INSTANCE);
+        return signature(session, "SLH-DSA", privateKey, VoidSpec.INSTANCE);
     }
 
     /**
@@ -386,16 +381,17 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * <p>
      * SLH-DSA is the NIST-standardized hash-based signature scheme (FIPS 205). The
      * concrete parameter set is encoded in the key material and interpreted by the
-     * underlying {@link CryptoAlgorithms} implementation.
+     * algorithm resolved through the supplied {@link ZeroEchoSession}.
      * </p>
      *
      * @param publicKey public verification key; must not be {@code null}
      * @return a builder that produces SLH-DSA signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> slhDsaVerify(final PublicKey publicKey) {
+    public static TagEngineBuilder<Signature> slhDsaVerify(final ZeroEchoSession session,
+            final PublicKey publicKey) {
         Objects.requireNonNull(publicKey, PUBLIC_KEY);
-        return signature("SLH-DSA", publicKey, VoidSpec.INSTANCE);
+        return signature(session, "SLH-DSA", publicKey, VoidSpec.INSTANCE);
     }
 
     /**
@@ -404,17 +400,18 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * <p>
      * ML-DSA is the NIST-standardized module-lattice signature scheme (FIPS 204).
      * The concrete parameter set and any pre-hash variant is encoded in the key
-     * material and interpreted by the underlying {@link CryptoAlgorithms}
-     * implementation.
+     * material and interpreted by the algorithm resolved through the supplied
+     * {@link ZeroEchoSession}.
      * </p>
      *
      * @param privateKey private signing key; must not be {@code null}
      * @return a builder that produces ML-DSA signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> mldsaSign(final PrivateKey privateKey) {
+    public static TagEngineBuilder<Signature> mldsaSign(final ZeroEchoSession session,
+            final PrivateKey privateKey) {
         Objects.requireNonNull(privateKey, PRIVATE_KEY);
-        return signature("ML-DSA", privateKey, VoidSpec.INSTANCE);
+        return signature(session, "ML-DSA", privateKey, VoidSpec.INSTANCE);
     }
 
     /**
@@ -423,16 +420,17 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * <p>
      * ML-DSA is the NIST-standardized module-lattice signature scheme (FIPS 204).
      * The concrete parameter set and any pre-hash variant is encoded in the key
-     * material and interpreted by the underlying {@link CryptoAlgorithms}
-     * implementation.
+     * material and interpreted by the algorithm resolved through the supplied
+     * {@link ZeroEchoSession}.
      * </p>
      *
      * @param publicKey public verification key; must not be {@code null}
      * @return a builder that produces ML-DSA signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
      */
-    public static TagEngineBuilder<Signature> mldsaVerify(final PublicKey publicKey) {
+    public static TagEngineBuilder<Signature> mldsaVerify(final ZeroEchoSession session,
+            final PublicKey publicKey) {
         Objects.requireNonNull(publicKey, PUBLIC_KEY);
-        return signature("ML-DSA", publicKey, VoidSpec.INSTANCE);
+        return signature(session, "ML-DSA", publicKey, VoidSpec.INSTANCE);
     }
 }

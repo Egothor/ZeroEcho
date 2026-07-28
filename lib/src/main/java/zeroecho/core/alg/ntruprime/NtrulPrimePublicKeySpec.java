@@ -59,7 +59,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * NtrulPrimePublicKeySpec spec = new NtrulPrimePublicKeySpec(der);
  *
  * // Import via CryptoAlgorithms
- * PublicKey pub = CryptoAlgorithms.publicKey("NTRULPRime", spec);
+ * PublicKey pub = session.keyBuilders().asymmetric().importPublic("NTRULPRime", spec);
  * }</pre>
  *
  * <h2>Serialization</h2> A lightweight marshaling format is supported via

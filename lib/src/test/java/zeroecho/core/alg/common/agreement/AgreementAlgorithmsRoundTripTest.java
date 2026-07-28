@@ -62,7 +62,9 @@ import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.KeyOperation;
+import zeroecho.core.KeyOperationInfo;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
 public class AgreementAlgorithmsRoundTripTest {
@@ -174,7 +176,7 @@ public class AgreementAlgorithmsRoundTripTest {
 
                     ContextSpec spec = null;
                     try {
-                        spec = cap.defaultSpec().get();
+                        spec = cap.defaultSpec();
                     } catch (Throwable ignore) {
                         spec = tryExtractContextSpec(alg);
                     }
@@ -204,8 +206,8 @@ public class AgreementAlgorithmsRoundTripTest {
                     MessageAgreementContext bCtx = null;
 
                     try {
-                        aCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, aliceKey, spec);
-                        bCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bobKey, spec);
+                        aCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, aliceKey, spec);
+                        bCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bobKey, spec);
 
                         byte[] aMsg = aCtx.getPeerMessage();
                         byte[] bMsg = bCtx.getPeerMessage();
@@ -272,11 +274,11 @@ public class AgreementAlgorithmsRoundTripTest {
 
                     try {
                         // Alice (initiator): has Bob's public key
-                        aliceCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bob.getPublic(),
+                        aliceCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bob.getPublic(),
                                 VoidSpec.INSTANCE);
 
                         // Bob (responder): has his private key
-                        bobCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(),
+                        bobCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(),
                                 VoidSpec.INSTANCE);
 
                         // Initiator produces encapsulation message (ciphertext) to send
@@ -324,7 +326,7 @@ public class AgreementAlgorithmsRoundTripTest {
 
                     ContextSpec spec = null;
                     try {
-                        spec = cap.defaultSpec().get();
+                        spec = cap.defaultSpec();
                     } catch (Throwable ignore) {
                         spec = tryExtractContextSpec(alg);
                     }
@@ -360,8 +362,8 @@ public class AgreementAlgorithmsRoundTripTest {
                     AgreementContext bCtx = null;
 
                     try {
-                        aCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, alice.getPrivate(), spec);
-                        bCtx = CryptoAlgorithms.create(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(), spec);
+                        aCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, alice.getPrivate(), spec);
+                        bCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(), spec);
 
                         aCtx.setPeerPublic(bob.getPublic());
                         bCtx.setPeerPublic(alice.getPublic());
@@ -402,14 +404,14 @@ public class AgreementAlgorithmsRoundTripTest {
     // ----- helpers -----
     private static KeyPair generateKeyPair(CryptoAlgorithm alg) {
         try {
-            for (CryptoAlgorithm.AsymBuilderInfo bi : alg.asymmetricBuildersInfo()) {
-                if (bi.defaultKeySpec == null) {
+            for (KeyOperationInfo bi : alg.keyOperations()) {
+                if (bi.operation() != KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE || bi.defaultSpec() == null) {
                     continue;
                 }
                 @SuppressWarnings("unchecked")
-                Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) bi.specType;
-                AsymmetricKeyBuilder<AlgorithmKeySpec> builder = alg.asymmetricKeyBuilder(specType);
-                AlgorithmKeySpec spec = (AlgorithmKeySpec) bi.defaultKeySpec;
+                Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) bi.specType();
+                AsymmetricKeyPairGenerator<AlgorithmKeySpec> builder = alg.asymmetricKeyPairGenerator(specType);
+                AlgorithmKeySpec spec = bi.defaultSpec();
                 return builder.generateKeyPair(spec);
             }
         } catch (Throwable ignore) {
@@ -423,7 +425,7 @@ public class AgreementAlgorithmsRoundTripTest {
             for (Capability c : alg.listCapabilities()) {
                 if (c.role() == KeyUsage.AGREEMENT && ContextSpec.class.isAssignableFrom(c.specType())) {
                     try {
-                        return c.defaultSpec().get();
+                        return c.defaultSpec();
                     } catch (Throwable ignore) {
                         // continue searching
                     }

@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
@@ -41,8 +43,6 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.Objects;
 
-import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.elgamal.ElgamalEncSpec;
 import zeroecho.core.alg.elgamal.ElgamalKeyGenSpec;
@@ -50,7 +50,6 @@ import zeroecho.core.alg.elgamal.ElgamalParamSpec;
 import zeroecho.core.alg.elgamal.ElgamalPrivateKeySpec;
 import zeroecho.core.alg.elgamal.ElgamalPublicKeySpec;
 import zeroecho.core.context.EncryptionContext;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.EncryptedContent;
@@ -109,6 +108,8 @@ import zeroecho.sdk.content.api.PlainContent;
  * @see ElgamalParamSpec
  */
 public final class ElgamalEncDataContentBuilder implements DataContentBuilder<DataContent> {
+    private static final String ALGORITHM_ID = "ElGamal";
+    private final ZeroEchoSession session;
     private PublicKey publicKey;
     private PrivateKey privateKey;
 
@@ -123,7 +124,8 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
 
     private ElgamalEncSpec spec = ElgamalEncSpec.pkcs1();
 
-    private ElgamalEncDataContentBuilder() {
+    private ElgamalEncDataContentBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -136,8 +138,8 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
      *
      * @return a new {@code ElgamalEncDataContentBuilder} instance
      */
-    public static ElgamalEncDataContentBuilder builder() {
-        return new ElgamalEncDataContentBuilder();
+    public static ElgamalEncDataContentBuilder builder(ZeroEchoSession session) {
+        return new ElgamalEncDataContentBuilder(session);
     }
 
     /**
@@ -331,25 +333,22 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
     }
 
     private void resolveKeys() throws GeneralSecurityException {
-        CryptoAlgorithm alg = CryptoAlgorithms.require("ElGamal");
         if (genKeyPair) {
-            AsymmetricKeyBuilder<ElgamalKeyGenSpec> b = alg.asymmetricKeyBuilder(ElgamalKeyGenSpec.class);
-            KeyPair kp = b.generateKeyPair(keyGen);
+            KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair(ALGORITHM_ID, keyGen);
             this.publicKey = kp.getPublic();
             this.privateKey = kp.getPrivate();
         } else if (genKeyPairPredef) {
-            AsymmetricKeyBuilder<ElgamalParamSpec> b = alg.asymmetricKeyBuilder(ElgamalParamSpec.class);
-            KeyPair kp = b.generateKeyPair(paramSpec);
+            KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair(ALGORITHM_ID, paramSpec);
             this.publicKey = kp.getPublic();
             this.privateKey = kp.getPrivate();
         }
         if (importPrivatePkcs8 != null) {
-            AsymmetricKeyBuilder<ElgamalPrivateKeySpec> b = alg.asymmetricKeyBuilder(ElgamalPrivateKeySpec.class);
-            this.privateKey = b.importPrivate(new ElgamalPrivateKeySpec(importPrivatePkcs8));
+            this.privateKey = session.keyBuilders().asymmetric().importPrivate(ALGORITHM_ID,
+                    new ElgamalPrivateKeySpec(importPrivatePkcs8));
         }
         if (importPublicX509 != null) {
-            AsymmetricKeyBuilder<ElgamalPublicKeySpec> b = alg.asymmetricKeyBuilder(ElgamalPublicKeySpec.class);
-            this.publicKey = b.importPublic(new ElgamalPublicKeySpec(importPublicX509));
+            this.publicKey = session.keyBuilders().asymmetric().importPublic(ALGORITHM_ID,
+                    new ElgamalPublicKeySpec(importPublicX509));
         }
     }
 
@@ -363,7 +362,8 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
      * {@link ElgamalEncSpec}. When {@link #getStream()} is called, it creates an
      * {@link zeroecho.core.context.EncryptionContext} for the "ElGamal" algorithm
      * in {@link zeroecho.core.KeyUsage#ENCRYPT} role via
-     * {@link zeroecho.core.CryptoAlgorithms#create(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
+     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
      * attaches the upstream stream, and returns a pull-based stream that encrypts
      * on the fly.
      * </p>
@@ -371,7 +371,7 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
      * <h2>Thread-safety</h2> Instances are not thread-safe and must be used from a
      * single thread.
      */
-    private static final class Encrypt implements EncryptedContent {
+    private final class Encrypt implements EncryptedContent {
         private final PublicKey key;
         private final ElgamalEncSpec spec;
         private DataContent upstream;
@@ -412,7 +412,7 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
             if (upstream == null) {
                 throw new IllegalStateException("elgamal encrypt: upstream not set");
             }
-            EncryptionContext ctx = CryptoAlgorithms.create("ElGamal", KeyUsage.ENCRYPT, key, spec); // NOPMD
+            EncryptionContext ctx = session.createContext(ALGORITHM_ID, KeyUsage.ENCRYPT, key, spec); // NOPMD
             return ctx.attach(upstream.getStream());
         }
     }
@@ -427,7 +427,8 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
      * {@link ElgamalEncSpec}. When {@link #getStream()} is called, it creates an
      * {@link zeroecho.core.context.EncryptionContext} for the "ElGamal" algorithm
      * in {@link zeroecho.core.KeyUsage#DECRYPT} role via
-     * {@link zeroecho.core.CryptoAlgorithms#create(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
+     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
      * attaches the upstream stream, and returns a pull-based stream that decrypts
      * on the fly.
      * </p>
@@ -435,7 +436,7 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
      * <h2>Thread-safety</h2> Instances are not thread-safe and must be used from a
      * single thread.
      */
-    private static final class Decrypt implements PlainContent {
+    private final class Decrypt implements PlainContent {
         private final PrivateKey key;
         private final ElgamalEncSpec spec;
         private DataContent upstream;
@@ -476,7 +477,7 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
             if (upstream == null) {
                 throw new IllegalStateException("elgamal decrypt: upstream not set");
             }
-            EncryptionContext ctx = CryptoAlgorithms.create("ElGamal", KeyUsage.DECRYPT, key, spec); // NOPMD
+            EncryptionContext ctx = session.createContext(ALGORITHM_ID, KeyUsage.DECRYPT, key, spec); // NOPMD
             return ctx.attach(upstream.getStream());
         }
     }

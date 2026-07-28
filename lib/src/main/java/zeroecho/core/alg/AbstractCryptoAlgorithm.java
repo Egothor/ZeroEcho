@@ -34,6 +34,7 @@
 package zeroecho.core.alg;
 
 import java.security.Key;
+import java.util.Objects;
 import java.util.function.Supplier;
 
 import zeroecho.core.AlgorithmFamily;
@@ -42,7 +43,7 @@ import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.CryptoContext;
 import zeroecho.core.spec.ContextSpec;
-import zeroecho.core.spi.ContextConstructorKS;
+import zeroecho.core.spi.ContextFactoryKS;
 
 /**
  * Convenience base class for concrete {@link CryptoAlgorithm} implementations.
@@ -54,7 +55,7 @@ import zeroecho.core.spi.ContextConstructorKS;
  *
  * <ol>
  * <li><b>Binding roles to runtime factories</b> via
- * {@link #capability(AlgorithmFamily, KeyUsage, Class, Class, Class, ContextConstructorKS, Supplier)},
+ * {@link #capability(AlgorithmFamily, KeyUsage, Class, Class, Class, ContextFactoryKS, Supplier)},
  * which registers a {@link KeyUsage role} together with its expected
  * {@link CryptoContext} type, accepted {@link Key} type, optional
  * {@link ContextSpec} type, the constructor factory, and a default spec
@@ -134,8 +135,8 @@ public abstract class AbstractCryptoAlgorithm extends CryptoAlgorithm {
      * </p>
      * <ul>
      * <li><b>Runtime binding:</b> delegates to
-     * {@link CryptoAlgorithm#bind(KeyUsage, Class, Class, Class, ContextConstructorKS, Supplier)}
-     * so that {@link CryptoAlgorithm#create(KeyUsage, Key, ContextSpec)} can
+     * {@link CryptoAlgorithm#bindContext(KeyUsage, Class, Class, Class, ContextFactoryKS, Supplier)}
+     * so that {@link CryptoAlgorithm#createContext(KeyUsage, Key, ContextSpec)} can
      * construct the appropriate {@link CryptoContext} when invoked.</li>
      * <li><b>Metadata publication:</b> creates a {@link Capability} describing this
      * role (algorithm id, {@link AlgorithmFamily family}, role, context/key/spec
@@ -145,7 +146,8 @@ public abstract class AbstractCryptoAlgorithm extends CryptoAlgorithm {
      * </ul>
      *
      * <h4>Validation</h4> Type checks happen at creation time (via {@code bind})
-     * and again when {@link CryptoAlgorithm#create(KeyUsage, Key, ContextSpec)} is
+     * and again when
+     * {@link CryptoAlgorithm#createContext(KeyUsage, Key, ContextSpec)} is
      * called. If a factory returns a context not assignable to {@code ctxType}, an
      * {@link IllegalStateException} will be thrown.
      *
@@ -157,21 +159,24 @@ public abstract class AbstractCryptoAlgorithm extends CryptoAlgorithm {
      * @param keyType     accepted {@link Key} type for this role
      * @param specType    accepted {@link ContextSpec} type (may be a marker type)
      * @param factory     constructor that builds a context for (key, spec)
-     * @param defaultSpec default spec supplier used when callers pass {@code null}
-     *                    spec
+     * @param defaultSpec supplier of the default spec used when callers pass
+     *                    {@code null}; capability metadata resolves one stable
+     *                    value during registration, while runtime creation retains
+     *                    the supplier contract
      * @param <C>         context type
      * @param <K>         key type
      * @param <S>         spec type
-     * @throws NullPointerException if any class/factory/supplier argument is
-     *                              {@code null}
+     * @throws NullPointerException if any class, factory, supplier, or metadata
+     *                              default value is {@code null}
      */
     protected <C extends CryptoContext, K extends Key, S extends ContextSpec> void capability(AlgorithmFamily family,
-            KeyUsage role, Class<C> ctxType, Class<K> keyType, Class<S> specType, ContextConstructorKS<C, K, S> factory,
+            KeyUsage role, Class<C> ctxType, Class<K> keyType, Class<S> specType, ContextFactoryKS<C, K, S> factory,
             Supplier<? extends S> defaultSpec) {
 
+        S resolvedDefault = Objects.requireNonNull(defaultSpec.get(), "defaultSpec value must not be null");
         // bind runtime factory
-        bind(role, ctxType, keyType, specType, factory, defaultSpec);
+        bindContext(role, ctxType, keyType, specType, factory, defaultSpec);
         // publish metadata
-        addCapability(new Capability(id(), family, role, ctxType, keyType, specType, defaultSpec));
+        addCapability(new Capability(id(), family, role, ctxType, keyType, specType, resolvedDefault));
     }
 }

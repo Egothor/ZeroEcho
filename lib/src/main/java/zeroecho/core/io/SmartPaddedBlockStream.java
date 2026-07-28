@@ -59,8 +59,6 @@ final class SmartPaddedBlockStream extends AbstractChunkTransformInputStream {
     private static final Logger LOG = Logger.getLogger(SmartPaddedBlockStream.class.getName());
 
     private final Cipher cipher;
-    private boolean doFinalCalled;
-
     /* package */ SmartPaddedBlockStream(InputStream upstream, Cipher cipher, int inChunkSize, int outChunkSize,
             int bufferedBlocks) {
         super(upstream, inChunkSize, outChunkSize, bufferedBlocks);
@@ -83,9 +81,11 @@ final class SmartPaddedBlockStream extends AbstractChunkTransformInputStream {
         try {
             // return cipher.doFinal(in, inOff, inChunks * g.inputBlockSize(), out);
             int output = 0;
-            doFinalCalled = inChunks > 0;
             for (int i = 0; i < inChunks; i++) {
                 int outOne = cipher.doFinal(in, inOff, inChunkSize, out, output);
+                if (outOne < 0 || outOne > outChunkSize) {
+                    throw new IOException("Cipher output exceeds the configured block size");
+                }
                 int diff = outChunkSize - outOne;
                 if (diff > 0) {
                     System.arraycopy(out, output, out, output + diff, outOne);
@@ -117,7 +117,7 @@ final class SmartPaddedBlockStream extends AbstractChunkTransformInputStream {
      */
     @Override
     protected int doFinal(byte[] in, int inOff, int len, byte[] out, int outOff) throws IOException {
-        if (doFinalCalled && len == 0) {
+        if (len == 0) {
             return 0;
         }
 
@@ -125,7 +125,6 @@ final class SmartPaddedBlockStream extends AbstractChunkTransformInputStream {
             throw new IllegalStateException("Cannot process incomplete blocks: " + len + " instead of " + inChunkSize);
         }
         try {
-            doFinalCalled = true;
             return cipher.doFinal(in, inOff, len, out, outOff);
         } catch (ShortBufferException | IllegalBlockSizeException | BadPaddingException e) {
             LOG.logp(Level.WARNING, "SmartBlockStream", "transform", "Exception", e);

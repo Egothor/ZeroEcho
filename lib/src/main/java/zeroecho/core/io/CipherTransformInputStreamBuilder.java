@@ -48,15 +48,16 @@ import javax.crypto.Cipher;
  * {@link Cipher}. Three stream variants are available:
  * </p>
  * <ul>
- * <li><b>SmartBlockStream</b> - invokes
+ * <li><b>Independent block stream</b> - invokes
  * {@link Cipher#doFinal(byte[], int, int, byte[], int)} for each full input
  * block; a final partial block (if any) is processed by a single
- * {@code doFinal}.</li>
- * <li><b>SmartPaddedBlockStream</b> - like {@code SmartBlockStream}, but
+ * {@code doFinal}. This mode is restricted to RSA and ElGamal.</li>
+ * <li><b>Left-padded independent block stream</b> - like the independent block
+ * stream, but
  * left-pads each transformed output block with zeros up to
  * {@code outChunkSize}. Final blocks must be complete; otherwise an
  * {@link IllegalStateException} is thrown.</li>
- * <li><b>SmartContinuousBlockStream</b> - streaming variant that uses
+ * <li><b>Continuous stream</b> - uses
  * {@code Cipher.update(...)} for bulk bytes and a single {@code doFinal()} at
  * end of stream. This is suitable for CTR/CFB/OFB/GCM and padding modes.</li>
  * </ul>
@@ -128,7 +129,7 @@ import javax.crypto.Cipher;
  * InputStream s4 = CipherTransformInputStreamBuilder.builder()
  *     .withUpstream(in)
  *     .withCipher(c4)
- *     .withUpdateStreaming(true)     // provider typically accepts update+doFinal
+ *     .withIndependentBlocks()
  *     .withInputBlockSize(elgIn)
  *     .withOutputBlockSize(elgOut)
  *     .withBufferedBlocks(200)
@@ -314,6 +315,24 @@ public final class CipherTransformInputStreamBuilder {
     }
 
     /**
+     * Selects independent-block processing, in which every logical input block is
+     * passed to a separate {@link Cipher#doFinal(byte[], int, int, byte[], int)}
+     * invocation.
+     *
+     * <p>
+     * This mode is supported only for RSA and ElGamal transformations. Stateful
+     * symmetric modes, including AES-GCM and AES-CBC, must use
+     * {@link #withUpdateStreaming()}.
+     * </p>
+     *
+     * @return this builder
+     */
+    public CipherTransformInputStreamBuilder withIndependentBlocks() {
+        this.updateStreaming = false;
+        return this;
+    }
+
+    /**
      * Builds a chunk-transforming {@link InputStream} using the configured options.
      *
      * <p>
@@ -326,7 +345,9 @@ public final class CipherTransformInputStreamBuilder {
      *
      * @return a new InputStream that transforms bytes on the fly
      * @throws NullPointerException if {@code upstream} or {@code cipher} is null
-     * @throws AssertionError       if buffer sizing assertions fail
+     * @throws IllegalArgumentException if independent-block processing is selected
+     *                                  for an unsupported algorithm or buffer
+     *                                  geometry is invalid
      */
     public InputStream build() {
         Objects.requireNonNull(upstream, "upstream must not be null");
@@ -336,7 +357,18 @@ public final class CipherTransformInputStreamBuilder {
             return new SmartContinuousBlockStream(upstream, cipher, inChunkSize, outChunkSize, bufferedBlocks,
                     finalizationOutputChunks);
         }
+        validateIndependentBlockAlgorithm(cipher);
         return padding ? new SmartPaddedBlockStream(upstream, cipher, inChunkSize, outChunkSize, bufferedBlocks)
                 : new SmartBlockStream(upstream, cipher, inChunkSize, outChunkSize, bufferedBlocks);
+    }
+
+    private static void validateIndependentBlockAlgorithm(Cipher cipher) {
+        String transformation = cipher.getAlgorithm();
+        int separator = transformation.indexOf('/');
+        String baseAlgorithm = separator < 0 ? transformation : transformation.substring(0, separator);
+        if (!"RSA".equalsIgnoreCase(baseAlgorithm) && !"ElGamal".equalsIgnoreCase(baseAlgorithm)) {
+            throw new IllegalArgumentException(
+                    "Independent-block processing supports only RSA and ElGamal transformations");
+        }
     }
 }

@@ -93,16 +93,16 @@ public class ElgamalLargeDataTest {
         byte[] msg = randomBytes(SIZE);
         System.out.printf("...input: %d bytes%n", msg.length);
 
-        KeyPair kp = CryptoAlgorithms.keyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
         ElgamalEncSpec spec = ElgamalEncSpec.pkcs1();
 
-        EncryptionContext enc = CryptoAlgorithms.create("ElGamal", KeyUsage.ENCRYPT, kp.getPublic(), spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("ElGamal", KeyUsage.ENCRYPT, kp.getPublic(), spec);
         InputStream ctIn = enc.attach(new ByteArrayInputStream(msg));
         byte[] ct = ctIn.readAllBytes();
         enc.close();
         System.out.printf("...encrypted: %d bytes%n", ct.length);
 
-        EncryptionContext dec = CryptoAlgorithms.create("ElGamal", KeyUsage.DECRYPT, kp.getPrivate(), spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("ElGamal", KeyUsage.DECRYPT, kp.getPrivate(), spec);
         InputStream ptIn = dec.attach(new ByteArrayInputStream(ct));
         byte[] pt = ptIn.readAllBytes();
         dec.close();
@@ -121,16 +121,16 @@ public class ElgamalLargeDataTest {
         byte[] msg = randomBytes(SIZE);
         System.out.printf("...input: %d bytes%n", msg.length);
 
-        KeyPair kp = CryptoAlgorithms.keyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
         ElgamalEncSpec spec = ElgamalEncSpec.noPadding();
 
-        EncryptionContext enc = CryptoAlgorithms.create("ElGamal", KeyUsage.ENCRYPT, kp.getPublic(), spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("ElGamal", KeyUsage.ENCRYPT, kp.getPublic(), spec);
         InputStream ctIn = enc.attach(new ByteArrayInputStream(msg));
         byte[] ct = ctIn.readAllBytes();
         enc.close();
         System.out.printf("...encrypted: %d bytes%n", ct.length);
 
-        EncryptionContext dec = CryptoAlgorithms.create("ElGamal", KeyUsage.DECRYPT, kp.getPrivate(), spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("ElGamal", KeyUsage.DECRYPT, kp.getPrivate(), spec);
         InputStream ptIn = dec.attach(new ByteArrayInputStream(ct));
         byte[] pt = ptIn.readAllBytes();
         dec.close();
@@ -149,10 +149,10 @@ public class ElgamalLargeDataTest {
         byte[] msg = randomBytes(SIZE);
         System.out.printf("...input: %d bytes%n", msg.length);
 
-        KeyPair kp = CryptoAlgorithms.keyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
         ElgamalEncSpec spec = ElgamalEncSpec.noPadding();
 
-        EncryptionContext enc = CryptoAlgorithms.create("ElGamal", KeyUsage.ENCRYPT, kp.getPublic(), spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("ElGamal", KeyUsage.ENCRYPT, kp.getPublic(), spec);
         InputStream ctIn = enc.attach(new ByteArrayInputStream(msg));
         assertThrowsExactly(IllegalStateException.class, () -> ctIn.readAllBytes(),
                 "No-padding cipher streams cannot processes incomplete blocks: 3 instead of 255");

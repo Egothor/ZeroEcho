@@ -35,13 +35,13 @@ package zeroecho.sdk.guard;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
+import java.util.Objects;
 
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.KemContext.KemResult;
 import zeroecho.core.io.Util;
-import zeroecho.sdk.util.Kdf;
 import zeroecho.sdk.util.RandomSupport;
 
 /**
@@ -68,18 +68,22 @@ import zeroecho.sdk.util.RandomSupport;
  *
  * @since 1.0
  */
-public final class KemCtxRecipient implements Recipient {
+public final class KemCtxRecipient implements Recipient, AutoCloseable {
     private final KemContext ctx;
     private final int kekBytes;
     private final int saltLen;
     private final boolean decoy;
+    private boolean closed;
 
     /**
      * Constructs a recipient that uses the given KEM context and parameters.
      *
      * @param ctx      the KEM context providing encapsulation
-     * @param kekBytes number of bytes of KEK material to derive via HKDF
+     * @param kekBytes KEK length; exactly 16 or 32 bytes
      * @param saltLen  length of the random salt to apply during HKDF
+     * @throws NullPointerException     if {@code ctx} is {@code null}
+     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or
+     *                                  32
      */
     public KemCtxRecipient(KemContext ctx, int kekBytes, int saltLen) {
         this(ctx, kekBytes, saltLen, false);
@@ -98,14 +102,18 @@ public final class KemCtxRecipient implements Recipient {
      *
      * @param ctx      the KEM context responsible for performing encapsulation;
      *                 must not be {@code null}
-     * @param kekBytes number of bytes of KEK material to derive via HKDF
+     * @param kekBytes KEK length; exactly 16 or 32 bytes
      * @param saltLen  length in bytes of the random salt applied during HKDF
      * @param decoy    {@code true} if this recipient is a decoy (fake entry that
      *                 cannot unwrap a CEK); {@code false} if it is a real recipient
+     * @throws NullPointerException     if {@code ctx} is {@code null}
+     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or
+     *                                  32
      */
     public KemCtxRecipient(KemContext ctx, int kekBytes, int saltLen, boolean decoy) {
-        this.ctx = ctx;
-        this.kekBytes = kekBytes;
+        int validatedKekBytes = RecipientKekSizes.requireSupported(kekBytes);
+        this.ctx = Objects.requireNonNull(ctx, "ctx must not be null");
+        this.kekBytes = validatedKekBytes;
         this.saltLen = saltLen;
         this.decoy = decoy;
     }
@@ -142,25 +150,35 @@ public final class KemCtxRecipient implements Recipient {
      */
     @Override
     public byte[] buildRecipientEntry(byte[] cek) throws GeneralSecurityException, IOException {
-        try (ctx) {
+        if (closed) {
+            throw new IllegalStateException("KEM recipient has been closed");
+        }
+        try {
             KemResult kr = ctx.encapsulate();
             byte[] kemCt = kr.ciphertext();
             byte[] ss = kr.sharedSecret();
+            byte[] kek = null;
+            try {
+                byte[] salt = RandomSupport.generateRandom(saltLen);
+                kek = KemKeyDerivation.derive(ss, salt, ctx.algorithm().id(), kekBytes);
+                byte[] iv = RandomSupport.generateRandom(12);
+                byte[] wrapped = MultiRecipientDataSourceBuilder.aesGcmWrap(kek, iv, null, cek);
 
-            byte[] salt = RandomSupport.generateRandom(saltLen);
-            byte[] info = ("KDF:" + ctx.algorithm().id()).getBytes(StandardCharsets.US_ASCII);
-            byte[] kek = Kdf.hkdfSha256(ss, salt, info, kekBytes);
-
-            byte[] iv = RandomSupport.generateRandom(12);
-            byte[] wrapped = MultiRecipientDataSourceBuilder.aesGcmWrap(kek, iv, null, cek);
-
-            ByteArrayOutputStream out = new ByteArrayOutputStream(
-                    kemCt.length + salt.length + iv.length + wrapped.length + 8);
-            Util.write(out, kemCt);
-            Util.write(out, salt);
-            Util.write(out, iv);
-            Util.write(out, wrapped);
-            return out.toByteArray();
+                ByteArrayOutputStream out = new ByteArrayOutputStream(
+                        kemCt.length + salt.length + iv.length + wrapped.length + 8);
+                Util.write(out, kemCt);
+                Util.write(out, salt);
+                Util.write(out, iv);
+                Util.write(out, wrapped);
+                return out.toByteArray();
+            } finally {
+                Arrays.fill(ss, (byte) 0);
+                if (kek != null) {
+                    Arrays.fill(kek, (byte) 0);
+                }
+            }
+        } finally {
+            close();
         }
     }
 
@@ -180,5 +198,18 @@ public final class KemCtxRecipient implements Recipient {
     @Override
     public boolean decoy() {
         return decoy;
+    }
+
+    /**
+     * Closes the owned KEM context.
+     *
+     * @throws IOException if context cleanup fails
+     */
+    @Override
+    public void close() throws IOException {
+        if (!closed) {
+            closed = true;
+            ctx.close();
+        }
     }
 }

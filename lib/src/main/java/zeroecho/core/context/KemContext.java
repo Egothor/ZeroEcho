@@ -46,7 +46,7 @@ import java.io.IOException;
  *
  * <h2>Lifecycle</h2>
  * <ul>
- * <li>Create a context via {@code CryptoAlgorithm#create(...)} for the
+ * <li>Create a context via {@code ZeroEchoSession#createContext(...)} for the
  * {@link zeroecho.core.KeyUsage#ENCAPSULATE} or
  * {@link zeroecho.core.KeyUsage#DECAPSULATE} role.</li>
  * <li>Call {@link #encapsulate()} when acting as an initiator. The result

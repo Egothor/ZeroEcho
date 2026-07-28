@@ -38,6 +38,9 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -48,8 +51,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <p>
  * This class wraps raw key material (16, 24, or 32 bytes) for use with the AES
  * algorithm. Factory methods support construction from raw bytes, hex strings,
- * or Base64-encoded strings. The key material is defensively copied to maintain
- * immutability.
+ * or Base64-encoded strings. The key material is defensively copied.
  * </p>
  *
  * <p>
@@ -58,13 +60,16 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * </p>
  *
  * <p>
- * Objects of this type are immutable and thread-safe.
+ * Objects of this type are thread-safe while active and may be destroyed to wipe
+ * their owned key bytes. Access and marshalling fail after destruction.
  * </p>
  *
  * @since 1.0
  */
-public final class AesKeyImportSpec implements AlgorithmKeySpec {
+public final class AesKeyImportSpec implements AlgorithmKeySpec, Destroyable {
     private final byte[] key;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     private AesKeyImportSpec(byte[] key) {
         Objects.requireNonNull(key, "key must not be null");
@@ -96,7 +101,12 @@ public final class AesKeyImportSpec implements AlgorithmKeySpec {
      */
     public static AesKeyImportSpec fromHex(String hex) {
         Objects.requireNonNull(hex, "hex must not be null");
-        return fromRaw(HexFormat.of().parseHex(hex));
+        byte[] decoded = HexFormat.of().parseHex(hex);
+        try {
+            return fromRaw(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -109,7 +119,12 @@ public final class AesKeyImportSpec implements AlgorithmKeySpec {
      */
     public static AesKeyImportSpec fromBase64(String b64) {
         Objects.requireNonNull(b64, "base64 must not be null");
-        return fromRaw(Base64.getDecoder().decode(b64));
+        byte[] decoded = Base64.getDecoder().decode(b64);
+        try {
+            return fromRaw(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -118,7 +133,13 @@ public final class AesKeyImportSpec implements AlgorithmKeySpec {
      * @return the raw key material
      */
     public byte[] key() {
-        return Arrays.copyOf(key, key.length);
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Arrays.copyOf(key, key.length);
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -129,7 +150,7 @@ public final class AesKeyImportSpec implements AlgorithmKeySpec {
      * @return a sequence containing the key data
      */
     public static PairSeq marshal(AesKeyImportSpec spec) {
-        String k = Base64.getEncoder().withoutPadding().encodeToString(spec.key);
+        String k = spec.encodedKey();
         return PairSeq.of("type", "AES-KEY", "k.b64", k);
     }
 
@@ -143,21 +164,81 @@ public final class AesKeyImportSpec implements AlgorithmKeySpec {
      */
     public static AesKeyImportSpec unmarshal(PairSeq p) {
         byte[] out = null;
-        PairSeq.Cursor cur = p.cursor();
-        while (cur.next()) {
-            String k = cur.key();
-            String v = cur.value();
-            switch (k) {
-                case "k.b64" -> out = Base64.getDecoder().decode(v);
-                case "k.hex" -> out = HexFormat.of().parseHex(v);
-                case "k.raw" -> out = v.getBytes(StandardCharsets.ISO_8859_1);
-                default -> {
-                    /* ignore */ }
+        try {
+            PairSeq.Cursor cur = p.cursor();
+            while (cur.next()) {
+                String k = cur.key();
+                String v = cur.value();
+                switch (k) {
+                    case "k.b64" -> {
+                        wipe(out);
+                        out = Base64.getDecoder().decode(v);
+                    }
+                    case "k.hex" -> {
+                        wipe(out);
+                        out = HexFormat.of().parseHex(v);
+                    }
+                    case "k.raw" -> {
+                        wipe(out);
+                        out = v.getBytes(StandardCharsets.ISO_8859_1);
+                    }
+                    default -> {
+                        /* ignore */ }
+                }
             }
+            if (out == null) {
+                throw new IllegalArgumentException("AES key missing (k.b64 / k.hex / k.raw)");
+            }
+            return new AesKeyImportSpec(out);
+        } finally {
+            wipe(out);
         }
-        if (out == null) {
-            throw new IllegalArgumentException("AES key missing (k.b64 / k.hex / k.raw)");
+    }
+
+    private static void wipe(byte[] current) {
+        if (current != null) {
+            Arrays.fill(current, (byte) 0);
         }
-        return new AesKeyImportSpec(out);
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(key);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(key, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("AES key import specification has been destroyed");
+        }
     }
 }

@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.sdk.hybrid.derived;
 
+import java.util.Arrays;
 import java.util.Objects;
 
 import javax.crypto.SecretKey;
@@ -213,9 +214,12 @@ public final class HybridDerived {
 
         int keyLenBytes = bitsToBytesStrict(keyBits);
         byte[] keyRaw = exportBytes(label + "/key", keyLenBytes); // NOPMD
-        SecretKey key = new SecretKeySpec(keyRaw, "AES");
-
-        aes.withKey(key);
+        try {
+            SecretKey key = new SecretKeySpec(keyRaw, "AES");
+            aes.withKey(key);
+        } finally {
+            Arrays.fill(keyRaw, (byte) 0);
+        }
 
         if (ivLenBytes > 0) {
             byte[] iv = exportBytes(label + "/iv", ivLenBytes);
@@ -255,9 +259,12 @@ public final class HybridDerived {
 
         int keyLenBytes = bitsToBytesStrict(keyBits);
         byte[] keyRaw = exportBytes(label + "/key", keyLenBytes); // NOPMD
-        SecretKey key = new SecretKeySpec(keyRaw, "ChaCha20");
-
-        chacha.withKey(key);
+        try {
+            SecretKey key = new SecretKeySpec(keyRaw, "ChaCha20");
+            chacha.withKey(key);
+        } finally {
+            Arrays.fill(keyRaw, (byte) 0);
+        }
 
         if (nonceLenBytes > 0) {
             byte[] nonce = exportBytes(label + "/nonce", nonceLenBytes);
@@ -341,10 +348,13 @@ public final class HybridDerived {
 
         int keyLenBytes = bitsToBytesStrict(keyBits);
         byte[] keyRaw = exportBytes(label + "/key", keyLenBytes);
-
-        // Prefer raw import to avoid duplicating MAC algorithm naming and to keep the
-        // builder as the source of truth.
-        return hmac.importKeyRaw(keyRaw);
+        try {
+            // Prefer raw import to avoid duplicating MAC algorithm naming and to keep the
+            // builder as the source of truth.
+            return hmac.importKeyRaw(keyRaw);
+        } finally {
+            Arrays.fill(keyRaw, (byte) 0);
+        }
     }
 
     private void validateBase() {

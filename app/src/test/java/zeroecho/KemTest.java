@@ -166,7 +166,7 @@ public class KemTest {
                 KeyAliases aliases = generateKemIntoKeyStore(ring, kemId, "alias-" + shortId(kemId));
 
                 // Sanity: re-open to ensure the file is valid
-                KeyringStore ks = KeyringStore.load(ring);
+                KeyringStore ks = KeyringStore.load(new zeroecho.sdk.ZeroEchoSession(), ring);
                 if (!(ks.contains(aliases.pub) && ks.contains(aliases.prv))) {
                     throw new IllegalStateException("Keyring does not contain expected aliases for " + kemId);
                 }

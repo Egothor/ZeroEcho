@@ -52,7 +52,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <pre>{@code
  * // Generate a key pair for McEliece 8192128F (256-bit security, fast)
  * CmceKeyGenSpec spec = CmceKeyGenSpec.mceliece8192128f();
- * KeyPair kp = alg.asymmetricKeyBuilder(CmceKeyGenSpec.class).generateKeyPair(spec);
+ * KeyPair kp = alg.asymmetricKeyPairGenerator(CmceKeyGenSpec.class).generateKeyPair(spec);
  * }</pre>
  *
  * @since 1.0

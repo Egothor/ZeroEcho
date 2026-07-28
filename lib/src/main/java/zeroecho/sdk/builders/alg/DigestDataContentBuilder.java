@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -43,7 +45,6 @@ import java.util.function.Consumer;
 
 import conflux.CtxInterface;
 import conflux.Key;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.NullKey;
 import zeroecho.core.alg.digest.DigestSpec;
@@ -112,6 +113,7 @@ import zeroecho.sdk.content.api.PlainContent;
  * @see zeroecho.sdk.content.api.PlainContent
  */
 public final class DigestDataContentBuilder implements DataContentBuilder<PlainContent> {
+    private final ZeroEchoSession session;
     /**
      * OutputMode selects how the digest-computing pipeline presents its result to
      * callers.
@@ -184,7 +186,8 @@ public final class DigestDataContentBuilder implements DataContentBuilder<PlainC
     private Consumer<byte[]> callback; // optional
     private int bufferSize = 8192; // internal I/O buffer for tail-stripper
 
-    private DigestDataContentBuilder() {
+    private DigestDataContentBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -200,8 +203,8 @@ public final class DigestDataContentBuilder implements DataContentBuilder<PlainC
      *
      * @return a new {@code DigestDataContentBuilder} instance
      */
-    public static DigestDataContentBuilder builder() {
-        return new DigestDataContentBuilder();
+    public static DigestDataContentBuilder builder(ZeroEchoSession session) {
+        return new DigestDataContentBuilder(session);
     }
 
     /**
@@ -414,7 +417,7 @@ public final class DigestDataContentBuilder implements DataContentBuilder<PlainC
      * captured from the produced trailer using
      * TailStrippingInputStream#processTail(...).
      */
-    private static final class PassthroughDigestContent implements PlainContent {
+    private final class PassthroughDigestContent implements PlainContent {
         private final DigestSpec spec;
         private final CtxInterface ctx;
         private final Key<byte[]> storeKey;
@@ -444,7 +447,8 @@ public final class DigestDataContentBuilder implements DataContentBuilder<PlainC
             }
 
             // Create a DigestContext via registry (DIGEST / DIGEST / NullKey + spec).
-            final DigestContext dctx = CryptoAlgorithms.create("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE, spec); // NOPMD
+            final DigestContext dctx = session.createContext("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE, // NOPMD
+                    spec);
 
             // Engine emits [body][tag]; we strip the tag and capture it.
             final InputStream produced = dctx.wrap(input.getStream());
@@ -479,7 +483,7 @@ public final class DigestDataContentBuilder implements DataContentBuilder<PlainC
      * tag via TailStrippingInputStream and then return a stream over the encoded
      * tag.
      */
-    private static final class DigestBytesContent implements PlainContent {
+    private final class DigestBytesContent implements PlainContent {
         private final DigestSpec spec;
         private final CtxInterface ctx;
         private final Key<byte[]> storeKey;
@@ -514,7 +518,8 @@ public final class DigestDataContentBuilder implements DataContentBuilder<PlainC
             }
 
             // Create engine and its output (which appends [tag] after the body).
-            final DigestContext dctx = CryptoAlgorithms.create("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE, spec); // NOPMD
+            final DigestContext dctx = session.createContext("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE, // NOPMD
+                    spec);
             final InputStream produced = dctx.wrap(input.getStream());
             final int tagLen = dctx.tagLength();
 

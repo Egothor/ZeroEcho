@@ -33,8 +33,12 @@
  ******************************************************************************/
 package zeroecho.core.alg.bike;
 
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.marshal.PairSeq.Cursor;
@@ -49,7 +53,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h3>Usage</h3> <pre>{@code
  * // Import a BIKE private key
  * BikePrivateKeySpec spec = new BikePrivateKeySpec(pkcs8Bytes);
- * PrivateKey key = bikeAlgorithm.importPrivate(spec);
+ * PrivateKey key = bikeAlgorithm.privateKeyImporter(BikePrivateKeySpec.class).importPrivate(spec);
  *
  * // Marshal for storage or transport
  * PairSeq seq = BikePrivateKeySpec.marshal(spec);
@@ -60,10 +64,12 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * @since 1.0
  */
-public final class BikePrivateKeySpec implements AlgorithmKeySpec {
+public final class BikePrivateKeySpec implements AlgorithmKeySpec, Destroyable {
 
     private static final String PKCS8_B64 = "pkcs8.b64";
     private final byte[] pkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Constructs a new spec from a PKCS#8 encoded private key.
@@ -81,7 +87,13 @@ public final class BikePrivateKeySpec implements AlgorithmKeySpec {
      * @return cloned PKCS#8 bytes
      */
     public byte[] pkcs8() {
-        return pkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return pkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -99,7 +111,7 @@ public final class BikePrivateKeySpec implements AlgorithmKeySpec {
      * @return serialized key representation
      */
     public static PairSeq marshal(BikePrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.pkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "BikePrivateKeySpec", PKCS8_B64, b64);
     }
 
@@ -120,7 +132,12 @@ public final class BikePrivateKeySpec implements AlgorithmKeySpec {
         if (b64 == null) {
             throw new IllegalArgumentException("BikePrivateKeySpec: missing pkcs8.b64");
         }
-        return new BikePrivateKeySpec(Base64.getDecoder().decode(b64));
+        byte[] decoded = Base64.getDecoder().decode(b64);
+        try {
+            return new BikePrivateKeySpec(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -131,5 +148,44 @@ public final class BikePrivateKeySpec implements AlgorithmKeySpec {
     @Override
     public String toString() {
         return "BikePrivateKeySpec[len=" + pkcs8.length + "]";
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(pkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(pkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("BIKE private key specification has been destroyed");
+        }
     }
 }

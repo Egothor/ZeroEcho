@@ -35,12 +35,11 @@ package zeroecho.core.alg.sphincsplus;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
 import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PrivateKeyImporter;
 
 /**
  * Builder for importing SPHINCS+ private keys from encoded specifications.
@@ -52,14 +51,9 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * pairs but focuses solely on importing private key material.
  * </p>
  *
- * <h2>Supported flows</h2>
- * <ul>
- * <li>{@link #importPrivate(SphincsPlusPrivateKeySpec)}: imports a SPHINCS+
- * private key from its encoded PKCS#8 representation.</li>
- * <li>{@link #generateKeyPair(SphincsPlusPrivateKeySpec)}: not supported.</li>
- * <li>{@link #importPublic(SphincsPlusPrivateKeySpec)}: not supported; use
- * {@link SphincsPlusPublicKeySpec} and its builder instead.</li>
- * </ul>
+ * <p>The exact supported operation is
+ * {@link #importPrivate(SphincsPlusPrivateKeySpec)}. Other key operations are
+ * registered through their own exact interfaces.</p>
  *
  * <h2>Example</h2> <pre>{@code
  * // Assuming bytes contain a PKCS#8-encoded SPHINCS+ private key:
@@ -72,40 +66,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class SphincsPlusPrivateKeyBuilder implements AsymmetricKeyBuilder<SphincsPlusPrivateKeySpec> {
-    /**
-     * Not supported for this builder.
-     *
-     * <p>
-     * Key pair generation requires a parameter set and is handled by
-     * {@link SphincsPlusKeyGenBuilder}. This method always throws.
-     * </p>
-     *
-     * @param spec ignored
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public KeyPair generateKeyPair(SphincsPlusPrivateKeySpec spec) {
-        throw new UnsupportedOperationException("Generation not supported by this spec.");
-    }
-
-    /**
-     * Not supported for this builder.
-     *
-     * <p>
-     * Public key import should be performed via {@link SphincsPlusPublicKeySpec}
-     * and its associated builder.
-     * </p>
-     *
-     * @param spec ignored
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public PublicKey importPublic(SphincsPlusPrivateKeySpec spec) {
-        throw new UnsupportedOperationException("Use SphincsPlusPublicKeySpec for public keys.");
-    }
+public final class SphincsPlusPrivateKeyBuilder implements PrivateKeyImporter<SphincsPlusPrivateKeySpec> {
 
     /**
      * Imports a SPHINCS+ private key from PKCS#8 encoding.
@@ -128,6 +89,11 @@ public final class SphincsPlusPrivateKeyBuilder implements AsymmetricKeyBuilder<
     public PrivateKey importPrivate(SphincsPlusPrivateKeySpec spec) throws GeneralSecurityException {
         KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance("SPHINCSPlus")
                 : KeyFactory.getInstance("SPHINCSPlus", spec.providerName());
-        return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.encoded()));
+        byte[] encoded = spec.encoded();
+        try {
+            return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+        } finally {
+            Arrays.fill(encoded, (byte) 0);
+        }
     }
 }

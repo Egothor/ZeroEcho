@@ -55,6 +55,7 @@ import zeroecho.core.err.ProviderFailureException;
 import zeroecho.core.io.CipherTransformInputStreamBuilder;
 import zeroecho.core.spi.ContextAware;
 import zeroecho.core.util.Strings;
+import zeroecho.sdk.util.RandomSupport;
 
 /**
  * Streaming AES cipher context for GCM / CBC / CTR.
@@ -97,7 +98,8 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
      *                  ({@code false})
      * @param spec      static AES settings (mode/padding and GCM tag bits); not
      *                  null
-     * @param rnd       secure random source; if null, a default is created
+     * @param rnd       secure random source; if null, the library's shared source
+     *                  is used
      * @throws NullPointerException     if any required parameter is null
      * @throws IllegalArgumentException if {@code spec} is inconsistent (e.g., GCM
      *                                  without NOPADDING)
@@ -107,7 +109,7 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
         this.key = Objects.requireNonNull(key, "secret key must not be null");
         this.encrypt = encrypt;
         this.spec = Objects.requireNonNull(spec, "spec must not be null");
-        this.rnd = (rnd != null ? rnd : new SecureRandom());
+        this.rnd = (rnd != null ? rnd : RandomSupport.getRandom());
     }
 
     /**

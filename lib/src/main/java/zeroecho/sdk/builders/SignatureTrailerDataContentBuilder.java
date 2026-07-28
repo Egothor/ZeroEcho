@@ -33,7 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders;
 
-import java.io.IOException;
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
@@ -42,7 +43,6 @@ import java.util.function.Supplier;
 
 import conflux.CtxInterface;
 import conflux.Key;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.tag.TagEngine;
@@ -75,19 +75,15 @@ import zeroecho.sdk.hybrid.signature.HybridSignatureProfile;
  * <ul>
  * <li>{@link #core(TagEngine)} / {@link #core(Supplier)}: wraps a ready engine
  * (same parameters as {@link TagTrailerDataContentBuilder}).</li>
- * <li>{@link #single()}: constructs a non-hybrid {@code SignatureContext} via
- * {@link CryptoAlgorithms}.</li>
- * <li>{@link #hybrid()}: constructs a hybrid {@code SignatureContext} via
+ * <li>{@link #single(ZeroEchoSession)}: constructs a non-hybrid
+ * {@code SignatureContext}.</li>
+ * <li>{@link #hybrid(ZeroEchoSession)}: constructs a hybrid
+ * {@code SignatureContext} via
  * {@link HybridSignatureContexts}.</li>
  * </ul>
  *
- * <h2>Checked exceptions</h2>
- * <p>
- * Context construction may involve I/O (e.g., catalog/provider loading) and
- * therefore throw {@link IOException}. This builder converts such failures to
- * {@link IllegalStateException} because fluent builder APIs are expected to be
- * used in configuration code without mandatory checked-exception plumbing.
- * </p>
+ * <p>Context construction is in-memory. Checked I/O failures arise only when a
+ * built stream is attached or processed.</p>
  *
  * @since 1.0
  */
@@ -146,8 +142,8 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
      * @return selector for creating signing/verifying builders
      * @since 1.0
      */
-    public static SingleSelector single() {
-        return new SingleSelector();
+    public static SingleSelector single(ZeroEchoSession session) {
+        return new SingleSelector(session);
     }
 
     /**
@@ -156,8 +152,8 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
      * @return selector for creating signing/verifying builders
      * @since 1.0
      */
-    public static HybridSelector hybrid() {
-        return new HybridSelector();
+    public static HybridSelector hybrid(ZeroEchoSession session) {
+        return new HybridSelector(session);
     }
 
     /**
@@ -218,7 +214,10 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
      */
     public static final class SingleSelector {
 
-        private SingleSelector() {
+        private final ZeroEchoSession session;
+
+        private SingleSelector(ZeroEchoSession session) {
+            this.session = Objects.requireNonNull(session, "session");
         }
 
         /**
@@ -255,13 +254,8 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
             Objects.requireNonNull(algorithmId, "algorithmId");
             Objects.requireNonNull(privateKey, "privateKey");
 
-            Supplier<TagEngine<Signature>> factory = () -> {
-                try {
-                    return CryptoAlgorithms.create(algorithmId, KeyUsage.SIGN, privateKey, spec);
-                } catch (IOException e) {
-                    throw new IllegalStateException("Failed to create SIGN SignatureContext for: " + algorithmId, e);
-                }
-            };
+            Supplier<TagEngine<Signature>> factory = () -> session.createContext(algorithmId, KeyUsage.SIGN,
+                    privateKey, spec);
 
             return core(factory);
         }
@@ -300,13 +294,8 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
             Objects.requireNonNull(algorithmId, "algorithmId");
             Objects.requireNonNull(publicKey, "publicKey");
 
-            Supplier<TagEngine<Signature>> factory = () -> {
-                try {
-                    return CryptoAlgorithms.create(algorithmId, KeyUsage.VERIFY, publicKey, spec);
-                } catch (IOException e) {
-                    throw new IllegalStateException("Failed to create VERIFY SignatureContext for: " + algorithmId, e);
-                }
-            };
+            Supplier<TagEngine<Signature>> factory = () -> session.createContext(algorithmId,
+                    KeyUsage.VERIFY, publicKey, spec);
 
             return core(factory);
         }
@@ -324,8 +313,10 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
     public static final class HybridSelector {
 
         private static final int DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+        private final ZeroEchoSession session;
 
-        private HybridSelector() {
+        private HybridSelector(ZeroEchoSession session) {
+            this.session = Objects.requireNonNull(session, "session");
         }
 
         /**
@@ -402,7 +393,7 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
 
             Supplier<TagEngine<Signature>> factory = () -> {
                 try {
-                    return HybridSignatureContexts.sign(profile, classicPrivate, pqcPrivate, maxBodyBytes);
+                    return HybridSignatureContexts.sign(session, profile, classicPrivate, pqcPrivate, maxBodyBytes);
                 } catch (RuntimeException e) { // NOPMD
                     throw e;
                 } catch (Exception e) {
@@ -449,7 +440,7 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
 
             Supplier<TagEngine<Signature>> factory = () -> {
                 try {
-                    return HybridSignatureContexts.verify(profile, classicPublic, pqcPublic, maxBodyBytes);
+                    return HybridSignatureContexts.verify(session, profile, classicPublic, pqcPublic, maxBodyBytes);
                 } catch (RuntimeException e) { // NOPMD
                     throw e;
                 } catch (Exception e) {

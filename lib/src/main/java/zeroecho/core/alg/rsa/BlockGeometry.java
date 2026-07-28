@@ -36,6 +36,7 @@ package zeroecho.core.alg.rsa;
 import java.math.BigInteger;
 import java.security.Key;
 import java.security.interfaces.RSAKey;
+import java.util.Objects;
 
 /**
  * Describes block sizing rules for RSA encryption and decryption.
@@ -70,18 +71,13 @@ import java.security.interfaces.RSAKey;
  * RsaEncSpec spec = RsaEncSpec.ofPkcs1v15();
  * BlockGeometry g = BlockGeometry.forRsa(spec, pub, true);
  * System.out.printf("Plaintext block: %d, Ciphertext block: %d%n",
- *                   g.inChunkSize, g.outChunkSize);
+ *                   g.inChunkSize(), g.outChunkSize());
  * }</pre>
  *
  * @since 1.0
  */
-public final class BlockGeometry {
-    /** Number of input bytes per block. */
-    public final int inChunkSize;
-    /** Number of output bytes per block. */
-    public final int outChunkSize;
-    /** Extra chunks produced during finalization (always 0 for RSA). */
-    public final int finalizationOutputChunks;
+public record BlockGeometry(int inChunkSize, int outChunkSize, int finalizationOutputChunks) {
+    private static final int MINIMUM_INPUT_CHUNK_SIZE = 2;
 
     /**
      * Constructs a new block geometry descriptor.
@@ -90,11 +86,25 @@ public final class BlockGeometry {
      * @param outChunkSize             output bytes per block
      * @param finalizationOutputChunks number of additional chunks during
      *                                 finalization
+     * @throws IllegalArgumentException if input size is not greater than one,
+     *                                  output size is not positive, input exceeds
+     *                                  output, or finalization chunks is not zero
      */
-    public BlockGeometry(int inChunkSize, int outChunkSize, int finalizationOutputChunks) {
-        this.inChunkSize = inChunkSize;
-        this.outChunkSize = outChunkSize;
-        this.finalizationOutputChunks = finalizationOutputChunks;
+    public BlockGeometry {
+        if (inChunkSize < MINIMUM_INPUT_CHUNK_SIZE) {
+            throw new IllegalArgumentException("inChunkSize must be greater than 1: " + inChunkSize);
+        }
+        if (outChunkSize <= 0) {
+            throw new IllegalArgumentException("outChunkSize must be positive: " + outChunkSize);
+        }
+        if (inChunkSize > outChunkSize) {
+            throw new IllegalArgumentException(
+                    "inChunkSize must not exceed outChunkSize: " + inChunkSize + " > " + outChunkSize);
+        }
+        if (finalizationOutputChunks != 0) {
+            throw new IllegalArgumentException(
+                    "finalizationOutputChunks must be zero: " + finalizationOutputChunks);
+        }
     }
 
     /**
@@ -150,5 +160,28 @@ public final class BlockGeometry {
             case SHA384 -> 48;
             case SHA512 -> 64;
         };
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof BlockGeometry geometry)) {
+            return false;
+        }
+        return inChunkSize == geometry.inChunkSize && outChunkSize == geometry.outChunkSize
+                && finalizationOutputChunks == geometry.finalizationOutputChunks;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(inChunkSize, outChunkSize, finalizationOutputChunks);
+    }
+
+    @Override
+    public String toString() {
+        return "BlockGeometry[inChunkSize=" + inChunkSize + ", outChunkSize=" + outChunkSize
+                + ", finalizationOutputChunks=" + finalizationOutputChunks + "]";
     }
 }

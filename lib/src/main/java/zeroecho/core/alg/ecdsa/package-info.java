@@ -36,9 +36,9 @@
  *
  * <p>
  * This package provides the ECDSA algorithm descriptor, curve specifications,
- * key builders for generation and import, and immutable encoded key specs. It
- * wires ECDSA into the core signature SPI through a JCA-backed streaming
- * signature context that enforces fixed signature lengths.
+ * key builders for generation and import, and defensively copying encoded key
+ * specs. It wires ECDSA into the core signature SPI through a JCA-backed
+ * streaming signature context that enforces fixed signature lengths.
  * </p>
  *
  * <h2>Scope and responsibilities</h2>
@@ -66,8 +66,9 @@
  * <li><b>EcdsaPublicKeyBuilder</b> and <b>EcdsaPrivateKeyBuilder:</b> import
  * keys from X.509 and PKCS#8 encodings via
  * {@link java.security.KeyFactory}.</li>
- * <li><b>EcdsaPublicKeySpec</b> and <b>EcdsaPrivateKeySpec:</b> immutable
- * wrappers around encoded keys with marshalling support.</li>
+ * <li><b>EcdsaPublicKeySpec</b> and <b>EcdsaPrivateKeySpec:</b> wrappers around
+ * encoded keys with marshalling support; the private-key form is
+ * destroyable.</li>
  * </ul>
  *
  * <h2>Design notes</h2>

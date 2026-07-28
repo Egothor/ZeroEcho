@@ -38,7 +38,9 @@ package zeroecho.core.err;
  * the algorithm for the requested role.
  *
  * <p>
- * This is thrown by {@link zeroecho.core.CryptoAlgorithm#create} when:
+ * This is thrown by
+ * {@link zeroecho.core.CryptoAlgorithm#createContext(zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}
+ * when:
  * </p>
  * <ul>
  * <li>The algorithm supports the requested {@link zeroecho.core.KeyUsage} role,
@@ -58,7 +60,7 @@ package zeroecho.core.err;
  * CryptoAlgorithm aes = CryptoAlgorithms.require("AES/GCM");
  * SecretKey wrongKey = ... // an RSA key by mistake
  * try {
- *     aes.create(KeyUsage.ENCRYPT, wrongKey, null);
+ *     aes.createContext(KeyUsage.ENCRYPT, wrongKey, null);
  * } catch (UnsupportedSpecException e) {
  *     // no binding accepted the RSA key for ENCRYPT role
  * }

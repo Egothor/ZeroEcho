@@ -81,7 +81,7 @@ import zeroecho.core.util.Strings;
  * Mac mac = Mac.getInstance("HmacSHA256");
  * mac.init(secretKey);
  * try (InputStream in = Files.newInputStream(path);
- *      InputStream s  = new Stream(in, mac, "HmacSHA256", null,
+ *      InputStream s  = new HmacStream(in, mac, "HmacSHA256", null,
  *                                  new ByteVerificationStrategy())) {
  *     // read from 's' to consume body; trailer is produced automatically
  * }
@@ -98,14 +98,14 @@ import zeroecho.core.util.Strings;
  *     new ByteVerificationStrategy().getThrowOnMismatch();
  *
  * try (InputStream in = Files.newInputStream(path);
- *      InputStream s  = new Stream(in, macV, "HmacSHA256", expected, strategy)) {
+ *      InputStream s  = new HmacStream(in, macV, "HmacSHA256", expected, strategy)) {
  *     // read from 's'; exception is thrown at EOF if verification fails
  * }
  * }
  * </pre>
  */
-final class Stream extends AbstractPassthroughInputStream {
-    private static final Logger LOG = Logger.getLogger(Stream.class.getName());
+final class HmacStream extends AbstractPassthroughInputStream {
+    private static final Logger LOG = Logger.getLogger(HmacStream.class.getName());
 
     private final Mac mac;
     private final String macName;
@@ -135,7 +135,7 @@ final class Stream extends AbstractPassthroughInputStream {
      * @throws NullPointerException if {@code upstream}, {@code mac}, or
      *                              {@code macName} is {@code null}
      */
-    /* package */ Stream(final InputStream upstream, final Mac mac, final String macName, final byte[] expectedTag,
+    /* package */ HmacStream(final InputStream upstream, final Mac mac, final String macName, final byte[] expectedTag,
             final VerificationBiPredicate<byte[]> verificationStrategy) {
         super(upstream, 8192);
         this.mac = mac;

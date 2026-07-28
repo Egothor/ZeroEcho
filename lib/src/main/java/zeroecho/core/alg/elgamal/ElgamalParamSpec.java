@@ -73,7 +73,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * <h2>Usage</h2> <pre>{@code
  * ElgamalParamSpec spec = ElgamalParamSpec.ffdhe2048();
- * KeyPair kp = algo.generateKeyPair(spec);
+ * KeyPair kp = algo.asymmetricKeyPairGenerator(ElgamalParamSpec.class).generateKeyPair(spec);
  * }</pre>
  *
  * <h2>Thread-safety</h2> Instances are immutable and safe to share between

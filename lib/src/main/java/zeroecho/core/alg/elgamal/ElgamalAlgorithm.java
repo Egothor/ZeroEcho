@@ -47,6 +47,7 @@ import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
 
 import org.bouncycastle.jce.spec.ElGamalParameterSpec;
 
@@ -54,7 +55,9 @@ import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
 import zeroecho.core.context.EncryptionContext;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * <h2>ElGamal Asymmetric Encryption Algorithm</h2>
@@ -110,11 +113,12 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * <h2>Example</h2> <pre>{@code
  * CryptoAlgorithm algo = new ElgamalAlgorithm();
- * KeyPair kp = algo.generateKeyPair(ElgamalParamSpec.ffdhe2048());
+ * KeyPair kp = algo.asymmetricKeyPairGenerator(ElgamalParamSpec.class)
+ *                  .generateKeyPair(ElgamalParamSpec.ffdhe2048());
  *
- * EncryptionContext enc = algo.create(KeyUsage.ENCRYPT, kp.getPublic(),
+ * EncryptionContext enc = algo.createContext(KeyUsage.ENCRYPT, kp.getPublic(),
  *                                     ElgamalEncSpec.pkcs1());
- * EncryptionContext dec = algo.create(KeyUsage.DECRYPT, kp.getPrivate(),
+ * EncryptionContext dec = algo.createContext(KeyUsage.DECRYPT, kp.getPrivate(),
  *                                     ElgamalEncSpec.pkcs1());
  * }</pre>
  *
@@ -148,7 +152,7 @@ public final class ElgamalAlgorithm extends AbstractCryptoAlgorithm {
 
         if (false) { // NOPMD
             // this key generation is slow
-            registerAsymmetricKeyBuilder(ElgamalKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+            registerAsymmetricKeyPairGenerator(ElgamalKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
                 @Override
                 public KeyPair generateKeyPair(ElgamalKeyGenSpec spec) throws GeneralSecurityException {
                     ensureBC();
@@ -161,20 +165,10 @@ public final class ElgamalAlgorithm extends AbstractCryptoAlgorithm {
                     kpg.initialize(eg, new SecureRandom());
                     return kpg.generateKeyPair();
                 }
-
-                @Override
-                public PublicKey importPublic(ElgamalKeyGenSpec spec) {
-                    throw new UnsupportedOperationException("Use ElgamalPublicKeySpec to import a public key.");
-                }
-
-                @Override
-                public PrivateKey importPrivate(ElgamalKeyGenSpec spec) {
-                    throw new UnsupportedOperationException("Use ElgamalPrivateKeySpec to import a private key.");
-                }
             }, ElgamalKeyGenSpec::elgamal2048);
         }
 
-        registerAsymmetricKeyBuilder(ElgamalParamSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(ElgamalParamSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(ElgamalParamSpec spec) throws GeneralSecurityException {
                 ensureBC();
@@ -183,23 +177,9 @@ public final class ElgamalAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(eg, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(ElgamalParamSpec spec) {
-                throw new UnsupportedOperationException("Use ElgamalPublicKeySpec to import a public key.");
-            }
-
-            @Override
-            public PrivateKey importPrivate(ElgamalParamSpec spec) {
-                throw new UnsupportedOperationException("Use ElgamalPrivateKeySpec to import a private key.");
-            }
         }, ElgamalParamSpec::ffdhe2048);
 
-        registerAsymmetricKeyBuilder(ElgamalPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(ElgamalPublicKeySpec spec) {
-                throw new UnsupportedOperationException("Generation not supported for encoded spec.");
-            }
+        registerPublicKeyImporter(ElgamalPublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(ElgamalPublicKeySpec spec) throws GeneralSecurityException {
@@ -207,31 +187,22 @@ public final class ElgamalAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance(EL_GAMAL, providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.encoded()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(ElgamalPublicKeySpec spec) {
-                throw new UnsupportedOperationException("Use ElgamalPrivateKeySpec for private keys.");
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(ElgamalPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(ElgamalPrivateKeySpec spec) {
-                throw new UnsupportedOperationException("Generation not supported for encoded spec.");
-            }
-
-            @Override
-            public PublicKey importPublic(ElgamalPrivateKeySpec spec) {
-                throw new UnsupportedOperationException("Use ElgamalPublicKeySpec for public keys.");
-            }
+        registerPrivateKeyImporter(ElgamalPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(ElgamalPrivateKeySpec spec) throws GeneralSecurityException {
                 ensureBC();
                 KeyFactory kf = KeyFactory.getInstance(EL_GAMAL, providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.encoded()));
+                byte[] encoded = spec.encoded();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     /**

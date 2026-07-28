@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -56,7 +57,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * <h2>HQC (Hamming Quasi-Cyclic) Algorithm Integration</h2>
@@ -124,13 +127,14 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * <h2>Usage example</h2> <pre>{@code
  * // Generate an HQC key pair
  * HqcAlgorithm hqc = new HqcAlgorithm();
- * KeyPair kp = hqc.generateKeyPair(HqcKeyGenSpec.hqc256());
+ * KeyPair kp = hqc.asymmetricKeyPairGenerator(HqcKeyGenSpec.class)
+ *                  .generateKeyPair(HqcKeyGenSpec.hqc256());
  *
  * // Encapsulation by initiator
- * KemContext encapsCtx = hqc.create(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
+ * KemContext encapsCtx = hqc.createContext(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
  *
  * // Decapsulation by responder
- * KemContext decapsCtx = hqc.create(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
+ * KemContext decapsCtx = hqc.createContext(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
  * }</pre>
  *
  * @since 1.0
@@ -200,7 +204,7 @@ public final class HqcAlgorithm extends AbstractCryptoAlgorithm {
                             .build();
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(HqcKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(HqcKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(HqcKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
@@ -213,23 +217,9 @@ public final class HqcAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(HqcKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PrivateKey importPrivate(HqcKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
         }, HqcKeyGenSpec::hqc256);
 
-        registerAsymmetricKeyBuilder(HqcPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(HqcPublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPublicKeyImporter(HqcPublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(HqcPublicKeySpec spec) throws GeneralSecurityException {
@@ -237,31 +227,22 @@ public final class HqcAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("HQC", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(HqcPublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(HqcPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(HqcPrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PublicKey importPublic(HqcPrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPrivateKeyImporter(HqcPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(HqcPrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("HQC", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     private static void ensureProvider() throws NoSuchProviderException {

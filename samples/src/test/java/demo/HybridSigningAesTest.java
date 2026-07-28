@@ -48,10 +48,11 @@ import javax.crypto.SecretKey;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
+import zeroecho.core.alg.ed25519.Ed25519KeyGenSpec;
+import zeroecho.core.alg.sphincsplus.SphincsPlusKeyGenSpec;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.sdk.builders.TagTrailerDataContentBuilder;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
@@ -99,7 +100,7 @@ class HybridSigningAesTest {
         byte[] msg = randomBytes(100);
 
         // AES-GCM with header, runtime params are stored in header
-        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
+        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).generateKey(256).modeGcm(128).withHeader();
 
         // Hybrid signature: Ed25519 + SPHINCS+ (AND)
         HybridSignatureProfile profile = new HybridSignatureProfile("Ed25519", "SPHINCS+", null, null,
@@ -108,9 +109,9 @@ class HybridSigningAesTest {
         KeyPair ed = generateKeyPair("Ed25519");
         KeyPair spx = generateKeyPair("SPHINCS+");
 
-        SignatureContext tagEnc = HybridSignatureContexts.sign(profile, ed.getPrivate(), spx.getPrivate(),
+        SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPrivate(), spx.getPrivate(),
                 2 * 1024 * 1024);
-        SignatureContext tagDec = HybridSignatureContexts.verify(profile, ed.getPublic(), spx.getPublic(),
+        SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024);
 
         // For verification, make mismatch behavior explicit (builder also supports
@@ -141,7 +142,7 @@ class HybridSigningAesTest {
                 // encrypted input
                 .add(PlainBytesBuilder.builder().bytes(ciphertext))
                 // AES-GCM decryption
-                .add(AesDataContentBuilder.builder().importKeyRaw(aesKey.getEncoded()).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).importKeyRaw(aesKey.getEncoded()).modeGcm(128).withHeader())
                 // hybrid signature verification
                 .add(new TagTrailerDataContentBuilder<Signature>(tagDec).bufferSize(8192).throwOnMismatch()).build();
 
@@ -161,7 +162,7 @@ class HybridSigningAesTest {
         byte[] msg = randomBytes(100);
 
         // AES-GCM with header, runtime params are stored in header
-        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
+        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).generateKey(256).modeGcm(128).withHeader();
 
         // Hybrid signature: Ed25519 + SPHINCS+ (AND)
         HybridSignatureProfile profile = new HybridSignatureProfile("Ed25519", "SPHINCS+", null, null,
@@ -170,9 +171,9 @@ class HybridSigningAesTest {
         KeyPair ed = generateKeyPair("Ed25519");
         KeyPair spx = generateKeyPair("SPHINCS+");
 
-        SignatureContext tagEnc = HybridSignatureContexts.sign(profile, ed.getPrivate(), spx.getPrivate(),
+        SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPrivate(), spx.getPrivate(),
                 2 * 1024 * 1024);
-        SignatureContext tagDec = HybridSignatureContexts.verify(profile, ed.getPublic(), spx.getPublic(),
+        SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024);
 
         tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
@@ -205,7 +206,7 @@ class HybridSigningAesTest {
                 // hybrid signature verification
                 .add(new TagTrailerDataContentBuilder<Signature>(tagDec).bufferSize(8192).throwOnMismatch())
                 // AES-GCM decryption
-                .add(AesDataContentBuilder.builder().importKeyRaw(aesKey.getEncoded()).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).importKeyRaw(aesKey.getEncoded()).modeGcm(128).withHeader())
                 .build();
 
         byte[] decrypted;
@@ -219,8 +220,14 @@ class HybridSigningAesTest {
     // helpers
 
     private static KeyPair generateKeyPair(String algId) throws GeneralSecurityException {
-        CryptoAlgorithm alg = CryptoAlgorithms.require(algId);
-        return alg.generateKeyPair();
+        ZeroEchoSession session = new ZeroEchoSession();
+        return switch (algId) {
+            case "Ed25519" -> session.keyBuilders().asymmetric().generateKeyPair(algId,
+                    Ed25519KeyGenSpec.defaultSpec());
+            case "SPHINCS+" -> session.keyBuilders().asymmetric().generateKeyPair(algId,
+                    SphincsPlusKeyGenSpec.defaultSpec());
+            default -> throw new IllegalArgumentException("Unsupported sample signature algorithm: " + algId);
+        };
     }
 
     private static byte[] randomBytes(int len) {

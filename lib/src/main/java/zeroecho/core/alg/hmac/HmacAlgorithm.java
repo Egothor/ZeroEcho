@@ -33,9 +33,9 @@
  ******************************************************************************/
 package zeroecho.core.alg.hmac;
 
-import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
+import java.util.Arrays;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -45,7 +45,9 @@ import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
 import zeroecho.core.context.MacContext;
-import zeroecho.core.spi.SymmetricKeyBuilder;
+import zeroecho.core.err.ProviderFailureException;
+import zeroecho.core.spi.SymmetricKeyGenerator;
+import zeroecho.core.spi.SymmetricKeyImporter;
 
 /**
  * <h2>HMAC Algorithm Integration</h2>
@@ -86,11 +88,11 @@ import zeroecho.core.spi.SymmetricKeyBuilder;
  *
  * <h2>Usage example</h2> <pre>{@code
  * // Generate a fresh key for HMAC-SHA256
- * SecretKey key = CryptoAlgorithms.generateSecret("HMAC",
+ * SecretKey key = session.keyBuilders().symmetric().generate("HMAC",
  *     HmacKeyGenSpec.sha256(256));
  *
  * // Create a MAC context
- * MacContext ctx = CryptoAlgorithms.create("HMAC",
+ * MacContext ctx = session.createContext("HMAC",
  *     KeyUsage.MAC, key, HmacSpec.sha256());
  *
  * ctx.update(data);
@@ -133,37 +135,33 @@ public final class HmacAlgorithm extends AbstractCryptoAlgorithm {
                     try {
                         return new HmacMacContext(this, k, s.macName());
                     } catch (GeneralSecurityException e) {
-                        throw new IOException("Init HMAC failed for " + s.macName(), e);
+                        throw new ProviderFailureException("Failed to initialize HMAC " + s.macName(), e);
                     }
                 }, HmacSpec::sha256 // default for catalog/tests
         );
 
         // Key builders (generation/import) — both respect macName in the spec.
-        registerSymmetricKeyBuilder(HmacKeyGenSpec.class, new SymmetricKeyBuilder<>() {
+        registerSymmetricKeyGenerator(HmacKeyGenSpec.class, new SymmetricKeyGenerator<>() {
             @Override
             public SecretKey generateSecret(HmacKeyGenSpec spec) throws GeneralSecurityException {
                 KeyGenerator kg = KeyGenerator.getInstance(spec.macName());
                 kg.init(spec.keySizeBits(), new SecureRandom());
                 return kg.generateKey();
             }
-
-            @Override
-            public SecretKey importSecret(HmacKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Use HmacKeyImportSpec for import");
-            }
         }, () -> HmacKeyGenSpec.sha256(256) // default keygen spec
         );
 
-        registerSymmetricKeyBuilder(HmacKeyImportSpec.class, new SymmetricKeyBuilder<>() {
-            @Override
-            public SecretKey generateSecret(HmacKeyImportSpec spec) {
-                throw new UnsupportedOperationException("Use HmacKeyGenSpec for generation");
-            }
+        registerSymmetricKeyImporter(HmacKeyImportSpec.class, new SymmetricKeyImporter<>() {
 
             @Override
             public SecretKey importSecret(HmacKeyImportSpec spec) {
-                return new SecretKeySpec(spec.key(), spec.macName());
+                byte[] key = spec.key();
+                try {
+                    return new SecretKeySpec(key, spec.macName());
+                } finally {
+                    Arrays.fill(key, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 }

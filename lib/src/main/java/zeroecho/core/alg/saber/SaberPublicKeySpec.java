@@ -61,7 +61,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * // Import SABER public key from encoded form
  * byte[] x509Bytes = ...;
  * SaberPublicKeySpec spec = new SaberPublicKeySpec(x509Bytes);
- * PublicKey key = CryptoAlgorithms.publicKey("SABER", spec);
+ * PublicKey key = session.keyBuilders().asymmetric().importPublic("SABER", spec);
  * }</pre>
  */
 public final class SaberPublicKeySpec implements AlgorithmKeySpec {

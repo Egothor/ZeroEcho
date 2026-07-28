@@ -40,7 +40,7 @@ import java.security.KeyPairGenerator;
 import java.util.Locale;
 import java.util.Objects;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
 /**
  * Key pair builder for SLH-DSA (FIPS 205) using the Bouncy Castle PQC provider.
@@ -54,7 +54,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class SlhDsaKeyGenBuilder implements AsymmetricKeyBuilder<SlhDsaKeyGenSpec> {
+public final class SlhDsaKeyGenBuilder implements AsymmetricKeyPairGenerator<SlhDsaKeyGenSpec> {
 
     private static final String ALG = "SLH-DSA";
 
@@ -70,16 +70,6 @@ public final class SlhDsaKeyGenBuilder implements AsymmetricKeyBuilder<SlhDsaKey
             kpg.initialize((java.security.spec.AlgorithmParameterSpec) bcParamSpec);
         }
         return kpg.generateKeyPair();
-    }
-
-    @Override
-    public java.security.PublicKey importPublic(SlhDsaKeyGenSpec spec) {
-        throw new UnsupportedOperationException("Use SlhDsaPublicKeySpec to import a public key.");
-    }
-
-    @Override
-    public java.security.PrivateKey importPrivate(SlhDsaKeyGenSpec spec) {
-        throw new UnsupportedOperationException("Use SlhDsaPrivateKeySpec to import a private key.");
     }
 
     private static Object resolveBcParameterSpec(SlhDsaKeyGenSpec spec) throws GeneralSecurityException {

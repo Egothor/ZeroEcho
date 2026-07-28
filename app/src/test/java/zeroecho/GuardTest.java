@@ -36,6 +36,7 @@ package zeroecho;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.PrintStream;
 import java.nio.file.Files;
@@ -45,6 +46,7 @@ import java.util.Arrays;
 import java.util.Random;
 
 import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -74,6 +76,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * </p>
  */
 public class GuardTest {
+    private static final String TEST_PBKDF2_MAXIMUM = "1000000";
 
     /** All temporary files live here and are auto-cleaned by JUnit. */
     @TempDir
@@ -120,14 +123,16 @@ public class GuardTest {
         Path dec = tmp.resolve("pt.bin.dec");
 
         // Encrypt
-        String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--to-psw", password, "--alg",
+        String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--to-psw", password,
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aadHex };
         System.out.println("...encrypt: " + Arrays.toString(encArgs));
         int e = Guard.main(encArgs, new Options());
         assertEquals(0, e, "... encrypt expected exit code 0");
 
         // Decrypt (using password)
-        String[] decArgs = { "--decrypt", enc.toString(), "--output", dec.toString(), "--password", password, "--alg",
+        String[] decArgs = { "--decrypt", enc.toString(), "--output", dec.toString(), "--password", password,
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aadHex };
         System.out.println("...decrypt: " + Arrays.toString(decArgs));
         int d = Guard.main(decArgs, new Options());
@@ -135,6 +140,42 @@ public class GuardTest {
 
         assertArrayEquals(Files.readAllBytes(in), Files.readAllBytes(dec), "AES-GCM password round-trip mismatch");
         System.out.println("...ok");
+    }
+
+    @Test
+    void passwordOperationRequiresExplicitLimits() throws Exception {
+        String method = "passwordOperationRequiresExplicitLimits";
+        System.out.println(method);
+        Path input = writeRandom(tmp.resolve("limits.bin"), 32, 0x51A17);
+        String[] arguments = { "--encrypt", input.toString(), "--to-psw", "controlled", "--alg", "aes-gcm" };
+
+        ParseException failure = assertThrows(ParseException.class,
+                () -> Guard.main(arguments, new Options()));
+
+        assertTrue(failure.getMessage().contains("--pbkdf2-max"));
+        System.out.println("...rejected=missingLimits");
+        System.out.println(method + "...ok");
+    }
+
+    @Test
+    void recipientKekOptionRejectsUnreadableSize() throws Exception {
+        String method = "recipientKekOptionRejectsUnreadableSize";
+        System.out.println(method);
+        Path input = writeRandom(tmp.resolve("invalid-kek.bin"), 32, 0x4B454B);
+        Path output = tmp.resolve("invalid-kek.enc");
+        String[] arguments = { "--encrypt", input.toString(), "--output", output.toString(),
+                "--to-psw", "controlled", "--to-kek-bytes", "24",
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM,
+                "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM,
+                "--alg", "aes-gcm" };
+
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> Guard.main(arguments, new Options()));
+
+        assertTrue(failure.getMessage().contains("exactly 16 or 32"));
+        assertTrue(Files.notExists(output));
+        System.out.println("...rejectedKekBytes=24");
+        System.out.println(method + "...ok");
     }
 
     /**
@@ -249,7 +290,8 @@ public class GuardTest {
         // alias,
         // plus 2 random password decoys. Recipients are shuffled by default.
         String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--keyring", ring.toString(),
-                "--to-alias", rsa.pub, "--to-psw", password, "--decoy-alias", elg.pub, "--decoy-psw-rand", "2", "--alg",
+                "--to-alias", rsa.pub, "--to-psw", password, "--decoy-alias", elg.pub, "--decoy-psw-rand", "2",
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aad };
         System.out.println("...encrypt: " + Arrays.toString(encArgs));
         int e = Guard.main(encArgs, new Options());
@@ -266,7 +308,8 @@ public class GuardTest {
                 "mixed recipients decrypt(private) mismatch");
 
         // Decrypt via password instead of key
-        String[] decPwd = { "--decrypt", enc.toString(), "--output", dec2.toString(), "--password", password, "--alg",
+        String[] decPwd = { "--decrypt", enc.toString(), "--output", dec2.toString(), "--password", password,
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aad };
         System.out.println("...decrypt(password): " + Arrays.toString(decPwd));
         int d2 = Guard.main(decPwd, new Options());
@@ -292,7 +335,8 @@ public class GuardTest {
         Path enc = tmp.resolve("pt-neg.bin.enc");
         String pwd = "x";
 
-        String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--to-psw", pwd, "--alg",
+        String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--to-psw", pwd,
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", "128" };
         int e = Guard.main(encArgs, new Options());
         assertEquals(0, e, "... encrypt rc");

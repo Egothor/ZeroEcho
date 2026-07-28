@@ -49,7 +49,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h2>Usage</h2> <pre>{@code
  * // Choose a parameter set and generate a key pair
  * NtruAlgorithm alg = new NtruAlgorithm();
- * KeyPair kp = alg.asymmetricKeyBuilder(NtruKeyGenSpec.class)
+ * KeyPair kp = alg.asymmetricKeyPairGenerator(NtruKeyGenSpec.class)
  *                 .generateKeyPair(NtruKeyGenSpec.hrss701());
  * }</pre>
  *

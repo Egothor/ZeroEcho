@@ -43,15 +43,20 @@ import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.security.KeyPair;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.core.CryptoAlgorithms;
+import zeroecho.core.audit.AuditListener;
+import zeroecho.core.audit.AuditMode;
 import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.alg.kyber.KyberKeyGenSpec;
 import zeroecho.core.alg.xdh.XdhSpec;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.hybrid.kex.HybridKexContext;
+import zeroecho.sdk.hybrid.kex.HybridKexContexts;
 import zeroecho.sdk.hybrid.kex.HybridKexPolicy;
 import zeroecho.sdk.hybrid.kex.HybridKexProfile;
 import zeroecho.sdk.hybrid.kex.HybridKexTranscript;
@@ -87,20 +92,20 @@ class HybridKexBuilderTest {
         HybridKexTranscript transcript = new HybridKexTranscript().addUtf8("suite", "X25519+ML-KEM-768").addUtf8("role",
                 "builder-test");
 
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         HybridKexContext alice = null;
         HybridKexContext bob = null;
 
         try {
-            alice = HybridKexBuilder.builder().profile(profile).transcript(transcript).classicAgreement()
+            alice = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).transcript(transcript).classicAgreement()
                     .algorithm("Xdh").spec(XdhSpec.X25519).privateKey(aliceClassic.getPrivate())
                     .peerPublic(bobClassic.getPublic()).pqcKem().algorithm("ML-KEM").peerPublic(bobPqc.getPublic())
                     .buildInitiator();
 
-            bob = HybridKexBuilder.builder().profile(profile).transcript(transcript).classicAgreement().algorithm("Xdh")
+            bob = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).transcript(transcript).classicAgreement().algorithm("Xdh")
                     .spec(XdhSpec.X25519).privateKey(bobClassic.getPrivate()).peerPublic(aliceClassic.getPublic())
                     .pqcKem().algorithm("ML-KEM").privateKey(bobPqc.getPrivate()).buildResponder();
 
@@ -133,19 +138,19 @@ class HybridKexBuilderTest {
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
 
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         HybridKexContext alice = null;
         HybridKexContext bob = null;
 
         try {
-            alice = HybridKexBuilder.builder().profile(profile).classicPairMessage().algorithm("Xdh")
+            alice = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).classicPairMessage().algorithm("Xdh")
                     .spec(XdhSpec.X25519).keyPair(new KeyPairKey(aliceClassic)).pqcKem().algorithm("ML-KEM")
                     .peerPublic(bobPqc.getPublic()).buildInitiator();
 
-            bob = HybridKexBuilder.builder().profile(profile).classicPairMessage().algorithm("Xdh").spec(XdhSpec.X25519)
+            bob = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).classicPairMessage().algorithm("Xdh").spec(XdhSpec.X25519)
                     .keyPair(new KeyPairKey(bobClassic)).pqcKem().algorithm("ML-KEM").privateKey(bobPqc.getPrivate())
                     .buildResponder();
 
@@ -179,12 +184,12 @@ class HybridKexBuilderTest {
     void buildInitiatorWithoutProfileFails() throws Exception {
         System.out.println("buildInitiatorWithoutProfileFails");
 
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
-            HybridKexBuilder.builder().classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519)
+            HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519)
                     .privateKey(aliceClassic.getPrivate()).peerPublic(bobClassic.getPublic()).pqcKem()
                     .algorithm("ML-KEM").peerPublic(bobPqc.getPublic()).buildInitiator();
         });
@@ -200,10 +205,10 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorWithoutClassicModeFails");
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
-            HybridKexBuilder.builder().profile(profile).pqcKem().algorithm("ML-KEM").peerPublic(bobPqc.getPublic())
+            HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).pqcKem().algorithm("ML-KEM").peerPublic(bobPqc.getPublic())
                     .buildInitiator();
         });
 
@@ -218,11 +223,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorClassicAgreementWithoutPeerPublicFails");
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
-            HybridKexBuilder.builder().profile(profile).classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519)
+            HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519)
                     .privateKey(aliceClassic.getPrivate()).pqcKem().algorithm("ML-KEM").peerPublic(bobPqc.getPublic())
                     .buildInitiator();
         });
@@ -238,10 +243,10 @@ class HybridKexBuilderTest {
         System.out.println("buildResponderPairMessageWithoutKeyPairFails");
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
-            HybridKexBuilder.builder().profile(profile).classicPairMessage().algorithm("Xdh").spec(XdhSpec.X25519)
+            HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).classicPairMessage().algorithm("Xdh").spec(XdhSpec.X25519)
                     .pqcKem().algorithm("ML-KEM").privateKey(bobPqc.getPrivate()).buildResponder();
         });
 
@@ -256,11 +261,11 @@ class HybridKexBuilderTest {
         System.out.println("buildInitiatorWithoutPqcPeerPublicFails");
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
-            HybridKexBuilder.builder().profile(profile).classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519)
+            HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519)
                     .privateKey(aliceClassic.getPrivate()).peerPublic(bobClassic.getPublic()).pqcKem()
                     .algorithm("ML-KEM").buildInitiator();
         });
@@ -276,11 +281,11 @@ class HybridKexBuilderTest {
         System.out.println("buildResponderWithoutPqcPrivateFails");
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
-            HybridKexBuilder.builder().profile(profile).classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519)
+            HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519)
                     .privateKey(bobClassic.getPrivate()).peerPublic(aliceClassic.getPublic()).pqcKem()
                     .algorithm("ML-KEM").buildResponder();
         });
@@ -298,12 +303,12 @@ class HybridKexBuilderTest {
         HybridKexProfile profile = HybridKexProfile.defaultProfile(16);
         HybridKexPolicy policy = new HybridKexPolicy(0, 0, 32);
 
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            HybridKexBuilder.builder().profile(profile).policy(policy).classicAgreement().algorithm("Xdh")
+            HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).policy(policy).classicAgreement().algorithm("Xdh")
                     .spec(XdhSpec.X25519).privateKey(aliceClassic.getPrivate()).peerPublic(bobClassic.getPublic())
                     .pqcKem().algorithm("ML-KEM").peerPublic(bobPqc.getPublic()).buildInitiator();
         });
@@ -315,17 +320,110 @@ class HybridKexBuilderTest {
     }
 
     @Test
+    void policyFailureClosesBothConstructedLegs() throws Exception {
+        System.out.println("policyFailureClosesBothConstructedLegs");
+        AtomicInteger closedContexts = new AtomicInteger();
+        AuditListener listener = new AuditListener() {
+            @Override
+            public void onContextClosed(String contextId, long bodyBytes, long trailerBytes, long durationMillis) {
+                closedContexts.incrementAndGet();
+            }
+        };
+        ZeroEchoSession session = new ZeroEchoSession()
+                .withAuditListener(listener)
+                .withAuditMode(AuditMode.WRAP);
+        HybridKexProfile profile = HybridKexProfile.defaultProfile(16);
+        HybridKexPolicy policy = new HybridKexPolicy(0, 0, 32);
+        KeyPair aliceClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqc = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM",
+                KyberKeyGenSpec.kyber768());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> HybridKexBuilder.builder(session).profile(profile).policy(policy).classicAgreement()
+                        .algorithm("Xdh").spec(XdhSpec.X25519).privateKey(aliceClassic.getPrivate())
+                        .peerPublic(bobClassic.getPublic()).pqcKem().algorithm("ML-KEM")
+                        .peerPublic(bobPqc.getPublic()).buildInitiator());
+
+        assertEquals(2, closedContexts.get());
+        System.out.println("...closedContexts=" + closedContexts.get());
+        System.out.println("policyFailureClosesBothConstructedLegs...ok");
+    }
+
+    @Test
+    void secondLegPolicyFailureClosesFirstFactoryLeg() throws Exception {
+        System.out.println("secondLegPolicyFailureClosesFirstFactoryLeg");
+        AtomicInteger closedContexts = new AtomicInteger();
+        AuditListener listener = new AuditListener() {
+            @Override
+            public void onContextClosed(String contextId, long bodyBytes, long trailerBytes, long durationMillis) {
+                closedContexts.incrementAndGet();
+            }
+        };
+        ZeroEchoSession keySession = new ZeroEchoSession();
+        KeyPair aliceClassic = keySession.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = keySession.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqc = keySession.keyBuilders().asymmetric().generateKeyPair("ML-KEM",
+                KyberKeyGenSpec.kyber768());
+        ZeroEchoSession operationSession = new ZeroEchoSession()
+                .withAuditListener(listener)
+                .withAuditMode(AuditMode.WRAP)
+                .withPolicy((id, role, key, spec) -> {
+                    if ("ML-KEM".equals(id)) {
+                        throw new IllegalArgumentException("controlled PQ policy denial");
+                    }
+                });
+
+        assertThrows(IllegalArgumentException.class,
+                () -> HybridKexContexts.initiator(operationSession, HybridKexProfile.defaultProfile(32),
+                        "Xdh", aliceClassic.getPrivate(), bobClassic.getPublic(), XdhSpec.X25519,
+                        "ML-KEM", bobPqc.getPublic(), null));
+
+        assertEquals(1, closedContexts.get());
+        System.out.println("...closedContexts=" + closedContexts.get());
+        System.out.println("secondLegPolicyFailureClosesFirstFactoryLeg...ok");
+    }
+
+    @Test
+    void invalidFactoryInputIsRejectedBeforeContextAllocation() throws Exception {
+        System.out.println("invalidFactoryInputIsRejectedBeforeContextAllocation");
+        AtomicInteger createdContexts = new AtomicInteger();
+        AuditListener listener = new AuditListener() {
+            @Override
+            public void onContextCreatedMeta(String contextId, String algorithmId, String provider,
+                    zeroecho.core.KeyUsage role, String keyFingerprint,
+                    java.util.Map<String, Object> specMeta) {
+                createdContexts.incrementAndGet();
+            }
+        };
+        ZeroEchoSession session = new ZeroEchoSession()
+                .withAuditListener(listener)
+                .withAuditMode(AuditMode.WRAP);
+        KeyPair aliceClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+
+        assertThrows(NullPointerException.class,
+                () -> HybridKexContexts.initiator(session, HybridKexProfile.defaultProfile(32),
+                        "Xdh", aliceClassic.getPrivate(), bobClassic.getPublic(), XdhSpec.X25519,
+                        "ML-KEM", null, null));
+
+        assertEquals(0, createdContexts.get());
+        System.out.println("...createdContexts=0");
+        System.out.println("invalidFactoryInputIsRejectedBeforeContextAllocation...ok");
+    }
+
+    @Test
     void switchingClassicModeClearsConflictingStateAndBuildsPairMessage() throws Exception {
         System.out.println("switchingClassicModeClearsConflictingStateAndBuildsPairMessage");
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
-        KeyPair agreementKeyPair = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair pairMessageKeyPair = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair agreementKeyPair = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair pairMessageKeyPair = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         HybridKexContext context = null;
         try {
-            HybridKexBuilder builder = HybridKexBuilder.builder().profile(profile);
+            HybridKexBuilder builder = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile);
 
             builder.classicAgreement().algorithm("Xdh").spec(XdhSpec.X25519).privateKey(agreementKeyPair.getPrivate())
                     .peerPublic(agreementKeyPair.getPublic());
@@ -352,13 +450,13 @@ class HybridKexBuilderTest {
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
 
-        KeyPair aliceClassicA = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassicA = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobPqcA = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair aliceClassicA = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassicA = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqcA = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
-        KeyPair aliceClassicB = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassicB = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobPqcB = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair aliceClassicB = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassicB = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobPqcB = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         HybridKexTranscript transcriptA = new HybridKexTranscript().addUtf8("context", "A");
         HybridKexTranscript transcriptB = new HybridKexTranscript().addUtf8("context", "B");
@@ -372,12 +470,12 @@ class HybridKexBuilderTest {
         HybridKexContext bobB = null;
 
         try {
-            aliceA = HybridKexBuilder.builder().profile(profile).transcript(transcriptA).classicAgreement()
+            aliceA = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).transcript(transcriptA).classicAgreement()
                     .algorithm("Xdh").spec(XdhSpec.X25519).privateKey(aliceClassicA.getPrivate())
                     .peerPublic(bobClassicA.getPublic()).pqcKem().algorithm("ML-KEM").peerPublic(bobPqcA.getPublic())
                     .buildInitiator();
 
-            bobA = HybridKexBuilder.builder().profile(profile).transcript(transcriptA).classicAgreement()
+            bobA = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).transcript(transcriptA).classicAgreement()
                     .algorithm("Xdh").spec(XdhSpec.X25519).privateKey(bobClassicA.getPrivate())
                     .peerPublic(aliceClassicA.getPublic()).pqcKem().algorithm("ML-KEM").privateKey(bobPqcA.getPrivate())
                     .buildResponder();
@@ -389,12 +487,12 @@ class HybridKexBuilderTest {
             System.out.println("...responderA=" + hex(responderA));
             assertArrayEquals(secretA, responderA);
 
-            aliceB = HybridKexBuilder.builder().profile(profile).transcript(transcriptB).classicAgreement()
+            aliceB = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).transcript(transcriptB).classicAgreement()
                     .algorithm("Xdh").spec(XdhSpec.X25519).privateKey(aliceClassicB.getPrivate())
                     .peerPublic(bobClassicB.getPublic()).pqcKem().algorithm("ML-KEM").peerPublic(bobPqcB.getPublic())
                     .buildInitiator();
 
-            bobB = HybridKexBuilder.builder().profile(profile).transcript(transcriptB).classicAgreement()
+            bobB = HybridKexBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).profile(profile).transcript(transcriptB).classicAgreement()
                     .algorithm("Xdh").spec(XdhSpec.X25519).privateKey(bobClassicB.getPrivate())
                     .peerPublic(aliceClassicB.getPublic()).pqcKem().algorithm("ML-KEM").privateKey(bobPqcB.getPrivate())
                     .buildResponder();

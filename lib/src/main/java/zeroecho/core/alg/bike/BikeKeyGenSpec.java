@@ -44,7 +44,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * <h3>Usage</h3> <pre>{@code
  * // Generate a BIKE-192 key pair
- * KeyPair kp = bikeAlgorithm.asymmetricKeyBuilder(BikeKeyGenSpec.class)
+ * KeyPair kp = bikeAlgorithm.asymmetricKeyPairGenerator(BikeKeyGenSpec.class)
  *                           .generateKeyPair(BikeKeyGenSpec.bike192());
  * }</pre>
  *

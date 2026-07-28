@@ -122,9 +122,9 @@ public final class Ed25519Algorithm extends AbstractCryptoAlgorithm {
                 }, () -> VoidSpec.INSTANCE);
 
         // Key builders
-        registerAsymmetricKeyBuilder(Ed25519KeyGenSpec.class, new Ed25519KeyGenBuilder(),
+        registerAsymmetricKeyPairGenerator(Ed25519KeyGenSpec.class, new Ed25519KeyGenBuilder(),
                 Ed25519KeyGenSpec::defaultSpec);
-        registerAsymmetricKeyBuilder(Ed25519PublicKeySpec.class, new Ed25519PublicKeyBuilder(), null);
-        registerAsymmetricKeyBuilder(Ed25519PrivateKeySpec.class, new Ed25519PrivateKeyBuilder(), null);
+        registerPublicKeyImporter(Ed25519PublicKeySpec.class, new Ed25519PublicKeyBuilder());
+        registerPrivateKeyImporter(Ed25519PrivateKeySpec.class, new Ed25519PrivateKeyBuilder());
     }
 }

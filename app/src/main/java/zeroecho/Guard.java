@@ -40,7 +40,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.GeneralSecurityException;
-import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Locale;
 
@@ -52,17 +52,21 @@ import org.apache.commons.cli.OptionGroup;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.context.KemContext;
+import zeroecho.core.err.UnsupportedRoleException;
 import zeroecho.core.storage.KeyringStore;
+import zeroecho.sdk.Pbkdf2Limits;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.alg.ChaChaDataContentBuilder;
 import zeroecho.sdk.builders.core.PlainFileBuilder;
-import zeroecho.sdk.content.api.DataContent;
+import zeroecho.sdk.guard.MultiRecipientContent;
 import zeroecho.sdk.guard.MultiRecipientDataSourceBuilder;
+import zeroecho.sdk.guard.RecipientKekSizes;
 import zeroecho.sdk.guard.UnlockMaterial;
+import zeroecho.sdk.util.RandomSupport;
 
 /**
  * Guard is a unified subcommand that encrypts and decrypts using a
@@ -97,6 +101,8 @@ import zeroecho.sdk.guard.UnlockMaterial;
  * ZeroEcho -G --encrypt in.bin --ks keys.txt \
  *   --to-alias alice --to-alias bob \
  *   --decoy-psw-rand 2 \
+ *   --pbkdf2-max "$PBKDF2_POLICY_MAX" \
+ *   --pbkdf2-hard-max "$PBKDF2_HARD_MAX" \
  *   --alg aes-gcm --tag-bits 128 --aad-hex 01ff
  *
  * # Decrypt with private key (payload is ChaCha20-Poly1305)
@@ -124,7 +130,6 @@ public final class Guard {
      */
     public static int main(final String[] args, final Options options) // NOPMD
             throws ParseException, IOException, GeneralSecurityException {
-
         // ---- operation selection
         final Option OPT_ENCRYPT = Option.builder("e").longOpt("encrypt").hasArg().argName("in-file")
                 .desc("Encrypt the given file").get();
@@ -177,7 +182,12 @@ public final class Guard {
         final Option OPT_PSW_SALT = Option.builder().longOpt("to-salt-len").hasArg().argName("bytes")
                 .desc("PBKDF2 salt length for password recipients (default 16)").get();
         final Option OPT_PSW_KEK = Option.builder().longOpt("to-kek-bytes").hasArg().argName("bytes")
-                .desc("Derived KEK length for password recipients (default 32)").get();
+                .desc("Recipient KEK length: exactly 16 or 32 bytes (default 32)").get();
+        final Option OPT_PBKDF2_MAX = Option.builder().longOpt("pbkdf2-max").hasArg().argName("iterations")
+                .desc("Operational PBKDF2 ceiling; required for password operations").get();
+        final Option OPT_PBKDF2_HARD_MAX = Option.builder().longOpt("pbkdf2-hard-max").hasArg()
+                .argName("iterations")
+                .desc("Absolute decoded PBKDF2 safety ceiling; required for password operations").get();
 
         // ---- decoys (all types)
         final Option OPT_DECOY_ALIAS = Option.builder().longOpt("decoy-alias").hasArg().argName("alias")
@@ -215,6 +225,8 @@ public final class Guard {
         options.addOption(OPT_PSW_ITER);
         options.addOption(OPT_PSW_SALT);
         options.addOption(OPT_PSW_KEK);
+        options.addOption(OPT_PBKDF2_MAX);
+        options.addOption(OPT_PBKDF2_HARD_MAX);
 
         options.addOption(OPT_DECOY_ALIAS);
         options.addOption(OPT_DECOY_PSW);
@@ -225,6 +237,10 @@ public final class Guard {
 
         final CommandLineParser parser = new DefaultParser();
         final CommandLine cmd = parser.parse(options, args);
+        final boolean passwordOperation = cmd.hasOption(OPT_TO_PSW) || cmd.hasOption(OPT_DECOY_PSW)
+                || cmd.hasOption(OPT_DECOY_PSW_RAND) || cmd.hasOption(OPT_PASSWORD);
+        final ZeroEchoSession session = createSession(cmd, OPT_PBKDF2_MAX, OPT_PBKDF2_HARD_MAX,
+                passwordOperation);
 
         final boolean encrypt = cmd.hasOption(OPT_ENCRYPT);
         final Path inPath = Paths.get(cmd.getOptionValue(encrypt ? OPT_ENCRYPT : OPT_DECRYPT));
@@ -249,7 +265,7 @@ public final class Guard {
         final ChaChaDataContentBuilder chacha;
         switch (alg) {
             case "aes-gcm" -> {
-                aes = AesDataContentBuilder.builder().modeGcm(tagBits);
+                aes = AesDataContentBuilder.builder(session).modeGcm(tagBits);
                 if (header) {
                     aes.withHeader();
                 }
@@ -259,28 +275,28 @@ public final class Guard {
                 chacha = null;
             }
             case "aes-ctr" -> {
-                aes = AesDataContentBuilder.builder().modeCtr();
+                aes = AesDataContentBuilder.builder(session).modeCtr();
                 if (header) {
                     aes.withHeader();
                 }
                 chacha = null;
             }
             case "aes-cbc-pkcs7" -> {
-                aes = AesDataContentBuilder.builder().modeCbcPkcs5();
+                aes = AesDataContentBuilder.builder(session).modeCbcPkcs5();
                 if (header) {
                     aes.withHeader();
                 }
                 chacha = null;
             }
             case "aes-cbc-nopad" -> {
-                aes = AesDataContentBuilder.builder().modeCbcNoPadding();
+                aes = AesDataContentBuilder.builder(session).modeCbcNoPadding();
                 if (header) {
                     aes.withHeader();
                 }
                 chacha = null;
             }
             case "chacha-aead" -> {
-                chacha = ChaChaDataContentBuilder.builder();
+                chacha = ChaChaDataContentBuilder.builder(session);
                 // selecting AEAD: if the user did not supply AAD, pass empty to pick AEAD
                 chacha.withAad(aad != null ? aad : new byte[0]);
                 if (header) {
@@ -302,7 +318,7 @@ public final class Guard {
                 aes = null;
             }
             case "chacha-stream" -> {
-                chacha = ChaChaDataContentBuilder.builder();
+                chacha = ChaChaDataContentBuilder.builder(session);
                 if (header) {
                     chacha.withHeader();
                 }
@@ -321,71 +337,93 @@ public final class Guard {
         }
 
         // envelope builder (new API)
-        final MultiRecipientDataSourceBuilder env = new MultiRecipientDataSourceBuilder().payloadKeyBytes(cekBytes)
+        final MultiRecipientDataSourceBuilder env = MultiRecipientDataSourceBuilder.builder(session)
+                .payloadKeyBytes(cekBytes)
                 .headerLimits(maxRecipients, maxEntryLen);
-        if (aes != null) {
-            env.withAes(aes);
-        } else {
-            env.withChaCha(chacha);
-        }
-        // shuffle on by default
-        if (shuffle) {
-            env.shuffle();
-        }
-        // recipients and decoys only apply on encrypt
-        if (encrypt) {
-            final int iter = Integer.parseInt(cmd.getOptionValue(OPT_PSW_ITER, "200000"));
-            final int saltLen = Integer.parseInt(cmd.getOptionValue(OPT_PSW_SALT, "16"));
-            final int kekLen = Integer.parseInt(cmd.getOptionValue(OPT_PSW_KEK, "32"));
-
-            final KeyringStore ks = loadKeyringIfPresent(cmd, OPT_KEYRING);
-            // real recipients by alias
-            for (String alias : cmd.getOptionValues(OPT_TO_ALIAS) == null ? new String[0]
-                    : cmd.getOptionValues(OPT_TO_ALIAS)) {
-                addRecipientFromAlias(env, ks, alias, kekLen, saltLen, false);
-            }
-            // real password recipients
-            for (String psw : cmd.getOptionValues(OPT_TO_PSW) == null ? new String[0]
-                    : cmd.getOptionValues(OPT_TO_PSW)) {
-                env.addPasswordRecipient(psw.toCharArray(), iter, saltLen, kekLen);
-            }
-            // decoys by alias (key types)
-            for (String alias : cmd.getOptionValues(OPT_DECOY_ALIAS) == null ? new String[0]
-                    : cmd.getOptionValues(OPT_DECOY_ALIAS)) {
-                addRecipientFromAlias(env, ks, alias, kekLen, saltLen, true);
-            }
-            // decoy passwords (explicit)
-            for (String psw : cmd.getOptionValues(OPT_DECOY_PSW) == null ? new String[0]
-                    : cmd.getOptionValues(OPT_DECOY_PSW)) {
-                env.addPasswordRecipientDecoy(psw.toCharArray(), iter, saltLen, kekLen);
-            }
-            // decoy passwords (random)
-            final int rndCount = Integer.parseInt(cmd.getOptionValue(OPT_DECOY_PSW_RAND, "0"));
-            for (int i = 0; i < rndCount; i++) {
-                env.addPasswordRecipientDecoy(randomPassword(), iter, saltLen, kekLen);
-            }
-        } else {
-            // unlock material for decrypt
-            final String privAlias = cmd.getOptionValue(OPT_PRIV_ALIAS);
-            final String password = cmd.getOptionValue(OPT_PASSWORD);
-
-            if ((privAlias == null && password == null) || (privAlias != null && password != null)) {
-                throw new ParseException("Specify exactly one of --priv-alias or --password for decryption");
-            }
-            if (privAlias != null) {
-                final KeyringStore ks = requireKeyring(cmd, OPT_KEYRING);
-                final KeyringStore.PrivateWithId pr = ks.getPrivateWithId(privAlias);
-                env.unlockWith(new UnlockMaterial.Private(pr.key()));
+        UnlockMaterial borrowedUnlockMaterial = null;
+        try (env) {
+            if (aes != null) {
+                env.withAes(aes);
             } else {
-                env.unlockWith(new UnlockMaterial.Password(password.toCharArray()));
+                env.withChaCha(chacha);
             }
-        }
+            if (shuffle) {
+                env.shuffle();
+            }
+            if (encrypt) {
+                final int iter = Integer.parseInt(cmd.getOptionValue(OPT_PSW_ITER, "200000"));
+                final int saltLen = Integer.parseInt(cmd.getOptionValue(OPT_PSW_SALT, "16"));
+                final int kekLen = RecipientKekSizes.requireSupported(
+                        Integer.parseInt(cmd.getOptionValue(OPT_PSW_KEK, "32")));
 
-        // connect upstream and run
-        final DataContent content = env.build(encrypt); // env installs default openers on decrypt if none were added
-        content.setInput(PlainFileBuilder.builder().url(inPath.toUri().toURL()).build(encrypt));
-        try (InputStream in = content.getStream(); OutputStream out = Files.newOutputStream(outPath)) {
-            in.transferTo(out);
+                final KeyringStore ks = loadKeyringIfPresent(session, cmd, OPT_KEYRING);
+                for (String alias : cmd.getOptionValues(OPT_TO_ALIAS) == null ? new String[0]
+                        : cmd.getOptionValues(OPT_TO_ALIAS)) {
+                    addRecipientFromAlias(session, env, ks, alias, kekLen, saltLen, false);
+                }
+                for (String psw : cmd.getOptionValues(OPT_TO_PSW) == null ? new String[0]
+                        : cmd.getOptionValues(OPT_TO_PSW)) {
+                    char[] passwordChars = psw.toCharArray();
+                    try {
+                        env.addPasswordRecipient(passwordChars, iter, saltLen, kekLen);
+                    } finally {
+                        Arrays.fill(passwordChars, '\0');
+                    }
+                }
+                for (String alias : cmd.getOptionValues(OPT_DECOY_ALIAS) == null ? new String[0]
+                        : cmd.getOptionValues(OPT_DECOY_ALIAS)) {
+                    addRecipientFromAlias(session, env, ks, alias, kekLen, saltLen, true);
+                }
+                for (String psw : cmd.getOptionValues(OPT_DECOY_PSW) == null ? new String[0]
+                        : cmd.getOptionValues(OPT_DECOY_PSW)) {
+                    char[] passwordChars = psw.toCharArray();
+                    try {
+                        env.addPasswordRecipientDecoy(passwordChars, iter, saltLen, kekLen);
+                    } finally {
+                        Arrays.fill(passwordChars, '\0');
+                    }
+                }
+                final int rndCount = Integer.parseInt(cmd.getOptionValue(OPT_DECOY_PSW_RAND, "0"));
+                for (int i = 0; i < rndCount; i++) {
+                    char[] passwordChars = randomPassword();
+                    try {
+                        env.addPasswordRecipientDecoy(passwordChars, iter, saltLen, kekLen);
+                    } finally {
+                        Arrays.fill(passwordChars, '\0');
+                    }
+                }
+            } else {
+                final String privAlias = cmd.getOptionValue(OPT_PRIV_ALIAS);
+                final String password = cmd.getOptionValue(OPT_PASSWORD);
+
+                if ((privAlias == null && password == null) || (privAlias != null && password != null)) {
+                    throw new ParseException("Specify exactly one of --priv-alias or --password for decryption");
+                }
+                if (privAlias != null) {
+                    final KeyringStore ks = requireKeyring(session, cmd, OPT_KEYRING);
+                    final KeyringStore.PrivateWithId pr = ks.getPrivateWithId(privAlias);
+                    borrowedUnlockMaterial = new UnlockMaterial.Private(pr.key());
+                } else {
+                    char[] passwordChars = password.toCharArray();
+                    try {
+                        borrowedUnlockMaterial = new UnlockMaterial.Password(passwordChars);
+                    } finally {
+                        Arrays.fill(passwordChars, '\0');
+                    }
+                }
+                env.unlockWith(borrowedUnlockMaterial);
+            }
+
+            try (MultiRecipientContent content = env.build(encrypt)) {
+                content.setInput(PlainFileBuilder.builder().url(inPath.toUri().toURL()).build(encrypt));
+                try (InputStream in = content.getStream(); OutputStream out = Files.newOutputStream(outPath)) {
+                    in.transferTo(out);
+                }
+            }
+        } finally {
+            if (borrowedUnlockMaterial instanceof UnlockMaterial.Password passwordMaterial) {
+                passwordMaterial.destroy();
+            }
         }
 
         return 0;
@@ -402,6 +440,33 @@ public final class Guard {
         final String s = inPath.toString();
         final String suffix = encrypt ? ".enc" : ".dec";
         return Paths.get(s + suffix);
+    }
+
+    private static ZeroEchoSession createSession(CommandLine cmd, Option operationalMaximumOption,
+            Option absoluteMaximumOption, boolean passwordOperation) throws ParseException {
+        boolean hasOperationalMaximum = cmd.hasOption(operationalMaximumOption);
+        boolean hasAbsoluteMaximum = cmd.hasOption(absoluteMaximumOption);
+        if (!hasOperationalMaximum && !hasAbsoluteMaximum) {
+            if (passwordOperation) {
+                throw new ParseException(
+                        "Password operations require --pbkdf2-max and --pbkdf2-hard-max");
+            }
+            return new ZeroEchoSession();
+        }
+        if (!hasOperationalMaximum || !hasAbsoluteMaximum) {
+            throw new ParseException("--pbkdf2-max and --pbkdf2-hard-max must be specified together");
+        }
+        try {
+            int operationalMaximum = Integer.parseInt(cmd.getOptionValue(operationalMaximumOption));
+            int absoluteMaximum = Integer.parseInt(cmd.getOptionValue(absoluteMaximumOption));
+            return new ZeroEchoSession().withPbkdf2Limits(
+                    new Pbkdf2Limits(operationalMaximum, absoluteMaximum));
+        } catch (IllegalArgumentException exception) {
+            ParseException parseException =
+                    new ParseException("Invalid PBKDF2 limits: " + exception.getMessage());
+            parseException.initCause(exception);
+            throw parseException;
+        }
     }
 
     private static byte[] parseHex(String s) throws ParseException {
@@ -434,15 +499,14 @@ public final class Guard {
      *
      * <p>
      * In both cases, the created context is consumed by
-     * {@link MultiRecipientDataSourceBuilder#addRecipient(Object)} and is closed
-     * internally by the builder.
+     * the matching {@link MultiRecipientDataSourceBuilder} recipient method and is
+     * closed internally by the resulting content.
      * </p>
      *
      * @param env      target builder to which the recipient is added
      * @param ks       keyring store that provides public keys by alias
      * @param alias    alias name of the recipient's public key in the keyring
-     * @param kekBytes desired length in bytes of the key-encryption key when using
-     *                 KEM
+     * @param kekBytes key-encryption key length; exactly 16 or 32 bytes
      * @param saltLen  salt length in bytes when using KEM
      * @param decoy    whether the recipient is a decoy
      * @throws GeneralSecurityException if the algorithm does not support the
@@ -450,29 +514,52 @@ public final class Guard {
      * @throws IOException              if context creation or builder operations
      *                                  require I/O and fail
      */
-    private static void addRecipientFromAlias(MultiRecipientDataSourceBuilder env, KeyringStore ks, String alias,
+    @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
+    private static void addRecipientFromAlias(ZeroEchoSession session, MultiRecipientDataSourceBuilder env,
+            KeyringStore ks, String alias,
             int kekBytes, int saltLen, boolean decoy) throws GeneralSecurityException, IOException {
         KeyringStore.PublicWithId r = ks.getPublicWithId(alias);
         final String algId = r.algorithm();
         final java.security.PublicKey pub = r.key();
 
-        // Try KEM first
-        try (KemContext kem = CryptoAlgorithms.create(algId, KeyUsage.ENCAPSULATE, pub)) {
-            if (decoy) {
-                env.addRecipientDecoy(kem, kekBytes, saltLen); // builder closes context
-            } else {
-                env.addRecipient(kem, kekBytes, saltLen); // builder closes context
-            }
+        KemContext kem;
+        try {
+            kem = session.createContext(algId, KeyUsage.ENCAPSULATE, pub);
+        } catch (UnsupportedRoleException notKem) {
+            addEncryptionRecipient(session, env, algId, pub, decoy);
             return;
-        } catch (Exception notKem) { // NOPMD
-            // fall back to public-key encryption
         }
 
-        try (EncryptionContext enc = CryptoAlgorithms.create(algId, KeyUsage.ENCRYPT, pub)) {
+        boolean transferred = false;
+        try {
             if (decoy) {
-                env.addRecipientDecoy(enc); // builder closes context
+                env.addRecipientDecoy(kem, kekBytes, saltLen);
             } else {
-                env.addRecipient(enc); // builder closes context
+                env.addRecipient(kem, kekBytes, saltLen);
+            }
+            transferred = true;
+        } finally {
+            if (!transferred) {
+                kem.close();
+            }
+        }
+    }
+
+    @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
+    private static void addEncryptionRecipient(ZeroEchoSession session, MultiRecipientDataSourceBuilder env,
+            String algorithmId, java.security.PublicKey publicKey, boolean decoy) throws IOException {
+        EncryptionContext encryption = session.createContext(algorithmId, KeyUsage.ENCRYPT, publicKey);
+        boolean transferred = false;
+        try {
+            if (decoy) {
+                env.addRecipientDecoy(encryption);
+            } else {
+                env.addRecipient(encryption);
+            }
+            transferred = true;
+        } finally {
+            if (!transferred) {
+                encryption.close();
             }
         }
     }
@@ -480,26 +567,27 @@ public final class Guard {
     private static char[] randomPassword() {
         // simple random alnum for decoy purposes only
         final String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        final SecureRandom rnd = new SecureRandom();
-        final int len = 16 + rnd.nextInt(17); // 16..32
+        final int len = 16 + RandomSupport.nextInt(17); // 16..32
         final char[] out = new char[len];
         for (int i = 0; i < len; i++) {
-            out[i] = alphabet.charAt(rnd.nextInt(alphabet.length()));
+            out[i] = alphabet.charAt(RandomSupport.nextInt(alphabet.length()));
         }
         return out;
     }
 
-    private static KeyringStore loadKeyringIfPresent(CommandLine cmd, Option optKs) throws IOException {
+    private static KeyringStore loadKeyringIfPresent(ZeroEchoSession session, CommandLine cmd, Option optKs)
+            throws IOException {
         if (!cmd.hasOption(optKs)) {
-            return new KeyringStore();
+            return new KeyringStore(session);
         }
-        return KeyringStore.load(Paths.get(cmd.getOptionValue(optKs)));
+        return KeyringStore.load(session, Paths.get(cmd.getOptionValue(optKs)));
     }
 
-    private static KeyringStore requireKeyring(CommandLine cmd, Option optKs) throws IOException, ParseException {
+    private static KeyringStore requireKeyring(ZeroEchoSession session, CommandLine cmd, Option optKs)
+            throws IOException, ParseException {
         if (!cmd.hasOption(optKs)) {
             throw new ParseException("--keyring <file> is required when aliases are used");
         }
-        return KeyringStore.load(Paths.get(cmd.getOptionValue(optKs)));
+        return KeyringStore.load(session, Paths.get(cmd.getOptionValue(optKs)));
     }
 }

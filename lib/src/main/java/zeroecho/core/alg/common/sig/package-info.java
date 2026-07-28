@@ -60,7 +60,7 @@
  * configured {@link java.security.Signature}, resolves a fixed tag length (via
  * resolvers), and exposes a one-shot {@code wrap(InputStream)} API.
  * Verification behavior is controlled by a pluggable comparison approach.</li>
- * <li><b>Stream</b> - internal passthrough input stream that feeds chunks to
+ * <li><b>SignatureStream</b> - internal passthrough input stream that feeds chunks to
  * the signature engine, emits the trailer in SIGN mode, and performs final
  * verification in VERIFY mode.</li>
  * </ul>

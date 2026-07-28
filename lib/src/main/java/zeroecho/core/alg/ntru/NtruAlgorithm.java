@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -56,7 +57,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * NtruAlgorithm exposes the NTRU KEM from the Bouncy Castle PQC provider and
@@ -90,15 +93,15 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * <pre>{@code
  * NtruAlgorithm alg = new NtruAlgorithm();
  * // Generate a key pair (or import one). hrss701 is the default.
- * KeyPair kp = alg.asymmetricKeyBuilder(NtruKeyGenSpec.class)
+ * KeyPair kp = alg.asymmetricKeyPairGenerator(NtruKeyGenSpec.class)
  *                 .generateKeyPair(NtruKeyGenSpec.hrss701());
  *
  * // Initiator encapsulates using recipient's public key
- * KemContext enc = alg.create(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
+ * KemContext enc = alg.createContext(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
  * KemResult kem = enc.encapsulate();
  *
  * // Responder decapsulates using their private key
- * KemContext dec = alg.create(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
+ * KemContext dec = alg.createContext(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
  * byte[] secret = dec.decapsulate(kem.encapsulation());
  * }</pre>
  *
@@ -107,18 +110,18 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * </p>
  * <pre>{@code
  * NtruAlgorithm alg = new NtruAlgorithm();
- * KeyPair kpBob = alg.asymmetricKeyBuilder(NtruKeyGenSpec.class)
+ * KeyPair kpBob = alg.asymmetricKeyPairGenerator(NtruKeyGenSpec.class)
  *                    .generateKeyPair(NtruKeyGenSpec.hrss701());
  *
  * // Alice (initiator) - has Bob's public key
- * MessageAgreementContext alice = alg.create(
+ * MessageAgreementContext alice = alg.createContext(
  *     KeyUsage.AGREEMENT, kpBob.getPublic(), VoidSpec.INSTANCE);
  *
  * // Alice produces the peer message she must send to Bob
  * byte[] toBob = alice.getPeerMessage();
  *
  * // Bob (responder) - has his private key
- * MessageAgreementContext bob = alg.create(
+ * MessageAgreementContext bob = alg.createContext(
  *     KeyUsage.AGREEMENT, kpBob.getPrivate(), VoidSpec.INSTANCE);
  *
  * // Bob supplies Alice's message so he can complete decapsulation
@@ -200,7 +203,7 @@ public final class NtruAlgorithm extends AbstractCryptoAlgorithm {
                 }, () -> VoidSpec.INSTANCE);
 
         // Keypair builder via BCPQC
-        registerAsymmetricKeyBuilder(NtruKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(NtruKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             /**
              * Generates a new NTRU key pair using the requested parameter set.
              *
@@ -217,45 +220,10 @@ public final class NtruAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            /**
-             * Importing a public key is not supported by this spec type.
-             *
-             * @param spec unused
-             * @return never returns
-             * @throws UnsupportedOperationException always thrown
-             */
-            @Override
-            public PublicKey importPublic(NtruKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Import with a dedicated encoded spec, if needed.");
-            }
-
-            /**
-             * Importing a private key is not supported by this spec type.
-             *
-             * @param spec unused
-             * @return never returns
-             * @throws UnsupportedOperationException always thrown
-             */
-            @Override
-            public PrivateKey importPrivate(NtruKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Import with a dedicated encoded spec, if needed.");
-            }
         }, NtruKeyGenSpec::hrss701); // sensible default
 
         // Public-key import (X.509)
-        registerAsymmetricKeyBuilder(NtruPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            /**
-             * Key generation is not supported for an encoded public-key spec.
-             *
-             * @param spec unused
-             * @return never returns
-             * @throws UnsupportedOperationException always thrown
-             */
-            @Override
-            public KeyPair generateKeyPair(NtruPublicKeySpec spec) {
-                throw new UnsupportedOperationException("Use NtruKeyGenSpec for generation");
-            }
+        registerPublicKeyImporter(NtruPublicKeySpec.class, new PublicKeyImporter<>() {
 
             /**
              * Imports a public key from an X.509 SubjectPublicKeyInfo blob.
@@ -270,45 +238,10 @@ public final class NtruAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("NTRU", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
-
-            /**
-             * Private key import is not supported by the public-key spec.
-             *
-             * @param spec unused
-             * @return never returns
-             * @throws UnsupportedOperationException always thrown
-             */
-            @Override
-            public PrivateKey importPrivate(NtruPublicKeySpec spec) {
-                throw new UnsupportedOperationException("Use NtruPrivateKeySpec for private key import");
-            }
-        }, null);
+        });
 
         // Private-key import (PKCS#8)
-        registerAsymmetricKeyBuilder(NtruPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            /**
-             * Key generation is not supported for an encoded private-key spec.
-             *
-             * @param spec unused
-             * @return never returns
-             * @throws UnsupportedOperationException always thrown
-             */
-            @Override
-            public KeyPair generateKeyPair(NtruPrivateKeySpec spec) {
-                throw new UnsupportedOperationException("Use NtruKeyGenSpec for generation");
-            }
-
-            /**
-             * Public key import is not supported by the private-key spec.
-             *
-             * @param spec unused
-             * @return never returns
-             * @throws UnsupportedOperationException always thrown
-             */
-            @Override
-            public PublicKey importPublic(NtruPrivateKeySpec spec) {
-                throw new UnsupportedOperationException("Use NtruPublicKeySpec for public key import");
-            }
+        registerPrivateKeyImporter(NtruPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             /**
              * Imports a private key from a PKCS#8 PrivateKeyInfo blob.
@@ -321,9 +254,14 @@ public final class NtruAlgorithm extends AbstractCryptoAlgorithm {
             public PrivateKey importPrivate(NtruPrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("NTRU", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     /**

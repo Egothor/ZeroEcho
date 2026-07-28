@@ -187,9 +187,9 @@ public final class RsaCipherContext implements EncryptionContext {
             BlockGeometry rsaGeometry = BlockGeometry.forRsa(spec, key, encrypt);
 
             return CipherTransformInputStreamBuilder.builder().withUpstream(upstream).withCipher(cipher)
-                    .withInputBlockSize(rsaGeometry.inChunkSize).withOutputBlockSize(rsaGeometry.outChunkSize)
-                    .withBufferedBlocks(100).withFinalizationOutputChunks(rsaGeometry.finalizationOutputChunks)
-                    .withUpdateStreaming(false).build();
+                    .withInputBlockSize(rsaGeometry.inChunkSize()).withOutputBlockSize(rsaGeometry.outChunkSize())
+                    .withBufferedBlocks(100).withFinalizationOutputChunks(rsaGeometry.finalizationOutputChunks())
+                    .withIndependentBlocks().build();
         } catch (GeneralSecurityException e) {
             throw new IOException(spec.description() + " RSA attach/init failed: " + e.getMessage(), e);
         }

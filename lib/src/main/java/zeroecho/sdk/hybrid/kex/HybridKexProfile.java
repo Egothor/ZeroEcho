@@ -78,7 +78,7 @@ public record HybridKexProfile(byte[] hkdfSalt, byte[] hkdfInfo, int outLenBytes
     /**
      * Default HKDF label used when the caller does not provide an explicit one.
      */
-    public static final byte[] DEFAULT_INFO = "ZeroEcho-HybridKEX".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] DEFAULT_INFO = "ZeroEcho-HybridKEX".getBytes(StandardCharsets.US_ASCII);
 
     /**
      * Constructs a profile with a default HKDF info label.
@@ -103,5 +103,25 @@ public record HybridKexProfile(byte[] hkdfSalt, byte[] hkdfInfo, int outLenBytes
         }
         hkdfSalt = (hkdfSalt == null) ? null : hkdfSalt.clone();
         hkdfInfo = (hkdfInfo == null) ? null : hkdfInfo.clone();
+    }
+
+    /**
+     * Returns an owned copy of the optional HKDF salt.
+     *
+     * @return salt copy, or {@code null}
+     */
+    @Override
+    public byte[] hkdfSalt() {
+        return hkdfSalt == null ? null : hkdfSalt.clone();
+    }
+
+    /**
+     * Returns an owned copy of the optional HKDF information.
+     *
+     * @return information copy, or {@code null}
+     */
+    @Override
+    public byte[] hkdfInfo() {
+        return hkdfInfo == null ? null : hkdfInfo.clone();
     }
 }

@@ -33,12 +33,13 @@
  ******************************************************************************/
 package zeroecho.sdk.builders;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.IOException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.Objects;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.context.AgreementContext;
@@ -89,6 +90,7 @@ import zeroecho.sdk.hybrid.kex.HybridKexTranscript;
  */
 public final class HybridKexBuilder {
 
+    private final ZeroEchoSession session;
     private HybridKexProfile profile;
     private HybridKexTranscript transcript;
     private HybridKexPolicy policy;
@@ -106,17 +108,19 @@ public final class HybridKexBuilder {
     private PublicKey pqcPeerPublic;
     private PrivateKey pqcPrivate;
 
-    private HybridKexBuilder() {
-        // builder
+    private HybridKexBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session");
     }
 
     /**
      * Creates a new builder instance.
      *
+     * @param session explicit runtime configuration
      * @return new builder
+     * @throws NullPointerException if {@code session} is {@code null}
      */
-    public static HybridKexBuilder builder() {
-        return new HybridKexBuilder();
+    public static HybridKexBuilder builder(ZeroEchoSession session) {
+        return new HybridKexBuilder(session);
     }
 
     /**
@@ -245,26 +249,23 @@ public final class HybridKexBuilder {
      *
      * @return classic agreement context derived from the configured classic-leg
      *         state
-     * @throws IOException           if underlying context creation fails
      * @throws IllegalStateException if the selected classic mode is missing
      *                               required state
      */
-    private AgreementContext buildClassicLeg() throws IOException {
+    private AgreementContext buildClassicLeg() {
         if (classicMode == ClassicMode.CLASSIC_AGREEMENT) {
-            if (classicPrivate == null || classicPeerPublic == null) {
-                throw new IllegalStateException(
-                        "classic private key and peer public must be set for CLASSIC_AGREEMENT");
-            }
-            AgreementContext classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicPrivate,
+            AgreementContext classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicPrivate,
                     classicSpec);
-            classic.setPeerPublic(classicPeerPublic);
-            return classic;
+            try {
+                classic.setPeerPublic(classicPeerPublic);
+                return classic;
+            } catch (RuntimeException | Error failure) { // NOPMD - close context on unchecked failure
+                closeAfterFailure(classic, failure);
+                throw failure;
+            }
         }
         if (classicMode == ClassicMode.PAIR_MESSAGE) {
-            if (classicKeyPair == null) {
-                throw new IllegalStateException("classic key pair must be set for PAIR_MESSAGE");
-            }
-            return CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicKeyPair, classicSpec);
+            return session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicKeyPair, classicSpec);
         }
         throw new IllegalStateException("classic mode must be selected");
     }
@@ -273,46 +274,48 @@ public final class HybridKexBuilder {
      * Builds initiator-side context.
      *
      * @return initiator context
-     * @throws IOException if underlying context creation fails
      */
-    public HybridKexContext buildInitiator() throws IOException {
-        validateCommon();
-
-        AgreementContext classic = buildClassicLeg();
-
-        if (pqcPeerPublic == null) {
-            throw new IllegalStateException("pqc peer public must be set for initiator");
-        }
-        MessageAgreementContext pqc = CryptoAlgorithms.create(pqcAlgId, KeyUsage.AGREEMENT, pqcPeerPublic, pqcSpec);
-
+    public HybridKexContext buildInitiator() {
+        validateInitiator();
         HybridKexProfile effective = effectiveProfile();
-        if (policy != null) {
-            policy.enforce(effective, classic, pqc);
+        AgreementContext classic = null;
+        MessageAgreementContext pqc = null;
+        try {
+            classic = buildClassicLeg();
+            pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcPeerPublic, pqcSpec);
+            if (policy != null) {
+                policy.enforce(effective, classic, pqc);
+            }
+            return new HybridKexContext(effective, classic, pqc);
+        } catch (RuntimeException | Error failure) { // NOPMD - close partial construction
+            closeAfterFailure(pqc, failure);
+            closeAfterFailure(classic, failure);
+            throw failure;
         }
-        return new HybridKexContext(effective, classic, pqc);
     }
 
     /**
      * Builds responder-side context.
      *
      * @return responder context
-     * @throws IOException if underlying context creation fails
      */
-    public HybridKexContext buildResponder() throws IOException {
-        validateCommon();
-
-        AgreementContext classic = buildClassicLeg();
-
-        if (pqcPrivate == null) {
-            throw new IllegalStateException("pqc private key must be set for responder");
-        }
-        MessageAgreementContext pqc = CryptoAlgorithms.create(pqcAlgId, KeyUsage.AGREEMENT, pqcPrivate, pqcSpec);
-
+    public HybridKexContext buildResponder() {
+        validateResponder();
         HybridKexProfile effective = effectiveProfile();
-        if (policy != null) {
-            policy.enforce(effective, classic, pqc);
+        AgreementContext classic = null;
+        MessageAgreementContext pqc = null;
+        try {
+            classic = buildClassicLeg();
+            pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcPrivate, pqcSpec);
+            if (policy != null) {
+                policy.enforce(effective, classic, pqc);
+            }
+            return new HybridKexContext(effective, classic, pqc);
+        } catch (RuntimeException | Error failure) { // NOPMD - close partial construction
+            closeAfterFailure(pqc, failure);
+            closeAfterFailure(classic, failure);
+            throw failure;
         }
-        return new HybridKexContext(effective, classic, pqc);
     }
 
     /**
@@ -339,6 +342,39 @@ public final class HybridKexBuilder {
         }
         if (pqcAlgId == null) {
             throw new IllegalStateException("pqc algorithm id must be set");
+        }
+        if (classicMode == ClassicMode.CLASSIC_AGREEMENT
+                && (classicPrivate == null || classicPeerPublic == null)) {
+            throw new IllegalStateException(
+                    "classic private key and peer public must be set for CLASSIC_AGREEMENT");
+        }
+        if (classicMode == ClassicMode.PAIR_MESSAGE && classicKeyPair == null) {
+            throw new IllegalStateException("classic key pair must be set for PAIR_MESSAGE");
+        }
+    }
+
+    private void validateInitiator() {
+        validateCommon();
+        if (pqcPeerPublic == null) {
+            throw new IllegalStateException("pqc peer public must be set for initiator");
+        }
+    }
+
+    private void validateResponder() {
+        validateCommon();
+        if (pqcPrivate == null) {
+            throw new IllegalStateException("pqc private key must be set for responder");
+        }
+    }
+
+    private static void closeAfterFailure(zeroecho.core.context.CryptoContext context, Throwable failure) {
+        if (context == null) {
+            return;
+        }
+        try {
+            context.close();
+        } catch (IOException | RuntimeException closeFailure) { // NOPMD - preserve close failure
+            failure.addSuppressed(closeFailure);
         }
     }
 
@@ -693,12 +729,11 @@ public final class HybridKexBuilder {
          * configuration.
          *
          * @return initiator context
-         * @throws IOException           if underlying context creation fails
          * @throws IllegalStateException if required configuration for initiator role is
          *                               missing
          * @since 1.0
          */
-        public HybridKexContext buildInitiator() throws IOException {
+        public HybridKexContext buildInitiator() {
             return parent.buildInitiator();
         }
 
@@ -707,12 +742,11 @@ public final class HybridKexBuilder {
          * configuration.
          *
          * @return responder context
-         * @throws IOException           if underlying context creation fails
          * @throws IllegalStateException if required configuration for responder role is
          *                               missing
          * @since 1.0
          */
-        public HybridKexContext buildResponder() throws IOException {
+        public HybridKexContext buildResponder() {
             return parent.buildResponder();
         }
     }

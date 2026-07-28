@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -56,7 +57,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * <h2>Classic McEliece (CMCE) algorithm adapter</h2>
@@ -106,15 +109,15 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * CmceAlgorithm alg = new CmceAlgorithm();
  *
  * // Generate a key pair with a chosen CMCE variant.
- * KeyPair kp = alg.asymmetricKeyBuilder(CmceKeyGenSpec.class)
+ * KeyPair kp = alg.asymmetricKeyPairGenerator(CmceKeyGenSpec.class)
  *                 .generateKeyPair(CmceKeyGenSpec.mceliece8192128f());
  *
  * // Create a KEM encapsulation context with the recipient public key.
- * KemContext enc = alg.create(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
+ * KemContext enc = alg.createContext(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
  *
  * // Create an agreement initiator context backed by CMCE KEM.
  * MessageAgreementContext initiator =
- *     alg.create(KeyUsage.AGREEMENT, kp.getPublic(), VoidSpec.INSTANCE);
+ *     alg.createContext(KeyUsage.AGREEMENT, kp.getPublic(), VoidSpec.INSTANCE);
  * }</pre>
  *
  * @since 1.0
@@ -169,7 +172,7 @@ public final class CmceAlgorithm extends AbstractCryptoAlgorithm {
                             .build();
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(CmceKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(CmceKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(CmceKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
@@ -189,23 +192,9 @@ public final class CmceAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(CmceKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PrivateKey importPrivate(CmceKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
         }, CmceKeyGenSpec::mceliece8192128f);
 
-        registerAsymmetricKeyBuilder(CmcePublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(CmcePublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPublicKeyImporter(CmcePublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(CmcePublicKeySpec spec) throws GeneralSecurityException {
@@ -213,31 +202,22 @@ public final class CmceAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("CMCE", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(CmcePublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(CmcePrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(CmcePrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PublicKey importPublic(CmcePrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPrivateKeyImporter(CmcePrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(CmcePrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("CMCE", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     private static void ensureProvider() throws NoSuchProviderException {

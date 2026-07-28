@@ -127,7 +127,7 @@ public class TagTest {
         Path ring = tmp.resolve("ring-ed25519.txt");
         KeyAliases ed = generateIntoKeyStore(ring, "Ed25519", "ed");
         // sanity
-        KeyringStore ks = KeyringStore.load(ring);
+        KeyringStore ks = KeyringStore.load(new zeroecho.sdk.ZeroEchoSession(), ring);
         assertTrue(ks.contains(ed.pub) && ks.contains(ed.prv), "missing expected aliases");
 
         byte[] pt = randomBytes(4096);

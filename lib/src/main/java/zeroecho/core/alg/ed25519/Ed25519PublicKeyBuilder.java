@@ -38,7 +38,7 @@ import zeroecho.core.alg.common.eddsa.AbstractEncodedPublicKeyBuilder;
 /**
  * <h2>Public key builder for Ed25519</h2>
  *
- * Concrete {@link zeroecho.core.spi.AsymmetricKeyBuilder} for importing and
+ * Concrete {@link zeroecho.core.spi.PublicKeyImporter} for importing
  * wrapping Ed25519 public keys.
  *
  * <p>
@@ -59,7 +59,7 @@ import zeroecho.core.alg.common.eddsa.AbstractEncodedPublicKeyBuilder;
  * <h2>Usage example</h2> <pre>{@code
  * // Import a public key from its encoded X.509 form
  * Ed25519PublicKeySpec spec = new Ed25519PublicKeySpec(x509Bytes);
- * PublicKey publicKey = CryptoAlgorithms.publicKey("Ed25519", spec);
+ * PublicKey publicKey = session.keyBuilders().asymmetric().importPublic("Ed25519", spec);
  * }</pre>
  *
  * <h2>Thread-safety</h2> Instances of this builder are stateless and may be

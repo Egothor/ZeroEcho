@@ -57,15 +57,14 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * </ul>
  *
  * <p>
- * Instances are immutable and typically passed to
- * {@link zeroecho.core.CryptoAlgorithm#generateKeyPair} or retrieved from a
- * {@code CryptoAlgorithm} builder. For convenience, static factory methods are
- * provided for each variant.
+ * Instances are immutable and passed to
+ * {@link zeroecho.sdk.KeyBuilders.Asymmetric#generateKeyPair(String, AlgorithmKeySpec)}.
+ * Static factory methods are provided for each variant.
  * </p>
  *
  * <h2>Example</h2> <pre>{@code
- * CryptoAlgorithm alg = CryptoAlgorithms.require("NTRULPRime");
- * KeyPair kp = alg.generateKeyPair(NtrulPrimeKeyGenSpec.ntrulpr761());
+ * KeyPair kp = session.keyBuilders().asymmetric()
+ *         .generateKeyPair("NTRULPRime", NtrulPrimeKeyGenSpec.ntrulpr761());
  * }</pre>
  *
  * @since 1.0

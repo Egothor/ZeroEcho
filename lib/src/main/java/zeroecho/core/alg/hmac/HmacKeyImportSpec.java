@@ -34,8 +34,12 @@
 package zeroecho.core.alg.hmac;
 
 import java.util.Base64;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.annotation.Describable;
 import zeroecho.core.marshal.PairSeq;
@@ -66,7 +70,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * {@code
  * byte[] rawKey = Files.readAllBytes(Paths.get("hmac.key"));
  * HmacKeyImportSpec spec = HmacKeyImportSpec.fromRaw("HmacSHA256", rawKey);
- * SecretKey key = CryptoAlgorithms.importSecret("HMAC", spec);
+ * SecretKey key = session.keyBuilders().symmetric().importKey("HMAC", spec);
  * }
  * </pre>
  *
@@ -100,9 +104,11 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * @since 1.0
  */
-public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable {
+public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable, Destroyable {
     private final String macName;
     private final byte[] key;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Constructs a new HMAC key import specification.
@@ -132,7 +138,13 @@ public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable {
      * @return cloned key bytes
      */
     public byte[] key() {
-        return key.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return key.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -156,7 +168,12 @@ public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable {
      */
     public static HmacKeyImportSpec fromHex(String macName, String hex) {
         Objects.requireNonNull(hex, "hex must not be null");
-        return fromRaw(macName, HexFormat.of().parseHex(hex));
+        byte[] decoded = HexFormat.of().parseHex(hex);
+        try {
+            return fromRaw(macName, decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -169,7 +186,12 @@ public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable {
      */
     public static HmacKeyImportSpec fromBase64(String macName, String b64) {
         Objects.requireNonNull(b64, "base64 must not be null");
-        return fromRaw(macName, Base64.getDecoder().decode(b64));
+        byte[] decoded = Base64.getDecoder().decode(b64);
+        try {
+            return fromRaw(macName, decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -193,7 +215,7 @@ public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable {
      * @return encoded key spec sequence
      */
     public static PairSeq marshal(HmacKeyImportSpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.key);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "HMAC-KEY", "mac", spec.macName, "k.b64", b64);
     }
 
@@ -213,24 +235,81 @@ public final class HmacKeyImportSpec implements AlgorithmKeySpec, Describable {
         String mac = null;
         byte[] key = null;
 
-        PairSeq.Cursor cur = p.cursor();
-        while (cur.next()) {
-            String k = cur.key();
-            String v = cur.value();
-            switch (k) {
-                case "mac" -> mac = v;
-                case "k.b64" -> key = Base64.getDecoder().decode(v);
-                case "k.hex" -> key = HexFormat.of().parseHex(v);
-                default -> {
+        try {
+            PairSeq.Cursor cur = p.cursor();
+            while (cur.next()) {
+                String k = cur.key();
+                String v = cur.value();
+                switch (k) {
+                    case "mac" -> mac = v;
+                    case "k.b64" -> {
+                        wipe(key);
+                        key = Base64.getDecoder().decode(v);
+                    }
+                    case "k.hex" -> {
+                        wipe(key);
+                        key = HexFormat.of().parseHex(v);
+                    }
+                    default -> {
+                    }
                 }
             }
+            if (mac == null) {
+                throw new IllegalArgumentException("mac missing for HMAC key");
+            }
+            if (key == null) {
+                throw new IllegalArgumentException("HMAC key missing (k.b64 or k.hex)");
+            }
+            return new HmacKeyImportSpec(mac, key);
+        } finally {
+            wipe(key);
         }
-        if (mac == null) {
-            throw new IllegalArgumentException("mac missing for HMAC key");
+    }
+
+    private static void wipe(byte[] current) {
+        if (current != null) {
+            Arrays.fill(current, (byte) 0);
         }
-        if (key == null) {
-            throw new IllegalArgumentException("HMAC key missing (k.b64 or k.hex)");
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(key);
+        } finally {
+            lifecycleLock.unlock();
         }
-        return new HmacKeyImportSpec(mac, key);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(key, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("HMAC key import specification has been destroyed");
+        }
     }
 }

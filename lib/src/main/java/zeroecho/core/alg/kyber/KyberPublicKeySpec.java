@@ -62,7 +62,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * // Import a public key into a CryptoAlgorithm
  * byte[] x509Bytes = ...; // obtained from storage
  * KyberPublicKeySpec spec = new KyberPublicKeySpec(x509Bytes);
- * PublicKey k = kyberAlg.importPublic(spec);
+ * PublicKey k = kyberAlg.publicKeyImporter(KyberPublicKeySpec.class).importPublic(spec);
  *
  * // Serialize for persistence
  * PairSeq seq = KyberPublicKeySpec.marshal(spec);

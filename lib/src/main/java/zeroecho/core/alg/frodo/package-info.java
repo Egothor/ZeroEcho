@@ -51,8 +51,9 @@
  * role for initiator/responder workflows.</li>
  * <li>Provide a {@link zeroecho.core.context.KemContext} implementation bound
  * to either a public or private key for encapsulation or decapsulation.</li>
- * <li>Expose immutable specifications for key generation variants and encoded
- * key carriers with marshalling helpers.</li>
+ * <li>Expose immutable key-generation specifications and defensively copying
+ * encoded-key carriers with marshalling helpers; private-key carriers are
+ * destroyable.</li>
  * <li>Ensure operations are delegated to a supported PQC provider (BouncyCastle
  * PQC) and fail fast if absent.</li>
  * </ul>

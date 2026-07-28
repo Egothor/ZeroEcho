@@ -79,17 +79,17 @@ import zeroecho.core.spec.VoidSpec;
  *
  * <h2>Example</h2> <pre>{@code
  * CryptoAlgorithm alg = new SphincsPlusAlgorithm();
- * KeyPair kp = alg.asymmetricKeyBuilder(SphincsPlusKeyGenSpec.class)
+ * KeyPair kp = alg.asymmetricKeyPairGenerator(SphincsPlusKeyGenSpec.class)
  *                 .generateKeyPair(SphincsPlusKeyGenSpec.sphincsPlusSha256_128s());
  *
  * try (SignatureContext signer =
- *          alg.create(KeyUsage.SIGN, kp.getPrivate(), null)) {
+ *          alg.createContext(KeyUsage.SIGN, kp.getPrivate(), null)) {
  *     signer.update(message);
  *     byte[] sig = signer.sign();
  * }
  *
  * try (SignatureContext verifier =
- *          alg.create(KeyUsage.VERIFY, kp.getPublic(), null)) {
+ *          alg.createContext(KeyUsage.VERIFY, kp.getPublic(), null)) {
  *     verifier.update(message);
  *     boolean ok = verifier.verify(sig);
  * }
@@ -151,9 +151,9 @@ public final class SphincsPlusAlgorithm extends AbstractCryptoAlgorithm {
                     }
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(SphincsPlusKeyGenSpec.class, new SphincsPlusKeyGenBuilder(),
+        registerAsymmetricKeyPairGenerator(SphincsPlusKeyGenSpec.class, new SphincsPlusKeyGenBuilder(),
                 SphincsPlusKeyGenSpec::defaultSpec);
-        registerAsymmetricKeyBuilder(SphincsPlusPublicKeySpec.class, new SphincsPlusPublicKeyBuilder(), null);
-        registerAsymmetricKeyBuilder(SphincsPlusPrivateKeySpec.class, new SphincsPlusPrivateKeyBuilder(), null);
+        registerPublicKeyImporter(SphincsPlusPublicKeySpec.class, new SphincsPlusPublicKeyBuilder());
+        registerPrivateKeyImporter(SphincsPlusPrivateKeySpec.class, new SphincsPlusPrivateKeyBuilder());
     }
 }

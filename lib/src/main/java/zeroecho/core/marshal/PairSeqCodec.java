@@ -33,10 +33,15 @@
  ******************************************************************************/
 package zeroecho.core.marshal;
 
-import java.lang.reflect.Constructor;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 /**
  * Reflection-based {@link Codec} that marshals and unmarshals domain objects to
@@ -95,14 +100,29 @@ import java.util.Objects;
  * User u = codec.unmarshal(repr);
  * }</pre>
  *
- * <h2>Thread-safety</h2> Instances are immutable and thread-safe. Reflection
- * lookups are performed per call and are not cached.
+ * <h2>Thread-safety</h2> Instances are immutable and thread-safe. Public
+ * accessors are resolved once per runtime class and operation type, then invoked
+ * through cached method handles. The unload-safe {@link ClassValue} caches do
+ * not retain otherwise unreachable class loaders.
  *
  * @param <T> domain type that follows the marshalling and unmarshalling
  *            conventions
  * @since 1.0
  */
 public final class PairSeqCodec<T> implements Codec<T, PairSeq> {
+    private static final ClassValue<PlanHolder<MarshalPlan>> MARSHAL_PLANS = new ClassValue<>() {
+        @Override
+        protected PlanHolder<MarshalPlan> computeValue(Class<?> type) {
+            return new PlanHolder<>(() -> MarshalPlan.resolve(type));
+        }
+    };
+    private static final ClassValue<PlanHolder<UnmarshalPlan>> UNMARSHAL_PLANS = new ClassValue<>() {
+        @Override
+        protected PlanHolder<UnmarshalPlan> computeValue(Class<?> type) {
+            return new PlanHolder<>(() -> UnmarshalPlan.resolve(type));
+        }
+    };
+
     private final Class<T> type;
 
     /**
@@ -136,17 +156,7 @@ public final class PairSeqCodec<T> implements Codec<T, PairSeq> {
     @Override
     public PairSeq marshal(T value) {
         Objects.requireNonNull(value, "value");
-        try {
-            Method m = value.getClass().getMethod("marshal");
-            if (!PairSeq.class.isAssignableFrom(m.getReturnType())) {
-                throw new IllegalStateException("marshal() must return PairSeq in " + value.getClass().getName());
-            }
-            return (PairSeq) m.invoke(value);
-        } catch (NoSuchMethodException e) {
-            throw new IllegalStateException(value.getClass().getName() + " must implement marshal():PairSeq", e);
-        } catch (IllegalAccessException | InvocationTargetException t) {
-            throw new IllegalStateException("marshal() failed for " + value.getClass().getName(), t);
-        }
+        return MARSHAL_PLANS.get(value.getClass()).get().invoke(value);
     }
 
     /**
@@ -174,31 +184,181 @@ public final class PairSeqCodec<T> implements Codec<T, PairSeq> {
      *                               constructor exists, or if either invocation
      *                               fails
      */
-    @SuppressWarnings("unchecked")
     @Override
     public T unmarshal(PairSeq repr) {
         Objects.requireNonNull(repr, "repr");
-        // Prefer static unmarshal(PairSeq)
-        try {
-            Method m = type.getMethod("unmarshal", PairSeq.class);
-            if ((m.getModifiers() & java.lang.reflect.Modifier.STATIC) != 0) {
-                return (T) m.invoke(null, repr);
-            }
-        } catch (NoSuchMethodException ignore) { // NOPMD
-            // fall through
-        } catch (IllegalAccessException | InvocationTargetException t) {
-            throw new IllegalStateException("static unmarshal(PairSeq) failed for " + type.getName(), t);
+        return type.cast(UNMARSHAL_PLANS.get(type).get().invoke(repr));
+    }
+
+    /* default */ static Object cachedMarshalPlan(Class<?> runtimeType) {
+        return MARSHAL_PLANS.get(runtimeType).get();
+    }
+
+    /* default */ static Object cachedUnmarshalPlan(Class<?> runtimeType) {
+        return UNMARSHAL_PLANS.get(runtimeType).get();
+    }
+
+    /* default */ static int marshalResolutionCount(Class<?> runtimeType) {
+        return MARSHAL_PLANS.get(runtimeType).resolutionCount();
+    }
+
+    /* default */ static int unmarshalResolutionCount(Class<?> runtimeType) {
+        return UNMARSHAL_PLANS.get(runtimeType).resolutionCount();
+    }
+
+    /**
+     * Once-only lazy plan resolver stored as the canonical {@link ClassValue}
+     * value.
+     *
+     * @param <P> plan type
+     */
+    private static final class PlanHolder<P> {
+        private final AtomicReference<P> plan = new AtomicReference<>();
+        private final ReentrantLock resolutionLock = new ReentrantLock();
+        private Supplier<P> resolver;
+        private int resolutionCount;
+
+        private PlanHolder(Supplier<P> resolver) {
+            this.resolver = resolver;
         }
-        // Or constructor T(PairSeq)
-        try {
-            Constructor<T> c = type.getConstructor(PairSeq.class);
-            return c.newInstance(repr);
-        } catch (NoSuchMethodException e) {
-            throw new IllegalStateException(type.getName() + " must provide static unmarshal(PairSeq) or ctor(PairSeq)",
-                    e);
-        } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException
-                | InstantiationException t) {
-            throw new IllegalStateException("ctor(PairSeq) failed for " + type.getName(), t);
+
+        private P get() {
+            P resolved = plan.get();
+            if (resolved == null) {
+                resolved = resolveOnce();
+            }
+            return resolved;
+        }
+
+        private P resolveOnce() {
+            resolutionLock.lock();
+            try {
+                P resolved = plan.get();
+                if (resolved == null) {
+                    resolutionCount++;
+                    resolved = resolver.get();
+                    resolver = null;
+                    plan.set(resolved);
+                }
+                return resolved;
+            } finally {
+                resolutionLock.unlock();
+            }
+        }
+
+        private int resolutionCount() {
+            resolutionLock.lock();
+            try {
+                return resolutionCount;
+            } finally {
+                resolutionLock.unlock();
+            }
+        }
+    }
+
+    /**
+     * Cached success or structural failure for one marshal runtime class.
+     */
+    private static final class MarshalPlan {
+        private final MethodHandle handle;
+        private final String failureMessage;
+        private final Throwable failureCause;
+
+        private MarshalPlan(MethodHandle handle, String failureMessage, Throwable failureCause) {
+            this.handle = handle;
+            this.failureMessage = failureMessage;
+            this.failureCause = failureCause;
+        }
+
+        private static MarshalPlan resolve(Class<?> runtimeType) {
+            try {
+                Method method = runtimeType.getMethod("marshal");
+                if (!PairSeq.class.isAssignableFrom(method.getReturnType())) {
+                    return new MarshalPlan(null,
+                            "marshal() must return PairSeq in " + runtimeType.getName(), null);
+                }
+                MethodHandle handle = MethodHandles.lookup().unreflect(method);
+                return new MarshalPlan(handle, null, null);
+            } catch (NoSuchMethodException exception) {
+                return new MarshalPlan(null, runtimeType.getName() + " must implement marshal():PairSeq", exception);
+            } catch (IllegalAccessException exception) {
+                return new MarshalPlan(null, "marshal() failed for " + runtimeType.getName(), exception);
+            }
+        }
+
+        @SuppressWarnings("PMD.AvoidCatchingGenericException")
+        private PairSeq invoke(Object value) {
+            if (handle == null) {
+                throw new IllegalStateException(failureMessage, failureCause);
+            }
+            try {
+                return (PairSeq) handle.invoke(value);
+            } catch (Throwable failure) {
+                throw new IllegalStateException("marshal() failed for " + value.getClass().getName(),
+                        new InvocationTargetException(failure));
+            }
+        }
+    }
+
+    /**
+     * Cached success or structural failure for one unmarshal runtime class.
+     */
+    private static final class UnmarshalPlan {
+        private final MethodHandle handle;
+        private final String invocationFailureMessage;
+        private final String resolutionFailureMessage;
+        private final Throwable resolutionFailureCause;
+
+        private UnmarshalPlan(MethodHandle handle, String invocationFailureMessage, String resolutionFailureMessage,
+                Throwable resolutionFailureCause) {
+            this.handle = handle;
+            this.invocationFailureMessage = invocationFailureMessage;
+            this.resolutionFailureMessage = resolutionFailureMessage;
+            this.resolutionFailureCause = resolutionFailureCause;
+        }
+
+        private static UnmarshalPlan resolve(Class<?> runtimeType) {
+            try {
+                Method method = runtimeType.getMethod("unmarshal", PairSeq.class);
+                if (Modifier.isStatic(method.getModifiers())) {
+                    Class<?> returnType = method.getReturnType();
+                    if (!runtimeType.isAssignableFrom(returnType) && !returnType.isAssignableFrom(runtimeType)) {
+                        return new UnmarshalPlan(null, null,
+                                "static unmarshal(PairSeq) must return " + runtimeType.getName(), null);
+                    }
+                    MethodHandle handle = MethodHandles.lookup().unreflect(method);
+                    return new UnmarshalPlan(handle,
+                            "static unmarshal(PairSeq) failed for " + runtimeType.getName(), null, null);
+                }
+            } catch (NoSuchMethodException ignored) {
+                // Resolve the constructor fallback below.
+            } catch (IllegalAccessException exception) {
+                return new UnmarshalPlan(null, null,
+                        "static unmarshal(PairSeq) failed for " + runtimeType.getName(), exception);
+            }
+
+            try {
+                MethodHandle handle = MethodHandles.lookup()
+                        .unreflectConstructor(runtimeType.getConstructor(PairSeq.class));
+                return new UnmarshalPlan(handle, "ctor(PairSeq) failed for " + runtimeType.getName(), null, null);
+            } catch (NoSuchMethodException exception) {
+                return new UnmarshalPlan(null, null,
+                        runtimeType.getName() + " must provide static unmarshal(PairSeq) or ctor(PairSeq)", exception);
+            } catch (IllegalAccessException exception) {
+                return new UnmarshalPlan(null, null, "ctor(PairSeq) failed for " + runtimeType.getName(), exception);
+            }
+        }
+
+        @SuppressWarnings("PMD.AvoidCatchingGenericException")
+        private Object invoke(PairSeq representation) {
+            if (handle == null) {
+                throw new IllegalStateException(resolutionFailureMessage, resolutionFailureCause);
+            }
+            try {
+                return handle.invoke(representation);
+            } catch (Throwable failure) {
+                throw new IllegalStateException(invocationFailureMessage, new InvocationTargetException(failure));
+            }
         }
     }
 }

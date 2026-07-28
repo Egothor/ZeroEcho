@@ -36,7 +36,6 @@ package zeroecho.core.marshal;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Reader;
-import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -62,8 +61,8 @@ import java.util.List;
  *
  * <h2>Serialization</h2>
  * <ul>
- * <li>{@link #writeTo(Appendable)} outputs each pair as {@code k=v\n} lines
- * without escaping.</li>
+ * <li>{@link #writeTo(Appendable)} outputs each pair as {@code k=v\n}
+ * lines without escaping and reports checked I/O failures.</li>
  * <li>{@link #readFrom(java.io.Reader)} parses lines in the same format,
  * ignoring blank lines and comments starting with {@code #}.</li>
  * </ul>
@@ -86,8 +85,8 @@ public final class PairSeq {
      *
      * @param kv alternating key and value strings; must have even length
      * @return new {@code PairSeq} with the given contents
-     * @throws IllegalArgumentException if {@code kv} is {@code null} or has odd
-     *                                  length
+     * @throws IllegalArgumentException if {@code kv} is {@code null}, has odd
+     *                                  length, or contains a null key or value
      */
     public static PairSeq of(String... kv) {
         if (kv == null) {
@@ -96,7 +95,15 @@ public final class PairSeq {
         if ((kv.length & 1) != 0) {
             throw new IllegalArgumentException("kv must have even length (k,v pairs)");
         }
-        return new PairSeq(kv);
+        for (int elementIndex = 0; elementIndex < kv.length; elementIndex++) {
+            if (kv[elementIndex] == null) {
+                int pairIndex = elementIndex >>> 1;
+                String role = (elementIndex & 1) == 0 ? "key" : "value";
+                throw new IllegalArgumentException(
+                        "pair " + pairIndex + " " + role + " must not be null");
+            }
+        }
+        return new PairSeq(kv.clone());
     }
 
     /**
@@ -194,7 +201,8 @@ public final class PairSeq {
     }
 
     /**
-     * Appends all pairs to the target as {@code key=value} lines.
+     * Appends all pairs to the target as {@code key=value} lines, reporting
+     * checked I/O failures directly.
      *
      * <p>
      * No escaping is performed; callers must ensure keys and values do not contain
@@ -202,15 +210,11 @@ public final class PairSeq {
      * </p>
      *
      * @param out appendable target
-     * @throws UncheckedIOException if the append fails
+     * @throws IOException if the append fails
      */
-    public void writeTo(Appendable out) {
-        try {
-            for (int i = 0; i < size(); i++) {
-                out.append(keyAt(i)).append('=').append(valAt(i)).append('\n');
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
+    public void writeTo(Appendable out) throws IOException {
+        for (int i = 0; i < size(); i++) {
+            out.append(keyAt(i)).append('=').append(valAt(i)).append('\n');
         }
     }
 
@@ -244,6 +248,6 @@ public final class PairSeq {
             list.add(k);
             list.add(v);
         }
-        return new PairSeq(list.toArray(String[]::new));
+        return of(list.toArray(String[]::new));
     }
 }

@@ -39,7 +39,6 @@ import java.security.PublicKey;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.CryptoCatalog;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
@@ -82,9 +81,9 @@ import zeroecho.core.context.SignatureContext;
  *
  * <pre>{@code
  * // Example: Sign and verify with ECDSA/P-256
- * KeyPair kp = CryptoAlgorithms.keyPair("ECDSA", EcdsaCurveSpec.P256);
- * SignatureContext signer = CryptoAlgorithms.create("ECDSA", KeyUsage.SIGN, kp.getPrivate(), EcdsaCurveSpec.P256);
- * SignatureContext verifier = CryptoAlgorithms.create("ECDSA", KeyUsage.VERIFY, kp.getPublic(), EcdsaCurveSpec.P256);
+ * KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("ECDSA", EcdsaCurveSpec.P256);
+ * SignatureContext signer = session.createContext("ECDSA", KeyUsage.SIGN, kp.getPrivate(), EcdsaCurveSpec.P256);
+ * SignatureContext verifier = session.createContext("ECDSA", KeyUsage.VERIFY, kp.getPublic(), EcdsaCurveSpec.P256);
  * }</pre>
  *
  * @since 1.0
@@ -104,8 +103,8 @@ public final class EcdsaAlgorithm extends AbstractCryptoAlgorithm {
      * <p>
      * On construction, the algorithm declares its supported roles and registers
      * builders with the {@link CryptoAlgorithm} infrastructure so they can be
-     * discovered by the {@link CryptoCatalog} or invoked through
-     * {@link CryptoAlgorithms} convenience methods.
+     * discovered by the {@link CryptoCatalog} or invoked through the
+     * session-bound {@link zeroecho.sdk.KeyBuilders} entry point.
      * </p>
      */
     public EcdsaAlgorithm() {
@@ -135,8 +134,9 @@ public final class EcdsaAlgorithm extends AbstractCryptoAlgorithm {
                     }
                 }, () -> EcdsaCurveSpec.P256);
 
-        registerAsymmetricKeyBuilder(EcdsaCurveSpec.class, new EcdsaKeyGenBuilder(), () -> EcdsaCurveSpec.P256);
-        registerAsymmetricKeyBuilder(EcdsaPublicKeySpec.class, new EcdsaPublicKeyBuilder(), null);
-        registerAsymmetricKeyBuilder(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder(), null);
+        registerAsymmetricKeyPairGenerator(EcdsaCurveSpec.class, new EcdsaKeyGenBuilder(),
+                () -> EcdsaCurveSpec.P256);
+        registerPublicKeyImporter(EcdsaPublicKeySpec.class, new EcdsaPublicKeyBuilder());
+        registerPrivateKeyImporter(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder());
     }
 }

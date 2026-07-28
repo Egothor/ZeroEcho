@@ -38,7 +38,7 @@ import zeroecho.core.alg.common.eddsa.AbstractEdDSAKeyGenBuilder;
 /**
  * <h2>Key-pair builder for Ed25519</h2>
  *
- * Concrete {@link zeroecho.core.spi.AsymmetricKeyBuilder} implementation for
+ * Concrete {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} implementation for
  * generating Ed25519 key pairs.
  *
  * <p>
@@ -50,7 +50,7 @@ import zeroecho.core.alg.common.eddsa.AbstractEdDSAKeyGenBuilder;
  * <h2>Usage example</h2> <pre>{@code
  * // Generate a new Ed25519 key pair with default parameters
  * Ed25519KeyGenSpec spec = Ed25519KeyGenSpec.defaultSpec();
- * KeyPair kp = CryptoAlgorithms.keyPair("Ed25519", spec);
+ * KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("Ed25519", spec);
  * }</pre>
  *
  * <h2>Thread-safety</h2> Instances of this builder are stateless and may be

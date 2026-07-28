@@ -49,8 +49,8 @@
  * enforces the 64-byte tag size.</li>
  * <li>Expose builders for key-pair generation and for importing encoded
  * public/private keys.</li>
- * <li>Define immutable key specifications suitable for safe cloning and simple
- * marshalling.</li>
+ * <li>Define defensively copying key specifications suitable for safe cloning
+ * and simple marshalling; private-key specifications are destroyable.</li>
  * </ul>
  *
  * <h2>Components</h2>
@@ -63,9 +63,9 @@
  * marker spec for producing key pairs.</li>
  * <li><b>Ed25519PublicKeyBuilder</b> / <b>Ed25519PrivateKeyBuilder</b>:
  * importers backed by JCA key factories.</li>
- * <li><b>Ed25519PublicKeySpec</b> / <b>Ed25519PrivateKeySpec</b>: immutable
- * wrappers over X.509 and PKCS#8 encodings, with defensive copying and simple
- * base64 marshalling helpers.</li>
+ * <li><b>Ed25519PublicKeySpec</b> / <b>Ed25519PrivateKeySpec</b>: wrappers over
+ * X.509 and PKCS#8 encodings, with defensive copying and simple base64
+ * marshalling helpers; the private-key form is destroyable.</li>
  * </ul>
  *
  * <h2>Design notes</h2>

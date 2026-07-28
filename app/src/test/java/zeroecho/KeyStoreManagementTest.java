@@ -52,10 +52,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.CryptoAlgorithms;
-import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
-import zeroecho.core.spi.SymmetricKeyBuilder;
+import zeroecho.core.KeyOperation;
 import zeroecho.core.storage.KeyringStore;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
 /**
@@ -91,6 +90,7 @@ public class KeyStoreManagementTest {
     @Test
     public void generateAndVerifyAllAlgorithms() throws Exception {
         Path ring = tmp.resolve("ring.txt");
+        ZeroEchoSession session = new ZeroEchoSession();
 
         Set<String> algIds = CryptoAlgorithms.available();
         System.out.println("Algorithms: " + algIds);
@@ -139,7 +139,7 @@ public class KeyStoreManagementTest {
         assertTrue(attempted > 0, "No generation attempts were successful");
 
         // Verify by reloading and materializing.
-        KeyringStore store = KeyringStore.load(ring);
+        KeyringStore store = KeyringStore.load(session, ring);
         List<String> aliases = store.aliases();
         System.out.println("Reloaded aliases (" + aliases.size() + "): " + aliases);
 
@@ -189,45 +189,15 @@ public class KeyStoreManagementTest {
     // ---- helpers ----
 
     private static boolean hasAsymmetricDefault(CryptoAlgorithm alg) {
-        try {
-            List<CryptoAlgorithm.AsymBuilderInfo> infos = alg.asymmetricBuildersInfo();
-            for (int i = 0; i < infos.size(); i++) {
-                CryptoAlgorithm.AsymBuilderInfo bi = infos.get(i);
-                if (bi.defaultKeySpec == null) {
-                    continue;
-                }
-                @SuppressWarnings("unchecked")
-                Class<AlgorithmKeySpec> st = (Class<AlgorithmKeySpec>) bi.specType;
-                AsymmetricKeyBuilder<AlgorithmKeySpec> b = alg.asymmetricKeyBuilder(st);
-                if (b != null) {
-                    return true;
-                }
-            }
-        } catch (Throwable t) {
-            return false;
-        }
-        return false;
+        return alg.keyOperations().stream()
+                .anyMatch(info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE
+                        && info.defaultSpec() != null);
     }
 
     private static boolean hasSymmetricDefault(CryptoAlgorithm alg) {
-        try {
-            List<CryptoAlgorithm.SymBuilderInfo> infos = alg.symmetricBuildersInfo();
-            for (int i = 0; i < infos.size(); i++) {
-                CryptoAlgorithm.SymBuilderInfo bi = infos.get(i);
-                if (bi.defaultKeySpec() == null) {
-                    continue;
-                }
-                @SuppressWarnings("unchecked")
-                Class<AlgorithmKeySpec> st = (Class<AlgorithmKeySpec>) bi.specType();
-                SymmetricKeyBuilder<AlgorithmKeySpec> b = alg.symmetricKeyBuilder(st);
-                if (b != null) {
-                    return true;
-                }
-            }
-        } catch (Throwable t) {
-            return false;
-        }
-        return false;
+        return alg.keyOperations().stream()
+                .anyMatch(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE
+                        && info.defaultSpec() != null);
     }
 
     private static String sanitize(String id) {

@@ -47,13 +47,16 @@ import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
+import javax.security.auth.DestroyFailedException;
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.context.KemContext;
+import zeroecho.sdk.Pbkdf2Limits;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.alg.ChaChaDataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentBuilder;
-import zeroecho.sdk.content.api.DataContent;
 
 /**
  * Builds a data content pipeline that supports multiple recipients and
@@ -79,7 +82,9 @@ import zeroecho.sdk.content.api.DataContent;
  * The symmetric stage parses its own header just as in the KEM-oriented
  * pipeline.
  */
-public final class MultiRecipientDataSourceBuilder implements DataContentBuilder<DataContent> {
+public final class MultiRecipientDataSourceBuilder
+        implements DataContentBuilder<MultiRecipientContent>, Destroyable, AutoCloseable {
+    private final ZeroEchoSession session;
     // ---- symmetric selection (mirrors KemDataContentBuilder style) ----
     private AesDataContentBuilder aesBuilder;
     private ChaChaDataContentBuilder chachaBuilder;
@@ -93,6 +98,7 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
     private int payloadKeyBytes = 32; // e.g., 32 for AES-256 or ChaCha20
     private int maxRecipients = 64;
     private int maxEntryLen = 1 << 20; // up to 1 MiB per recipient entry
+    private boolean closed;
 
     /**
      * Creates a new builder for constructing a multi-recipient data source.
@@ -112,8 +118,12 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * @return a fresh {@code MultiRecipientDataSourceBuilder} instance with default
      *         settings
      */
-    public static MultiRecipientDataSourceBuilder builder() {
-        return new MultiRecipientDataSourceBuilder();
+    public static MultiRecipientDataSourceBuilder builder(ZeroEchoSession session) {
+        return new MultiRecipientDataSourceBuilder(session);
+    }
+
+    private MultiRecipientDataSourceBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -129,6 +139,7 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * @throws NullPointerException if {@code builder} is {@code null}
      */
     public MultiRecipientDataSourceBuilder withAes(AesDataContentBuilder builder) {
+        ensureOpen();
         this.aesBuilder = Objects.requireNonNull(builder, "aesBuilder");
         this.chachaBuilder = null;
         return this;
@@ -139,6 +150,7 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * randomness. All permutations occur with approximately equal likelihood.
      */
     public void shuffle() {
+        ensureOpen();
         Collections.shuffle(recipients);
     }
 
@@ -156,6 +168,7 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * @throws NullPointerException if {@code builder} is {@code null}
      */
     public MultiRecipientDataSourceBuilder withChaCha(ChaChaDataContentBuilder builder) {
+        ensureOpen();
         this.chachaBuilder = Objects.requireNonNull(builder, "chachaBuilder");
         this.aesBuilder = null;
         return this;
@@ -174,6 +187,7 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * @throws IllegalArgumentException if {@code keyBytes} is not positive
      */
     public MultiRecipientDataSourceBuilder payloadKeyBytes(int keyBytes) {
+        ensureOpen();
         if (keyBytes <= 0) {
             throw new IllegalArgumentException("payloadKeyBytes must be > 0");
         }
@@ -186,15 +200,23 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * and AES-GCM-wraps the CEK.
      *
      * @param password   the password; the caller should clear the array after use
-     * @param iterations PBKDF2 iteration count
+     * @param iterations PBKDF2 iteration count; must be at least
+     *                   {@value Pbkdf2Limits#MINIMUM}
      * @param saltLen    salt length in bytes
-     * @param kekBytes   derived KEK length in bytes (for example, 16 or 32)
+     * @param kekBytes   derived KEK length; exactly 16 or 32 bytes
      * @return this builder
-     * @throws NullPointerException if {@code password} is {@code null}
+     * @throws NullPointerException     if {@code password} is {@code null}
+     * @throws IllegalArgumentException if {@code iterations} is below
+     *                                  {@value Pbkdf2Limits#MINIMUM} or
+     *                                  {@code kekBytes} is not exactly 16 or 32
      */
     public MultiRecipientDataSourceBuilder addPasswordRecipient(char[] password, int iterations, int saltLen,
             int kekBytes) {
-        this.recipients.add(new PasswordRecipient(password, iterations, saltLen, kekBytes));
+        ensureOpen();
+        RecipientKekSizes.requireSupported(kekBytes);
+        session.pbkdf2Limits().validateTrusted(iterations);
+        this.recipients.add(new PasswordRecipient(password, iterations, saltLen, kekBytes, false,
+                session.pbkdf2Limits()));
         return this;
     }
 
@@ -210,12 +232,16 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      *
      * @param kem      configured context for
      *                 {@link zeroecho.core.KeyUsage#ENCAPSULATE}
-     * @param kekBytes derived KEK length in bytes (e.g., 16 or 32)
+     * @param kekBytes derived KEK length; exactly 16 or 32 bytes
      * @param saltLen  HKDF salt length in bytes
      * @return this builder
-     * @throws NullPointerException if {@code kem} is {@code null}
+     * @throws NullPointerException     if {@code kem} is {@code null}
+     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or
+     *                                  32
      */
     public MultiRecipientDataSourceBuilder addRecipient(KemContext kem, int kekBytes, int saltLen) {
+        ensureOpen();
+        RecipientKekSizes.requireSupported(kekBytes);
         this.recipients.add(new KemCtxRecipient(Objects.requireNonNull(kem), kekBytes, saltLen));
         return this;
     }
@@ -241,6 +267,7 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * @throws NullPointerException if {@code ctx} is {@code null}
      */
     public MultiRecipientDataSourceBuilder addRecipient(EncryptionContext ctx) {
+        ensureOpen();
         this.recipients.add(new EncCtxRecipient(Objects.requireNonNull(ctx)));
         return this;
     }
@@ -250,15 +277,23 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * PBKDF2(HMAC-SHA-256) and AES-GCM-wraps the CEK.
      *
      * @param password   the password; the caller should clear the array after use
-     * @param iterations PBKDF2 iteration count
+     * @param iterations PBKDF2 iteration count; must be at least
+     *                   {@value Pbkdf2Limits#MINIMUM}
      * @param saltLen    salt length in bytes
-     * @param kekBytes   derived KEK length in bytes (for example, 16 or 32)
+     * @param kekBytes   derived KEK length; exactly 16 or 32 bytes
      * @return this builder
-     * @throws NullPointerException if {@code password} is {@code null}
+     * @throws NullPointerException     if {@code password} is {@code null}
+     * @throws IllegalArgumentException if {@code iterations} is below
+     *                                  {@value Pbkdf2Limits#MINIMUM} or
+     *                                  {@code kekBytes} is not exactly 16 or 32
      */
     public MultiRecipientDataSourceBuilder addPasswordRecipientDecoy(char[] password, int iterations, int saltLen,
             int kekBytes) {
-        this.recipients.add(new PasswordRecipient(password, iterations, saltLen, kekBytes, true));
+        ensureOpen();
+        RecipientKekSizes.requireSupported(kekBytes);
+        session.pbkdf2Limits().validateTrusted(iterations);
+        this.recipients.add(new PasswordRecipient(password, iterations, saltLen, kekBytes, true,
+                session.pbkdf2Limits()));
         return this;
     }
 
@@ -275,12 +310,16 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      *
      * @param kem      configured context for
      *                 {@link zeroecho.core.KeyUsage#ENCAPSULATE}
-     * @param kekBytes derived KEK length in bytes (e.g., 16 or 32)
+     * @param kekBytes derived KEK length; exactly 16 or 32 bytes
      * @param saltLen  HKDF salt length in bytes
      * @return this builder
-     * @throws NullPointerException if {@code kem} is {@code null}
+     * @throws NullPointerException     if {@code kem} is {@code null}
+     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or
+     *                                  32
      */
     public MultiRecipientDataSourceBuilder addRecipientDecoy(KemContext kem, int kekBytes, int saltLen) {
+        ensureOpen();
+        RecipientKekSizes.requireSupported(kekBytes);
         this.recipients.add(new KemCtxRecipient(Objects.requireNonNull(kem), kekBytes, saltLen, true));
         return this;
     }
@@ -306,6 +345,7 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * @throws NullPointerException if {@code ctx} is {@code null}
      */
     public MultiRecipientDataSourceBuilder addRecipientDecoy(EncryptionContext ctx) {
+        ensureOpen();
         this.recipients.add(new EncCtxRecipient(Objects.requireNonNull(ctx), true));
         return this;
     }
@@ -317,13 +357,18 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * <p>
      * Only a single unlocking material is used. During decryption each opener
      * attempts to recover the CEK from the recipient entries using this material.
+     * The builder borrows the object for the lifetime of the built decrypting
+     * content and never destroys it. The caller retains ownership and must destroy
+     * password material after the returned content and stream are no longer used.
      * </p>
      *
-     * @param material the unlocking material (private key or password)
+     * @param material caller-owned unlocking material borrowed until decryption
+     *                 completes
      * @return this builder
      * @throws NullPointerException if {@code material} is {@code null}
      */
     public MultiRecipientDataSourceBuilder unlockWith(UnlockMaterial material) {
+        ensureOpen();
         this.unlockMaterial = Objects.requireNonNull(material);
         return this;
     }
@@ -338,52 +383,19 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * password recipients.
      * </p>
      *
-     * @param opener the opener to add
+     * <p>
+     * The builder takes ownership of the opener. The opener must be reusable
+     * across all recipient entries and is closed after scanning or when the built
+     * content is abandoned.
+     * </p>
+     *
+     * @param opener reusable opener to add
      * @return this builder
      * @throws NullPointerException if {@code opener} is {@code null}
      */
     public MultiRecipientDataSourceBuilder addOpener(RecipientOpener opener) {
+        ensureOpen();
         this.openers.add(Objects.requireNonNull(opener));
-        return this;
-    }
-
-    /**
-     * Adds a universal opener backed by a caller-supplied {@link KemContext}.
-     *
-     * <p>
-     * The opener matches entries whose id starts with {@code "KEM:"} and whose
-     * algorithm id equals {@code kem.algorithm().id()}. When a match is attempted,
-     * the context is used to {@link KemContext#decapsulate(byte[])} and then
-     * closed.
-     * </p>
-     *
-     * @param kem context configured for {@link zeroecho.core.KeyUsage#DECAPSULATE}
-     * @return this builder
-     * @throws NullPointerException if {@code kem} is {@code null}
-     */
-    public MultiRecipientDataSourceBuilder addOpener(KemContext kem) {
-        this.openers.add(new KemCtxOpener(Objects.requireNonNull(kem)));
-        return this;
-    }
-
-    /**
-     * Adds a universal opener backed by a caller-supplied
-     * {@link EncryptionContext}.
-     *
-     * <p>
-     * The opener matches entries whose id equals
-     * {@code "ENC:" + ctx.algorithm().id()}. When a match is attempted, the CEK
-     * ciphertext blob is streamed through
-     * {@link EncryptionContext#attach(java.io.InputStream)} to obtain the plaintext
-     * CEK. The context is then closed.
-     * </p>
-     *
-     * @param ctx context configured for {@link zeroecho.core.KeyUsage#DECRYPT}
-     * @return this builder
-     * @throws NullPointerException if {@code ctx} is {@code null}
-     */
-    public MultiRecipientDataSourceBuilder addOpener(EncryptionContext ctx) {
-        this.openers.add(new EncCtxOpener(Objects.requireNonNull(ctx)));
         return this;
     }
 
@@ -400,6 +412,7 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      * @return this builder
      */
     public MultiRecipientDataSourceBuilder headerLimits(int maxRecipients, int maxEntryLen) {
+        ensureOpen();
         this.maxRecipients = Math.max(1, maxRecipients);
         this.maxEntryLen = Math.max(1, maxEntryLen);
         return this;
@@ -418,20 +431,23 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
      *
      * <p>
      * Default openers are installed automatically if none were added explicitly.
-     * They support KEM, RSA-OAEP, ElGamal with PKCS1 padding, and PBKDF2 password
-     * recipients.
+     * They support KEM, RSA-OAEP, ElGamal with PKCS1 padding, and, when password
+     * unlock material is selected, PBKDF2 password recipients. Password decryption
+     * requires explicit session PBKDF2 limits.
      * </p>
      *
      * @param encrypt {@code true} to build an encrypting content source,
      *                {@code false} to build a decrypting one
-     * @return an encrypting or decrypting {@link DataContent} wrapper
+     * @return an encrypting or decrypting one-shot content wrapper; callers must
+     *         close an abandoned result
      * @throws IllegalStateException if no symmetric builder is selected, if
      *                               encryption is requested with no recipients, or
      *                               if decryption is requested without unlock
      *                               material
      */
     @Override
-    public DataContent build(boolean encrypt) {
+    public MultiRecipientContent build(boolean encrypt) {
+        ensureOpen();
         if (aesBuilder == null && chachaBuilder == null) {
             throw new IllegalStateException("No symmetric builder selected. Call withAes(...) or withChaCha(...).");
         }
@@ -441,15 +457,88 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
         if (!encrypt && unlockMaterial == null) {
             throw new IllegalStateException("Missing unlock material for decryption");
         }
-        if (openers.isEmpty()) {
-            openers.add(new EncCtxOpener());
-            openers.add(new KemCtxOpener());
-            openers.add(new PasswordOpener());
+        if (!encrypt && openers.isEmpty()) {
+            openers.add(new EncCtxOpener(session));
+            openers.add(new KemCtxOpener(session));
+            if (unlockMaterial instanceof UnlockMaterial.Password) {
+                openers.add(new PasswordOpener(session.pbkdf2Limits()));
+            }
         }
-        return encrypt
-                ? new Encryptor(recipients, aesBuilder, chachaBuilder, payloadKeyBytes, maxRecipients, maxEntryLen)
-                : new Decryptor(openers, unlockMaterial, aesBuilder, chachaBuilder, payloadKeyBytes, maxRecipients,
-                        maxEntryLen);
+        if (encrypt) {
+            List<Recipient> transferredRecipients = List.copyOf(recipients);
+            recipients.clear();
+            return new Encryptor(transferredRecipients, aesBuilder, chachaBuilder, payloadKeyBytes, maxRecipients,
+                    maxEntryLen);
+        }
+        List<RecipientOpener> transferredOpeners = List.copyOf(openers);
+        openers.clear();
+        return new Decryptor(transferredOpeners, unlockMaterial, aesBuilder, chachaBuilder, payloadKeyBytes,
+                maxRecipients, maxEntryLen);
+    }
+
+    /**
+     * Destroys recipient secrets still owned by this builder.
+     *
+     * <p>Recipients transferred to a successfully built encrypting content object
+     * are owned and destroyed by that object instead.</p>
+     *
+     * @throws DestroyFailedException if recipient cleanup fails
+     */
+    @Override
+    public void destroy() throws DestroyFailedException {
+        try {
+            close();
+        } catch (IOException exception) {
+            DestroyFailedException failure = new DestroyFailedException("Recipient cleanup failed");
+            failure.initCause(exception);
+            throw failure;
+        }
+    }
+
+    /**
+     * Reports whether this builder has released its owned recipient secrets.
+     *
+     * @return {@code true} after {@link #close()} or {@link #destroy()}
+     */
+    @Override
+    public boolean isDestroyed() {
+        return closed;
+    }
+
+    /**
+     * Releases recipient and opener resources not transferred by
+     * {@link #build(boolean)}.
+     *
+     * @throws IOException if recipient cleanup fails
+     */
+    @Override
+    public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        IOException failure = null;
+        try {
+            Encryptor.closeRecipients(recipients, null);
+        } catch (IOException exception) {
+            failure = exception;
+        } finally {
+            recipients.clear();
+        }
+        try {
+            Decryptor.closeOpeners(openers, failure);
+        } finally {
+            openers.clear();
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("Multi-recipient builder has been closed");
+        }
     }
 
     // ========================================================================
@@ -481,7 +570,11 @@ public final class MultiRecipientDataSourceBuilder implements DataContentBuilder
     /* default */ static byte[] pbkdf2HmacSha256(char[] password, byte[] salt, int iterations, int outLen)
             throws GeneralSecurityException {
         PBEKeySpec spec = new PBEKeySpec(password, salt, iterations, outLen * 8);
-        return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded();
+        try {
+            return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded();
+        } finally {
+            spec.clearPassword();
+        }
     }
 
     /**

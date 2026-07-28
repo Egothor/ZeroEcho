@@ -44,7 +44,6 @@ import java.util.logging.Logger;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.alg.kyber.KyberKeyGenSpec;
 import zeroecho.core.alg.xdh.XdhSpec;
 import zeroecho.sdk.builders.HybridKexBuilder;
@@ -56,6 +55,7 @@ import zeroecho.sdk.hybrid.derived.HybridDerived;
 import zeroecho.sdk.hybrid.kex.HybridKexContext;
 import zeroecho.sdk.hybrid.kex.HybridKexExporter;
 import zeroecho.sdk.hybrid.kex.HybridKexProfile;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.hybrid.kex.HybridKexTranscript;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
@@ -78,6 +78,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * </p>
  */
 class HybridDerivedAesDemoTest {
+    private final ZeroEchoSession session = new ZeroEchoSession();
 
     private static final Logger LOG = Logger.getLogger(HybridDerivedAesDemoTest.class.getName());
 
@@ -108,16 +109,17 @@ class HybridDerivedAesDemoTest {
                 "hybrid-derived-aes-gcm-condensed");
 
         // ...Generate classic key pairs for X25519 (Xdh + XdhSpec.X25519).
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // ...Generate PQC key pair for ML-KEM-768 (recipient; used by Bob side to
         // decapsulate).
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // ...Build Alice initiator: classic agreement (out-of-band peer pub) + PQC
         // encapsulation.
-        HybridKexContext alice = HybridKexBuilder.builder()
+        HybridKexContext alice = HybridKexBuilder.builder(session)
                 // ...Set mandatory profile.
                 .profile(profile)
                 // ...Bind builder HKDF info to transcript.
@@ -142,7 +144,7 @@ class HybridDerivedAesDemoTest {
                 .buildInitiator();
 
         // ...Build Bob responder: classic agreement + PQC decapsulation.
-        HybridKexContext bob = HybridKexBuilder.builder()
+        HybridKexContext bob = HybridKexBuilder.builder(session)
                 // ...Set mandatory profile.
                 .profile(profile)
                 // ...Bind builder HKDF info to transcript.
@@ -203,7 +205,7 @@ class HybridDerivedAesDemoTest {
                             // ...Inject explicit AAD.
                             .aad(aad)
                             // ...Apply derived key(256b) and IV(12B) to AES-GCM with header.
-                            .applyToAesGcm(AesDataContentBuilder.builder()
+                            .applyToAesGcm(AesDataContentBuilder.builder(session)
                                     // ...Store IV in header for decrypt side.
                                     .withHeader()
                                     // ...Use AES-GCM with 128-bit authentication tag.
@@ -230,7 +232,7 @@ class HybridDerivedAesDemoTest {
                             // ...Same explicit AAD as encryption.
                             .aad(aad)
                             // ...Apply derived key and IV to AES-GCM with header.
-                            .applyToAesGcm(AesDataContentBuilder.builder()
+                            .applyToAesGcm(AesDataContentBuilder.builder(session)
                                     // ...Parse IV from header.
                                     .withHeader()
                                     // ...Use AES-GCM with 128-bit authentication tag.
@@ -271,14 +273,15 @@ class HybridDerivedAesDemoTest {
                 "hybrid-derived-aes-gcm-expanded");
 
         // ...Generate classic key pairs for X25519.
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // ...Generate PQC key pair for ML-KEM-768.
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // ...Build Alice initiator in a step-by-step manner.
-        HybridKexBuilder aliceBuilder = HybridKexBuilder.builder();
+        HybridKexBuilder aliceBuilder = HybridKexBuilder.builder(session);
         // ...Set mandatory profile.
         aliceBuilder.profile(profile);
         // ...Bind builder HKDF info to transcript.
@@ -306,7 +309,7 @@ class HybridDerivedAesDemoTest {
         HybridKexContext alice = alicePqcCfg.buildInitiator();
 
         // ...Build Bob responder in a step-by-step manner.
-        HybridKexBuilder bobBuilder = HybridKexBuilder.builder();
+        HybridKexBuilder bobBuilder = HybridKexBuilder.builder(session);
         // ...Set mandatory profile.
         bobBuilder.profile(profile);
         // ...Bind builder HKDF info to transcript.
@@ -356,7 +359,7 @@ class HybridDerivedAesDemoTest {
             byte[] aad = "aad:demo:expanded".getBytes(StandardCharsets.UTF_8);
 
             // ...Prepare AES builder for encryption.
-            AesDataContentBuilder aesEnc = AesDataContentBuilder.builder();
+            AesDataContentBuilder aesEnc = AesDataContentBuilder.builder(session);
             // ...Store IV in header.
             aesEnc.withHeader();
             // ...Use AES-GCM with 128-bit authentication tag.
@@ -389,7 +392,7 @@ class HybridDerivedAesDemoTest {
             System.out.println("...ciphertext " + lens(ciphertext) + " " + shortHex(ciphertext, 48));
 
             // ...Prepare AES builder for decryption.
-            AesDataContentBuilder aesDec = AesDataContentBuilder.builder();
+            AesDataContentBuilder aesDec = AesDataContentBuilder.builder(session);
             // ...Parse IV from header.
             aesDec.withHeader();
             // ...Use AES-GCM with 128-bit authentication tag.
@@ -453,13 +456,14 @@ class HybridDerivedAesDemoTest {
         byte[] aad = "aad:local-self".getBytes(StandardCharsets.UTF_8);
 
         // ...Generate classic identity keys (X25519).
-        KeyPair selfClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair selfClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // ...Generate PQC identity keys (ML-KEM-768).
-        KeyPair selfPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair selfPqc = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // ...Build local initiator (encapsulation) against our own public keys.
-        HybridKexContext encKex = HybridKexBuilder.builder()
+        HybridKexContext encKex = HybridKexBuilder.builder(session)
                 // ...Set mandatory profile.
                 .profile(profile)
                 // ...Bind derivation to transcript.
@@ -509,7 +513,7 @@ class HybridDerivedAesDemoTest {
                         // ...Inject explicit AAD.
                         .aad(aad)
                         // ...Apply derived key(256b) and IV(12B) to AES-GCM with header.
-                        .applyToAesGcm(AesDataContentBuilder.builder()
+                        .applyToAesGcm(AesDataContentBuilder.builder(session)
                                 // ...Store IV in header for decrypt side.
                                 .withHeader()
                                 // ...Use AES-GCM with 128-bit authentication tag.
@@ -525,7 +529,7 @@ class HybridDerivedAesDemoTest {
 
         // ...Build local responder (decapsulation) using our own private keys and
         // stored peer message.
-        HybridKexContext decKex = HybridKexBuilder.builder()
+        HybridKexContext decKex = HybridKexBuilder.builder(session)
                 // ...Set mandatory profile.
                 .profile(profile)
                 // ...Bind derivation to transcript.
@@ -577,7 +581,7 @@ class HybridDerivedAesDemoTest {
                             // ...Same explicit AAD.
                             .aad(aad)
                             // ...Apply derived key and IV to AES-GCM with header.
-                            .applyToAesGcm(AesDataContentBuilder.builder()
+                            .applyToAesGcm(AesDataContentBuilder.builder(session)
                                     // ...Parse IV from header.
                                     .withHeader()
                                     // ...Use AES-GCM with 128-bit authentication tag.

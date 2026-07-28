@@ -35,11 +35,11 @@ package zeroecho.core.alg.xdh;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
@@ -49,7 +49,8 @@ import zeroecho.core.alg.common.agreement.GenericJcaMessageAgreementContext;
 import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.MessageAgreementContext;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * Algorithm definition for XDH (elliptic curve Diffie-Hellman) key agreement,
@@ -97,16 +98,16 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * CryptoAlgorithm xdh = new XdhAlgorithm();
  *
  * // Generate key pairs
- * KeyPair a = xdh.asymmetricKeyBuilder(XdhSpec.class).generateKeyPair(XdhSpec.X25519);
- * KeyPair b = xdh.asymmetricKeyBuilder(XdhSpec.class).generateKeyPair(XdhSpec.X25519);
+ * KeyPair a = xdh.asymmetricKeyPairGenerator(XdhSpec.class).generateKeyPair(XdhSpec.X25519);
+ * KeyPair b = xdh.asymmetricKeyPairGenerator(XdhSpec.class).generateKeyPair(XdhSpec.X25519);
  *
  * // Perform agreement on side A
- * AgreementContext ctxA = xdh.create(KeyUsage.AGREEMENT, a.getPrivate(), XdhSpec.X25519);
+ * AgreementContext ctxA = xdh.createContext(KeyUsage.AGREEMENT, a.getPrivate(), XdhSpec.X25519);
  * ctxA.setPeerPublic(b.getPublic());
  * byte[] secretA = ctxA.deriveSecret();
  *
  * // Perform agreement on side B
- * AgreementContext ctxB = xdh.create(KeyUsage.AGREEMENT, b.getPrivate(), XdhSpec.X25519);
+ * AgreementContext ctxB = xdh.createContext(KeyUsage.AGREEMENT, b.getPrivate(), XdhSpec.X25519);
  * ctxB.setPeerPublic(a.getPublic());
  * byte[] secretB = ctxB.deriveSecret();
  *
@@ -153,42 +154,27 @@ public final class XdhAlgorithm extends AbstractCryptoAlgorithm {
                         s.keyAgreementName(), null, "XDH", null),
                 () -> XdhSpec.X25519);
 
-        registerAsymmetricKeyBuilder(XdhSpec.class, new XdhKeyGenBuilder(), () -> XdhSpec.X25519);
-        registerAsymmetricKeyBuilder(XdhPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-
-            @Override
-            public KeyPair generateKeyPair(XdhPublicKeySpec spec) throws GeneralSecurityException {
-                throw new UnsupportedOperationException("Use XdhKeyGenBuilder for keypair generation.");
-            }
+        registerAsymmetricKeyPairGenerator(XdhSpec.class, new XdhKeyGenBuilder(), () -> XdhSpec.X25519);
+        registerPublicKeyImporter(XdhPublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(XdhPublicKeySpec spec) throws GeneralSecurityException {
                 KeyFactory kf = KeyFactory.getInstance("XDH");
                 return kf.generatePublic(new X509EncodedKeySpec(spec.encoded()));
             }
-
-            @Override
-            public PrivateKey importPrivate(XdhPublicKeySpec spec) throws GeneralSecurityException {
-                throw new UnsupportedOperationException("Use XdhPrivateKeySpec for private key import.");
-            }
-        }, null);
-        registerAsymmetricKeyBuilder(XdhPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-
-            @Override
-            public KeyPair generateKeyPair(XdhPrivateKeySpec spec) throws GeneralSecurityException {
-                throw new UnsupportedOperationException("Use XdhKeyGenBuilder for keypair generation.");
-            }
-
-            @Override
-            public PublicKey importPublic(XdhPrivateKeySpec spec) throws GeneralSecurityException {
-                throw new UnsupportedOperationException("Use XdhPrivateKeySpec for public key import.");
-            }
+        });
+        registerPrivateKeyImporter(XdhPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(XdhPrivateKeySpec spec) throws GeneralSecurityException {
                 KeyFactory kf = KeyFactory.getInstance("XDH");
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.encoded()));
+                byte[] encoded = spec.encoded();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 }

@@ -59,16 +59,17 @@ import zeroecho.core.spec.ContextSpec;
  * </ul>
  *
  * <h2>Typical usage</h2> <pre>{@code
- * // Install a global minimum-strength policy
- * CryptoAlgorithms.setPolicy(CryptoPolicy.minStrength(128));
+ * ZeroEchoSession session = new ZeroEchoSession()
+ *         .withPolicy(CryptoPolicy.minStrength(128));
  *
  * // Later, when creating a context:
- * EncryptionContext ctx = CryptoAlgorithms.create("AES/GCM", KeyUsage.ENCRYPT, secretKey);
+ * EncryptionContext ctx = session.createContext("AES", KeyUsage.ENCRYPT, secretKey);
  * }</pre>
  *
  * @param <S> context specification type
  * @param <K> key type
  * @since 1.0
+ * @see zeroecho.sdk.ZeroEchoSession
  */
 public interface CryptoPolicy<S extends ContextSpec, K extends Key> { // NOPMD
     /**

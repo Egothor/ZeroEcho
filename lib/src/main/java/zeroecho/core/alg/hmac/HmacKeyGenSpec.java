@@ -55,12 +55,12 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * <h2>Usage</h2> Typical usage is to construct a spec with a given digest
  * family and key size, and then pass it to a registered
- * {@code SymmetricKeyBuilder}:
+ * {@link zeroecho.core.spi.SymmetricKeyGenerator}:
  *
  * <pre>{@code
  * // Generate a 256-bit key for HMAC-SHA256
  * HmacKeyGenSpec spec = HmacKeyGenSpec.sha256(256);
- * SecretKey key = CryptoAlgorithms.generateSecret("HMAC", spec);
+ * SecretKey key = session.keyBuilders().symmetric().generate("HMAC", spec);
  * }</pre>
  *
  * <h2>Defaults</h2> Convenience static factories are provided for the most

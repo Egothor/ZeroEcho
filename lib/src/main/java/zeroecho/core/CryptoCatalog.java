@@ -33,10 +33,7 @@
  ******************************************************************************/
 package zeroecho.core;
 
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
-import java.util.ServiceLoader;
 
 import zeroecho.core.annotation.Describable;
 import zeroecho.core.annotation.DisplayName;
@@ -47,8 +44,8 @@ import zeroecho.core.annotation.DisplayName;
  *
  * <p>
  * {@code CryptoCatalog} is a lightweight registry built at a point in time via
- * {@link #load()}. It collects algorithms published through the Java SPI for
- * {@link CryptoAlgorithm}, ensures identifier uniqueness, and exposes:
+ * {@link #load()}. It consumes the authoritative provider registry owned by
+ * {@link CryptoAlgorithms} and exposes:
  * </p>
  *
  * <ul>
@@ -60,8 +57,8 @@ import zeroecho.core.annotation.DisplayName;
  * </ul>
  *
  * <h2>Identity and uniqueness</h2> Algorithm ids are treated as canonical keys.
- * If two providers expose the same {@linkplain CryptoAlgorithm#id() id}, the
- * catalog build fails with {@link IllegalStateException}.
+ * Duplicate provider identifiers are rejected when the authoritative registry
+ * is initialized.
  *
  * <h2>Immutability &amp; thread-safety</h2> After construction, the internal
  * map is unmodifiable and safe to share across threads. This class performs no
@@ -77,10 +74,9 @@ import zeroecho.core.annotation.DisplayName;
  * </ul>
  *
  * <p>
- * <b>Note:</b> Default spec / key-spec values shown in outputs are derived from
- * {@code Supplier}s registered by algorithms. Suppliers may compute labels or
- * return lightweight descriptors; their intent is documentation, not
- * round‑tripping.
+ * <b>Note:</b> Default spec / key-spec values shown in outputs are stable
+ * metadata values resolved when providers are initialized; their intent is
+ * documentation, not round-tripping.
  * </p>
  *
  * @since 1.0
@@ -93,26 +89,25 @@ public final class CryptoCatalog {
     }
 
     /**
-     * Discovers {@link CryptoAlgorithm} implementations via {@link ServiceLoader}
-     * and returns an immutable catalog snapshot.
+     * Returns a catalog view of the authoritative registry initialized by
+     * {@link CryptoAlgorithms}.
      *
      * <p>
-     * During loading, algorithm ids are checked for uniqueness. A duplicate id
-     * results in an {@link IllegalStateException} to prevent ambiguous resolution.
+     * Provider discovery, deterministic ordering, and duplicate checking occur
+     * once in {@code CryptoAlgorithms}. This method neither scans providers nor
+     * copies their collection.
      * </p>
      *
      * @return an immutable {@code CryptoCatalog} with all discovered algorithms
-     * @throws IllegalStateException if two providers declare the same algorithm id
+     * @throws ExceptionInInitializerError if authoritative provider initialization
+     *                                     fails
      */
     public static CryptoCatalog load() {
-        Map<String, CryptoAlgorithm> m = new HashMap<>();
-        ServiceLoader.load(CryptoAlgorithm.class).forEach(a -> {
-            CryptoAlgorithm prev = m.put(a.id(), a);
-            if (prev != null) {
-                throw new IllegalStateException("Duplicate algorithm id: " + a.id());
-            }
-        });
-        return new CryptoCatalog(Collections.unmodifiableMap(m));
+        return new CryptoCatalog(CryptoAlgorithms.registry());
+    }
+
+    /* default */ Map<String, CryptoAlgorithm> algorithms() {
+        return algos;
     }
 
     /**
@@ -132,9 +127,8 @@ public final class CryptoCatalog {
         StringBuilder sb = null;
         for (CryptoAlgorithm a : algos.values()) {
             boolean hasCaps = !a.listCapabilities().isEmpty();
-            boolean hasAsym = !a.asymmetricBuildersInfo().isEmpty();
-            boolean hasSym = !a.symmetricBuildersInfo().isEmpty();
-            if (!hasCaps && !hasAsym && !hasSym) {
+            boolean hasKeyOperations = !a.keyOperations().isEmpty();
+            if (!hasCaps && !hasKeyOperations) {
                 if (sb == null) {
                     sb = new StringBuilder(50 /* minimal record size */ * 6 /* suggested avg of error records */); // NOPMD
                 }
@@ -225,30 +219,20 @@ public final class CryptoCatalog {
                         .append(jsonField("contextType", cap.contextType().getSimpleName())).append(',')
                         .append(jsonField("keyType", cap.keyType().getSimpleName())).append(',')
                         .append(jsonField("specType", cap.specType().getSimpleName())).append(",\"defaultSpec\":")
-                        .append(cap.defaultSpec() == null ? "null" : jsonString(labelOf(cap.defaultSpec().get())))
+                        .append(cap.defaultSpec() == null ? "null" : jsonString(labelOf(cap.defaultSpec())))
                         .append('}');
             }
-            sb.append("],\"asymmetricKeyBuilders\":[");
-            boolean fa = true;
-            for (CryptoAlgorithm.AsymBuilderInfo kb : a.asymmetricBuildersInfo()) {
-                if (!fa) {
+            sb.append("],\"keyOperations\":[");
+            boolean firstOperation = true;
+            for (KeyOperationInfo operation : a.keyOperations()) {
+                if (!firstOperation) {
                     sb.append(',');
                 }
-                fa = false;
-                sb.append('{').append(jsonField("specType", kb.specType.getSimpleName())).append(",\"defaultKeySpec\":")
-                        .append(kb.defaultKeySpec == null ? "null" : jsonString(labelOf(kb.defaultKeySpec)))
-                        .append('}');
-            }
-            sb.append("],\"symmetricKeyBuilders\":[");
-            boolean fs = true;
-            for (CryptoAlgorithm.SymBuilderInfo kb : a.symmetricBuildersInfo()) {
-                if (!fs) {
-                    sb.append(',');
-                }
-                fs = false;
-                sb.append('{').append(jsonField("specType", kb.specType().getSimpleName()))
-                        .append(",\"defaultKeySpec\":")
-                        .append(kb.defaultKeySpec() == null ? "null" : jsonString(labelOf(kb.defaultKeySpec())))
+                firstOperation = false;
+                sb.append('{').append(jsonField("operation", operation.operation().name())).append(',')
+                        .append(jsonField("specType", operation.specType().getSimpleName()))
+                        .append(",\"defaultSpec\":")
+                        .append(operation.defaultSpec() == null ? "null" : jsonString(labelOf(operation.defaultSpec())))
                         .append('}');
             }
             sb.append("]}");
@@ -285,23 +269,17 @@ public final class CryptoCatalog {
                         .append(esc(cap.contextType().getSimpleName())).append("</contextType><keyType>")
                         .append(esc(cap.keyType().getSimpleName())).append("</keyType><specType>")
                         .append(esc(cap.specType().getSimpleName())).append("</specType><defaultSpec>")
-                        .append(esc(labelOf(cap.defaultSpec().get()))).append("</defaultSpec></capability>");
+                        .append(esc(labelOf(cap.defaultSpec()))).append("</defaultSpec></capability>");
             }
-            sb.append("</capabilities><asymmetricKeyBuilders>");
-            for (CryptoAlgorithm.AsymBuilderInfo kb : a.asymmetricBuildersInfo()) {
-                sb.append("<keyBuilder specType=\"").append(esc(kb.specType.getSimpleName()))
-                        .append("\"><defaultKeySpec>")
-                        .append(kb.defaultKeySpec == null ? "" : esc(labelOf(kb.defaultKeySpec)))
-                        .append("</defaultKeySpec></keyBuilder>");
+            sb.append("</capabilities><keyOperations>");
+            for (KeyOperationInfo operation : a.keyOperations()) {
+                sb.append("<keyOperation operation=\"").append(operation.operation().name())
+                        .append("\" specType=\"").append(esc(operation.specType().getSimpleName()))
+                        .append("\"><defaultSpec>")
+                        .append(operation.defaultSpec() == null ? "" : esc(labelOf(operation.defaultSpec())))
+                        .append("</defaultSpec></keyOperation>");
             }
-            sb.append("</asymmetricKeyBuilders><symmetricKeyBuilders>");
-            for (CryptoAlgorithm.SymBuilderInfo kb : a.symmetricBuildersInfo()) {
-                sb.append("<keyBuilder specType=\"").append(esc(kb.specType().getSimpleName()))
-                        .append("\"><defaultKeySpec>")
-                        .append(kb.defaultKeySpec() == null ? "" : esc(labelOf(kb.defaultKeySpec())))
-                        .append("</defaultKeySpec></keyBuilder>");
-            }
-            sb.append("</symmetricKeyBuilders></algorithm>");
+            sb.append("</keyOperations></algorithm>");
         }
         sb.append("</cryptoCatalog>");
         return sb.toString();

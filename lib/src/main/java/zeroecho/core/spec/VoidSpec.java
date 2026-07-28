@@ -43,7 +43,7 @@ package zeroecho.core.spec;
  * </p>
  *
  * <h2>Usage</h2> <pre>{@code
- * CryptoContext ctx = algo.create(KeyUsage.SIGN, privateKey, VoidSpec.INSTANCE);
+ * CryptoContext ctx = algo.createContext(KeyUsage.SIGN, privateKey, VoidSpec.INSTANCE);
  * }</pre>
  *
  * <p>

@@ -100,7 +100,7 @@ import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
  * <h2>Usage example</h2>
  * <h3>Produce HMAC-SHA256 trailer</h3> <pre>
  * {@code
- * SecretKey key = CryptoAlgorithms.generateSecret("HMAC", HmacKeyGenSpec.sha256(256));
+ * SecretKey key = session.keyBuilders().symmetric().generate("HMAC", HmacKeyGenSpec.sha256(256));
  * HmacMacContext ctx = new HmacMacContext(CryptoAlgorithms.require("HMAC"), key, "HmacSHA256");
  * try (InputStream in = ctx.wrap(new FileInputStream("data.bin"))) {
  *     in.transferTo(OutputStream.nullOutputStream()); // body then MAC trailer
@@ -135,7 +135,7 @@ public final class HmacMacContext implements MacContext {
 
     // lifecycle
     private boolean wrapped; // = false;
-    private Stream activeStream;
+    private HmacStream activeStream;
     private boolean autoCloseActiveStream;
 
     /**
@@ -238,7 +238,7 @@ public final class HmacMacContext implements MacContext {
             throw new IOException("HMAC init failed for " + macName, e);
         }
 
-        Stream s = new Stream(upstream, mac, macName, expectedTag, verifier());
+        HmacStream s = new HmacStream(upstream, mac, macName, expectedTag, verifier());
         this.activeStream = s;
         return s;
     }

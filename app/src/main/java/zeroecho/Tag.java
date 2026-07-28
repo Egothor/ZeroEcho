@@ -59,6 +59,7 @@ import zeroecho.core.spec.VoidSpec;
 import zeroecho.core.storage.KeyringStore;
 import zeroecho.core.tag.TagEngineBuilder;
 import zeroecho.sdk.builders.TagTrailerDataContentBuilder;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.PlainContent;
 import zeroecho.sdk.content.builtin.PlainFile;
@@ -157,6 +158,7 @@ public final class Tag { // NOPMD
      *                                  signature or digest processing
      */
     public static int main(String[] args, Options root) throws ParseException, IOException, GeneralSecurityException {
+        ZeroEchoSession session = new ZeroEchoSession();
         Options opts = root;
         opts.addOption(TYPE_OPT);
         opts.addOption(MODE_OPT);
@@ -196,21 +198,23 @@ public final class Tag { // NOPMD
 
         if (TYPE_SIGNATURE.equals(type)) {
             String ksPath = require(cli, KS_OPT, "--ks <file> is required for --type signature");
-            KeyringStore keyring = KeyringStore.load(Path.of(ksPath));
+            KeyringStore keyring = KeyringStore.load(session, Path.of(ksPath));
             ContextSpec spec = VoidSpec.INSTANCE;
 
             if (produce) {
                 String privAlias = require(cli, PRIV_OPT, "signature produce requires --priv <alias>");
                 PrivateKey priv = keyring.getPrivate(privAlias);
-                tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.signature(alg, priv, spec)).build(true);
+                tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.signature(session, alg, priv, spec))
+                        .build(true);
             } else {
                 String pubAlias = require(cli, PUB_OPT, "signature verify requires --pub <alias>");
                 PublicKey pub = keyring.getPublic(pubAlias);
-                tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.signature(alg, pub, spec)).build(false);
+                tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.signature(session, alg, pub, spec))
+                        .build(false);
             }
         } else { // digest
             DigestSpec spec = parseDigest(alg);
-            tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(spec)).build(produce);
+            tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(session, spec)).build(produce);
         }
 
         tail.setInput(source);

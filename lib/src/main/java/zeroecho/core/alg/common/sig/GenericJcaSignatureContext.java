@@ -145,7 +145,7 @@ public final class GenericJcaSignatureContext implements SignatureContext {
 
     // lifecycle
     private boolean wrapped; // = false;
-    private Stream activeStream;
+    private SignatureStream activeStream;
     private boolean autoCloseActiveStream;
 
     /**
@@ -449,7 +449,7 @@ public final class GenericJcaSignatureContext implements SignatureContext {
 
         LOG.log(Level.INFO, "wrap for signing, tagLength={0}", declaredTagLen);
 
-        Stream s = new Stream(engine, signMode, upstream, tagLength(), expectedTag, verifier());
+        SignatureStream s = new SignatureStream(engine, signMode, upstream, tagLength(), expectedTag, verifier());
         this.activeStream = s;
         return s;
     }

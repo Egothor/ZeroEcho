@@ -50,7 +50,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * <h2>Usage example</h2> <pre>{@code
  * // Generate a new Ed25519 key pair using the default spec
- * KeyPair kp = CryptoAlgorithms.keyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
+ * KeyPair kp = session.keyBuilders().asymmetric()
+ *     .generateKeyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
  * }</pre>
  *
  * <h2>Thread-safety</h2> The default spec instance is immutable and safe to

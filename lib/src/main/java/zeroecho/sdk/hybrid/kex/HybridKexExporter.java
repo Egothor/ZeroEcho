@@ -34,7 +34,11 @@
 package zeroecho.sdk.hybrid.kex;
 
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.sdk.util.Kdf;
 
@@ -65,10 +69,12 @@ import zeroecho.sdk.util.Kdf;
  *
  * @since 1.0
  */
-public final class HybridKexExporter {
+public final class HybridKexExporter implements Destroyable, AutoCloseable {
 
     private final byte[] rootSecret;
     private final byte[] salt;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Creates an exporter seeded from a root secret.
@@ -93,27 +99,36 @@ public final class HybridKexExporter {
      * @throws IllegalArgumentException if outLenBytes is out of range
      */
     public byte[] export(String label, byte[] info, int outLenBytes) {
-        Objects.requireNonNull(label, "label");
-
-        if (outLenBytes < 1 || outLenBytes > 255 * 32) {
-            throw new IllegalArgumentException("outLenBytes must be in range 1.." + (255 * 32));
-        }
-
-        byte[] labelBytes = label.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        byte[] infoUse;
-        if (info == null || info.length == 0) {
-            infoUse = labelBytes;
-        } else {
-            infoUse = new byte[labelBytes.length + 1 + info.length];
-            System.arraycopy(labelBytes, 0, infoUse, 0, labelBytes.length);
-            infoUse[labelBytes.length] = 0;
-            System.arraycopy(info, 0, infoUse, labelBytes.length + 1, info.length);
-        }
-
+        lifecycleLock.lock();
         try {
-            return Kdf.hkdfSha256(rootSecret, salt, infoUse, outLenBytes);
-        } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("HKDF-SHA256 failed", e);
+            requireActive();
+            Objects.requireNonNull(label, "label");
+
+            if (outLenBytes < 1 || outLenBytes > 255 * 32) {
+                throw new IllegalArgumentException("outLenBytes must be in range 1.." + (255 * 32));
+            }
+
+            byte[] labelBytes = label.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] infoUse;
+            if (info == null || info.length == 0) {
+                infoUse = labelBytes;
+            } else {
+                infoUse = new byte[labelBytes.length + 1 + info.length];
+                System.arraycopy(labelBytes, 0, infoUse, 0, labelBytes.length);
+                infoUse[labelBytes.length] = 0;
+                System.arraycopy(info, 0, infoUse, labelBytes.length + 1, info.length);
+            }
+
+            try {
+                return Kdf.hkdfSha256(rootSecret, salt, infoUse, outLenBytes);
+            } catch (GeneralSecurityException e) {
+                throw new IllegalStateException("HKDF-SHA256 failed", e);
+            } finally {
+                Arrays.fill(labelBytes, (byte) 0);
+                Arrays.fill(infoUse, (byte) 0);
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
@@ -128,6 +143,63 @@ public final class HybridKexExporter {
      * @return copy of root secret
      */
     public byte[] rootSecretCopy() {
-        return rootSecret.clone();
+        lifecycleLock.lock();
+        try {
+            requireActive();
+            return rootSecret.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /**
+     * Overwrites the exporter root secret and salt.
+     *
+     * <p>Destruction is idempotent. All subsequent export or diagnostic access
+     * fails with {@link IllegalStateException}.</p>
+     */
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(rootSecret, (byte) 0);
+                if (salt != null) {
+                    Arrays.fill(salt, (byte) 0);
+                }
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /**
+     * Reports whether this exporter has been destroyed.
+     *
+     * @return {@code true} after destruction
+     */
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /**
+     * Closes this exporter by destroying its retained secret material.
+     */
+    @Override
+    public void close() {
+        destroy();
+    }
+
+    private void requireActive() {
+        if (destroyed) {
+            throw new IllegalStateException("Hybrid KEX exporter has been destroyed");
+        }
     }
 }

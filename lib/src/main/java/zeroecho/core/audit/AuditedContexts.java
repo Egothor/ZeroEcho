@@ -37,6 +37,9 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -44,6 +47,7 @@ import java.security.Key;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -101,8 +105,8 @@ import zeroecho.core.spec.ContextSpec;
  * <li>Counting is performed by decorating the returned {@code InputStream}s; no
  * buffering beyond normal {@code FilterInputStream} forwarding is
  * introduced.</li>
- * <li>Idempotent wrapping: contexts that are already JDK proxies will be
- * returned unchanged.</li>
+ * <li>Idempotent wrapping: contexts already wrapped by this utility are returned
+ * unchanged. Unrelated JDK proxies are wrapped normally.</li>
  * </ul>
  *
  * <h2>Usage example</h2> <pre>{@code
@@ -130,9 +134,9 @@ public final class AuditedContexts {
      * and error events while preserving the original behavior.
      *
      * <p>
-     * If {@code ctx} is {@code null}, this method returns {@code null}. If
-     * {@code ctx} is already a JDK dynamic proxy, the instance is returned as-is to
-     * keep wrapping idempotent.
+     * If {@code ctx} is {@code null}, this method returns {@code null}. A context
+     * already backed by this utility's auditing handler is returned as-is to keep
+     * wrapping idempotent; unrelated JDK proxies are wrapped normally.
      * </p>
      *
      * <p>
@@ -149,8 +153,9 @@ public final class AuditedContexts {
      * with non-reversible key fingerprints and derived sizes.</li>
      * </ul>
      * Creation metadata includes a generated correlation id, algorithm id, provider
-     * label, key fingerprint (if extractable), and a best-effort, non-secret spec
-     * summary when available.
+     * label, a public-key fingerprint or safe key type label, and a best-effort,
+     * non-secret spec summary when available. Private and secret key encodings are
+     * never requested.
      *
      * <p>
      * This call does not invoke any context operations other than the minimal,
@@ -170,23 +175,29 @@ public final class AuditedContexts {
      * @param role  the usage role associated with the context (for example,
      *              ENCRYPTION, DECRYPTION, SIGNING); must not be {@code null}
      * @return the auditing proxy for {@code ctx}, the original {@code ctx} if it is
-     *         already a proxy, or {@code null} if {@code ctx} is {@code null}
+     *         already wrapped by this utility, or {@code null} if {@code ctx} is
+     *         {@code null}
      */
     public static CryptoContext wrap(final CryptoContext ctx, final AuditListener audit, final KeyUsage role) {
         if (ctx == null) {
             return null;
         }
-        if (Proxy.isProxyClass(ctx.getClass())) {
-            return ctx; // idempotent
+        if (isAuditedProxy(ctx)) {
+            return ctx;
         }
         // IMPORTANT: do not call any other wrap(...) here — avoid recursion.
         return replaceWithProxy(ctx, audit, role);
     }
 
+    private static boolean isAuditedProxy(CryptoContext context) {
+        return Proxy.isProxyClass(context.getClass())
+                && Proxy.getInvocationHandler(context) instanceof AuditingHandler;
+    }
+
     @SuppressWarnings("unchecked")
-    private static <T> T replaceWithProxy(final T ctx, final AuditListener audit, final KeyUsage role) { // NOPMD
+    private static <T> T replaceWithProxy(final T ctx, final AuditListener audit, final KeyUsage role) {
         Objects.requireNonNull(ctx, "ctx must not be null");
-        Objects.requireNonNull(audit, "audit must not be null");
+        AuditListener safeAudit = AuditListeners.bestEffort(Objects.requireNonNull(audit, "audit must not be null"));
         Objects.requireNonNull(role, "role must not be null");
 
         // Emit creation metadata if we can resolve it
@@ -195,71 +206,49 @@ public final class AuditedContexts {
         String provider = null;
         String keyFp;
         Map<String, Object> specMeta = null;
-        Key keyObj = null;
-        ContextSpec specObj = null;
+        AccessorSet accessors = new AccessorSet(ctx);
 
         if (ctx instanceof CryptoContext cctx) { // NOPMD
             try {
                 CryptoAlgorithm alg = cctx.algorithm();
                 if (alg != null) {
                     try {
-                        algoId = safeString(invokeNoArg(alg, "id"));
+                        algoId = safeString(alg.id());
                     } catch (Throwable ignore) { // NOPMD
                         algoId = alg.getClass().getSimpleName();
                     }
                     try {
-                        provider = safeString(invokeNoArg(alg, "providerLabel"));
+                        provider = safeString(alg.providerName());
                     } catch (Throwable ignore) { // NOPMD
-                        try {
-                            provider = safeString(invokeNoArg(alg, "provider"));
-                        } catch (Throwable ignoredToo) { // NOPMD
-                            provider = alg.getClass().getPackageName();
-                        }
+                        provider = alg.getClass().getPackageName();
                     }
                 }
             } catch (Throwable ignore) { // NOPMD
                 // best-effort
             }
             try {
-                keyObj = cctx.key();
-                keyFp = fingerprint(keyObj);
+                keyFp = fingerprint(cctx.key());
             } catch (Throwable ignore) { // NOPMD
                 keyFp = "n/a";
             }
             try {
                 // optional: contexts may expose a spec() accessor
-                Object s = invokeNoArg(cctx, "spec");
-                if (s instanceof ContextSpec) {
-                    specObj = (ContextSpec) s;
-                    specMeta = SpecIntrospector.summarize(specObj);
+                Object s = accessors.spec();
+                if (s instanceof ContextSpec contextSpec) {
+                    specMeta = SpecIntrospector.summarize(contextSpec);
                 }
             } catch (Throwable ignore) { // NOPMD
-                specObj = null;
                 specMeta = null;
             }
 
-            // New-style context-created event with metadata
-            audit.onContextCreatedMeta(ctxId, algoId == null ? UNKNOWN : algoId, provider == null ? UNKNOWN : provider,
+            safeAudit.onContextCreatedMeta(ctxId, algoId == null ? UNKNOWN : algoId,
+                    provider == null ? UNKNOWN : provider,
                     role, keyFp, specMeta);
-
-            // Back-compat event forms
-            try {
-                // Generic with id/provider/role/key/spec
-                audit.onContextCreated(algoId == null ? UNKNOWN : algoId, provider == null ? UNKNOWN : provider, role,
-                        keyObj, specObj);
-            } catch (Throwable ignore) { // NOPMD
-            }
-            try {
-                // Legacy single-arg callback
-                audit.onContextCreated(cctx);
-            } catch (Throwable ignore) { // NOPMD
-            }
         }
 
         ClassLoader cl = ctx.getClass().getClassLoader(); // NOPMD
         Class<?>[] ifaces = allInterfaces(ctx.getClass());
-        InvocationHandler handler = new AuditingHandler(ctx, audit, role, ctxId, algoId == null ? UNKNOWN : algoId,
-                provider == null ? UNKNOWN : provider, keyObj);
+        InvocationHandler handler = new AuditingHandler(ctx, safeAudit, role, ctxId, accessors);
 
         return (T) Proxy.newProxyInstance(cl, ifaces, handler);
     }
@@ -281,9 +270,7 @@ public final class AuditedContexts {
         private final KeyUsage role;
 
         private final String ctxId;
-        private final String algoId;
-        private final String provider;
-        private final Key keyForClose; // may be null
+        private final AccessorSet accessors;
 
         private long bodyBytes;
         private long trailerBytes;
@@ -294,15 +281,13 @@ public final class AuditedContexts {
         private String policyLabel = "UNSET";
         private String expectedSource = "provided"; // default for setExpectedTag(byte[])
 
-        private AuditingHandler(Object target, AuditListener audit, KeyUsage role, String ctxId, String algoId,
-                String provider, Key keyForClose) {
+        private AuditingHandler(Object target, AuditListener audit, KeyUsage role, String ctxId,
+                AccessorSet accessors) {
             this.target = target;
             this.audit = audit;
             this.role = role;
             this.ctxId = ctxId;
-            this.algoId = algoId;
-            this.provider = provider;
-            this.keyForClose = keyForClose;
+            this.accessors = accessors;
             this.startNanos = System.nanoTime();
         }
 
@@ -312,7 +297,7 @@ public final class AuditedContexts {
 
             // Object methods
             if ("toString".equals(name) && (args == null || args.length == 0)) {
-                return "AuditedProxy(" + target + ")";
+                return "AuditedCryptoContext[type=" + target.getClass().getName() + ", role=" + role + "]";
             }
             if ("hashCode".equals(name) && (args == null || args.length == 0)) {
                 return System.identityHashCode(proxy);
@@ -326,11 +311,12 @@ public final class AuditedContexts {
 
                 // Track tagLength() if requested explicitly
                 if ("tagLength".equals(name) && (args == null || args.length == 0)) {
-                    Object res = method.invoke(target, args);
-                    if (res instanceof Integer) {
-                        this.tagLen = (Integer) res;
+                    Integer resolvedTagLength = accessors.tagLength();
+                    if (resolvedTagLength != null) {
+                        this.tagLen = resolvedTagLength;
+                        return resolvedTagLength;
                     }
-                    return res;
+                    return method.invoke(target, args);
                 }
 
                 // Track verification policy (label only; do not depend on specific enum type)
@@ -344,6 +330,7 @@ public final class AuditedContexts {
                 if ("setExpectedTag".equals(name) && args != null && args.length == 1 && args[0] instanceof byte[]) {
                     this.verifyMode = true;
                     this.expectedSource = "provided";
+                    this.tagLen = ((byte[]) args[0]).length;
                     return method.invoke(target, args);
                 }
 
@@ -352,10 +339,7 @@ public final class AuditedContexts {
                     // Update tagLen lazily if not known
                     if (this.tagLen == null) {
                         try {
-                            Object tl = target.getClass().getMethod("tagLength").invoke(target);
-                            if (tl instanceof Integer i) { // NOPMD
-                                this.tagLen = i;
-                            }
+                            this.tagLen = accessors.tagLength();
                         } catch (Throwable ignore) { // NOPMD
                             this.tagLen = null;
                         }
@@ -375,41 +359,23 @@ public final class AuditedContexts {
                     // setPeerPublic(PublicKey)
                     if ("setPeerPublic".equals(name) && args != null && args.length == 1
                             && args[0] instanceof PublicKey) {
+                        Object result = method.invoke(target, args);
                         try {
-                            Object res = method.invoke(target, args);
-                            try {
-                                String peerFp = fingerprint((Key) args[0]); // short, non-reversible
-                                audit.onAgreementPeerSet(ctxId, peerFp);
-                            } catch (Throwable ignore) { // NOPMD
-                            }
-                            return res;
-                        } catch (Throwable t) { // NOPMD
-                            Throwable cause = unwrapInvocationTarget(t);
-                            try {
-                                audit.onFailure(ctxId, "invoke:setPeerPublic", role.name(), cause);
-                            } catch (Throwable ignore) { // NOPMD
-                            }
-                            throw cause;
+                            String peerFingerprint = fingerprint((Key) args[0]);
+                            audit.onAgreementPeerSet(ctxId, peerFingerprint);
+                        } catch (Throwable ignore) { // NOPMD
                         }
+                        return result;
                     }
 
                     // deriveSecret()
                     if ("deriveSecret".equals(name) && (args == null || args.length == 0)) {
+                        byte[] secret = (byte[]) method.invoke(target);
                         try {
-                            byte[] secret = (byte[]) method.invoke(target);
-                            try {
-                                audit.onAgreementDerived(ctxId, secret == null ? -1 : secret.length);
-                            } catch (Throwable ignore) { // NOPMD
-                            }
-                            return secret;
-                        } catch (Throwable t) { // NOPMD
-                            Throwable cause = unwrapInvocationTarget(t);
-                            try {
-                                audit.onFailure(ctxId, "invoke:deriveSecret", role.name(), cause);
-                            } catch (Throwable ignore) { // NOPMD
-                            }
-                            throw cause;
+                            audit.onAgreementDerived(ctxId, secret == null ? -1 : secret.length);
+                        } catch (Throwable ignore) { // NOPMD
                         }
+                        return secret;
                     }
                 }
 
@@ -418,41 +384,23 @@ public final class AuditedContexts {
                     // setPeerMessage(byte[])
                     if ("setPeerMessage".equals(name) && args != null && args.length == 1
                             && args[0] instanceof byte[]) {
+                        Object result = method.invoke(target, args);
                         try {
-                            Object r = method.invoke(target, args);
-                            try {
-                                int len = ((byte[]) args[0]).length;
-                                audit.onAgreementPeerMessageSet(ctxId, len);
-                            } catch (Throwable ignore) { // NOPMD
-                            }
-                            return r;
-                        } catch (Throwable t) { // NOPMD
-                            Throwable cause = unwrapInvocationTarget(t);
-                            try {
-                                audit.onFailure(ctxId, "invoke:setPeerMessage", role.name(), cause);
-                            } catch (Throwable ignore) { // NOPMD
-                            }
-                            throw cause;
+                            int length = ((byte[]) args[0]).length;
+                            audit.onAgreementPeerMessageSet(ctxId, length);
+                        } catch (Throwable ignore) { // NOPMD
                         }
+                        return result;
                     }
 
                     // getPeerMessage()
                     if ("getPeerMessage".equals(name) && (args == null || args.length == 0)) {
+                        byte[] message = (byte[]) method.invoke(target);
                         try {
-                            byte[] msg = (byte[]) method.invoke(target);
-                            try {
-                                audit.onAgreementPeerMessageGet(ctxId, msg == null ? -1 : msg.length);
-                            } catch (Throwable ignore) { // NOPMD
-                            }
-                            return msg;
-                        } catch (Throwable t) { // NOPMD
-                            Throwable cause = unwrapInvocationTarget(t);
-                            try {
-                                audit.onFailure(ctxId, "invoke:getPeerMessage", role.name(), cause);
-                            } catch (Throwable ignore) { // NOPMD
-                            }
-                            throw cause;
+                            audit.onAgreementPeerMessageGet(ctxId, message == null ? -1 : message.length);
+                        } catch (Throwable ignore) { // NOPMD
                         }
+                        return message;
                     }
                 }
 
@@ -485,10 +433,6 @@ public final class AuditedContexts {
                         long durationMs = Math.max(1L, (System.nanoTime() - startNanos) / 1_000_000L);
                         try {
                             audit.onContextClosed(ctxId, bodyBytes, trailerBytes, durationMs);
-                        } catch (Throwable ignore) { // NOPMD
-                        }
-                        try {
-                            audit.onContextClosed(algoId, provider, role, keyForClose);
                         } catch (Throwable ignore) { // NOPMD
                         }
                     }
@@ -564,7 +508,9 @@ public final class AuditedContexts {
             final KeyUsage role, final AuditingHandler h) {
         return new FilterInputStream(in) {
             private long total;
-            private boolean eof;
+            private boolean terminal;
+            private boolean failureReported;
+            private boolean verificationReported;
 
             @Override
             public int read() throws IOException {
@@ -605,8 +551,10 @@ public final class AuditedContexts {
             @Override
             public void close() throws IOException {
                 try { // NOPMD
-                    transferTo(OutputStream.nullOutputStream());
-                    onEof();
+                    if (!terminal) {
+                        transferTo(OutputStream.nullOutputStream());
+                        onEof();
+                    }
                 } finally {
                     super.close();
                 }
@@ -621,12 +569,17 @@ public final class AuditedContexts {
             }
 
             private void onEof() {
-                if (eof) {
+                if (terminal) {
                     return;
                 }
-                eof = true;
+                terminal = true;
 
-                // Reclassify trailer if tagLen known
+                if (h.verifyMode) {
+                    reportVerification(true);
+                    return;
+                }
+
+                // Produce-mode streams emit the tag as a trailer.
                 if (h.tagLen != null && h.tagLen > 0 && h.bodyBytes >= h.tagLen) {
                     h.bodyBytes -= h.tagLen;
                     h.trailerBytes += h.tagLen;
@@ -635,36 +588,103 @@ public final class AuditedContexts {
                     } catch (Throwable ignore) { // NOPMD
                     }
 
-                    // Produce tag or verification result at EOF (no exception thrown)
                     try {
-                        if (h.verifyMode) {
-                            audit.onVerifyResult(ctxId, true, h.policyLabel, h.expectedSource, h.tagLen);
-                        } else {
-                            audit.onTagProduced(ctxId, h.tagLen, h.policyLabel);
-                        }
+                        audit.onTagProduced(ctxId, h.tagLen, h.policyLabel);
                     } catch (Throwable ignore) { // NOPMD
                     }
                 }
             }
 
             private void onFailureMaybeVerify(IOException ioe) {
-                try {
-                    audit.onFailure(ctxId, "read", role.name(), ioe);
-                    if (h.verifyMode && h.tagLen != null && h.tagLen > 0) {
-                        // Heuristic: verification failures commonly bubble as IOException from the
-                        // engine.
-                        audit.onVerifyResult(ctxId, false, h.policyLabel, h.expectedSource, h.tagLen);
+                terminal = true;
+                if (!failureReported) {
+                    failureReported = true;
+                    try {
+                        audit.onFailure(ctxId, "read", role.name(), ioe);
+                    } catch (Throwable ignore) { // NOPMD
                     }
+                }
+                if (h.verifyMode) {
+                    reportVerification(false);
+                }
+            }
+
+            private void reportVerification(boolean success) {
+                if (verificationReported) {
+                    return;
+                }
+                verificationReported = true;
+                int reportedTagLength = h.tagLen == null ? -1 : h.tagLen;
+                try {
+                    audit.onVerifyResult(ctxId, success, h.policyLabel, h.expectedSource, reportedTagLength);
                 } catch (Throwable ignore) { // NOPMD
                 }
             }
         };
     }
 
-    private static Object invokeNoArg(Object target, String method) throws Throwable {
-        Method m = target.getClass().getMethod(method);
-        m.setAccessible(true); // NOPMD
-        return m.invoke(target);
+    /**
+     * Handler-local, pre-bound optional no-argument accessors.
+     */
+    private static final class AccessorSet {
+        private final MethodHandle specAccessor;
+        private final MethodHandle tagLengthAccessor;
+
+        private AccessorSet(Object target) {
+            this.specAccessor = bindNoArg(target, "spec", ContextSpec.class);
+            this.tagLengthAccessor = bindNoArg(target, "tagLength", Integer.class);
+        }
+
+        private Object spec() throws Throwable {
+            if (specAccessor == null) {
+                return null;
+            }
+            return specAccessor.invokeExact();
+        }
+
+        private Integer tagLength() throws Throwable {
+            if (tagLengthAccessor == null) {
+                return null;
+            }
+            Object result = tagLengthAccessor.invokeExact();
+            return result instanceof Integer ? (Integer) result : null;
+        }
+
+        private static MethodHandle bindNoArg(Object target, String name, Class<?> expectedType) {
+            MethodHandle handle = bindNoArg(target, target.getClass().getMethods(), name, expectedType);
+            if (handle != null) {
+                return handle;
+            }
+            Class<?>[] interfaces = allInterfaces(target.getClass());
+            for (Class<?> type : interfaces) {
+                handle = bindNoArg(target, type.getMethods(), name, expectedType);
+                if (handle != null) {
+                    return handle;
+                }
+            }
+            return null;
+        }
+
+        private static MethodHandle bindNoArg(Object target, Method[] methods, String name, Class<?> expectedType) {
+            for (Method method : methods) {
+                if (!name.equals(method.getName()) || method.getParameterCount() != 0
+                        || !compatibleReturnType(method.getReturnType(), expectedType)) {
+                    continue;
+                }
+                try {
+                    MethodHandle handle = MethodHandles.publicLookup().unreflect(method).bindTo(target);
+                    return handle.asType(MethodType.methodType(Object.class));
+                } catch (IllegalAccessException exception) { // NOPMD - try another public declaration
+                    // Try another public declaration of the same accessor.
+                }
+            }
+            return null;
+        }
+
+        private static boolean compatibleReturnType(Class<?> actualType, Class<?> expectedType) {
+            return expectedType == Integer.class && actualType == Integer.TYPE
+                    || expectedType.isAssignableFrom(actualType);
+        }
     }
 
     private static Throwable unwrapInvocationTarget(Throwable t) {
@@ -682,22 +702,41 @@ public final class AuditedContexts {
         if (key == null) {
             return "n/a";
         }
-        try {
-            byte[] enc = key.getEncoded();
-            if (enc == null) {
-                // Non-extractable key: fall back to type information
-                return key.getAlgorithm() + ":" + key.getClass().getSimpleName();
-            }
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] d = md.digest(enc);
-            // hex-short: first 8 bytes
-            StringBuilder sb = new StringBuilder(2 * 8);
-            for (int i = 0; i < Math.min(8, d.length); i++) {
-                sb.append(String.format("%02x", d[i]));
-            }
-            return key.getAlgorithm() + ":" + sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            return key.getAlgorithm() + ":fp-error";
+        if (!(key instanceof PublicKey)) {
+            return safeKeyMetadata(key);
         }
+
+        byte[] workingEncoding = null;
+        byte[] digest = null;
+        try {
+            workingEncoding = key.getEncoded();
+            if (workingEncoding == null) {
+                // Non-extractable key: fall back to type information
+                return safeKeyMetadata(key);
+            }
+            MessageDigest messageDigest = MessageDigest.getInstance("SHA-256");
+            digest = messageDigest.digest(workingEncoding);
+            // hex-short: first 8 bytes
+            StringBuilder fingerprint = new StringBuilder(16);
+            for (int index = 0; index < Math.min(8, digest.length); index++) {
+                int value = digest[index] & 0xff;
+                fingerprint.append(Character.forDigit(value >>> 4, 16))
+                        .append(Character.forDigit(value & 0x0f, 16));
+            }
+            return key.getAlgorithm() + ":" + fingerprint;
+        } catch (NoSuchAlgorithmException exception) {
+            return key.getAlgorithm() + ":fp-error";
+        } finally {
+            if (workingEncoding != null) {
+                Arrays.fill(workingEncoding, (byte) 0);
+            }
+            if (digest != null) {
+                Arrays.fill(digest, (byte) 0);
+            }
+        }
+    }
+
+    private static String safeKeyMetadata(Key key) {
+        return key.getAlgorithm() + ":" + key.getClass().getSimpleName();
     }
 }

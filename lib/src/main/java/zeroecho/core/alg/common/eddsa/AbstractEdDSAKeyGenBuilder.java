@@ -36,11 +36,9 @@ package zeroecho.core.alg.common.eddsa;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.PrivateKey;
-import java.security.PublicKey;
 
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
 /**
  * <h2>Abstract EdDSA Key-Pair Builder</h2>
@@ -71,7 +69,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public abstract class AbstractEdDSAKeyGenBuilder<S extends AlgorithmKeySpec> implements AsymmetricKeyBuilder<S> {
+public abstract class AbstractEdDSAKeyGenBuilder<S extends AlgorithmKeySpec> implements AsymmetricKeyPairGenerator<S> {
     /**
      * Returns the JCA algorithm name understood by {@link KeyPairGenerator}.
      *
@@ -92,9 +90,8 @@ public abstract class AbstractEdDSAKeyGenBuilder<S extends AlgorithmKeySpec> imp
      * Generates a new EdDSA key pair using JCA defaults.
      *
      * <p>
-     * The provided {@code spec} is not inspected in this base implementation, but
-     * it satisfies the {@link AsymmetricKeyBuilder} contract. Subclasses may extend
-     * this behavior to interpret spec parameters.
+     * The provided {@code spec} is not inspected in this base implementation.
+     * Subclasses may extend this behavior to interpret specification parameters.
      * </p>
      *
      * @param spec algorithm-specific key specification (currently unused)
@@ -106,39 +103,5 @@ public abstract class AbstractEdDSAKeyGenBuilder<S extends AlgorithmKeySpec> imp
     public KeyPair generateKeyPair(S spec) throws GeneralSecurityException {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance(jcaKeyPairAlg());
         return kpg.generateKeyPair();
-    }
-
-    /**
-     * Always throws, as this builder does not support public key import.
-     *
-     * <p>
-     * Importing encoded EdDSA public keys must be done through the corresponding
-     * {@code *PublicKeySpec} builder class.
-     * </p>
-     *
-     * @param spec algorithm-specific key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public PublicKey importPublic(S spec) {
-        throw new UnsupportedOperationException("Use the corresponding PublicKeySpec to import a public key.");
-    }
-
-    /**
-     * Always throws, as this builder does not support private key import.
-     *
-     * <p>
-     * Importing encoded EdDSA private keys must be done through the corresponding
-     * {@code *PrivateKeySpec} builder class.
-     * </p>
-     *
-     * @param spec algorithm-specific key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public PrivateKey importPrivate(S spec) {
-        throw new UnsupportedOperationException("Use the corresponding PrivateKeySpec to import a private key.");
     }
 }

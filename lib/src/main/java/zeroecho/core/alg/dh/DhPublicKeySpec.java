@@ -64,7 +64,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h2>Example</h2> <pre>{@code
  * // Import a DH public key from encoded bytes
  * DhPublicKeySpec spec = new DhPublicKeySpec(x509Bytes);
- * PublicKey pub = CryptoAlgorithms.publicKey("DH", spec);
+ * PublicKey pub = session.keyBuilders().asymmetric().importPublic("DH", spec);
  *
  * // Marshal to a text-friendly representation
  * PairSeq ps = DhPublicKeySpec.marshal(spec);

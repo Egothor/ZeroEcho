@@ -33,8 +33,12 @@
  ******************************************************************************/
 package zeroecho.core.alg.kyber;
 
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -43,7 +47,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * Specification wrapper for a Kyber (ML-KEM) private key encoded in PKCS#8.
  *
  * <p>
- * Instances of this class carry an immutable copy of the PKCS#8-encoded private
+ * Instances of this class carry an owned copy of the PKCS#8-encoded private
  * key bytes. They are used with {@link zeroecho.core.CryptoAlgorithm} key
  * builders to import keys into the provider’s native representation.
  * </p>
@@ -51,7 +55,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h2>Encoding</h2>
  * <ul>
  * <li>Format: PKCS#8 DER encoding of a Kyber private key.</li>
- * <li>Stored as a defensive clone to ensure immutability.</li>
+ * <li>Stored as a defensive clone.</li>
  * <li>Marshalling/unmarshalling supported via {@link PairSeq} with Base64
  * encoding.</li>
  * </ul>
@@ -60,7 +64,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * // Import a private key into a CryptoAlgorithm
  * byte[] pkcs8Bytes = ...; // obtained from storage
  * KyberPrivateKeySpec spec = new KyberPrivateKeySpec(pkcs8Bytes);
- * PrivateKey k = kyberAlg.importPrivate(spec);
+ * PrivateKey k = kyberAlg.privateKeyImporter(KyberPrivateKeySpec.class).importPrivate(spec);
  *
  * // Serialize for persistence
  * PairSeq seq = KyberPrivateKeySpec.marshal(spec);
@@ -70,16 +74,18 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * }</pre>
  *
  * <p>
- * This class is immutable and thread-safe.
+ * Access and destruction are synchronized.
  * </p>
  *
  * @see KyberPublicKeySpec
  * @see KyberKeyGenSpec
  */
-public final class KyberPrivateKeySpec implements AlgorithmKeySpec {
+public final class KyberPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
 
     private static final String PKCS8_B64 = "pkcs8.b64";
     private final byte[] pkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Creates a new spec from PKCS#8-encoded private key bytes.
@@ -97,7 +103,13 @@ public final class KyberPrivateKeySpec implements AlgorithmKeySpec {
      * @return cloned byte array of PKCS#8 DER encoding
      */
     public byte[] pkcs8() {
-        return pkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return pkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -114,7 +126,7 @@ public final class KyberPrivateKeySpec implements AlgorithmKeySpec {
      * @return key-value representation suitable for persistence
      */
     public static PairSeq marshal(KyberPrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.pkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "KyberPrivateKey", PKCS8_B64, b64);
     }
 
@@ -139,7 +151,12 @@ public final class KyberPrivateKeySpec implements AlgorithmKeySpec {
         if (pkcs8b64 == null) {
             throw new IllegalArgumentException("KyberPrivateKeySpec: missing 'pkcs8.b64'");
         }
-        return new KyberPrivateKeySpec(Base64.getDecoder().decode(pkcs8b64));
+        byte[] decoded = Base64.getDecoder().decode(pkcs8b64);
+        try {
+            return new KyberPrivateKeySpec(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -154,5 +171,44 @@ public final class KyberPrivateKeySpec implements AlgorithmKeySpec {
     @Override
     public String toString() {
         return "KyberPrivateKeySpec[len=" + pkcs8.length + "]";
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(pkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(pkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("Kyber private key specification has been destroyed");
+        }
     }
 }

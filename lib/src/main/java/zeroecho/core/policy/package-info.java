@@ -52,13 +52,12 @@
  * </ul>
  *
  * <h2>Typical usage</h2> <pre>{@code
- * // Install a global minimum-strength policy.
- * zeroecho.core.CryptoAlgorithms.setPolicy(
- *     zeroecho.core.policy.CryptoPolicy.minStrength(128));
+ * zeroecho.sdk.ZeroEchoSession session = new zeroecho.sdk.ZeroEchoSession()
+ *     .withPolicy(zeroecho.core.policy.CryptoPolicy.minStrength(128));
  *
- * // Later, when creating a context, the policy is consulted automatically.
+ * // The session applies the policy without changing other consumers.
  * zeroecho.core.context.EncryptionContext ctx =
- *     zeroecho.core.CryptoAlgorithms.create("AES/GCM", zeroecho.core.KeyUsage.ENCRYPT, secretKey);
+ *     session.createContext("AES", zeroecho.core.KeyUsage.ENCRYPT, secretKey);
  * }</pre>
  *
  * <h2>Design notes</h2>

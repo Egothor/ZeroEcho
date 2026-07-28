@@ -56,12 +56,12 @@
  * <h2>Typical usage</h2> <pre>{@code
  * // Algorithm requires no per-operation parameters.
  * zeroecho.core.context.CryptoContext ctx =
- *     algo.create(zeroecho.core.KeyUsage.SIGN, privateKey, zeroecho.core.spec.VoidSpec.INSTANCE);
+ *     algo.createContext(zeroecho.core.KeyUsage.SIGN, privateKey, zeroecho.core.spec.VoidSpec.INSTANCE);
  *
  * // Algorithm with parameters: pass an algorithm-specific ContextSpec implementation.
  * // Example: RSA with OAEP/PSS, AEAD tag length, etc.
  * // zeroecho.core.context.CryptoContext ctx =
- * //     algo.create(zeroecho.core.KeyUsage.ENCRYPT, key, someAlgorithmSpecificSpec);
+ * //     algo.createContext(zeroecho.core.KeyUsage.ENCRYPT, key, someAlgorithmSpecificSpec);
  * }</pre>
  *
  * <h2>Design notes</h2>

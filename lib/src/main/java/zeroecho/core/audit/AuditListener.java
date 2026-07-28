@@ -38,9 +38,7 @@ import java.security.KeyPair;
 import java.util.Map;
 
 import zeroecho.core.KeyUsage;
-import zeroecho.core.context.CryptoContext;
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spec.ContextSpec;
 
 /**
  * Listener for structured audit events emitted by audited crypto contexts.
@@ -72,33 +70,6 @@ import zeroecho.core.spec.ContextSpec;
  * </p>
  */
 public interface AuditListener {
-    /**
-     * Emitted right after a context has been created and wrapped.
-     *
-     * <p>
-     * The callback conveys basic provenance such as provider label, the intended
-     * key usage role, and optional key and specification objects. Implementations
-     * must not attempt to extract secrets from the provided objects.
-     * </p>
-     *
-     * @param <S>      the concrete context specification type
-     * @param <K>      the concrete key type
-     * @param id       an algorithm or implementation identifier supplied by the
-     *                 creator; never null but may be a generic label such as
-     *                 "unknown"
-     * @param provider a provider or vendor label; may be "unknown"
-     * @param role     the usage role associated with the context, for example
-     *                 ENCRYPTION or VERIFY
-     * @param key      the key associated with the context if available, or null if
-     *                 not applicable
-     * @param spec     the context specification if available, or null if not
-     *                 applicable
-     */
-    default <S extends ContextSpec, K extends Key> void onContextCreated(String id, String provider, KeyUsage role,
-            K key, S spec) {
-        // empty
-    }
-
     /**
      * Emitted after key pair generation via SPI.
      *
@@ -135,25 +106,6 @@ public interface AuditListener {
      * @param key      the constructed or imported key; never null
      */
     default void onKeyBuilt(String id, String provider, AlgorithmKeySpec spec, Key key) {
-        // empty
-    }
-
-    /**
-     * Emitted when a context is closed (generic form).
-     *
-     * <p>
-     * This form mirrors legacy summary notifications and may be emitted in addition
-     * to the id-based closure callback.
-     * </p>
-     *
-     * @param id       an algorithm or implementation identifier supplied at
-     *                 creation time
-     * @param provider a provider or vendor label
-     * @param role     the usage role associated with the context
-     * @param key      the primary key associated with the context, or null if
-     *                 unavailable
-     */
-    default void onContextClosed(String id, String provider, KeyUsage role, Key key) {
         // empty
     }
 
@@ -407,21 +359,6 @@ public interface AuditListener {
      * @param msgLen the retrieved message length in bytes, or -1 if unavailable
      */
     default void onAgreementPeerMessageGet(String ctxId, int msgLen) {
-        // empty
-    }
-
-    /**
-     * Legacy single-argument creation callback.
-     *
-     * <p>
-     * Emitted when a context is wrapped. Prefer
-     * {@link #onContextCreatedMeta(String, String, String, KeyUsage, String, Map)}
-     * for structured metadata and correlation.
-     * </p>
-     *
-     * @param ctx the wrapped crypto context; never null
-     */
-    default void onContextCreated(CryptoContext ctx) {
         // empty
     }
 

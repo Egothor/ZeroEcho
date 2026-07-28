@@ -38,7 +38,8 @@
  * This package wires the Ed448 Edwards-curve Digital Signature Algorithm into
  * the core layer. It provides the algorithm descriptor, a streaming signature
  * context with a fixed 114-byte tag length, builders for generating and
- * importing keys, and immutable key specifications with marshalling helpers.
+ * importing keys, and defensively copying key specifications with marshalling
+ * helpers.
  * </p>
  *
  * <h2>Scope and responsibilities</h2>
@@ -49,8 +50,8 @@
  * enforces the 114-byte tag size.</li>
  * <li>Expose builders for key-pair generation and for importing encoded
  * keys.</li>
- * <li>Define immutable key specifications suitable for safe cloning and simple
- * marshalling.</li>
+ * <li>Define defensively copying key specifications suitable for safe cloning
+ * and simple marshalling; private-key specifications are destroyable.</li>
  * </ul>
  *
  * <h2>Components</h2>
@@ -63,9 +64,9 @@
  * marker spec for producing key pairs.</li>
  * <li><b>Ed448PublicKeyBuilder</b> / <b>Ed448PrivateKeyBuilder</b>: importers
  * backed by JCA key factories.</li>
- * <li><b>Ed448PublicKeySpec</b> / <b>Ed448PrivateKeySpec</b>: immutable
- * wrappers over X.509 and PKCS#8 encodings, with defensive copying and base64
- * marshalling helpers.</li>
+ * <li><b>Ed448PublicKeySpec</b> / <b>Ed448PrivateKeySpec</b>: wrappers over
+ * X.509 and PKCS#8 encodings, with defensive copying and base64 marshalling
+ * helpers; the private-key form is destroyable.</li>
  * </ul>
  *
  * <h2>Design notes</h2>

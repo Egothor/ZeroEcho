@@ -57,7 +57,7 @@ package zeroecho.core.context;
  *
  * <h2>Lifecycle</h2>
  * <ul>
- * <li>Create a context via {@code CryptoAlgorithm#create(...)} for the
+ * <li>Create a context via {@code ZeroEchoSession#createContext(...)} for the
  * {@link zeroecho.core.KeyUsage#AGREEMENT} role.</li>
  * <li>Initiators call {@link #getPeerMessage()} to obtain the message to send
  * to the responder, then invoke {@link AgreementContext#deriveSecret()}.</li>

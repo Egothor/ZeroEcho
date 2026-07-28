@@ -132,11 +132,11 @@ public class Ed25519LargeDataTest {
             return;
         }
 
-        KeyPair kp = CryptoAlgorithms.keyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
 
         // SIGN: context emits [body][signature] — capture trailer via
         // TailStrippingInputStream
-        SignatureContext signer = CryptoAlgorithms.create("Ed25519", KeyUsage.SIGN, kp.getPrivate(), null);
+        SignatureContext signer = new zeroecho.sdk.ZeroEchoSession().createContext("Ed25519", KeyUsage.SIGN, kp.getPrivate(), null);
         final byte[][] sigHolder = new byte[1][];
         final int sigLen = signer.tagLength();
 
@@ -166,7 +166,7 @@ public class Ed25519LargeDataTest {
         assertArrayEquals(refSig, ourSig, "signature mismatch vs JCA reference");
 
         // VERIFY: supply expected tag and drain (throws on mismatch)
-        SignatureContext verifier = CryptoAlgorithms.create("Ed25519", KeyUsage.VERIFY, kp.getPublic(), null);
+        SignatureContext verifier = new zeroecho.sdk.ZeroEchoSession().createContext("Ed25519", KeyUsage.VERIFY, kp.getPublic(), null);
         verifier.setExpectedTag(ourSig);
 
         byte[] sink2;

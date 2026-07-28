@@ -52,8 +52,7 @@ import zeroecho.core.CryptoAlgorithm;
  *
  * <h2>Lifecycle</h2>
  * <ul>
- * <li>Contexts are created via {@code CryptoAlgorithm#create(...)} or the
- * convenience methods in {@code CryptoAlgorithms}.</li>
+ * <li>Contexts are created via {@code ZeroEchoSession#createContext(...)}.</li>
  * <li>They may wrap native or provider-managed resources that must be
  * released.</li>
  * <li>Once closed, a context must not be reused; callers should request a new
@@ -62,9 +61,8 @@ import zeroecho.core.CryptoAlgorithm;
  *
  * <h2>Security considerations</h2>
  * <ul>
- * <li>Closing a context may attempt to destroy the underlying {@link Key} if it
- * implements {@code javax.security.auth.Destroyable} and auditing is
- * enabled.</li>
+ * <li>Bound keys are borrowed from the caller and are never destroyed by
+ * context closure.</li>
  * <li>Applications should always call {@link #close()} promptly to avoid
  * leaking key material or other sensitive state.</li>
  * <li>Contexts are not guaranteed to be thread-safe; concurrent use should be
@@ -110,9 +108,10 @@ public sealed interface CryptoContext extends Closeable
      * Closes this context and releases all associated resources.
      *
      * <p>
-     * Implementations should free provider state and native handles. If the bound
-     * key supports destruction, the library may attempt to invoke {@code destroy()}
-     * on it when auditing is enabled.
+     * Implementations free context-owned provider state and native handles. The
+     * bound key remains caller-owned: closing a context never destroys the key.
+     * Callers that own a destroyable key must destroy it explicitly after all
+     * contexts and other consumers have released it.
      * </p>
      *
      * @throws java.io.IOException if the underlying provider encounters an I/O

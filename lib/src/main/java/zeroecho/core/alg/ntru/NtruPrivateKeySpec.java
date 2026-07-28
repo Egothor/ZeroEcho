@@ -33,8 +33,12 @@
  ******************************************************************************/
 package zeroecho.core.alg.ntru;
 
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -44,8 +48,9 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * simple marshal/unmarshal form.
  *
  * <p>
- * Instances are immutable. The byte array provided to the constructor is
- * defensively copied and {@link #pkcs8()} returns a fresh clone on each call.
+ * The byte array provided to the constructor is defensively copied and
+ * {@link #pkcs8()} returns a fresh clone on each call. Access and destruction
+ * are synchronized.
  * </p>
  *
  * <h2>Usage</h2> <pre>{@code
@@ -66,10 +71,12 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * @since 1.0
  */
-public final class NtruPrivateKeySpec implements AlgorithmKeySpec {
+public final class NtruPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
 
     private static final String PKCS8_B64 = "pkcs8.b64";
     private final byte[] pkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Creates a new specification from PKCS#8-encoded bytes.
@@ -96,7 +103,13 @@ public final class NtruPrivateKeySpec implements AlgorithmKeySpec {
      * @return a new byte array containing the PKCS#8 DER encoding
      */
     public byte[] pkcs8() {
-        return pkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return pkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -118,7 +131,7 @@ public final class NtruPrivateKeySpec implements AlgorithmKeySpec {
      * @throws NullPointerException if {@code spec} is null
      */
     public static PairSeq marshal(NtruPrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.pkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "NtruPrivateKey", PKCS8_B64, b64);
     }
 
@@ -151,7 +164,12 @@ public final class NtruPrivateKeySpec implements AlgorithmKeySpec {
         if (pkcs8b64 == null) {
             throw new IllegalArgumentException("NtruPrivateKeySpec: missing 'pkcs8.b64'");
         }
-        return new NtruPrivateKeySpec(Base64.getDecoder().decode(pkcs8b64));
+        byte[] decoded = Base64.getDecoder().decode(pkcs8b64);
+        try {
+            return new NtruPrivateKeySpec(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -162,5 +180,44 @@ public final class NtruPrivateKeySpec implements AlgorithmKeySpec {
     @Override
     public String toString() {
         return "NtruPrivateKeySpec[len=" + pkcs8.length + "]";
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(pkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(pkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("NTRU private key specification has been destroyed");
+        }
     }
 }

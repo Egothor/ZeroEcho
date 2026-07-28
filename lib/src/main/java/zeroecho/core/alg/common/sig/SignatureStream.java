@@ -81,8 +81,8 @@ import zeroecho.core.util.Strings;
  * upstream stream.
  * </p>
  */
-final class Stream extends AbstractPassthroughInputStream {
-    private static final Logger LOG = Logger.getLogger(Stream.class.getName());
+final class SignatureStream extends AbstractPassthroughInputStream {
+    private static final Logger LOG = Logger.getLogger(SignatureStream.class.getName());
 
     /** Cached trailer in sign mode: computed once from {@link Signature#sign()}. */
     private byte[] signature;
@@ -108,7 +108,7 @@ final class Stream extends AbstractPassthroughInputStream {
      * @param strategy    verification predicate used in verify mode; ignored in
      *                    sign mode; must not be {@code null} in verify mode
      */
-    /* package */ Stream(final Signature engine, final boolean signMode, final InputStream upstream,
+    /* package */ SignatureStream(final Signature engine, final boolean signMode, final InputStream upstream,
             final int bodyBufSize, final byte[] expectedTag, final VerificationBiPredicate<Signature> strategy) {
         super(upstream, bodyBufSize);
         this.engine = engine;

@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -55,7 +56,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * Implements the SABER post-quantum key encapsulation mechanism for the crypto
@@ -73,7 +76,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * message-oriented interface suitable for one-pass key agreement.
  *
  * <h2>Key material import and generation</h2> The algorithm registers
- * {@code AsymmetricKeyBuilder} implementations for:
+ * operation-specific key implementations for:
  * <ul>
  * <li>{@code SaberKeyGenSpec}: generates SABER key pairs for the requested
  * parameter set using {@code KeyPairGenerator} from the provider.</li>
@@ -92,14 +95,15 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * CryptoAlgorithm saber = new SaberAlgorithm();
  *
  * // Generate a key pair for a specific SABER variant
- * KeyPair kp = saber.build(SaberKeyGenSpec.saberkem256r3()).generateKeyPair();
+ * KeyPair kp = saber.asymmetricKeyPairGenerator(SaberKeyGenSpec.class)
+ *                    .generateKeyPair(SaberKeyGenSpec.saberkem256r3());
  *
  * // Encapsulation (initiator)
- * KemContext enc = saber.create(KemContext.class, kp.getPublic(), VoidSpec.INSTANCE);
+ * KemContext enc = saber.createContext(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
  * KemResult out = enc.encapsulate();
  *
  * // Decapsulation (responder)
- * KemContext dec = saber.create(KemContext.class, kp.getPrivate(), VoidSpec.INSTANCE);
+ * KemContext dec = saber.createContext(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
  * SecretKey k = dec.decapsulate(out.ciphertext());
  * }</pre>
  */
@@ -154,7 +158,7 @@ public final class SaberAlgorithm extends AbstractCryptoAlgorithm {
                             .build();
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(SaberKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(SaberKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(SaberKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
@@ -176,23 +180,9 @@ public final class SaberAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(SaberKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PrivateKey importPrivate(SaberKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
         }, SaberKeyGenSpec::saberkem256r3);
 
-        registerAsymmetricKeyBuilder(SaberPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(SaberPublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPublicKeyImporter(SaberPublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(SaberPublicKeySpec spec) throws GeneralSecurityException {
@@ -200,31 +190,22 @@ public final class SaberAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("SABER", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(SaberPublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(SaberPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(SaberPrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PublicKey importPublic(SaberPrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPrivateKeyImporter(SaberPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(SaberPrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("SABER", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     /**

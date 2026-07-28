@@ -38,12 +38,10 @@ import java.security.AlgorithmParameters;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.PrivateKey;
-import java.security.PublicKey;
 
 import javax.crypto.spec.DHParameterSpec;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
 /**
  * <h2>DH key pair builder</h2>
@@ -89,7 +87,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * KeyPair kp2 = builder.generateKeyPair(sized);
  * }</pre>
  */
-public final class DhKeyGenBuilder implements AsymmetricKeyBuilder<DhSpec> {
+public final class DhKeyGenBuilder implements AsymmetricKeyPairGenerator<DhSpec> {
     /**
      * Generates a Diffie-Hellman key pair for the given specification.
      *
@@ -137,57 +135,5 @@ public final class DhKeyGenBuilder implements AsymmetricKeyBuilder<DhSpec> {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("DiffieHellman");
         kpg.initialize(dh);
         return kpg.generateKeyPair();
-    }
-
-    /**
-     * Unsupported for DH in this builder.
-     *
-     * <p>
-     * Raw public key import is not implemented because this builder focuses on key
-     * generation from DH parameters. Use higher-level catalog or codec facilities
-     * to parse or construct {@link PublicKey} instances if needed.
-     * </p>
-     *
-     * <p>
-     * <strong>Example</strong>
-     * </p>
-     * <pre>{@code
-     * // This will throw UnsupportedOperationException
-     * new DhKeyGenBuilder().importPublic(DhSpec.ffdhe2048());
-     * }</pre>
-     *
-     * @param spec the DH specification (ignored)
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public PublicKey importPublic(DhSpec spec) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Unsupported for DH in this builder.
-     *
-     * <p>
-     * Raw private key import is not implemented because this builder focuses on key
-     * generation from DH parameters. Use higher-level catalog or codec facilities
-     * to parse or construct {@link PrivateKey} instances if needed.
-     * </p>
-     *
-     * <p>
-     * <strong>Example</strong>
-     * </p>
-     * <pre>{@code
-     * // This will throw UnsupportedOperationException
-     * new DhKeyGenBuilder().importPrivate(DhSpec.ffdhe2048());
-     * }</pre>
-     *
-     * @param spec the DH specification (ignored)
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public PrivateKey importPrivate(DhSpec spec) {
-        throw new UnsupportedOperationException();
     }
 }

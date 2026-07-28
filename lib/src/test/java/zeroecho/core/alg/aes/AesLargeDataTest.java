@@ -109,18 +109,18 @@ public class AesLargeDataTest {
         byte[] msg = randomBytes(SIZE);
         CryptoAlgorithm aes = CryptoAlgorithms.require("AES");
 
-        SecretKey key = aes.symmetricKeyBuilder(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.aes256());
+        SecretKey key = aes.symmetricKeyGenerator(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.aes256());
 
         CtxInterface session = Ctx.INSTANCE.getContext("aes-ctx-" + System.nanoTime());
 
         AesSpec spec = AesSpec.gcm128(null);
 
-        EncryptionContext enc = CryptoAlgorithms.create("AES", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(session);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
 
-        EncryptionContext dec = CryptoAlgorithms.create("AES", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec).setContext(session);
         byte[] pt = readAll(dec.attach(new ByteArrayInputStream(ct)));
         dec.close();
@@ -139,18 +139,18 @@ public class AesLargeDataTest {
         System.out.printf("...input: %d bytes%n", msg.length);
         CryptoAlgorithm aes = CryptoAlgorithms.require("AES");
 
-        SecretKey key = aes.symmetricKeyBuilder(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.aes256());
+        SecretKey key = aes.symmetricKeyGenerator(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.aes256());
 
         CtxInterface session = Ctx.INSTANCE.getContext("aes-hdr-" + System.nanoTime());
         AesSpec spec = AesSpec.gcm128(new AesHeaderCodec());
 
-        EncryptionContext enc = CryptoAlgorithms.create("AES", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(session);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
         System.out.printf("...encrypted: %d bytes%n", ct.length);
 
-        EncryptionContext dec = CryptoAlgorithms.create("AES", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec).setContext(session);
         byte[] pt = readAll(dec.attach(new ByteArrayInputStream(ct)));
         dec.close();
@@ -169,18 +169,18 @@ public class AesLargeDataTest {
         byte[] msg = randomBytes(SIZE);
         CryptoAlgorithm aes = CryptoAlgorithms.require("AES");
 
-        SecretKey key = aes.symmetricKeyBuilder(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.aes256());
+        SecretKey key = aes.symmetricKeyGenerator(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.aes256());
 
         CtxInterface session = Ctx.INSTANCE.getContext("aes-cbc-" + System.nanoTime());
 
         AesSpec spec = AesSpec.cbcPkcs7(null);
 
-        EncryptionContext enc = CryptoAlgorithms.create("AES", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(session);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
 
-        EncryptionContext dec = CryptoAlgorithms.create("AES", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec).setContext(session);
         byte[] pt = readAll(dec.attach(new ByteArrayInputStream(ct)));
         dec.close();

@@ -71,11 +71,16 @@ import zeroecho.core.context.MacContext;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.TailStrippingInputStream;
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
-import zeroecho.core.spi.SymmetricKeyBuilder;
+import zeroecho.core.KeyOperation;
+import zeroecho.core.KeyOperationInfo;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.SymmetricKeyGenerator;
+import zeroecho.core.audit.AuditMode;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
 public class CatalogContractTest {
+    private static ZeroEchoSession session;
 
     static Level effectiveLevel(Logger lg) {
         for (Logger x = lg; x != null; x = x.getParent()) {
@@ -102,9 +107,9 @@ public class CatalogContractTest {
         Logger jul = Logger.getLogger("zeroecho.audit");
         jul.setLevel(Level.FINE); // see PROGRESS at FINE
 
-        CryptoAlgorithms.setAuditListener(JulAuditListenerStd.builder().logger(jul).infoLevel(Level.INFO)
-                .warnLevel(Level.WARNING).progressLevel(Level.FINE).includeStackTraces(true).build());
-        CryptoAlgorithms.setAuditMode(CryptoAlgorithms.AuditMode.WRAP);
+        session = new ZeroEchoSession().withAuditListener(JulAuditListenerStd.builder().logger(jul)
+                .infoLevel(Level.INFO).warnLevel(Level.WARNING).progressLevel(Level.FINE)
+                .includeStackTraces(true).build()).withAuditMode(AuditMode.WRAP);
 
         dump("");
         dump("zeroecho.core.audit");
@@ -167,21 +172,21 @@ public class CatalogContractTest {
     void genericRoundTrips() throws Exception {
         logBegin();
         byte[] msg = "roundtrip".getBytes();
-        CryptoAlgorithms.setAuditMode(CryptoAlgorithms.AuditMode.WRAP);
-
         for (String id : CryptoAlgorithms.available()) {
             CryptoAlgorithm alg = CryptoAlgorithms.require(id);
+            boolean hasAsym = alg.keyOperations().stream()
+                    .anyMatch(info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE);
+            boolean hasSym = alg.keyOperations().stream()
+                    .anyMatch(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE);
 
             // SIGN/VERIFY (asymmetric)
             if (alg.roles().contains(KeyUsage.SIGN) && alg.roles().contains(KeyUsage.VERIFY)
-                    && !alg.asymmetricBuildersInfo().isEmpty()) {
+                    && hasAsym) {
                 trySignVerify(id, msg);
                 System.out.println();
             }
 
             // ENCRYPT/DECRYPT
-            boolean hasSym = !alg.symmetricBuildersInfo().isEmpty();
-            boolean hasAsym = !alg.asymmetricBuildersInfo().isEmpty();
             if (alg.roles().contains(KeyUsage.ENCRYPT) && alg.roles().contains(KeyUsage.DECRYPT)) {
                 if (hasSym || hasAsym) {
                     tryEncryptDecrypt(id, msg, hasSym, hasAsym);
@@ -191,7 +196,7 @@ public class CatalogContractTest {
 
             // KEM
             if (alg.roles().contains(KeyUsage.ENCAPSULATE) && alg.roles().contains(KeyUsage.DECAPSULATE)
-                    && !alg.asymmetricBuildersInfo().isEmpty()) {
+                    && hasAsym) {
                 tryKem(id, msg);
                 System.out.println();
             }
@@ -203,7 +208,7 @@ public class CatalogContractTest {
             }
 
             // MAC (single role now; verification via setExpectedTag)
-            if (alg.roles().contains(KeyUsage.MAC) && !alg.symmetricBuildersInfo().isEmpty()) {
+            if (alg.roles().contains(KeyUsage.MAC) && hasSym) {
                 tryMac(id, msg);
                 System.out.println();
             }
@@ -222,7 +227,7 @@ public class CatalogContractTest {
         }
 
         // SIGN: produce [body][signature] and capture trailer
-        SignatureContext signer = CryptoAlgorithms.create(id, KeyUsage.SIGN, kp.getPrivate(), null);
+        SignatureContext signer = session.createContext(id, KeyUsage.SIGN, kp.getPrivate(), null);
         final byte[][] sigHolder = new byte[1][];
         final int sigLen = signer.tagLength();
         try (InputStream in = new TailStrippingInputStream(signer.wrap(new ByteArrayInputStream(msg)), sigLen, 8192) {
@@ -240,7 +245,7 @@ public class CatalogContractTest {
         assertTrue(sig.length > 0, "signature empty");
 
         // VERIFY: supply signature via setExpectedTag and drain (throws on mismatch)
-        SignatureContext verifier = CryptoAlgorithms.create(id, KeyUsage.VERIFY, kp.getPublic(), null);
+        SignatureContext verifier = session.createContext(id, KeyUsage.VERIFY, kp.getPublic(), null);
         verifier.setExpectedTag(sig);
         try (InputStream verIn = verifier.wrap(new ByteArrayInputStream(msg))) {
             readAll(verIn);
@@ -261,14 +266,14 @@ public class CatalogContractTest {
             if (sk != null) {
                 conflux.CtxInterface session = conflux.Ctx.INSTANCE.getContext("encdec-" + System.nanoTime());
 
-                EncryptionContext enc = CryptoAlgorithms.create(id, KeyUsage.ENCRYPT, sk, null);
+                EncryptionContext enc = CatalogContractTest.session.createContext(id, KeyUsage.ENCRYPT, sk, null);
                 if (enc instanceof zeroecho.core.spi.ContextAware ca) {
                     ca.setContext(session);
                 }
                 byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
                 enc.close();
 
-                EncryptionContext dec = CryptoAlgorithms.create(id, KeyUsage.DECRYPT, sk, null);
+                EncryptionContext dec = CatalogContractTest.session.createContext(id, KeyUsage.DECRYPT, sk, null);
                 if (dec instanceof zeroecho.core.spi.ContextAware ca2) {
                     ca2.setContext(session);
                 }
@@ -284,11 +289,11 @@ public class CatalogContractTest {
         if (hasAsym) {
             KeyPair kp = tryKeyPairWithDefaultSpec(alg);
             if (kp != null) {
-                EncryptionContext enc = CryptoAlgorithms.create(id, KeyUsage.ENCRYPT, kp.getPublic(), null);
+                EncryptionContext enc = session.createContext(id, KeyUsage.ENCRYPT, kp.getPublic(), null);
                 byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
                 enc.close();
 
-                EncryptionContext dec = CryptoAlgorithms.create(id, KeyUsage.DECRYPT, kp.getPrivate(), null);
+                EncryptionContext dec = session.createContext(id, KeyUsage.DECRYPT, kp.getPrivate(), null);
                 byte[] pt = readAll(dec.attach(new ByteArrayInputStream(ct)));
                 dec.close();
 
@@ -308,8 +313,8 @@ public class CatalogContractTest {
             return;
         }
 
-        KemContext pub = CryptoAlgorithms.create(id, KeyUsage.ENCAPSULATE, kp.getPublic(), null);
-        KemContext prv = CryptoAlgorithms.create(id, KeyUsage.DECAPSULATE, kp.getPrivate(), null);
+        KemContext pub = session.createContext(id, KeyUsage.ENCAPSULATE, kp.getPublic(), null);
+        KemContext prv = session.createContext(id, KeyUsage.DECAPSULATE, kp.getPrivate(), null);
 
         KemContext.KemResult res = pub.encapsulate();
         byte[] ss = prv.decapsulate(res.ciphertext());
@@ -326,7 +331,7 @@ public class CatalogContractTest {
     private void tryDigest(String id, byte[] msg) throws Exception {
         logBegin(id, Integer.valueOf(msg.length));
 
-        DigestContext dctx = CryptoAlgorithms.create(id, KeyUsage.DIGEST, NullKey.INSTANCE, null);
+        DigestContext dctx = session.createContext(id, KeyUsage.DIGEST, NullKey.INSTANCE, null);
         final byte[][] digestHolder = new byte[1][];
         final int tagLen = dctx.tagLength();
 
@@ -360,7 +365,7 @@ public class CatalogContractTest {
         }
 
         // Produce tag: [body][tag], capture trailer
-        MacContext mac = CryptoAlgorithms.create(id, KeyUsage.MAC, sk, null);
+        MacContext mac = session.createContext(id, KeyUsage.MAC, sk, null);
         final byte[][] tagHolder = new byte[1][];
         final int tagLen = mac.tagLength();
         try (InputStream in = new TailStrippingInputStream(mac.wrap(new ByteArrayInputStream(msg)), tagLen, 8192) {
@@ -378,7 +383,7 @@ public class CatalogContractTest {
         assertTrue(tag.length > 0);
 
         // Verify: provide expected tag and drain (throws on mismatch)
-        MacContext ver = CryptoAlgorithms.create(id, KeyUsage.MAC, sk, null);
+        MacContext ver = session.createContext(id, KeyUsage.MAC, sk, null);
         ver.setExpectedTag(tag);
         try (InputStream in = ver.wrap(new ByteArrayInputStream(msg))) {
             readAll(in);
@@ -406,33 +411,32 @@ public class CatalogContractTest {
     private KeyPair tryKeyPairWithDefaultSpec(CryptoAlgorithm alg) {
         logBegin(alg.id());
         try {
-            List<CryptoAlgorithm.AsymBuilderInfo> infos = alg.asymmetricBuildersInfo();
+            List<KeyOperationInfo> infos = alg.keyOperations().stream()
+                    .filter(info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE).toList();
             if (infos.isEmpty()) {
                 System.out.println("no asymmetric builder info");
                 logEnd();
                 return null;
             }
 
-            for (CryptoAlgorithm.AsymBuilderInfo bi : infos) {
-                if (bi.defaultKeySpec == null) {
+            for (KeyOperationInfo bi : infos) {
+                if (bi.defaultSpec() == null) {
                     continue;
                 }
                 try {
                     @SuppressWarnings("unchecked")
-                    Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) bi.specType;
-                    AlgorithmKeySpec spec = (AlgorithmKeySpec) bi.defaultKeySpec;
+                    Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) bi.specType();
+                    AlgorithmKeySpec spec = bi.defaultSpec();
 
-                    AsymmetricKeyBuilder<AlgorithmKeySpec> builder = alg.asymmetricKeyBuilder(specType);
+                    AsymmetricKeyPairGenerator<AlgorithmKeySpec> builder = alg.asymmetricKeyPairGenerator(specType);
                     System.out.println("...building with " + specType.getName());
                     KeyPair kp = builder.generateKeyPair(spec);
                     if (kp != null) {
                         logEnd();
                         return kp;
                     }
-                } catch (UnsupportedOperationException e) {
-                    // import-only
                 } catch (Throwable t) {
-                    System.out.println("builder " + bi.specType.getSimpleName() + " failed to generate keypair: "
+                    System.out.println("builder " + bi.specType().getSimpleName() + " failed to generate keypair: "
                             + t.getClass().getSimpleName() + ": " + t.getMessage());
                 }
             }
@@ -449,30 +453,29 @@ public class CatalogContractTest {
     private SecretKey tryGenerateSecretWithDefaultSpec(CryptoAlgorithm alg) {
         logBegin(alg.id());
         try {
-            List<CryptoAlgorithm.SymBuilderInfo> infos = alg.symmetricBuildersInfo();
+            List<KeyOperationInfo> infos = alg.keyOperations().stream()
+                    .filter(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE).toList();
             if (infos.isEmpty()) {
                 System.out.println("no symmetric builder info");
                 logEnd();
                 return null;
             }
 
-            for (CryptoAlgorithm.SymBuilderInfo bi : infos) {
-                if (bi.defaultKeySpec() == null) {
+            for (KeyOperationInfo bi : infos) {
+                if (bi.defaultSpec() == null) {
                     continue;
                 }
                 try {
                     @SuppressWarnings("unchecked")
                     Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) bi.specType();
-                    AlgorithmKeySpec spec = (AlgorithmKeySpec) bi.defaultKeySpec();
+                    AlgorithmKeySpec spec = bi.defaultSpec();
 
-                    SymmetricKeyBuilder<AlgorithmKeySpec> builder = alg.symmetricKeyBuilder(specType);
+                    SymmetricKeyGenerator<AlgorithmKeySpec> builder = alg.symmetricKeyGenerator(specType);
                     SecretKey sk = builder.generateSecret(spec);
                     if (sk != null) {
                         logEnd();
                         return sk;
                     }
-                } catch (UnsupportedOperationException e) {
-                    // import-only
                 } catch (Throwable t) {
                     System.out.println("symmetric builder " + bi.specType().getSimpleName()
                             + " failed to generate secret: " + t.getClass().getSimpleName() + ": " + t.getMessage());

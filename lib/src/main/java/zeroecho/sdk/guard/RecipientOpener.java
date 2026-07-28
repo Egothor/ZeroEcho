@@ -66,8 +66,11 @@ import java.security.GeneralSecurityException;
  * Implementation notes:
  * </p>
  * <ul>
- * <li>Openers are expected to be stateless and reusable; they must not retain
- * references to {@code UnlockMaterial} or the returned CEK.</li>
+ * <li>Openers are reusable across every recipient entry in one envelope.
+ * Implementations that need cryptographic contexts must create a fresh context
+ * for each applicable attempt.</li>
+ * <li>Openers must not retain references to {@code UnlockMaterial} or the
+ * returned CEK.</li>
  * <li>Do not log sensitive values, and avoid timing-sensitive distinctions
  * beyond what the caller needs to continue scanning other entries.</li>
  * </ul>
@@ -91,7 +94,7 @@ import java.security.GeneralSecurityException;
  * }
  * }</pre>
  */
-interface RecipientOpener { // NOPMD
+public interface RecipientOpener extends AutoCloseable { // NOPMD
     /**
      * Tries to recover the content-encryption key from the supplied recipient
      * entry.
@@ -112,4 +115,14 @@ interface RecipientOpener { // NOPMD
      */
     byte[] tryOpen(String entryId, byte[] entryBlob, UnlockMaterial material)
             throws GeneralSecurityException, IOException;
+
+    /**
+     * Releases opener-owned resources that were not consumed.
+     *
+     * @throws IOException if cleanup fails
+     */
+    @Override
+    default void close() throws IOException {
+        // Stateless openers own no resources.
+    }
 }

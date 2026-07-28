@@ -52,6 +52,7 @@ import zeroecho.core.alg.xdh.XdhSpec;
 import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.core.util.Strings;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
@@ -107,6 +108,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * </p>
  */
 class AgreementVariantsTest {
+    private final ZeroEchoSession session = new ZeroEchoSession();
 
     private static final Logger LOG = Logger.getLogger(AgreementVariantsTest.class.getName());
 
@@ -138,16 +140,17 @@ class AgreementVariantsTest {
     void kemAdapter_mlKem_roundTrip() throws Exception {
         LOG.info("kemAdapter_mlKem_roundTrip - KEM_ADAPTER (ML-KEM)");
 
-        KeyPair recipient = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
+        KeyPair recipient = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
 
         MessageAgreementContext initiator = null;
         MessageAgreementContext responder = null;
         try {
             // Initiator: constructed with recipient's public key (encapsulation side).
-            initiator = CryptoAlgorithms.create("ML-KEM", KeyUsage.AGREEMENT, recipient.getPublic(), VoidSpec.INSTANCE);
+            initiator = session.createContext("ML-KEM", KeyUsage.AGREEMENT, recipient.getPublic(), VoidSpec.INSTANCE);
 
             // Responder: constructed with recipient's private key (decapsulation side).
-            responder = CryptoAlgorithms.create("ML-KEM", KeyUsage.AGREEMENT, recipient.getPrivate(),
+            responder = session.createContext("ML-KEM", KeyUsage.AGREEMENT, recipient.getPrivate(),
                     VoidSpec.INSTANCE);
 
             // One-shot outbound message: KEM ciphertext / encapsulation payload.
@@ -193,17 +196,16 @@ class AgreementVariantsTest {
     void classicAgreement_x25519_roundTrip() throws Exception {
         LOG.info("classicAgreement_x25519_roundTrip - CLASSIC_AGREEMENT (X25519)");
 
-        CryptoAlgorithm xdh = CryptoAlgorithms.require("Xdh");
-        KeyPair alice = xdh.generateKeyPair();
-        KeyPair bob = xdh.generateKeyPair();
+        KeyPair alice = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bob = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         AgreementContext aCtx = null;
         AgreementContext bCtx = null;
 
         try {
             // Both contexts are built from local private keys.
-            aCtx = CryptoAlgorithms.create("Xdh", KeyUsage.AGREEMENT, alice.getPrivate(), XdhSpec.X25519);
-            bCtx = CryptoAlgorithms.create("Xdh", KeyUsage.AGREEMENT, bob.getPrivate(), XdhSpec.X25519);
+            aCtx = session.createContext("Xdh", KeyUsage.AGREEMENT, alice.getPrivate(), XdhSpec.X25519);
+            bCtx = session.createContext("Xdh", KeyUsage.AGREEMENT, bob.getPrivate(), XdhSpec.X25519);
 
             // The protocol layer provides peer public keys (here we use in-memory
             // exchange).
@@ -254,9 +256,8 @@ class AgreementVariantsTest {
     void pairMessage_x25519_roundTrip() throws Exception {
         LOG.info("pairMessage_x25519_roundTrip - PAIR_MESSAGE (X25519)");
 
-        CryptoAlgorithm xdh = CryptoAlgorithms.require("Xdh");
-        KeyPair alice = xdh.generateKeyPair();
-        KeyPair bob = xdh.generateKeyPair();
+        KeyPair alice = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bob = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // Wrapper is required because ZeroEcho capability dispatch uses Key (KeyPair is
         // not a Key).
@@ -267,8 +268,8 @@ class AgreementVariantsTest {
         MessageAgreementContext bCtx = null;
 
         try {
-            aCtx = CryptoAlgorithms.create("Xdh", KeyUsage.AGREEMENT, aliceKey, XdhSpec.X25519);
-            bCtx = CryptoAlgorithms.create("Xdh", KeyUsage.AGREEMENT, bobKey, XdhSpec.X25519);
+            aCtx = session.createContext("Xdh", KeyUsage.AGREEMENT, aliceKey, XdhSpec.X25519);
+            bCtx = session.createContext("Xdh", KeyUsage.AGREEMENT, bobKey, XdhSpec.X25519);
 
             // Outbound messages: SPKI encodings of local public keys.
             byte[] aMsg = aCtx.getPeerMessage();

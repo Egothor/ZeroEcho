@@ -49,8 +49,8 @@ import java.security.PublicKey;
  *
  * <h2>Lifecycle</h2>
  * <ul>
- * <li>Create a context via {@code CryptoAlgorithm#create(...)} or
- * {@code CryptoAlgorithms.create(...)} for the {@code AGREEMENT} role.</li>
+ * <li>Create a context via {@code ZeroEchoSession#createContext(...)} for the
+ * {@code AGREEMENT} role.</li>
  * <li>Call {@link #setPeerPublic(PublicKey)} with the peer’s public key.</li>
  * <li>Invoke {@link #deriveSecret()} once to compute the raw shared
  * secret.</li>

@@ -59,7 +59,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * RsaKeyGenSpec spec = RsaKeyGenSpec.rsa2048();
  *
  * // Generate the key pair
- * KeyPair kp = rsaAlgorithm.asymmetricKeyBuilder(RsaKeyGenSpec.class)
+ * KeyPair kp = rsaAlgorithm.asymmetricKeyPairGenerator(RsaKeyGenSpec.class)
  *                          .generateKeyPair(spec);
  * }</pre>
  *

@@ -97,8 +97,9 @@ public final class MldsaAlgorithm extends AbstractCryptoAlgorithm {
                     }
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(MldsaKeyGenSpec.class, new MldsaKeyGenBuilder(), MldsaKeyGenSpec::defaultSpec);
-        registerAsymmetricKeyBuilder(MldsaPublicKeySpec.class, new MldsaPublicKeyBuilder(), null);
-        registerAsymmetricKeyBuilder(MldsaPrivateKeySpec.class, new MldsaPrivateKeyBuilder(), null);
+        registerAsymmetricKeyPairGenerator(MldsaKeyGenSpec.class, new MldsaKeyGenBuilder(),
+                MldsaKeyGenSpec::defaultSpec);
+        registerPublicKeyImporter(MldsaPublicKeySpec.class, new MldsaPublicKeyBuilder());
+        registerPrivateKeyImporter(MldsaPrivateKeySpec.class, new MldsaPrivateKeyBuilder());
     }
 }

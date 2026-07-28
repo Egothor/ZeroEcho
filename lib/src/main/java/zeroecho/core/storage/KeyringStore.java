@@ -52,12 +52,18 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import javax.crypto.SecretKey;
+import javax.security.auth.DestroyFailedException;
+import javax.security.auth.Destroyable;
 
-import zeroecho.core.CryptoAlgorithms;
+import zeroecho.core.CryptoAlgorithm;
+import zeroecho.core.KeyOperation;
+import zeroecho.core.KeyOperationInfo;
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
+import zeroecho.sdk.ZeroEchoSession;
 
 /**
  * Human-editable keyring persisted in a simple UTF-8 text format.
@@ -82,7 +88,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * }</pre>
  *
  * <h2>Reading and writing</h2> Use {@link #save(java.nio.file.Path)} to write
- * the keyring to disk and {@link #load(java.nio.file.Path)} to read it back.
+ * the keyring to disk and {@link #load(ZeroEchoSession, java.nio.file.Path)} to
+ * read it back.
  * The loader tolerates the presence of the header and comment lines but
  * requires the magic header for the v1 format.
  *
@@ -95,15 +102,16 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * </ul>
  * These are discovered and invoked via reflection. See
  * {@link #marshalSpec(AlgorithmKeySpec)} and
- * {@link #unmarshalSpec(String, PairSeq)} for details.
+ * {@link #unmarshalSpec(Class, PairSeq)} for details.
  *
  * <h2>Basic usage</h2> <pre>{@code
- * KeyringStore ks = new KeyringStore();
+ * ZeroEchoSession session = new ZeroEchoSession();
+ * KeyringStore ks = new KeyringStore(session);
  * ks.putPublic("site-signing", "Ed25519", myEd25519PublicSpec);
  * ks.putPrivate("site-signing", "Ed25519", myEd25519PrivateSpec);
  * ks.save(Path.of("keyring.txt"));
  *
- * KeyringStore reloaded = KeyringStore.load(Path.of("keyring.txt"));
+ * KeyringStore reloaded = KeyringStore.load(session, Path.of("keyring.txt"));
  * PublicKey pub = reloaded.getPublic("site-signing");
  * }</pre>
  */
@@ -120,6 +128,17 @@ public final class KeyringStore { // NOPMD
     private static final String SUFFIX_PRIVATE = ".priv";
 
     private final Map<String, Record> byAlias = new LinkedHashMap<>();
+    private final ZeroEchoSession session;
+
+    /**
+     * Creates an empty keyring bound to a runtime session.
+     *
+     * @param session explicit runtime configuration
+     * @throws NullPointerException if {@code session} is {@code null}
+     */
+    public KeyringStore(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
+    }
 
     /**
      * Immutable entry in a {@link KeyringStore}.
@@ -228,7 +247,7 @@ public final class KeyringStore { // NOPMD
      * PublicWithId pairs the algorithm identifier with a resolved public key.
      *
      * <h2>Usage</h2> <pre>{@code
-     * KeyringStore ks = KeyringStore.load(path);
+     * KeyringStore ks = KeyringStore.load(session, path);
      * KeyringStore.PublicWithId r = ks.getPublicWithId("alice");
      * String algId = r.algorithm();
      * PublicKey pub = r.key();
@@ -241,7 +260,7 @@ public final class KeyringStore { // NOPMD
      * PrivateWithId pairs the algorithm identifier with a resolved private key.
      *
      * <h2>Usage</h2> <pre>{@code
-     * KeyringStore ks = KeyringStore.load(path);
+     * KeyringStore ks = KeyringStore.load(session, path);
      * KeyringStore.PrivateWithId r = ks.getPrivateWithId("alice");
      * String algId = r.algorithm();
      * PrivateKey prv = r.key();
@@ -254,7 +273,7 @@ public final class KeyringStore { // NOPMD
      * SecretWithId pairs the algorithm identifier with a resolved secret key.
      *
      * <h2>Usage</h2> <pre>{@code
-     * KeyringStore ks = KeyringStore.load(path);
+     * KeyringStore ks = KeyringStore.load(session, path);
      * KeyringStore.SecretWithId r = ks.getSecretWithId("hmac-key");
      * String algId = r.algorithm();
      * SecretKey sk = r.key();
@@ -280,8 +299,8 @@ public final class KeyringStore { // NOPMD
      */
     public PublicWithId getPublicWithId(String alias) throws GeneralSecurityException {
         Record r = require(withPublicSuffix(alias), Record.Kind.PUBLIC_KEY);
-        AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
-        PublicKey key = CryptoAlgorithms.publicKey(r.algorithm, spec);
+        AlgorithmKeySpec spec = unmarshalRecord(r);
+        PublicKey key = session.keyBuilders().asymmetric().importPublic(r.algorithm, spec);
         return new PublicWithId(r.algorithm, key);
     }
 
@@ -296,9 +315,17 @@ public final class KeyringStore { // NOPMD
      */
     public PrivateWithId getPrivateWithId(String alias) throws GeneralSecurityException {
         Record r = require(withPrivateSuffix(alias), Record.Kind.PRIVATE_KEY);
-        AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
-        PrivateKey key = CryptoAlgorithms.privateKey(r.algorithm, spec);
-        return new PrivateWithId(r.algorithm, key);
+        AlgorithmKeySpec spec = unmarshalRecord(r);
+        Throwable failure = null;
+        try {
+            PrivateKey key = session.keyBuilders().asymmetric().importPrivate(r.algorithm, spec);
+            return new PrivateWithId(r.algorithm, key);
+        } catch (GeneralSecurityException | RuntimeException | Error exception) { // NOPMD - retain primary failure
+            failure = exception;
+            throw exception;
+        } finally {
+            destroyTemporarySpec(spec, failure);
+        }
     }
 
     /**
@@ -312,9 +339,17 @@ public final class KeyringStore { // NOPMD
      */
     public SecretWithId getSecretWithId(String alias) throws GeneralSecurityException {
         Record r = require(alias, Record.Kind.SECRET_KEY);
-        AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
-        SecretKey key = CryptoAlgorithms.secretKey(r.algorithm, spec);
-        return new SecretWithId(r.algorithm, key);
+        AlgorithmKeySpec spec = unmarshalRecord(r);
+        Throwable failure = null;
+        try {
+            SecretKey key = session.keyBuilders().symmetric().importKey(r.algorithm, spec);
+            return new SecretWithId(r.algorithm, key);
+        } catch (GeneralSecurityException | RuntimeException | Error exception) { // NOPMD - retain primary failure
+            failure = exception;
+            throw exception;
+        } finally {
+            destroyTemporarySpec(spec, failure);
+        }
     }
 
     /**
@@ -322,7 +357,7 @@ public final class KeyringStore { // NOPMD
      *
      * <p>
      * The stored spec class is loaded and unmarshaled via
-     * {@link #unmarshalSpec(String, PairSeq)}, and the key is materialized via the
+     * {@link #unmarshalSpec(Class, PairSeq)}, and the key is materialized via the
      * crypto catalog.
      * </p>
      *
@@ -335,8 +370,8 @@ public final class KeyringStore { // NOPMD
      */
     public PublicKey getPublic(String alias) throws GeneralSecurityException {
         Record r = require(withPublicSuffix(alias), Record.Kind.PUBLIC_KEY);
-        AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
-        return CryptoAlgorithms.publicKey(r.algorithm, spec);
+        AlgorithmKeySpec spec = unmarshalRecord(r);
+        return session.keyBuilders().asymmetric().importPublic(r.algorithm, spec);
     }
 
     /**
@@ -351,8 +386,16 @@ public final class KeyringStore { // NOPMD
      */
     public PrivateKey getPrivate(String alias) throws GeneralSecurityException {
         Record r = require(withPrivateSuffix(alias), Record.Kind.PRIVATE_KEY);
-        AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
-        return CryptoAlgorithms.privateKey(r.algorithm, spec);
+        AlgorithmKeySpec spec = unmarshalRecord(r);
+        Throwable failure = null;
+        try {
+            return session.keyBuilders().asymmetric().importPrivate(r.algorithm, spec);
+        } catch (GeneralSecurityException | RuntimeException | Error exception) { // NOPMD - retain primary failure
+            failure = exception;
+            throw exception;
+        } finally {
+            destroyTemporarySpec(spec, failure);
+        }
     }
 
     private static String withPublicSuffix(String baseAlias) {
@@ -401,8 +444,16 @@ public final class KeyringStore { // NOPMD
      */
     public SecretKey getSecret(String alias) throws GeneralSecurityException {
         Record r = require(alias, Record.Kind.SECRET_KEY);
-        AlgorithmKeySpec spec = unmarshalSpec(r.specClass, r.specPayload);
-        return CryptoAlgorithms.secretKey(r.algorithm, spec);
+        AlgorithmKeySpec spec = unmarshalRecord(r);
+        Throwable failure = null;
+        try {
+            return session.keyBuilders().symmetric().importKey(r.algorithm, spec);
+        } catch (GeneralSecurityException | RuntimeException | Error exception) { // NOPMD - retain primary failure
+            failure = exception;
+            throw exception;
+        } finally {
+            destroyTemporarySpec(spec, failure);
+        }
     }
 
     /**
@@ -420,14 +471,15 @@ public final class KeyringStore { // NOPMD
     /**
      * Loads a keyring from a UTF-8 text file.
      *
+     * @param session explicit runtime configuration
      * @param path source path
      * @return a new store populated with entries from the file
      * @throws IOException if reading fails or the format is not supported
      */
-    public static KeyringStore load(Path path) throws IOException {
+    public static KeyringStore load(ZeroEchoSession session, Path path) throws IOException {
         try (BufferedReader r = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
             List<Record> recs = readAll(r, /* requireHeader */ true);
-            KeyringStore store = new KeyringStore();
+            KeyringStore store = new KeyringStore(session);
             recs.forEach(rec -> store.byAlias.put(rec.alias, rec));
             return store;
         }
@@ -616,6 +668,7 @@ public final class KeyringStore { // NOPMD
         if (importSpec == null) {
             throw new IllegalArgumentException("importSpec");
         }
+        registeredSpecClass(algorithmId, kind, importSpec.getClass().getName());
 
         PairSeq payload = marshalSpec(importSpec);
 
@@ -659,21 +712,69 @@ public final class KeyringStore { // NOPMD
      * Calls a static {@code unmarshal(PairSeq)} method on the spec class.
      *
      * @param <S>       spec type
-     * @param specClass fully qualified spec class name
+     * @param specClass registered specification class
      * @param p         the pair sequence to unmarshal
      * @return the reconstructed spec instance
      * @throws IllegalStateException if reflection fails or the method is absent
      */
     @SuppressWarnings("unchecked")
-    private static <S extends AlgorithmKeySpec> S unmarshalSpec(String specClass, PairSeq p) {
+    private static <S extends AlgorithmKeySpec> S unmarshalSpec(Class<S> specClass, PairSeq p) {
         try {
-            Class<?> cls = Class.forName(specClass);
-            Method m = cls.getMethod("unmarshal", PairSeq.class);
+            Method m = specClass.getMethod("unmarshal", PairSeq.class);
             Object out = m.invoke(null, p);
             return (S) out;
-        } catch (IllegalAccessException | InvocationTargetException | ClassNotFoundException | NoSuchMethodException
-                | SecurityException e) {
-            throw new IllegalStateException("Spec unmarshal failed for " + specClass, e);
+        } catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException | SecurityException e) {
+            throw new IllegalStateException("Spec unmarshal failed for " + specClass.getName(), e);
+        }
+    }
+
+    private AlgorithmKeySpec unmarshalRecord(Record record) {
+        Class<? extends AlgorithmKeySpec> specClass = registeredSpecClass(record.algorithm, record.kind,
+                record.specClass);
+        return unmarshalSpec(specClass, record.specPayload);
+    }
+
+    private Class<? extends AlgorithmKeySpec> registeredSpecClass(String algorithmId, Record.Kind kind,
+            String persistedClassName) {
+        if (persistedClassName == null || persistedClassName.isBlank()) {
+            throw new IllegalArgumentException("Missing key specification class");
+        }
+        CryptoAlgorithm algorithm = session.require(algorithmId);
+        KeyOperation expectedOperation = switch (kind) {
+            case PUBLIC_KEY -> KeyOperation.ASYMMETRIC_PUBLIC_IMPORT;
+            case PRIVATE_KEY -> KeyOperation.ASYMMETRIC_PRIVATE_IMPORT;
+            case SECRET_KEY -> KeyOperation.SYMMETRIC_IMPORT;
+        };
+        return algorithm.keyOperations().stream()
+                .filter(info -> info.operation() == expectedOperation)
+                .map(KeyOperationInfo::specType)
+                .filter(type -> type.getName().equals(persistedClassName))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Specification class is not registered for " + algorithmId + " " + kind));
+    }
+
+    /* default */ static void destroyTemporarySpec(AlgorithmKeySpec spec, Throwable primary)
+            throws GeneralSecurityException {
+        if (!(spec instanceof Destroyable destroyable)) {
+            return;
+        }
+        try {
+            if (!destroyable.isDestroyed()) {
+                destroyable.destroy();
+            }
+        } catch (DestroyFailedException failure) {
+            if (primary != null) {
+                primary.addSuppressed(failure);
+                return;
+            }
+            throw new GeneralSecurityException("Temporary key specification destruction failed", failure);
+        } catch (RuntimeException failure) { // NOPMD - preserve cleanup failure and primary failure
+            if (primary != null) {
+                primary.addSuppressed(failure);
+                return;
+            }
+            throw failure;
         }
     }
 }

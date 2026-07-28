@@ -36,16 +36,28 @@ package zeroecho.sdk.guard;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 
 import javax.crypto.AEADBadTagException;
 
 import zeroecho.core.io.Util;
+import zeroecho.sdk.Pbkdf2Limits;
 
 /**
  * Recipient opener for password-based entries that derives a KEK via PBKDF2 and
  * unwraps the CEK with AES-GCM.
  */
 public final class PasswordOpener implements RecipientOpener {
+    private final Pbkdf2Limits limits;
+
+    /**
+     * Creates an opener with explicit decoded-input limits.
+     *
+     * @param limits PBKDF2 safety limits
+     */
+    public PasswordOpener(Pbkdf2Limits limits) {
+        this.limits = java.util.Objects.requireNonNull(limits, "limits must not be null");
+    }
     /**
      * Attempts to open a password-based recipient entry using a password unlock
      * material.
@@ -72,17 +84,34 @@ public final class PasswordOpener implements RecipientOpener {
 
         ByteArrayInputStream in = new ByteArrayInputStream(entryBlob);
         int iterations = Util.readPack7I(in);
+        try {
+            limits.validateDecoded(iterations);
+        } catch (IllegalArgumentException exception) {
+            throw new IOException("Invalid decoded PBKDF2 iteration count", exception);
+        }
         byte[] salt = Util.read(in, 64);
         byte[] wrapIv = Util.read(in, 64);
         byte[] wrapped = Util.read(in, 1 << 16);
 
         char[] password = ((UnlockMaterial.Password) material).password();
-        byte[] kek = MultiRecipientDataSourceBuilder.pbkdf2HmacSha256(password, salt, iterations, 32); // try 256-bit
+        byte[] kek = null;
         try {
-            return MultiRecipientDataSourceBuilder.aesGcmUnwrap(kek, wrapIv, null, wrapped);
-        } catch (AEADBadTagException e256) {
-            kek = MultiRecipientDataSourceBuilder.pbkdf2HmacSha256(password, salt, iterations, 16); // fall back to 128-bit
-            return MultiRecipientDataSourceBuilder.aesGcmUnwrap(kek, wrapIv, null, wrapped);
+            kek = MultiRecipientDataSourceBuilder.pbkdf2HmacSha256(password, salt, iterations, 32);
+            try {
+                return MultiRecipientDataSourceBuilder.aesGcmUnwrap(kek, wrapIv, null, wrapped);
+            } catch (AEADBadTagException e256) {
+                Arrays.fill(kek, (byte) 0);
+                kek = MultiRecipientDataSourceBuilder.pbkdf2HmacSha256(password, salt, iterations, 16);
+                return MultiRecipientDataSourceBuilder.aesGcmUnwrap(kek, wrapIv, null, wrapped);
+            }
+        } finally {
+            Arrays.fill(password, '\0');
+            Arrays.fill(salt, (byte) 0);
+            Arrays.fill(wrapIv, (byte) 0);
+            Arrays.fill(wrapped, (byte) 0);
+            if (kek != null) {
+                Arrays.fill(kek, (byte) 0);
+            }
         }
     }
 }

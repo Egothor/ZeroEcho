@@ -39,30 +39,23 @@ import java.security.KeyPairGenerator;
 import java.security.spec.ECGenParameterSpec;
 
 import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
 /**
  * <h2>ECDSA Key Pair Generator</h2>
  *
- * Implementation of {@link AsymmetricKeyBuilder} for {@link EcdsaCurveSpec}.
+ * Implementation of {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} for
+ * {@link EcdsaCurveSpec}.
  * This builder is responsible for generating new elliptic curve key pairs for
  * use with the {@link EcdsaAlgorithm}.
  *
- * <h2>Supported operations</h2>
- * <ul>
- * <li>{@link #generateKeyPair(EcdsaCurveSpec)} - create a fresh key pair for
- * the given named curve.</li>
- * <li>{@link #importPublic(EcdsaCurveSpec)} - unsupported; use
- * {@link EcdsaPublicKeySpec} with {@link EcdsaPublicKeyBuilder} instead.</li>
- * <li>{@link #importPrivate(EcdsaCurveSpec)} - unsupported; use
- * {@link EcdsaPrivateKeySpec} with {@link EcdsaPrivateKeyBuilder} instead.</li>
- * </ul>
+ * <p>The exact supported operation is
+ * {@link #generateKeyPair(EcdsaCurveSpec)}. Public and private import are
+ * registered separately through {@link EcdsaPublicKeyBuilder} and
+ * {@link EcdsaPrivateKeyBuilder}.</p>
  *
- * <h2>Usage</h2> Typically accessed indirectly through
- * {@link CryptoAlgorithms#keyPair(String, zeroecho.core.spec.AlgorithmKeySpec)}
- * or
- * {@link CryptoAlgorithm#generateKeyPair(zeroecho.core.spec.AlgorithmKeySpec)}.
+ * <h2>Usage</h2> Typically accessed through the session key-operation API or
+ * {@link CryptoAlgorithm#asymmetricKeyPairGenerator(Class)}.
  *
  * <pre>{@code
  * // Example: Generate an ECDSA P-256 key pair
@@ -72,7 +65,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class EcdsaKeyGenBuilder implements AsymmetricKeyBuilder<EcdsaCurveSpec> {
+public final class EcdsaKeyGenBuilder implements AsymmetricKeyPairGenerator<EcdsaCurveSpec> {
     /**
      * Generates a new elliptic curve key pair for the given curve specification.
      *
@@ -92,39 +85,5 @@ public final class EcdsaKeyGenBuilder implements AsymmetricKeyBuilder<EcdsaCurve
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
         kpg.initialize(new ECGenParameterSpec(spec.curveName()));
         return kpg.generateKeyPair();
-    }
-
-    /**
-     * Unsupported operation for this builder.
-     *
-     * <p>
-     * Public key import should be performed using {@link EcdsaPublicKeySpec} and
-     * {@link EcdsaPublicKeyBuilder}.
-     * </p>
-     *
-     * @param spec unused curve specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public java.security.PublicKey importPublic(EcdsaCurveSpec spec) {
-        throw new UnsupportedOperationException("Use EcdsaPublicKeySpec with EcdsaPublicKeyBuilder.");
-    }
-
-    /**
-     * Unsupported operation for this builder.
-     *
-     * <p>
-     * Private key import should be performed using {@link EcdsaPrivateKeySpec} and
-     * {@link EcdsaPrivateKeyBuilder}.
-     * </p>
-     *
-     * @param spec unused curve specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public java.security.PrivateKey importPrivate(EcdsaCurveSpec spec) {
-        throw new UnsupportedOperationException("Use EcdsaPrivateKeySpec with EcdsaPrivateKeyBuilder.");
     }
 }

@@ -40,7 +40,7 @@ import java.security.KeyPairGenerator;
 import java.util.Locale;
 import java.util.Objects;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
 /**
  * Key pair builder for ML-DSA (FIPS 204) using the Bouncy Castle provider.
@@ -54,7 +54,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class MldsaKeyGenBuilder implements AsymmetricKeyBuilder<MldsaKeyGenSpec> {
+public final class MldsaKeyGenBuilder implements AsymmetricKeyPairGenerator<MldsaKeyGenSpec> {
 
     private static final String ALG_PURE = "MLDSA";
     private static final String ALG_SHA512 = "SHA512withMLDSA";
@@ -81,30 +81,6 @@ public final class MldsaKeyGenBuilder implements AsymmetricKeyBuilder<MldsaKeyGe
             kpg.initialize((java.security.spec.AlgorithmParameterSpec) bcParamSpec);
         }
         return kpg.generateKeyPair();
-    }
-
-    /**
-     * Key generation specs cannot import public keys.
-     *
-     * @param spec key generation specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public java.security.PublicKey importPublic(MldsaKeyGenSpec spec) {
-        throw new UnsupportedOperationException("Use MldsaPublicKeySpec to import a public key.");
-    }
-
-    /**
-     * Key generation specs cannot import private keys.
-     *
-     * @param spec key generation specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public java.security.PrivateKey importPrivate(MldsaKeyGenSpec spec) {
-        throw new UnsupportedOperationException("Use MldsaPrivateKeySpec to import a private key.");
     }
 
     private static Object resolveBcParameterSpec(MldsaKeyGenSpec spec) throws GeneralSecurityException {

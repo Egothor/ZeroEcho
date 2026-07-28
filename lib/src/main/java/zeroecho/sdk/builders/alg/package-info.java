@@ -65,11 +65,9 @@
  * supported, emit textual encodings.</li>
  * <li>{@link RsaEncDataContentBuilder} and {@link ElgamalEncDataContentBuilder}
  * - wrap asymmetric encryption.</li>
- * <li>{@link RsaSigDataContentBuilder}, {@link EcdsaDataContentBuilder},
- * {@link Ed25519DataContentBuilder}, {@link Ed448DataContentBuilder},
- * {@link SphincsPlusDataContentBuilder}, {@link SlhDsaDataContentBuilder}, and
- * {@link MldsaDataContentBuilder} - perform streaming signatures and
- * verification.</li>
+ * <li>{@link RsaSigDataContentBuilder} - performs streaming RSA signatures and
+ * verification; other signature algorithms use the session-bound trailer
+ * builder in {@code zeroecho.sdk.builders}.</li>
  * <li>{@link KemDataContentBuilder} - implement KEM-first envelopes and inject
  * the derived key into a chosen symmetric payload builder.</li>
  * </ul>
@@ -87,8 +85,7 @@
  *
  * <h2>Signatures and MACs</h2>
  * <p>
- * Signature builders share common mechanics via
- * {@link AbstractStreamingSignatureDataBuilder}. They support:
+ * Signature and MAC builders support:
  * </p>
  * <ul>
  * <li><b>Pass-through:</b> output the message body while a trailing signature

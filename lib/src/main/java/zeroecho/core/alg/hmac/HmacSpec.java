@@ -54,10 +54,10 @@ import zeroecho.core.spec.ContextSpec;
  *
  * <h2>Usage</h2> This spec is passed when creating a new HMAC context:
  * <pre>{@code
- * SecretKey key = CryptoAlgorithms.generateSecret("HMAC",
+ * SecretKey key = session.keyBuilders().symmetric().generate("HMAC",
  *     HmacKeyGenSpec.sha256(256));
  *
- * MacContext ctx = CryptoAlgorithms.create("HMAC",
+ * MacContext ctx = session.createContext("HMAC",
  *     KeyUsage.MAC, key, HmacSpec.sha256());
  *
  * ctx.update(data);

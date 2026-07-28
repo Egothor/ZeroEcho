@@ -33,39 +33,40 @@
  ******************************************************************************/
 package zeroecho.sdk.guard;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.Objects;
 
 import javax.crypto.AEADBadTagException;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.io.Util;
-import zeroecho.sdk.util.Kdf;
 
 /**
- * Opener for "KEM:&lt;algId&gt;:GCM-WRAP" entries. If a context is provided, it
- * is used directly; otherwise a context is derived from entryId and the
- * supplied private key.
+ * Reusable opener for {@code KEM:<algorithm>:GCM-WRAP} entries.
+ *
+ * <p>
+ * Each applicable recipient entry receives a fresh decapsulation context from
+ * the explicit session. A failed same-algorithm entry therefore cannot consume
+ * the opener state needed by a later legitimate entry.
+ * </p>
  */
 public final class KemCtxOpener implements RecipientOpener {
-    private final KemContext provided; // may be null
-
-    /** Derive the context on demand from entryId and private key. */
-    public KemCtxOpener() {
-        this.provided = null;
-    }
+    private final ZeroEchoSession session;
 
     /**
-     * Use the provided context once for the matching entry. The opener will consume
-     * and close this context when used.
+     * Creates an opener that derives contexts through the explicit session.
+     *
+     * @param session runtime configuration used for context creation
+     * @throws NullPointerException if {@code session} is {@code null}
      */
-    public KemCtxOpener(KemContext kem) {
-        this.provided = Objects.requireNonNull(kem);
+    public KemCtxOpener(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session");
     }
 
     @Override
@@ -79,36 +80,42 @@ public final class KemCtxOpener implements RecipientOpener {
         if (next <= 4) { // NOPMD
             return null; // NOPMD malformed id
         }
-        final String kemId = entryId.substring(4, next);
-
-        final KemContext kem;
-        if (provided != null) {
-            // Caller-supplied context (material not required)
-            kem = provided;
-        } else {
-            if (!(material instanceof UnlockMaterial.Private)) {
-                return null; // NOPMD
-            }
-            final java.security.PrivateKey prv = ((UnlockMaterial.Private) material).key();
-            kem = CryptoAlgorithms.create(kemId, KeyUsage.DECAPSULATE, prv);
+        if (!(material instanceof UnlockMaterial.Private)) {
+            return null; // NOPMD
         }
+        final String kemId = entryId.substring(4, next);
+        java.security.PrivateKey privateKey = ((UnlockMaterial.Private) material).key();
+        try (KemContext kem = session.createContext(kemId, KeyUsage.DECAPSULATE, privateKey)) {
+            return openWithContext(kem, entryBlob);
+        }
+    }
 
-        try (KemContext c = kem; ByteArrayInputStream in = new ByteArrayInputStream(entryBlob)) {
+    private static byte[] openWithContext(KemContext kem, byte[] entryBlob)
+            throws GeneralSecurityException, IOException {
+        try (ByteArrayInputStream in = new ByteArrayInputStream(entryBlob)) {
             byte[] kemCt = Util.read(in, 1 << 20);
             byte[] salt = Util.read(in, 64);
             byte[] wrapIv = Util.read(in, 64);
             byte[] wrapped = Util.read(in, 1 << 16);
 
-            byte[] ss = c.decapsulate(kemCt);
-            byte[] info = ("KDF:" + kem.algorithm().id()).getBytes(StandardCharsets.US_ASCII);
-            byte[] kek = Kdf.hkdfSha256(ss, salt, info, 32);
+            byte[] ss = kem.decapsulate(kemCt);
+            byte[] kek = null;
             try {
-                return MultiRecipientDataSourceBuilder.aesGcmUnwrap(kek, wrapIv, null, wrapped);
-            } catch (AEADBadTagException e) {
-                // Sender could have used 128-bit KEK
-                kek = Kdf.hkdfSha256(ss, salt, "KEM:KEK".getBytes(StandardCharsets.UTF_8), 16);
-                return MultiRecipientDataSourceBuilder.aesGcmUnwrap(kek, wrapIv, null, wrapped);
+                try {
+                    kek = KemKeyDerivation.derive(ss, salt, kem.algorithm().id(), 32);
+                    return MultiRecipientDataSourceBuilder.aesGcmUnwrap(kek, wrapIv, null, wrapped);
+                } catch (AEADBadTagException exception) {
+                    Arrays.fill(kek, (byte) 0);
+                    kek = KemKeyDerivation.derive(ss, salt, kem.algorithm().id(), 16);
+                    return MultiRecipientDataSourceBuilder.aesGcmUnwrap(kek, wrapIv, null, wrapped);
+                }
+            } finally {
+                Arrays.fill(ss, (byte) 0);
+                if (kek != null) {
+                    Arrays.fill(kek, (byte) 0);
+                }
             }
         }
     }
+
 }

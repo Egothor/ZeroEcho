@@ -35,13 +35,15 @@ package zeroecho.core.alg.chacha;
 
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
+import java.util.Arrays;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
-import zeroecho.core.spi.SymmetricKeyBuilder;
+import zeroecho.core.spi.SymmetricKeyGenerator;
+import zeroecho.core.spi.SymmetricKeyImporter;
 
 /**
  * <h2>Abstract base for ChaCha family algorithms</h2>
@@ -64,19 +66,20 @@ import zeroecho.core.spi.SymmetricKeyBuilder;
  * {@code "ChaCha20"}.</li>
  * <li>Import wraps the raw key material with
  * {@link javax.crypto.spec.SecretKeySpec}.</li>
- * <li>Attempts to generate a key via {@code ChaChaKeyImportSpec} or import via
- * {@code ChaChaKeyGenSpec} will throw
- * {@link UnsupportedOperationException}.</li>
+ * <li>Generation and import are discovered through independent exact
+ * capabilities, so an unsupported lookup fails before invocation.</li>
  * </ul>
  *
  * <h3>Example</h3> <pre>{@code
- * AbstractChaChaAlgorithm algo = ...;
+ * ZeroEchoSession session = new ZeroEchoSession();
  *
  * // Generate a fresh 256-bit key
- * SecretKey key = algo.generateSecret(ChaChaKeyGenSpec.chacha256());
+ * SecretKey key = session.keyBuilders().symmetric()
+ *                        .generate("ChaCha20", ChaChaKeyGenSpec.chacha256());
  *
  * // Import an existing key
- * SecretKey imported = algo.importSecret(new ChaChaKeyImportSpec(rawBytes));
+ * SecretKey imported = session.keyBuilders().symmetric()
+ *                             .importKey("ChaCha20", new ChaChaKeyImportSpec(rawBytes));
  * }</pre>
  *
  * @since 1.0
@@ -93,30 +96,26 @@ abstract class AbstractChaChaAlgorithm extends AbstractCryptoAlgorithm {
         super(id, title);
 
         // register once for both algorithms (same 256-bit key)
-        registerSymmetricKeyBuilder(ChaChaKeyGenSpec.class, new SymmetricKeyBuilder<>() {
+        registerSymmetricKeyGenerator(ChaChaKeyGenSpec.class, new SymmetricKeyGenerator<>() {
             @Override
             public SecretKey generateSecret(ChaChaKeyGenSpec spec) throws GeneralSecurityException {
                 KeyGenerator kg = KeyGenerator.getInstance("ChaCha20");
                 kg.init(spec.keySizeBits(), new SecureRandom());
                 return kg.generateKey();
             }
-
-            @Override
-            public SecretKey importSecret(ChaChaKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Use ChaChaKeyImportSpec for importing ChaCha keys");
-            }
         }, ChaChaKeyGenSpec::chacha256);
 
-        registerSymmetricKeyBuilder(ChaChaKeyImportSpec.class, new SymmetricKeyBuilder<>() {
-            @Override
-            public SecretKey generateSecret(ChaChaKeyImportSpec spec) {
-                throw new UnsupportedOperationException("Use ChaChaKeyGenSpec to generate ChaCha keys");
-            }
+        registerSymmetricKeyImporter(ChaChaKeyImportSpec.class, new SymmetricKeyImporter<>() {
 
             @Override
             public SecretKey importSecret(ChaChaKeyImportSpec spec) {
-                return new SecretKeySpec(spec.key(), "ChaCha20");
+                byte[] key = spec.key();
+                try {
+                    return new SecretKeySpec(key, "ChaCha20");
+                } finally {
+                    Arrays.fill(key, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 }

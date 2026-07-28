@@ -69,7 +69,7 @@ public final class ZeroEchoLibSignatureWorkflowVerifyEncodedEcdsaTest {
         System.out.println("verifyFromSpkiDerEcdsaSucceeds");
 
         Path keyring = tempDir.resolve("keyring.txt");
-        KeyringStore ks = new KeyringStore();
+        KeyringStore ks = new KeyringStore(new zeroecho.sdk.ZeroEchoSession());
         ks.save(keyring);
 
         try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("wf", keyring, "zeroecho-lib:", true)) {

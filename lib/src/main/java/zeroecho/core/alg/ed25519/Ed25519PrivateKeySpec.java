@@ -33,7 +33,11 @@
  ******************************************************************************/
 package zeroecho.core.alg.ed25519;
 
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -65,7 +69,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * Ed25519PrivateKeySpec spec = new Ed25519PrivateKeySpec(pkcs8Bytes);
  *
  * // Import into a PrivateKey using ZeroEcho
- * PrivateKey priv = CryptoAlgorithms.privateKey("Ed25519", spec);
+ * PrivateKey priv = session.keyBuilders().asymmetric().importPrivate("Ed25519", spec);
  *
  * // Serialize to PairSeq (e.g., for configuration or transport)
  * PairSeq seq = Ed25519PrivateKeySpec.marshal(spec);
@@ -74,16 +78,17 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * Ed25519PrivateKeySpec restored = Ed25519PrivateKeySpec.unmarshal(seq);
  * }</pre>
  *
- * <h2>Thread-safety</h2> Instances are immutable. The internal key bytes are
- * defensively copied on construction and retrieval, making this class safe to
- * share across threads.
+ * <h2>Thread-safety</h2> Access and destruction are synchronized. The internal
+ * key bytes are defensively copied on construction and retrieval.
  *
  * @since 1.0
  */
-public final class Ed25519PrivateKeySpec implements AlgorithmKeySpec {
+public final class Ed25519PrivateKeySpec implements AlgorithmKeySpec, Destroyable {
 
     private static final String PKCS8_B64 = "pkcs8.b64";
     private final byte[] encodedPkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Creates a new Ed25519 private key specification from its PKCS#8 encoding.
@@ -104,7 +109,13 @@ public final class Ed25519PrivateKeySpec implements AlgorithmKeySpec {
      * @return clone of the PKCS#8 encoding
      */
     public byte[] encoded() {
-        return encodedPkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return encodedPkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -119,7 +130,7 @@ public final class Ed25519PrivateKeySpec implements AlgorithmKeySpec {
      * @return serialized representation as a {@link PairSeq}
      */
     public static PairSeq marshal(Ed25519PrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.encodedPkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "Ed25519-PRIV", PKCS8_B64, b64);
     }
 
@@ -143,12 +154,62 @@ public final class Ed25519PrivateKeySpec implements AlgorithmKeySpec {
             String k = cur.key();
             String v = cur.value();
             if (PKCS8_B64.equals(k)) {
-                out = Base64.getDecoder().decode(v);
+                out = decodeReplacing(out, v);
             }
         }
         if (out == null) {
             throw new IllegalArgumentException("pkcs8.b64 missing for Ed25519 private key");
         }
-        return new Ed25519PrivateKeySpec(out);
+        try {
+            return new Ed25519PrivateKeySpec(out);
+        } finally {
+            Arrays.fill(out, (byte) 0);
+        }
+    }
+
+    private static byte[] decodeReplacing(byte[] current, String encoded) {
+        if (current != null) {
+            Arrays.fill(current, (byte) 0);
+        }
+        return Base64.getDecoder().decode(encoded);
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(encodedPkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(encodedPkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("Ed25519 private key specification has been destroyed");
+        }
     }
 }

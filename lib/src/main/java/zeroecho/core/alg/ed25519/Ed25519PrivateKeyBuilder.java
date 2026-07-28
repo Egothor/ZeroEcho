@@ -38,7 +38,7 @@ import zeroecho.core.alg.common.eddsa.AbstractEncodedPrivateKeyBuilder;
 /**
  * <h2>Private key builder for Ed25519</h2>
  *
- * Concrete {@link zeroecho.core.spi.AsymmetricKeyBuilder} for importing and
+ * Concrete {@link zeroecho.core.spi.PrivateKeyImporter} for importing
  * wrapping Ed25519 private keys.
  *
  * <p>
@@ -59,7 +59,7 @@ import zeroecho.core.alg.common.eddsa.AbstractEncodedPrivateKeyBuilder;
  * <h2>Usage example</h2> <pre>{@code
  * // Import a private key from its encoded PKCS#8 form
  * Ed25519PrivateKeySpec spec = new Ed25519PrivateKeySpec(pkcs8Bytes);
- * PrivateKey privateKey = CryptoAlgorithms.privateKey("Ed25519", spec);
+ * PrivateKey privateKey = session.keyBuilders().asymmetric().importPrivate("Ed25519", spec);
  * }</pre>
  *
  * <h2>Thread-safety</h2> Instances of this builder are stateless and may be

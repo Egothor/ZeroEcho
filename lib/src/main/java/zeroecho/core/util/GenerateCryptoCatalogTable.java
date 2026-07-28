@@ -37,17 +37,15 @@ import java.io.File;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
-import java.util.Map;
-import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
 import zeroecho.core.Capability;
 import zeroecho.core.CryptoAlgorithm;
+import zeroecho.core.CryptoAlgorithms;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
 /**
@@ -92,14 +90,14 @@ public final class GenerateCryptoCatalogTable {
         File out = new File(args[0]);
         out.getParentFile().mkdirs();
 
-        // Discover providers directly so we do not rely on CryptoCatalog internals.
-        Map<String, CryptoAlgorithm> algos = loadAlgorithms();
-        validate(algos);
+        Set<String> algorithmIds = CryptoAlgorithms.available();
+        validate(algorithmIds);
 
         // Enumerate subcolumns actually present.
         SortedSet<String> families = new TreeSet<>();
         SortedSet<String> roles = new TreeSet<>();
-        for (CryptoAlgorithm a : algos.values()) {
+        for (String algorithmId : algorithmIds) {
+            CryptoAlgorithm a = CryptoAlgorithms.require(algorithmId);
             for (Capability c : a.listCapabilities()) {
                 families.add(c.family().name());
                 roles.add(c.role().name());
@@ -144,8 +142,8 @@ public final class GenerateCryptoCatalogTable {
 
             // TBODY same as before, but make family/role cells narrow and centered
             w.write("<tbody>");
-            for (String id : new TreeSet<>(algos.keySet())) {
-                CryptoAlgorithm a = algos.get(id);
+            for (String id : algorithmIds) {
+                CryptoAlgorithm a = CryptoAlgorithms.require(id);
 
                 Set<String> famHit = new HashSet<>(); // NOPMD
                 Set<String> roleHit = new HashSet<>(); // NOPMD
@@ -156,7 +154,7 @@ public final class GenerateCryptoCatalogTable {
                     roleHit.add(c.role().name());
                     if (c.defaultSpec() != null) {
                         try {
-                            Object ds = c.defaultSpec().get();
+                            Object ds = c.defaultSpec();
                             if (ds != null) {
                                 defaultSpecs.add(esc(labelOf(ds)));
                             }
@@ -189,24 +187,13 @@ public final class GenerateCryptoCatalogTable {
         }
     }
 
-    private static Map<String, CryptoAlgorithm> loadAlgorithms() {
-        Map<String, CryptoAlgorithm> m = new HashMap<>();
-        ServiceLoader.load(CryptoAlgorithm.class).forEach(a -> {
-            CryptoAlgorithm prev = m.put(a.id(), a);
-            if (prev != null) {
-                throw new IllegalStateException("Duplicate algorithm id: " + a.id());
-            }
-        });
-        return m;
-    }
-
-    private static void validate(Map<String, CryptoAlgorithm> algos) {
+    private static void validate(Set<String> algorithmIds) {
         StringBuilder sb = null;
-        for (CryptoAlgorithm a : algos.values()) {
+        for (String algorithmId : algorithmIds) {
+            CryptoAlgorithm a = CryptoAlgorithms.require(algorithmId);
             boolean hasCaps = !a.listCapabilities().isEmpty();
-            boolean hasAsym = !a.asymmetricBuildersInfo().isEmpty();
-            boolean hasSym = !a.symmetricBuildersInfo().isEmpty();
-            if (!hasCaps && !hasAsym && !hasSym) {
+            boolean hasKeyOperations = !a.keyOperations().isEmpty();
+            if (!hasCaps && !hasKeyOperations) {
                 if (sb == null) {
                     sb = new StringBuilder(); // NOPMD
                 }

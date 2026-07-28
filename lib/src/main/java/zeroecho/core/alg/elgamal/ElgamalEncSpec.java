@@ -71,7 +71,7 @@ import zeroecho.core.spec.ContextSpec;
  *
  * <h2>Usage</h2> Instances are created via the static factories: <pre>{@code
  * ElgamalEncSpec spec = ElgamalEncSpec.pkcs1();
- * EncryptionContext ctx = algo.create(KeyUsage.ENCRYPT, pubKey, spec);
+ * EncryptionContext ctx = algo.createContext(KeyUsage.ENCRYPT, pubKey, spec);
  * }</pre>
  *
  * <h2>Thread-safety</h2> {@code ElgamalEncSpec} is immutable and safe to share

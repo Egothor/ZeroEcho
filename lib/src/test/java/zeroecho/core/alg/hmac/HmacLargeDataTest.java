@@ -127,11 +127,11 @@ public class HmacLargeDataTest {
         CryptoAlgorithm algo = CryptoAlgorithms.require(ALG_ID);
 
         // Generate a key (macName must match)
-        SecretKey key = algo.symmetricKeyBuilder(HmacKeyGenSpec.class).generateSecret(new HmacKeyGenSpec(JCA_MAC, 256));
+        SecretKey key = algo.symmetricKeyGenerator(HmacKeyGenSpec.class).generateSecret(new HmacKeyGenSpec(JCA_MAC, 256));
 
         // --- MAC (produce): engine emits [body][tag]; capture trailer ---
         HmacSpec spec = HmacSpec.sha256();
-        MacContext mac = CryptoAlgorithms.create(ALG_ID, KeyUsage.MAC, key, spec);
+        MacContext mac = new zeroecho.sdk.ZeroEchoSession().createContext(ALG_ID, KeyUsage.MAC, key, spec);
         final byte[][] tagHolder = new byte[1][];
         final int tagLen = mac.tagLength();
 
@@ -161,7 +161,7 @@ public class HmacLargeDataTest {
         assertArrayEquals(ref, tag, "HMAC tag mismatch vs JCA reference");
 
         // --- VERIFY (consume): provide expected tag and drain (throws on mismatch) ---
-        MacContext ver = CryptoAlgorithms.create(ALG_ID, KeyUsage.MAC, key, spec);
+        MacContext ver = new zeroecho.sdk.ZeroEchoSession().createContext(ALG_ID, KeyUsage.MAC, key, spec);
         ver.setExpectedTag(tag);
         byte[] pass2;
         try (InputStream in = ver.wrap(new ByteArrayInputStream(msg))) {

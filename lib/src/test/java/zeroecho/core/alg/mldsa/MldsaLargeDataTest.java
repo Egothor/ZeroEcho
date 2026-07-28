@@ -117,13 +117,13 @@ public final class MldsaLargeDataTest {
         String caseId = "ML-DSA " + ps.name() + " preHash=" + preHash.name();
         System.out.println(INDENT + " case=" + safeText(caseId));
 
-        KeyPair kp = CryptoAlgorithms.keyPair("ML-DSA", spec);
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-DSA", spec);
 
-        SignatureContext mldsaVerifier = CryptoAlgorithms.create("ML-DSA", KeyUsage.VERIFY, kp.getPublic());
+        SignatureContext mldsaVerifier = new zeroecho.sdk.ZeroEchoSession().createContext("ML-DSA", KeyUsage.VERIFY, kp.getPublic());
         int expectedSigLen = mldsaVerifier.tagLength();
         System.out.println(INDENT + " expectedSigLen=" + expectedSigLen);
 
-        SignatureContext signer = CryptoAlgorithms.create("ML-DSA", KeyUsage.SIGN, kp.getPrivate());
+        SignatureContext signer = new zeroecho.sdk.ZeroEchoSession().createContext("ML-DSA", KeyUsage.SIGN, kp.getPrivate());
 
         final byte[][] sigHolder = new byte[1][];
         byte[] passthrough;
@@ -178,7 +178,7 @@ public final class MldsaLargeDataTest {
         byte[] badSig = Arrays.copyOf(signature, signature.length);
         badSig[0] = (byte) (badSig[0] ^ 0x01);
 
-        SignatureContext badVerifier = CryptoAlgorithms.create("ML-DSA", KeyUsage.VERIFY, kp.getPublic());
+        SignatureContext badVerifier = new zeroecho.sdk.ZeroEchoSession().createContext("ML-DSA", KeyUsage.VERIFY, kp.getPublic());
 
         try {
             badVerifier.setExpectedTag(badSig);

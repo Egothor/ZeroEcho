@@ -65,7 +65,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * // Generate a key pair via HqcAlgorithm
  * HqcAlgorithm hqc = new HqcAlgorithm();
- * KeyPair kp = hqc.generateKeyPair(spec);
+ * KeyPair kp = hqc.asymmetricKeyPairGenerator(HqcKeyGenSpec.class).generateKeyPair(spec);
  * }</pre>
  *
  * @since 1.0

@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
@@ -44,7 +46,6 @@ import javax.crypto.SecretKey;
 import conflux.Ctx;
 import conflux.CtxInterface;
 import zeroecho.core.ConfluxKeys;
-import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.SymmetricHeaderCodec;
@@ -54,7 +55,6 @@ import zeroecho.core.alg.aes.AesKeyImportSpec;
 import zeroecho.core.alg.aes.AesSpec;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spi.ContextAware;
-import zeroecho.core.spi.SymmetricKeyBuilder;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.EncryptedContent;
@@ -106,6 +106,8 @@ import zeroecho.sdk.content.api.PlainContent;
  * @since 1.0
  */
 public final class AesDataContentBuilder implements DataContentBuilder<DataContent> {
+    private static final String ALGORITHM_ID = "AES";
+    private final ZeroEchoSession session;
     private SecretKey secretKey;
     private AesKeyGenSpec genSpec;
     private AesKeyImportSpec importSpec;
@@ -128,11 +130,12 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
      *
      * @return a new builder instance
      */
-    public static AesDataContentBuilder builder() {
-        return new AesDataContentBuilder();
+    public static AesDataContentBuilder builder(ZeroEchoSession session) {
+        return new AesDataContentBuilder(session);
     }
 
-    private AesDataContentBuilder() {
+    private AesDataContentBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -353,13 +356,13 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
             if (ctx == null) {
                 ctx = Ctx.INSTANCE.getContext("aes-ctx-" + System.nanoTime());
             }
-            ctx.put(ConfluxKeys.aad("AES"), aad);
+            ctx.put(ConfluxKeys.aad(ALGORITHM_ID), aad);
         }
         if (iv != null && iv.length > 0) {
             if (ctx == null) {
                 ctx = Ctx.INSTANCE.getContext("aes-ctx-" + System.nanoTime());
             }
-            ctx.put(ConfluxKeys.iv("AES"), iv);
+            ctx.put(ConfluxKeys.iv(ALGORITHM_ID), iv);
         }
 
         return encrypt ? new EncryptContent(key, aesSpec, ctx) : new DecryptContent(key, aesSpec, ctx);
@@ -387,18 +390,14 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
             return secretKey;
         }
         try {
-            CryptoAlgorithm algo = CryptoAlgorithms.require("AES"); // registry lookup
             if (genSpec != null) {
-                SymmetricKeyBuilder<AesKeyGenSpec> b = algo.symmetricKeyBuilder(AesKeyGenSpec.class);
-                generatedKey = b.generateSecret(genSpec);
+                generatedKey = session.keyBuilders().symmetric().generate(ALGORITHM_ID, genSpec);
                 return generatedKey;
             }
             if (importSpec != null) {
-                SymmetricKeyBuilder<AesKeyImportSpec> b = algo.symmetricKeyBuilder(AesKeyImportSpec.class);
-                return b.importSecret(importSpec);
+                return session.keyBuilders().symmetric().importKey(ALGORITHM_ID, importSpec);
             }
-            SymmetricKeyBuilder<AesKeyGenSpec> b = algo.symmetricKeyBuilder(AesKeyGenSpec.class);
-            generatedKey = b.generateSecret(AesKeyGenSpec.aes256());
+            generatedKey = session.keyBuilders().symmetric().generate(ALGORITHM_ID, AesKeyGenSpec.aes256());
             return generatedKey;
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("AES key construction failed", e);
@@ -446,7 +445,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
      * }
      * }</pre>
      */
-    private static final class EncryptContent implements EncryptedContent {
+    private final class EncryptContent implements EncryptedContent {
         private final SecretKey key;
         private final AesSpec spec;
         private final CtxInterface ctx; // may be null
@@ -523,7 +522,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "encrypt: missing input content");
-            try (EncryptionContext enc = CryptoAlgorithms.create("AES", KeyUsage.ENCRYPT, key, spec)) {
+            try (EncryptionContext enc = session.createContext(ALGORITHM_ID, KeyUsage.ENCRYPT, key, spec)) {
                 if (!(enc instanceof ContextAware)) {
                     throw new IllegalStateException("AES context is not ContextAware; cannot pass conflux Ctx");
                 }
@@ -557,7 +556,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
      * <h2>Thread-safety</h2> Instances are not thread-safe and are intended for
      * single-use pipelines.
      */
-    private static final class DecryptContent implements PlainContent {
+    private final class DecryptContent implements PlainContent {
         private final SecretKey key;
         private final AesSpec spec;
         private final CtxInterface ctx; // may be null
@@ -609,7 +608,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
          * <p>
          * The method creates a decryption
          * {@link zeroecho.core.context.EncryptionContext} via
-         * {@link CryptoAlgorithms#create(String, KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+         * {@link zeroecho.sdk.ZeroEchoSession#createContext(String, KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
          * forwards the optional {@link CtxInterface} when the context is
          * {@code ContextAware}, and returns the stream produced by {@code attach}. The
          * returned stream is independent of the temporary context and remains usable
@@ -628,7 +627,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "decrypt: missing input content");
-            try (EncryptionContext dec = CryptoAlgorithms.create("AES", KeyUsage.DECRYPT, key, spec)) {
+            try (EncryptionContext dec = session.createContext(ALGORITHM_ID, KeyUsage.DECRYPT, key, spec)) {
                 if (!(dec instanceof ContextAware)) {
                     throw new IllegalStateException("AES context is not ContextAware; cannot pass conflux Ctx");
                 }

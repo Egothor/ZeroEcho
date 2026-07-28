@@ -133,7 +133,7 @@ public class AesGcmCrossCheckTest {
 
         // --- key (either via your builder or direct JCA; both fine) ---
         CryptoAlgorithm aesAlg = CryptoAlgorithms.require("AES");
-        SecretKey key = aesAlg.symmetricKeyBuilder(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.aes256());
+        SecretKey key = aesAlg.symmetricKeyGenerator(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.aes256());
         // or:
         // KeyGenerator kg = KeyGenerator.getInstance("AES");
         // kg.init(256);
@@ -148,7 +148,7 @@ public class AesGcmCrossCheckTest {
         AesSpec spec = AesSpec.gcm128(null);
 
         // === STREAM ENCRYPT ===
-        EncryptionContext enc = CryptoAlgorithms.create("AES", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(session);
         byte[] ct_stream = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
@@ -160,7 +160,7 @@ public class AesGcmCrossCheckTest {
         assertArrayEquals(ct_jca, ct_stream, "STREAM ciphertext != JCA ciphertext (IV/AAD/msg must match)");
 
         // === STREAM DECRYPT of JCA ciphertext ===
-        EncryptionContext dec1 = CryptoAlgorithms.create("AES", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec1 = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec1).setContext(session); // same IV/AAD in ctx
         byte[] pt1 = readAll(dec1.attach(new ByteArrayInputStream(ct_jca)));
         dec1.close();

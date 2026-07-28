@@ -57,9 +57,10 @@ import zeroecho.core.context.EncryptionContext;
  *
  * @since 1.0
  */
-public final class EncCtxRecipient implements Recipient {
+public final class EncCtxRecipient implements Recipient, AutoCloseable {
     private final EncryptionContext enc;
     private final boolean decoy;
+    private boolean closed;
 
     /**
      * Constructs a recipient that uses the given {@link EncryptionContext}.
@@ -121,10 +122,15 @@ public final class EncCtxRecipient implements Recipient {
      */
     @Override
     public byte[] buildRecipientEntry(byte[] cek) throws IOException {
+        if (closed) {
+            throw new IllegalStateException("Encryption recipient has been closed");
+        }
         ByteArrayInputStream in = new ByteArrayInputStream(cek);
-        try (enc; InputStream s = enc.attach(in); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+        try (InputStream s = enc.attach(in); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             s.transferTo(out);
             return out.toByteArray();
+        } finally {
+            close();
         }
     }
 
@@ -144,5 +150,18 @@ public final class EncCtxRecipient implements Recipient {
     @Override
     public boolean decoy() {
         return decoy;
+    }
+
+    /**
+     * Closes the owned encryption context.
+     *
+     * @throws IOException if context cleanup fails
+     */
+    @Override
+    public void close() throws IOException {
+        if (!closed) {
+            closed = true;
+            enc.close();
+        }
     }
 }

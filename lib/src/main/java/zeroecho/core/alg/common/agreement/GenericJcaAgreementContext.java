@@ -33,12 +33,9 @@
  ******************************************************************************/
 package zeroecho.core.alg.common.agreement;
 
-import java.security.GeneralSecurityException;
 import java.security.Key;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-
-import javax.crypto.KeyAgreement;
 
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.context.AgreementContext;
@@ -46,8 +43,8 @@ import zeroecho.core.context.AgreementContext;
 /**
  * <h2>Generic JCA-based Key Agreement Context</h2>
  *
- * An {@link AgreementContext} backed by the standard JCA {@link KeyAgreement}
- * API. This class supports elliptic-curve and modern Diffie-Hellman variants
+ * An {@link AgreementContext} backed by the standard JCA key-agreement API.
+ * This class supports elliptic-curve and modern Diffie-Hellman variants
  * such as ECDH, XDH (X25519, X448), and others provided by the runtime or
  * configured provider.
  *
@@ -75,12 +72,9 @@ import zeroecho.core.context.AgreementContext;
  *
  * @since 1.0
  */
-public class GenericJcaAgreementContext implements AgreementContext {
+public final class GenericJcaAgreementContext implements AgreementContext {
     private final CryptoAlgorithm algorithm;
-    private final PrivateKey privateKey;
-    private final String jcaName; // e.g., "ECDH" or "XDH" (or "X25519"/"X448")
-    private final String provider; // null => default
-    private PublicKey peer;
+    private final JcaAgreementEngine engine;
 
     /**
      * Creates a new JCA-based agreement context.
@@ -95,10 +89,8 @@ public class GenericJcaAgreementContext implements AgreementContext {
      *                              is {@code null}
      */
     public GenericJcaAgreementContext(CryptoAlgorithm alg, PrivateKey priv, String jcaName, String provider) {
-        this.algorithm = alg;
-        this.privateKey = priv;
-        this.jcaName = jcaName;
-        this.provider = provider;
+        this.algorithm = java.util.Objects.requireNonNull(alg, "alg must not be null");
+        this.engine = new JcaAgreementEngine(priv, jcaName, provider);
     }
 
     /**
@@ -118,7 +110,7 @@ public class GenericJcaAgreementContext implements AgreementContext {
      */
     @Override
     public Key key() {
-        return privateKey;
+        return engine.privateKey();
     }
 
     /**
@@ -133,7 +125,7 @@ public class GenericJcaAgreementContext implements AgreementContext {
      */
     @Override
     public void setPeerPublic(PublicKey peer) {
-        this.peer = peer;
+        engine.setPeerPublic(peer);
     }
 
     /**
@@ -141,7 +133,7 @@ public class GenericJcaAgreementContext implements AgreementContext {
      * previously assigned peer public key.
      *
      * <p>
-     * Internally this delegates to the JCA {@link KeyAgreement} API with the given
+     * Internally this delegates to the JCA key-agreement API with the given
      * {@code jcaName} and optional provider.
      * </p>
      *
@@ -152,18 +144,7 @@ public class GenericJcaAgreementContext implements AgreementContext {
      */
     @Override
     public byte[] deriveSecret() {
-        if (peer == null) {
-            throw new IllegalStateException("Peer public key not set");
-        }
-        try {
-            KeyAgreement ka = (provider == null) ? KeyAgreement.getInstance(jcaName)
-                    : KeyAgreement.getInstance(jcaName, provider);
-            ka.init(privateKey);
-            ka.doPhase(peer, true);
-            return ka.generateSecret();
-        } catch (GeneralSecurityException e) {
-            throw new IllegalArgumentException("KeyAgreement failed for " + jcaName, e);
-        }
+        return engine.deriveSecret();
     }
 
     /**

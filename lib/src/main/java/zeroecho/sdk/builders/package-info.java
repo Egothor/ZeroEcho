@@ -68,13 +68,9 @@
  * <li>Asymmetric encryption:
  * {@link zeroecho.sdk.builders.alg.RsaEncDataContentBuilder},
  * {@link zeroecho.sdk.builders.alg.ElgamalEncDataContentBuilder}.</li>
- * <li>Signatures: {@link zeroecho.sdk.builders.alg.RsaSigDataContentBuilder},
- * {@link zeroecho.sdk.builders.alg.EcdsaDataContentBuilder},
- * {@link zeroecho.sdk.builders.alg.Ed25519DataContentBuilder},
- * {@link zeroecho.sdk.builders.alg.Ed448DataContentBuilder},
- * {@link zeroecho.sdk.builders.alg.SphincsPlusDataContentBuilder},
- * {@link zeroecho.sdk.builders.alg.MldsaDataContentBuilder},
- * {@link zeroecho.sdk.builders.alg.SlhDsaDataContentBuilder}.</li>
+ * <li>RSA signatures:
+ * {@link zeroecho.sdk.builders.alg.RsaSigDataContentBuilder}; generic signature
+ * trailers use {@link zeroecho.sdk.builders.SignatureTrailerDataContentBuilder}.</li>
  * <li>MAC and digest: {@link zeroecho.sdk.builders.alg.HmacDataContentBuilder},
  * {@link zeroecho.sdk.builders.alg.DigestDataContentBuilder}.</li>
  * <li>KEM envelopes: {@link zeroecho.sdk.builders.alg.KemDataContentBuilder}

@@ -36,6 +36,7 @@ package zeroecho.sdk.guard;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.logging.Level;
@@ -43,6 +44,7 @@ import java.util.logging.Logger;
 
 import javax.crypto.AEADBadTagException;
 import javax.crypto.spec.SecretKeySpec;
+import javax.security.auth.DestroyFailedException;
 
 import zeroecho.core.io.Util;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
@@ -54,7 +56,7 @@ import zeroecho.sdk.content.api.PlainContent;
  * Decrypting stage that scans recipient entries to recover the CEK and then
  * delegates to the symmetric builder.
  */
-final class Decryptor implements PlainContent {
+final class Decryptor implements PlainContent, MultiRecipientContent {
     private static final Logger LOG = Logger.getLogger(Decryptor.class.getName());
 
     private final List<RecipientOpener> openers;
@@ -65,6 +67,7 @@ final class Decryptor implements PlainContent {
     private final int maxRecipients;
     private final int maxEntryLen;
     private DataContent upstream;
+    private boolean closed;
 
     /* package */ Decryptor(List<RecipientOpener> openers, UnlockMaterial material, AesDataContentBuilder aesBuilder,
             ChaChaDataContentBuilder chachaBuilder, int keyBytes, int maxRecipients, int maxEntryLen) {
@@ -85,6 +88,7 @@ final class Decryptor implements PlainContent {
      */
     @Override
     public void setInput(DataContent input) {
+        ensureOpen();
         this.upstream = Objects.requireNonNull(input);
     }
 
@@ -99,81 +103,223 @@ final class Decryptor implements PlainContent {
      */
     @Override
     public InputStream getStream() throws IOException { // NOPMD
-        Objects.requireNonNull(upstream, "decrypt: missing input");
-        InputStream in = upstream.getStream(); // NOPMD
-
-        // 1) Read recipients
-        int count = Util.readPack7I(in);
-        if (count < 0 || count > maxRecipients) {
-            in.close();
-            throw new IOException("invalid recipient count: " + count);
-        }
-
+        ensureOpen();
+        InputStream in = null; // NOPMD
         String matchedId = null;
         byte[] cek = null;
-
-        for (int i = 0; i < count; i++) {
-            String id = Util.readUTF8(in, 256); // reasonable max id length
-            byte[] blob = Util.read(in, maxEntryLen);
-
-            if (LOG.isLoggable(Level.FINE)) {
-                LOG.log(Level.FINE, "round {0} id {1} material {2}", new Object[] { i, id, material.description() }); // NOPMD
+        Throwable failure = null;
+        boolean transferred = false;
+        try {
+            Objects.requireNonNull(upstream, "decrypt: missing input");
+            in = upstream.getStream();
+            // 1) Read recipients
+            int count = Util.readPack7I(in);
+            if (count < 0 || count > maxRecipients) {
+                throw new IOException("invalid recipient count: " + count);
             }
 
-            for (RecipientOpener op : openers) {
+            for (int i = 0; i < count; i++) {
+                String id = Util.readUTF8(in, 256); // reasonable max id length
+                byte[] blob = Util.read(in, maxEntryLen);
+
                 if (LOG.isLoggable(Level.FINE)) {
-                    LOG.log(Level.FINE, "testing {0}", op.getClass().getName());
+                    LOG.log(Level.FINE, "round {0} id {1} material {2}",
+                            new Object[] { i, id, material.description() }); // NOPMD
                 }
-                try {
-                    byte[] maybe = op.tryOpen(id, blob, material);
-                    if (maybe != null) {
-                        if (maybe.length > keyBytes) {
-                            if (LOG.isLoggable(Level.WARNING)) { // NOPMD
-                                LOG.log(Level.WARNING,
-                                        "Suspicious material in field {0}: {1}/{2} finds the secret of length {3}, while {4} is a limit. Ignoring.",
-                                        new Object[] { i, id, op.toString(), maybe.length, keyBytes }); // NOPMD
+
+                for (RecipientOpener op : openers) { // NOPMD - owned openers close in closeAfterAttempt
+                    if (LOG.isLoggable(Level.FINE)) {
+                        LOG.log(Level.FINE, "testing {0}", op.getClass().getName());
+                    }
+                    try {
+                        byte[] maybe = op.tryOpen(id, blob, material);
+                        if (maybe != null) {
+                            if (maybe.length > keyBytes) {
+                                rejectOversizedCek(maybe, i, id, op);
+                            } else {
+                                cek = maybe;
+                                matchedId = id;
+                                if (LOG.isLoggable(Level.FINE)) {
+                                    LOG.log(Level.FINE, "*** match with {0} ***", op.getClass().getName());
+                                }
+                                break;
                             }
-                        } else {
-                            cek = maybe;
-                            matchedId = id;
-                            if (LOG.isLoggable(Level.FINE)) {
-                                LOG.log(Level.FINE, "*** match with {0} ***", op.getClass().getName());
-                            }
-                            break;
+                        }
+                    } catch (AEADBadTagException ex) {
+                        // wrong key/password for that entry, continue scanning
+                        if (LOG.isLoggable(Level.FINE)) {
+                            LOG.log(Level.FINE, "recipient authentication failed: {0}",
+                                    ex.getClass().getSimpleName());
+                        }
+                    } catch (GeneralSecurityException | IOException | IllegalArgumentException ex) {
+                        // entry not applicable to this opener/material; ignore and continue
+                        if (LOG.isLoggable(Level.FINE)) {
+                            LOG.log(Level.FINE, "recipient opener failed: {0}", ex.getClass().getSimpleName());
                         }
                     }
-                } catch (AEADBadTagException ex) {
-                    // wrong key/password for that entry, continue scanning
-                    LOG.log(Level.FINE, "failed AEAD {0}", ex);
-                } catch (GeneralSecurityException | IOException | IllegalArgumentException ex) {
-                    // entry not applicable to this opener/material; ignore and continue
-                    LOG.log(Level.FINE, "failed {0}", ex);
+                }
+                if (cek != null) {
+                    // Skip remaining recipient entries if any
+                    for (int j = i + 1; j < count; j++) {
+                        Util.readUTF8(in, 256);
+                        Util.read(in, maxEntryLen);
+                    }
+                    break;
                 }
             }
+
+            if (cek == null) {
+                throw new IOException("unable to unlock CEK with provided material");
+            }
+
+            LOG.log(Level.INFO, "found={0}", matchedId);
+
+            close();
+
+            // 2) Build symmetric decrypt stage and feed the remaining stream
+            final DataContent symmetric;
+            if (aesBuilder != null) {
+                symmetric = aesBuilder.withKey(new SecretKeySpec(cek, "AES")).build(false);
+            } else {
+                symmetric = chachaBuilder.withKey(new SecretKeySpec(cek, "ChaCha20")).build(false);
+            }
+            symmetric.setInput(new TailDataContent(in));
+            InputStream result = symmetric.getStream();
+            transferred = true;
+            return result;
+        } catch (IOException | RuntimeException | Error exception) { // NOPMD - retain primary failure
+            failure = exception;
+            throw exception;
+        } finally {
             if (cek != null) {
-                // Skip remaining recipient entries if any
-                for (int j = i + 1; j < count; j++) {
-                    Util.readUTF8(in, 256);
-                    Util.read(in, maxEntryLen);
-                }
-                break;
+                Arrays.fill(cek, (byte) 0);
+            }
+            closeAfterAttempt(in, transferred, failure);
+        }
+    }
+
+    private void closeAfterAttempt(InputStream input, boolean transferred, Throwable primary)
+            throws IOException {
+        IOException cleanupFailure = null;
+        if (!transferred) {
+            try {
+                closeRejectedInput(input, primary);
+            } catch (IOException exception) {
+                cleanupFailure = exception;
             }
         }
-
-        if (cek == null) {
-            throw new IOException("unable to unlock CEK with provided material");
+        Throwable effectivePrimary = primary == null ? cleanupFailure : primary;
+        try {
+            closeWithPrimary(effectivePrimary);
+        } catch (IOException exception) {
+            cleanupFailure = exception;
         }
-
-        LOG.log(Level.INFO, "found={0}", matchedId);
-
-        // 2) Build symmetric decrypt stage and feed the remaining stream
-        final DataContent symmetric;
-        if (aesBuilder != null) {
-            symmetric = aesBuilder.withKey(new SecretKeySpec(cek, "AES")).build(false);
-        } else {
-            symmetric = chachaBuilder.withKey(new SecretKeySpec(cek, "ChaCha20")).build(false);
+        if (primary == null && cleanupFailure != null) {
+            throw cleanupFailure;
         }
-        symmetric.setInput(new TailDataContent(in));
-        return symmetric.getStream();
+    }
+
+    private static void closeRejectedInput(InputStream input, Throwable primary) throws IOException {
+        if (input == null) {
+            return;
+        }
+        try {
+            input.close();
+        } catch (IOException cleanupFailure) {
+            if (primary != null) {
+                primary.addSuppressed(cleanupFailure);
+            } else {
+                throw cleanupFailure;
+            }
+        }
+    }
+
+    /**
+     * Releases opener-owned resources after scanning or abandonment.
+     *
+     * @throws IOException if opener cleanup fails
+     */
+    @Override
+    public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        closeOpeners(openers, null);
+    }
+
+    /**
+     * Destroys opener-owned resources after scanning or abandonment.
+     *
+     * @throws DestroyFailedException if opener cleanup fails
+     */
+    @Override
+    public void destroy() throws DestroyFailedException {
+        try {
+            close();
+        } catch (IOException exception) {
+            DestroyFailedException failure = new DestroyFailedException("Recipient opener cleanup failed");
+            failure.initCause(exception);
+            throw failure;
+        }
+    }
+
+    /**
+     * Reports whether opener-owned resources have been released.
+     *
+     * @return {@code true} after processing or explicit cleanup
+     */
+    @Override
+    public boolean isDestroyed() {
+        return closed;
+    }
+
+    private void closeWithPrimary(Throwable primary) throws IOException {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        closeOpeners(openers, primary);
+    }
+
+    /* default */ static void closeOpeners(List<RecipientOpener> ownedOpeners, Throwable primary)
+            throws IOException {
+        IOException cleanupFailure = null;
+        for (RecipientOpener opener : ownedOpeners) { // NOPMD - each opener is closed in this loop
+            try {
+                opener.close();
+            } catch (IOException wrapped) {
+                if (primary != null) {
+                    primary.addSuppressed(wrapped);
+                } else if (cleanupFailure == null) {
+                    cleanupFailure = wrapped;
+                } else {
+                    cleanupFailure.addSuppressed(wrapped);
+                }
+            }
+        }
+        if (primary == null && cleanupFailure != null) {
+            throw cleanupFailure;
+        }
+    }
+
+    private void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("Multi-recipient decrypting content has been closed");
+        }
+    }
+
+    private void rejectOversizedCek(byte[] candidate, int fieldIndex, String recipientId,
+            RecipientOpener opener) {
+        try {
+            if (LOG.isLoggable(Level.WARNING)) {
+                LOG.log(Level.WARNING,
+                        "Suspicious material in field {0}: {1}/{2} returned length {3}, while {4} is the limit. Ignoring.",
+                        new Object[] { fieldIndex, recipientId, opener.getClass().getName(),
+                                candidate.length, keyBytes });
+            }
+        } finally {
+            Arrays.fill(candidate, (byte) 0);
+        }
     }
 }

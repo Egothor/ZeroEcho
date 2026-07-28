@@ -62,7 +62,7 @@ import zeroecho.core.io.TailStrippingInputStream;
  * </p>
  *
  * <h2>Usage</h2> <pre>{@code
- * SignatureContext sc = CryptoAlgorithms.create("Ed25519", KeyUsage.SIGN, privateKey, spec);
+ * SignatureContext sc = session.createContext("Ed25519", KeyUsage.SIGN, privateKey, spec);
  * try (InputStream in = new SignatureTrailerInputStream(
  *         sc,
  *         originalContent.getStream(),

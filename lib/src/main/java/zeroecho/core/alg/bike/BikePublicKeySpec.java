@@ -49,7 +49,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h3>Usage</h3> <pre>{@code
  * // Import a BIKE public key
  * BikePublicKeySpec spec = new BikePublicKeySpec(x509Bytes);
- * PublicKey key = bikeAlgorithm.importPublic(spec);
+ * PublicKey key = bikeAlgorithm.publicKeyImporter(BikePublicKeySpec.class).importPublic(spec);
  *
  * // Marshal for transport or storage
  * PairSeq seq = BikePublicKeySpec.marshal(spec);

@@ -35,13 +35,11 @@ package zeroecho.core.alg.common.eddsa;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
-import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
 
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * <h2>Abstract EdDSA Encoded Public Key Builder</h2>
@@ -75,7 +73,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public abstract class AbstractEncodedPublicKeyBuilder<S extends AlgorithmKeySpec> implements AsymmetricKeyBuilder<S> {
+public abstract class AbstractEncodedPublicKeyBuilder<S extends AlgorithmKeySpec> implements PublicKeyImporter<S> {
 
     /**
      * Returns the canonical JCA algorithm identifier used by
@@ -104,19 +102,6 @@ public abstract class AbstractEncodedPublicKeyBuilder<S extends AlgorithmKeySpec
     protected abstract byte[] encodedX509(S spec);
 
     /**
-     * Unsupported in this builder, since key pair generation is handled by
-     * {@link AbstractEdDSAKeyGenBuilder}.
-     *
-     * @param spec algorithm-specific key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public KeyPair generateKeyPair(S spec) {
-        throw new UnsupportedOperationException("Generation not supported by this spec.");
-    }
-
-    /**
      * Imports an EdDSA public key from its X.509-encoded form.
      *
      * <p>
@@ -134,18 +119,5 @@ public abstract class AbstractEncodedPublicKeyBuilder<S extends AlgorithmKeySpec
     public PublicKey importPublic(S spec) throws GeneralSecurityException {
         KeyFactory kf = KeyFactory.getInstance(jcaKeyFactoryAlg());
         return kf.generatePublic(new X509EncodedKeySpec(encodedX509(spec)));
-    }
-
-    /**
-     * Unsupported in this builder, since private key import is delegated to the
-     * matching {@code *PrivateKeySpec} builder.
-     *
-     * @param spec algorithm-specific key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public PrivateKey importPrivate(S spec) {
-        throw new UnsupportedOperationException("Use the corresponding PrivateKeySpec.");
     }
 }

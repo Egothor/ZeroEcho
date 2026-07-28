@@ -33,14 +33,16 @@
  ******************************************************************************/
 package zeroecho.sdk.hybrid.kex;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.IOException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.Objects;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.AgreementContext;
+import zeroecho.core.context.CryptoContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.ContextSpec;
 
@@ -82,12 +84,9 @@ import zeroecho.core.spec.ContextSpec;
  * </p>
  *
  * <h2>Error handling</h2>
- * <p>
- * Underlying context construction uses
- * {@link CryptoAlgorithms#create(String, KeyUsage, java.security.Key, ContextSpec)}
- * which may throw {@link IOException}. These factory methods propagate the
- * checked exception to keep failures explicit and auditable.
- * </p>
+ * <p>Context construction is in-memory and reports configuration or provider
+ * failures through the security exception model of {@link ZeroEchoSession}.
+ * I/O failures remain associated with later stream processing.</p>
  *
  * <h2>Thread safety</h2>
  * <p>
@@ -123,6 +122,7 @@ public final class HybridKexContexts {
      * empty unless the chosen classic implementation itself supports message mode.
      * </p>
      *
+     * @param session                 explicit policy and audit boundary
      * @param profile                 hybrid profile defining HKDF binding and
      *                                output length
      * @param classicAlgId            classic agreement algorithm identifier (for
@@ -142,13 +142,13 @@ public final class HybridKexContexts {
      *                                if the algorithm supports a default)
      * @return initiator-side {@link HybridKexContext}
      * @throws NullPointerException if any required argument is {@code null}
-     * @throws IOException          if underlying context creation fails
      * @since 1.0
      */
-    public static HybridKexContext initiator(HybridKexProfile profile, String classicAlgId,
+    public static HybridKexContext initiator(ZeroEchoSession session, HybridKexProfile profile, String classicAlgId,
             PrivateKey classicInitiatorPrivate, PublicKey classicPeerPublic, ContextSpec classicSpec, String pqcAlgId,
-            PublicKey pqcPeerPublic, ContextSpec pqcSpec) throws IOException {
+            PublicKey pqcPeerPublic, ContextSpec pqcSpec) {
 
+        Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(classicAlgId, "classicAlgId");
         Objects.requireNonNull(classicInitiatorPrivate, "classicInitiatorPrivate");
@@ -156,13 +156,19 @@ public final class HybridKexContexts {
         Objects.requireNonNull(pqcAlgId, "pqcAlgId");
         Objects.requireNonNull(pqcPeerPublic, "pqcPeerPublic");
 
-        AgreementContext classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicInitiatorPrivate,
-                classicSpec);
-        classic.setPeerPublic(classicPeerPublic);
-
-        MessageAgreementContext pqc = CryptoAlgorithms.create(pqcAlgId, KeyUsage.AGREEMENT, pqcPeerPublic, pqcSpec);
-
-        return new HybridKexContext(profile, classic, pqc);
+        AgreementContext classic = null;
+        MessageAgreementContext pqc = null;
+        try {
+            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicInitiatorPrivate,
+                    classicSpec);
+            classic.setPeerPublic(classicPeerPublic);
+            pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcPeerPublic, pqcSpec);
+            return new HybridKexContext(profile, classic, pqc);
+        } catch (RuntimeException | Error failure) { // NOPMD - close partial construction
+            closeAfterFailure(pqc, failure);
+            closeAfterFailure(classic, failure);
+            throw failure;
+        }
     }
 
     /**
@@ -185,6 +191,7 @@ public final class HybridKexContexts {
      * {@link HybridKexContext#setPeerMessage(byte[])}.
      * </p>
      *
+     * @param session                 explicit policy and audit boundary
      * @param profile                 hybrid profile defining HKDF binding and
      *                                output length
      * @param classicAlgId            classic agreement algorithm identifier
@@ -199,13 +206,13 @@ public final class HybridKexContexts {
      *                                {@code null})
      * @return responder-side {@link HybridKexContext}
      * @throws NullPointerException if any required argument is {@code null}
-     * @throws IOException          if underlying context creation fails
      * @since 1.0
      */
-    public static HybridKexContext responder(HybridKexProfile profile, String classicAlgId,
+    public static HybridKexContext responder(ZeroEchoSession session, HybridKexProfile profile, String classicAlgId,
             PrivateKey classicResponderPrivate, PublicKey classicPeerPublic, ContextSpec classicSpec, String pqcAlgId,
-            PrivateKey pqcResponderPrivate, ContextSpec pqcSpec) throws IOException {
+            PrivateKey pqcResponderPrivate, ContextSpec pqcSpec) {
 
+        Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(classicAlgId, "classicAlgId");
         Objects.requireNonNull(classicResponderPrivate, "classicResponderPrivate");
@@ -213,14 +220,19 @@ public final class HybridKexContexts {
         Objects.requireNonNull(pqcAlgId, "pqcAlgId");
         Objects.requireNonNull(pqcResponderPrivate, "pqcResponderPrivate");
 
-        AgreementContext classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT, classicResponderPrivate,
-                classicSpec);
-        classic.setPeerPublic(classicPeerPublic);
-
-        MessageAgreementContext pqc = CryptoAlgorithms.create(pqcAlgId, KeyUsage.AGREEMENT, pqcResponderPrivate,
-                pqcSpec);
-
-        return new HybridKexContext(profile, classic, pqc);
+        AgreementContext classic = null;
+        MessageAgreementContext pqc = null;
+        try {
+            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicResponderPrivate,
+                    classicSpec);
+            classic.setPeerPublic(classicPeerPublic);
+            pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcResponderPrivate, pqcSpec);
+            return new HybridKexContext(profile, classic, pqc);
+        } catch (RuntimeException | Error failure) { // NOPMD - close partial construction
+            closeAfterFailure(pqc, failure);
+            closeAfterFailure(classic, failure);
+            throw failure;
+        }
     }
 
     /**
@@ -233,6 +245,7 @@ public final class HybridKexContexts {
      * message is the PQC encapsulation payload (typically KEM ciphertext).
      * </p>
      *
+     * @param session                 explicit policy and audit boundary
      * @param profile                 hybrid profile defining HKDF binding and
      *                                output length
      * @param classicAlgId            classic agreement algorithm identifier (e.g.
@@ -248,24 +261,31 @@ public final class HybridKexContexts {
      *                                {@code null})
      * @return initiator-side {@link HybridKexContext}
      * @throws NullPointerException if any required argument is {@code null}
-     * @throws IOException          if underlying context creation fails
      */
-    public static HybridKexContext initiatorPairMessage(HybridKexProfile profile, String classicAlgId,
+    public static HybridKexContext initiatorPairMessage(ZeroEchoSession session, HybridKexProfile profile,
+            String classicAlgId,
             zeroecho.core.alg.common.agreement.KeyPairKey classicInitiatorKeyPair, ContextSpec classicSpec,
-            String pqcAlgId, PublicKey pqcPeerPublic, ContextSpec pqcSpec) throws IOException {
+            String pqcAlgId, PublicKey pqcPeerPublic, ContextSpec pqcSpec) {
 
+        Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(classicAlgId, "classicAlgId");
         Objects.requireNonNull(classicInitiatorKeyPair, "classicInitiatorKeyPair");
         Objects.requireNonNull(pqcAlgId, "pqcAlgId");
         Objects.requireNonNull(pqcPeerPublic, "pqcPeerPublic");
 
-        MessageAgreementContext classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT,
-                classicInitiatorKeyPair, classicSpec);
-
-        MessageAgreementContext pqc = CryptoAlgorithms.create(pqcAlgId, KeyUsage.AGREEMENT, pqcPeerPublic, pqcSpec);
-
-        return new HybridKexContext(profile, classic, pqc);
+        MessageAgreementContext classic = null;
+        MessageAgreementContext pqc = null;
+        try {
+            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicInitiatorKeyPair,
+                    classicSpec);
+            pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcPeerPublic, pqcSpec);
+            return new HybridKexContext(profile, classic, pqc);
+        } catch (RuntimeException | Error failure) { // NOPMD - close partial construction
+            closeAfterFailure(pqc, failure);
+            closeAfterFailure(classic, failure);
+            throw failure;
+        }
     }
 
     /**
@@ -278,6 +298,7 @@ public final class HybridKexContexts {
      * {@link HybridKexContext#deriveSecret()}.
      * </p>
      *
+     * @param session                 explicit policy and audit boundary
      * @param profile                 hybrid profile defining HKDF binding and
      *                                output length
      * @param classicAlgId            classic agreement algorithm identifier
@@ -290,24 +311,41 @@ public final class HybridKexContexts {
      *                                {@code null})
      * @return responder-side {@link HybridKexContext}
      * @throws NullPointerException if any required argument is {@code null}
-     * @throws IOException          if underlying context creation fails
      */
-    public static HybridKexContext responderPairMessage(HybridKexProfile profile, String classicAlgId,
+    public static HybridKexContext responderPairMessage(ZeroEchoSession session, HybridKexProfile profile,
+            String classicAlgId,
             zeroecho.core.alg.common.agreement.KeyPairKey classicResponderKeyPair, ContextSpec classicSpec,
-            String pqcAlgId, PrivateKey pqcResponderPrivate, ContextSpec pqcSpec) throws IOException {
+            String pqcAlgId, PrivateKey pqcResponderPrivate, ContextSpec pqcSpec) {
 
+        Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(classicAlgId, "classicAlgId");
         Objects.requireNonNull(classicResponderKeyPair, "classicResponderKeyPair");
         Objects.requireNonNull(pqcAlgId, "pqcAlgId");
         Objects.requireNonNull(pqcResponderPrivate, "pqcResponderPrivate");
 
-        MessageAgreementContext classic = CryptoAlgorithms.create(classicAlgId, KeyUsage.AGREEMENT,
-                classicResponderKeyPair, classicSpec);
+        MessageAgreementContext classic = null;
+        MessageAgreementContext pqc = null;
+        try {
+            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicResponderKeyPair,
+                    classicSpec);
+            pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcResponderPrivate, pqcSpec);
+            return new HybridKexContext(profile, classic, pqc);
+        } catch (RuntimeException | Error failure) { // NOPMD - close partial construction
+            closeAfterFailure(pqc, failure);
+            closeAfterFailure(classic, failure);
+            throw failure;
+        }
+    }
 
-        MessageAgreementContext pqc = CryptoAlgorithms.create(pqcAlgId, KeyUsage.AGREEMENT, pqcResponderPrivate,
-                pqcSpec);
-
-        return new HybridKexContext(profile, classic, pqc);
+    private static void closeAfterFailure(CryptoContext context, Throwable failure) {
+        if (context == null) {
+            return;
+        }
+        try {
+            context.close();
+        } catch (IOException | RuntimeException closeFailure) { // NOPMD - preserve close failure
+            failure.addSuppressed(closeFailure);
+        }
     }
 }

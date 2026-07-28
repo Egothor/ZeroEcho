@@ -36,34 +36,28 @@ package zeroecho.sdk.guard;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.io.Util;
+import zeroecho.sdk.Pbkdf2Limits;
 import zeroecho.sdk.util.RandomSupport;
 
 /**
  * Password recipient that derives a KEK via PBKDF2(HMAC-SHA-256) and wraps the
  * CEK with AES-GCM.
  */
-public final class PasswordRecipient implements Recipient {
+public final class PasswordRecipient implements Recipient, Destroyable, AutoCloseable {
     private final char[] password;
     private final int iterations;
     private final int saltLen;
     private final int kekBytes;
     private final boolean decoy;
-
-    /**
-     * Creates a password-based recipient.
-     *
-     * @param password   the password; the caller should clear the array after use
-     * @param iterations PBKDF2 iteration count
-     * @param saltLen    salt length in bytes
-     * @param kekBytes   derived KEK length in bytes
-     * @throws NullPointerException if {@code password} is null
-     */
-    public PasswordRecipient(char[] password, int iterations, int saltLen, int kekBytes) {
-        this(password, iterations, saltLen, kekBytes, false);
-    }
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Creates a password-based recipient that derives a key-encryption key (KEK)
@@ -81,27 +75,35 @@ public final class PasswordRecipient implements Recipient {
      * <ul>
      * <li>The caller should clear the {@code password} array after constructing the
      * recipient to minimize exposure in memory.</li>
-     * <li>Choose an iteration count appropriate to the target platform to resist
-     * brute-force attacks.</li>
+     * <li>Choose an iteration count appropriate to the target platform to balance
+     * password-guessing resistance against recipient creation and opening
+     * latency. Counts below {@value Pbkdf2Limits#MINIMUM} are rejected.</li>
      * <li>Decoy recipients increase confidentiality by hiding the number of real
      * recipients but cannot successfully unwrap the CEK.</li>
      * </ul>
      *
      * @param password   the password used as input to PBKDF2; must not be
      *                   {@code null}
-     * @param iterations the PBKDF2 iteration count
+     * @param iterations the PBKDF2 iteration count; must be at least
+     *                   {@value Pbkdf2Limits#MINIMUM}
      * @param saltLen    length of the random salt (in bytes)
-     * @param kekBytes   desired length of the derived KEK (in bytes)
+     * @param kekBytes   derived KEK length; exactly 16 or 32 bytes
      * @param decoy      {@code true} if this is a decoy recipient (fake entry that
      *                   cannot unwrap a CEK); {@code false} if it is a real
      *                   recipient
-     * @throws NullPointerException if {@code password} is {@code null}
+     * @throws NullPointerException     if {@code password} is {@code null}
+     * @throws IllegalArgumentException if {@code iterations} is below
+     *                                  {@value Pbkdf2Limits#MINIMUM} or
+     *                                  {@code kekBytes} is not exactly 16 or 32
      */
-    public PasswordRecipient(char[] password, int iterations, int saltLen, int kekBytes, boolean decoy) {
-        this.password = Objects.requireNonNull(password);
+    /* default */ PasswordRecipient(char[] password, int iterations, int saltLen, int kekBytes, boolean decoy,
+            Pbkdf2Limits limits) {
+        int validatedKekBytes = RecipientKekSizes.requireSupported(kekBytes);
+        Objects.requireNonNull(limits, "limits must not be null").validateTrusted(iterations);
+        this.password = Objects.requireNonNull(password, "password must not be null").clone();
         this.iterations = iterations;
         this.saltLen = saltLen;
-        this.kekBytes = kekBytes;
+        this.kekBytes = validatedKekBytes;
         this.decoy = decoy;
     }
 
@@ -125,17 +127,29 @@ public final class PasswordRecipient implements Recipient {
      */
     @Override
     public byte[] buildRecipientEntry(byte[] cek) throws GeneralSecurityException, IOException {
-        byte[] salt = RandomSupport.generateRandom(saltLen);
-        byte[] kek = MultiRecipientDataSourceBuilder.pbkdf2HmacSha256(password, salt, iterations, kekBytes);
-        byte[] wrapIv = RandomSupport.generateRandom(12);
-        byte[] wrapped = MultiRecipientDataSourceBuilder.aesGcmWrap(kek, wrapIv, null, cek);
+        lifecycleLock.lock();
+        try {
+            if (destroyed) {
+                throw new IllegalStateException("Password recipient has been destroyed");
+            }
+            byte[] salt = RandomSupport.generateRandom(saltLen);
+            byte[] kek = MultiRecipientDataSourceBuilder.pbkdf2HmacSha256(password, salt, iterations, kekBytes);
+            try {
+                byte[] wrapIv = RandomSupport.generateRandom(12);
+                byte[] wrapped = MultiRecipientDataSourceBuilder.aesGcmWrap(kek, wrapIv, null, cek);
 
-        ByteArrayOutputStream out = new ByteArrayOutputStream(64 + wrapped.length);
-        Util.writePack7I(out, iterations);
-        Util.write(out, salt);
-        Util.write(out, wrapIv);
-        Util.write(out, wrapped);
-        return out.toByteArray();
+                ByteArrayOutputStream out = new ByteArrayOutputStream(64 + wrapped.length);
+                Util.writePack7I(out, iterations);
+                Util.write(out, salt);
+                Util.write(out, wrapIv);
+                Util.write(out, wrapped);
+                return out.toByteArray();
+            } finally {
+                Arrays.fill(kek, (byte) 0);
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -154,5 +168,38 @@ public final class PasswordRecipient implements Recipient {
     @Override
     public boolean decoy() {
         return decoy;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(password, '\0');
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /**
+     * Closes this recipient by destroying its retained password copy.
+     */
+    @Override
+    public void close() {
+        destroy();
     }
 }

@@ -70,9 +70,9 @@
  * <li><b>ElgamalKeyGenSpec</b>: parameters for generating fresh domain
  * parameters and key pairs; typically disabled in favor of predefined parameter
  * sets.</li>
- * <li><b>ElgamalPublicKeySpec</b> / <b>ElgamalPrivateKeySpec</b>: immutable
- * encoded key specifications (X.509 and PKCS#8) with defensive copying and
- * compact marshalling helpers.</li>
+ * <li><b>ElgamalPublicKeySpec</b> / <b>ElgamalPrivateKeySpec</b>: encoded key
+ * specifications (X.509 and PKCS#8) with defensive copying and compact
+ * marshalling helpers; the private-key form is destroyable.</li>
  * </ul>
  *
  * <h2>Design notes</h2>

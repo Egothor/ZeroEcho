@@ -137,7 +137,7 @@ public final class ElgamalCipherContext implements EncryptionContext {
 
         return CipherTransformInputStreamBuilder.builder().withCipher(cipher).withUpstream(upstream)
                 .withInputBlockSize(g.inputBlockSize()).withOutputBlockSize(g.perBlockOutput())
-                .withLeftZeroPadding(g.noPadding).build();
+                .withLeftZeroPadding(g.noPadding).withIndependentBlocks().build();
     }
 
     /**

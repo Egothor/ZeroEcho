@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -44,15 +46,12 @@ import java.util.Objects;
 
 import javax.crypto.SecretKey;
 
-import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.hmac.HmacKeyGenSpec;
 import zeroecho.core.alg.hmac.HmacKeyImportSpec;
 import zeroecho.core.alg.hmac.HmacSpec;
 import zeroecho.core.context.MacContext;
 import zeroecho.core.io.TailStrippingInputStream;
-import zeroecho.core.spi.SymmetricKeyBuilder;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.PlainContent;
@@ -91,6 +90,8 @@ import zeroecho.sdk.content.api.PlainContent;
  * @see HmacSpec
  */
 public final class HmacDataContentBuilder implements DataContentBuilder<PlainContent> {
+    private static final String ALGORITHM_ID = "HMAC";
+    private final ZeroEchoSession session;
     /**
      * Mode selects whether the pipeline computes an HMAC tag or verifies one.
      *
@@ -233,7 +234,8 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
 
     private Out out = Out.PASSTHROUGH;
 
-    private HmacDataContentBuilder() {
+    private HmacDataContentBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -248,8 +250,8 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
      *
      * @return a new {@code HmacDataContentBuilder} instance
      */
-    public static HmacDataContentBuilder builder() {
-        return new HmacDataContentBuilder();
+    public static HmacDataContentBuilder builder(ZeroEchoSession session) {
+        return new HmacDataContentBuilder(session);
     }
 
     /**
@@ -620,13 +622,11 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
         }
         final String mac = spec.macName(); // e.g., "HmacSHA256"
         try {
-            final CryptoAlgorithm algo = CryptoAlgorithms.require("HMAC"); // registered in HmacAlgorithm
             if (genKeyBits != null) {
-                SymmetricKeyBuilder<HmacKeyGenSpec> b = algo.symmetricKeyBuilder(HmacKeyGenSpec.class);
-                return b.generateSecret(new HmacKeyGenSpec(mac, genKeyBits)); // builder honors macName
+                return session.keyBuilders().symmetric().generate(ALGORITHM_ID,
+                        new HmacKeyGenSpec(mac, genKeyBits));
             }
             if (importRaw != null || importHex != null || importBase64 != null) {
-                SymmetricKeyBuilder<HmacKeyImportSpec> b = algo.symmetricKeyBuilder(HmacKeyImportSpec.class);
                 HmacKeyImportSpec ispec;
                 if (importRaw != null) {
                     ispec = HmacKeyImportSpec.fromRaw(mac, importRaw);
@@ -635,11 +635,10 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
                 } else {
                     ispec = HmacKeyImportSpec.fromBase64(mac, importBase64);
                 }
-                return b.importSecret(ispec);
+                return session.keyBuilders().symmetric().importKey(ALGORITHM_ID, ispec);
             }
             // default keygen if nothing provided
-            SymmetricKeyBuilder<HmacKeyGenSpec> b = algo.symmetricKeyBuilder(HmacKeyGenSpec.class);
-            return b.generateSecret(HmacKeyGenSpec.sha256(256));
+            return session.keyBuilders().symmetric().generate(ALGORITHM_ID, HmacKeyGenSpec.sha256(256));
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("HMAC key construction failed", e);
         }
@@ -661,7 +660,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
     /**
      * MAC + pass-through: return body only (trailer stripped).
      */
-    private static final class MacPassThrough implements PlainContent {
+    private final class MacPassThrough implements PlainContent {
         private final SecretKey key;
         private final HmacSpec spec;
 
@@ -680,7 +679,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "mac: missing input");
-            final MacContext m = CryptoAlgorithms.create("HMAC", KeyUsage.MAC, key, spec); // HmacMacContext
+            final MacContext m = session.createContext(ALGORITHM_ID, KeyUsage.MAC, key, spec); // HmacMacContext
             final InputStream produced = m.wrap(upstream.getStream()); // emits [body][tag]
             final int tagLen = m.tagLength();
             return withContextClose(new TailStrippingInputStream(produced, tagLen, IO_BUF) {
@@ -694,7 +693,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
     /**
      * MAC + emit tag (raw/hex/base64).
      */
-    private static final class MacEmit implements PlainContent {
+    private final class MacEmit implements PlainContent {
         private final SecretKey key;
         private final HmacSpec spec;
         private final Out out;
@@ -719,7 +718,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
             Objects.requireNonNull(upstream, "mac: missing input");
 
             final byte[][] holder = new byte[1][];
-            try (MacContext m = CryptoAlgorithms.create("HMAC", KeyUsage.MAC, key, spec)) {
+            try (MacContext m = session.createContext(ALGORITHM_ID, KeyUsage.MAC, key, spec)) {
                 final int tagLen = m.tagLength();
                 try (InputStream in = new TailStrippingInputStream(m.wrap(upstream.getStream()), tagLen, IO_BUF) {
                     @Override
@@ -765,7 +764,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
      * read expected from the input trailer (and strip it). Returns body only;
      * throws on mismatch.
      */
-    private static final class VerifyPassThrough implements PlainContent {
+    private final class VerifyPassThrough implements PlainContent {
         private final SecretKey key;
         private final HmacSpec spec;
         private final byte[] expectedOrNull;
@@ -787,7 +786,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "verify: missing input");
 
-            final MacContext m = CryptoAlgorithms.create("HMAC", KeyUsage.MAC, key, spec);
+            final MacContext m = session.createContext(ALGORITHM_ID, KeyUsage.MAC, key, spec);
 
             final InputStream body;
             if (expectedOrNull != null) {
@@ -814,7 +813,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
     /**
      * VERIFY + emit boolean ("true"/"false").
      */
-    private static final class VerifyEmit implements PlainContent {
+    private final class VerifyEmit implements PlainContent {
         private final SecretKey key;
         private final HmacSpec spec;
         private final byte[] expectedOrNull;
@@ -837,7 +836,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
             Objects.requireNonNull(upstream, "verify: missing input");
 
             boolean ok;
-            try (MacContext m = CryptoAlgorithms.create("HMAC", KeyUsage.MAC, key, spec)) {
+            try (MacContext m = session.createContext(ALGORITHM_ID, KeyUsage.MAC, key, spec)) {
                 if (expectedOrNull != null) {
                     m.setExpectedTag(expectedOrNull);
                     try (InputStream in = m.wrap(upstream.getStream())) {

@@ -50,10 +50,10 @@ import zeroecho.core.spec.ContextSpec;
  *
  * <h2>Usage</h2> <pre>{@code
  * // Generate a key pair for X25519
- * KeyPair kp = CryptoAlgorithms.keyPair("XDH", XdhSpec.X25519);
+ * KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("XDH", XdhSpec.X25519);
  *
  * // Perform key agreement
- * AgreementContext ctx = CryptoAlgorithms.create("XDH", KeyUsage.AGREEMENT,
+ * AgreementContext ctx = session.createContext("XDH", KeyUsage.AGREEMENT,
  *                                                kp.getPrivate(), XdhSpec.X25519);
  * ctx.setPeerPublic(peerPublicKey);
  * byte[] sharedSecret = ctx.deriveSecret();

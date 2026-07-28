@@ -82,12 +82,13 @@ import zeroecho.core.spec.VoidSpec;
  * <pre>{@code
  * // Example: generate a key pair and sign data
  * CryptoAlgorithm ed448 = new Ed448Algorithm();
- * KeyPair kp = ed448.generateKeyPair(Ed448KeyGenSpec.defaultSpec());
+ * KeyPair kp = ed448.asymmetricKeyPairGenerator(Ed448KeyGenSpec.class)
+ *                    .generateKeyPair(Ed448KeyGenSpec.defaultSpec());
  *
- * SignatureContext signer = ed448.create(KeyUsage.SIGN, kp.getPrivate(), null);
+ * SignatureContext signer = ed448.createContext(KeyUsage.SIGN, kp.getPrivate(), null);
  * byte[] sig = signer.sign(data);
  *
- * SignatureContext verifier = ed448.create(KeyUsage.VERIFY, kp.getPublic(), null);
+ * SignatureContext verifier = ed448.createContext(KeyUsage.VERIFY, kp.getPublic(), null);
  * boolean ok = verifier.verify(data, sig);
  * }</pre>
  *
@@ -128,7 +129,7 @@ public final class Ed448Algorithm extends AbstractCryptoAlgorithm {
      * <pre>{@code
      * // Example: instantiate and obtain a signer
      * CryptoAlgorithm ed448 = new Ed448Algorithm();
-     * SignatureContext signer = ed448.create(KeyUsage.SIGN, privateKey, null);
+     * SignatureContext signer = ed448.createContext(KeyUsage.SIGN, privateKey, null);
      * }</pre>
      */
     public Ed448Algorithm() {
@@ -155,8 +156,9 @@ public final class Ed448Algorithm extends AbstractCryptoAlgorithm {
                 }, () -> VoidSpec.INSTANCE);
 
         // Key builders
-        registerAsymmetricKeyBuilder(Ed448KeyGenSpec.class, new Ed448KeyGenBuilder(), Ed448KeyGenSpec::defaultSpec);
-        registerAsymmetricKeyBuilder(Ed448PublicKeySpec.class, new Ed448PublicKeyBuilder(), null);
-        registerAsymmetricKeyBuilder(Ed448PrivateKeySpec.class, new Ed448PrivateKeyBuilder(), null);
+        registerAsymmetricKeyPairGenerator(Ed448KeyGenSpec.class, new Ed448KeyGenBuilder(),
+                Ed448KeyGenSpec::defaultSpec);
+        registerPublicKeyImporter(Ed448PublicKeySpec.class, new Ed448PublicKeyBuilder());
+        registerPrivateKeyImporter(Ed448PrivateKeySpec.class, new Ed448PrivateKeyBuilder());
     }
 }

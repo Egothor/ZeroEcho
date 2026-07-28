@@ -62,8 +62,10 @@ import zeroecho.core.alg.rsa.RsaKeyGenSpec;
 import zeroecho.core.alg.rsa.RsaPrivateKeySpec;
 import zeroecho.core.alg.rsa.RsaPublicKeySpec;
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
-import zeroecho.core.spi.SymmetricKeyBuilder;
+import zeroecho.core.KeyOperation;
+import zeroecho.core.KeyOperationInfo;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.SymmetricKeyGenerator;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
 public class KeyringStoreDynamicTest {
@@ -183,19 +185,19 @@ public class KeyringStoreDynamicTest {
         logBegin();
 
         Path keyringPath = tempDir.resolve("keyring-" + System.nanoTime() + ".txt");
-        KeyringStore store = new KeyringStore();
+        KeyringStore store = new KeyringStore(new zeroecho.sdk.ZeroEchoSession());
 
-        CryptoAlgorithm algo = CryptoAlgorithms.require("RSA");
-        KeyPair kp = algo.generateKeyPair(RsaKeyGenSpec.rsa4096());
+        zeroecho.sdk.ZeroEchoSession session = new zeroecho.sdk.ZeroEchoSession();
+        KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
         store.putPrivate("alice.priv", "RSA", new RsaPrivateKeySpec(kp.getPrivate().getEncoded()));
         store.putPublic("alice.pub", "RSA", new RsaPublicKeySpec(kp.getPublic().getEncoded()));
 
-        kp = algo.generateKeyPair(RsaKeyGenSpec.rsa4096());
+        kp = session.keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
         store.putPrivate("bob.priv", "RSA", new RsaPrivateKeySpec(kp.getPrivate().getEncoded()));
         store.putPublic("bob.pub", "RSA", new RsaPublicKeySpec(kp.getPublic().getEncoded()));
         store.save(keyringPath);
 
-        store = KeyringStore.load(keyringPath);
+        store = KeyringStore.load(new zeroecho.sdk.ZeroEchoSession(), keyringPath);
         String s = store.exportText(Collections.singleton("alice.pub"));
 
         assertTrue(s.contains("# KeyringStore v1\n"));
@@ -214,7 +216,7 @@ public class KeyringStoreDynamicTest {
     void keyring_dynamic_population_roundtrip_and_dump(@TempDir Path tempDir) throws Exception {
         logBegin();
 
-        KeyringStore store = new KeyringStore();
+        KeyringStore store = new KeyringStore(new zeroecho.sdk.ZeroEchoSession());
 
         Set<String> ids = CryptoAlgorithms.available();
         System.out.println("...algorithms discovered: " + ids);
@@ -225,34 +227,35 @@ public class KeyringStoreDynamicTest {
             CryptoAlgorithm alg = CryptoAlgorithms.require(id);
             System.out.println("\n-- " + id + " --");
 
-            if (!alg.asymmetricBuildersInfo().isEmpty()) {
+            if (alg.keyOperations().stream()
+                    .anyMatch(info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE)) {
                 int perAlg = 0;
-                for (CryptoAlgorithm.AsymBuilderInfo bi : alg.asymmetricBuildersInfo()) {
-                    if (bi.defaultKeySpec == null) {
+                for (KeyOperationInfo bi : alg.keyOperations()) {
+                    if (bi.operation() != KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE || bi.defaultSpec() == null) {
                         continue;
                     }
                     try {
                         @SuppressWarnings("unchecked")
-                        Class<AlgorithmKeySpec> genSpecType = (Class<AlgorithmKeySpec>) bi.specType;
-                        AsymmetricKeyBuilder<AlgorithmKeySpec> b = alg.asymmetricKeyBuilder(genSpecType);
+                        Class<AlgorithmKeySpec> genSpecType = (Class<AlgorithmKeySpec>) bi.specType();
+                        AsymmetricKeyPairGenerator<AlgorithmKeySpec> b = alg.asymmetricKeyPairGenerator(genSpecType);
 
-                        AlgorithmKeySpec genSpec = (AlgorithmKeySpec) bi.defaultKeySpec;
+                        AlgorithmKeySpec genSpec = bi.defaultSpec();
                         KeyPair kp = b.generateKeyPair(genSpec);
                         PublicKey pub = kp.getPublic();
                         PrivateKey prv = kp.getPrivate();
 
                         Class<?> pubImpType = null;
                         Class<?> prvImpType = null;
-                        for (CryptoAlgorithm.AsymBuilderInfo x : alg.asymmetricBuildersInfo()) {
-                            if (looksLikeImportSpecForPublic(x.specType)) {
-                                pubImpType = x.specType;
-                            } else if (looksLikeImportSpecForPrivate(x.specType)) {
-                                prvImpType = x.specType;
+                        for (KeyOperationInfo x : alg.keyOperations()) {
+                            if (x.operation() == KeyOperation.ASYMMETRIC_PUBLIC_IMPORT) {
+                                pubImpType = x.specType();
+                            } else if (x.operation() == KeyOperation.ASYMMETRIC_PRIVATE_IMPORT) {
+                                prvImpType = x.specType();
                             }
                         }
                         if (pubImpType != null) {
                             AlgorithmKeySpec pubSpec = makeImportSpec(pubImpType, pub.getEncoded(), id,
-                                    bi.defaultKeySpec);
+                                    bi.defaultSpec());
                             String alias = id.toLowerCase() + "-pub-" + perAlg;
                             store.putPublic(alias, id, pubSpec);
                             System.out.println("..." + alias + " saved, len=" + encLen(pub.getEncoded()));
@@ -262,7 +265,7 @@ public class KeyringStoreDynamicTest {
                         }
                         if (prvImpType != null) {
                             AlgorithmKeySpec prvSpec = makeImportSpec(prvImpType, prv.getEncoded(), id,
-                                    bi.defaultKeySpec);
+                                    bi.defaultSpec());
                             String alias = id.toLowerCase() + "-prv-" + perAlg;
                             store.putPrivate(alias, id, prvSpec);
                             System.out.println("..." + alias + " saved, len=" + encLen(prv.getEncoded()));
@@ -282,34 +285,26 @@ public class KeyringStoreDynamicTest {
                 }
             }
 
-            if (!alg.symmetricBuildersInfo().isEmpty()) {
+            if (alg.keyOperations().stream()
+                    .anyMatch(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE)) {
                 int perAlg = 0;
-                for (CryptoAlgorithm.SymBuilderInfo bi : alg.symmetricBuildersInfo()) {
-                    if (bi.defaultKeySpec() == null) {
+                for (KeyOperationInfo bi : alg.keyOperations()) {
+                    if (bi.operation() != KeyOperation.SYMMETRIC_GENERATE || bi.defaultSpec() == null) {
                         continue;
                     }
                     try {
                         @SuppressWarnings("unchecked")
                         Class<AlgorithmKeySpec> genSpecType = (Class<AlgorithmKeySpec>) bi.specType();
-                        SymmetricKeyBuilder<AlgorithmKeySpec> b = alg.symmetricKeyBuilder(genSpecType);
+                        SymmetricKeyGenerator<AlgorithmKeySpec> b = alg.symmetricKeyGenerator(genSpecType);
 
-                        AlgorithmKeySpec genSpec = (AlgorithmKeySpec) bi.defaultKeySpec();
+                        AlgorithmKeySpec genSpec = bi.defaultSpec();
                         SecretKey sk = b.generateSecret(genSpec);
 
                         Class<?> impType = null;
-                        for (CryptoAlgorithm.SymBuilderInfo x : alg.symmetricBuildersInfo()) {
-                            if (looksLikeImportSpecForSecret(x.specType())) {
+                        for (KeyOperationInfo x : alg.keyOperations()) {
+                            if (x.operation() == KeyOperation.SYMMETRIC_IMPORT
+                                    && looksLikeImportSpecForSecret(x.specType())) {
                                 impType = x.specType();
-                            }
-                        }
-                        if (impType == null) {
-                            for (CryptoAlgorithm.SymBuilderInfo x : alg.symmetricBuildersInfo()) {
-                                try {
-                                    x.specType().getConstructor(byte[].class);
-                                    impType = x.specType();
-                                    break;
-                                } catch (NoSuchMethodException ignored) {
-                                }
                             }
                         }
                         if (impType != null) {
@@ -317,11 +312,10 @@ public class KeyringStoreDynamicTest {
                             if (raw == null) {
                                 raw = randomBytes(32);
                             }
-                            AlgorithmKeySpec imp = makeImportSpec(impType, raw, id, bi.defaultKeySpec());
+                            AlgorithmKeySpec imp = makeImportSpec(impType, raw, id, bi.defaultSpec());
                             String alias = id.toLowerCase() + "-sec-" + perAlg;
                             store.putSecret(alias, id, imp);
-                            System.out.println("..." + alias + " saved, len=" + (raw == null ? 0 : raw.length) + " "
-                                    + Base64.getEncoder().withoutPadding().encodeToString(raw));
+                            System.out.println("..." + alias + " saved, len=" + raw.length);
                             totalAdded++;
                         } else {
                             System.out.println("...*** SKIP *** no symmetric import spec for " + id);
@@ -344,7 +338,7 @@ public class KeyringStoreDynamicTest {
         System.out.println("\n...saved keyring: " + keyringPath.getFileName());
         System.out.println("...entries stored: " + totalAdded);
 
-        KeyringStore loaded = KeyringStore.load(keyringPath);
+        KeyringStore loaded = KeyringStore.load(new zeroecho.sdk.ZeroEchoSession(), keyringPath);
         assertTrue(loaded.aliases().size() >= Math.min(totalAdded, 1), "no entries reloaded");
 
         int ok = 0;

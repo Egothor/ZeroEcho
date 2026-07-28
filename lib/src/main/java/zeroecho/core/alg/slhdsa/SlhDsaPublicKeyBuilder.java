@@ -35,36 +35,24 @@ package zeroecho.core.alg.slhdsa;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
-import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * Builder for importing SLH-DSA public keys from encoded specifications.
  *
  * @since 1.0
  */
-public final class SlhDsaPublicKeyBuilder implements AsymmetricKeyBuilder<SlhDsaPublicKeySpec> {
+public final class SlhDsaPublicKeyBuilder implements PublicKeyImporter<SlhDsaPublicKeySpec> {
 
     private static final String ALG = "SLH-DSA";
-
-    @Override
-    public KeyPair generateKeyPair(SlhDsaPublicKeySpec spec) {
-        throw new UnsupportedOperationException("Generation not supported by this spec.");
-    }
 
     @Override
     public PublicKey importPublic(SlhDsaPublicKeySpec spec) throws GeneralSecurityException {
         KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance(ALG)
                 : KeyFactory.getInstance(ALG, spec.providerName());
         return kf.generatePublic(new X509EncodedKeySpec(spec.encoded()));
-    }
-
-    @Override
-    public PrivateKey importPrivate(SlhDsaPublicKeySpec spec) {
-        throw new UnsupportedOperationException("Use SlhDsaPrivateKeySpec for private keys.");
     }
 }

@@ -122,18 +122,18 @@ public final class SlhDsaLargeDataTest {
         String caseId = "SLH-DSA " + hash.name() + " " + sec.name() + " " + variant.name();
         System.out.println(INDENT + " case=" + safeText(caseId));
 
-        KeyPair kp = CryptoAlgorithms.keyPair("SLH-DSA", spec);
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("SLH-DSA", spec);
 
         // Create verifier FIRST to obtain tag length via
         // SlhDsaSignatureContext.sigLenFromPublicKey.
-        SignatureContext verifierCtx = CryptoAlgorithms.create("SLH-DSA", KeyUsage.VERIFY, kp.getPublic());
+        SignatureContext verifierCtx = new zeroecho.sdk.ZeroEchoSession().createContext("SLH-DSA", KeyUsage.VERIFY, kp.getPublic());
 
         int expectedSigLen = verifierCtx.tagLength();
         System.out.println(INDENT + " expectedSigLen=" + expectedSigLen);
 
         // Now sign and strip trailer using the expected length from verifier (not from
         // signer).
-        SignatureContext signer = CryptoAlgorithms.create("SLH-DSA", KeyUsage.SIGN, kp.getPrivate());
+        SignatureContext signer = new zeroecho.sdk.ZeroEchoSession().createContext("SLH-DSA", KeyUsage.SIGN, kp.getPrivate());
 
         final byte[][] sigHolder = new byte[1][];
         byte[] passthrough;
@@ -188,7 +188,7 @@ public final class SlhDsaLargeDataTest {
         byte[] badSig = Arrays.copyOf(signature, signature.length);
         badSig[0] = (byte) (badSig[0] ^ 0x01);
 
-        SignatureContext badVerifier = CryptoAlgorithms.create("SLH-DSA", KeyUsage.VERIFY, kp.getPublic());
+        SignatureContext badVerifier = new zeroecho.sdk.ZeroEchoSession().createContext("SLH-DSA", KeyUsage.VERIFY, kp.getPublic());
 
         try {
             badVerifier.setExpectedTag(badSig);

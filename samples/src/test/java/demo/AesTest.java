@@ -50,7 +50,6 @@ import conflux.Ctx;
 import conflux.CtxInterface;
 import zeroecho.core.ConfluxKeys;
 import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.aes.AesKeyGenSpec;
 import zeroecho.core.alg.aes.AesSpec;
@@ -61,23 +60,16 @@ import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
+import zeroecho.sdk.ZeroEchoSession;
 
 class AesTest {
     private static final Logger LOG = Logger.getLogger(AesTest.class.getName());
+    private final ZeroEchoSession zeroEchoSession = new ZeroEchoSession();
 
     SecretKey generateAesKey() throws GeneralSecurityException {
-        // Locate the AES algorithm in the catalog
-        CryptoAlgorithm aes = CryptoAlgorithms.require("AES");
-        SecretKey key = aes
-                // Retrieve the builder that works with AesKeyGenSpec - the specification for
-                // AES key generation
-                .symmetricKeyBuilder(AesKeyGenSpec.class)
-                // Generate a secret key according to the AES256 specification
-                .generateSecret(AesKeyGenSpec.aes256());
-        // Log the generated key (truncated to short hex for readability)
-        LOG.log(Level.INFO, "AES256 key generated: {0}", Strings.toShortHexString(key.getEncoded()));
-
-        // or just: CryptoAlgorithms.generateSecret("AES", AesKeyGenSpec.aes256())
+        SecretKey key = zeroEchoSession.keyBuilders().symmetric()
+                .generate("AES", AesKeyGenSpec.aes256());
+        LOG.log(Level.INFO, "AES256 key generated");
 
         return key;
     }
@@ -101,7 +93,7 @@ class AesTest {
         SecretKey key = generateAesKey();
         byte[] encrypted;
         // Request an encryption context using the key and AES-GCM-128 specification
-        try (EncryptionContext enc = CryptoAlgorithms.create("AES", KeyUsage.ENCRYPT, key, spec)) {
+        try (EncryptionContext enc = zeroEchoSession.createContext("AES", KeyUsage.ENCRYPT, key, spec)) {
             // This context implements ContextAware, allowing us to associate our session
             ((ContextAware) enc).setContext(session);
             // Get an encrypted stream that processes the plaintext on-the-fly
@@ -132,7 +124,7 @@ class AesTest {
 
         // Separate context again to hold IV and AAD values so we can inspect them later
         CtxInterface session = Ctx.INSTANCE.getContext("aes-ctx-" + System.nanoTime());
-        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder()
+        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
                 // Use the generated AES key
                 .importKeyRaw(key.getEncoded())
                 // Specify AES-GCM-128 mode
@@ -171,7 +163,7 @@ class AesTest {
         // Sample message to encrypt
         byte[] msg = randomBytes(100);
 
-        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder()
+        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
                 // Automatically generate a 256-bit AES key
                 .generateKey(256)
                 // Store ad-hoc generated parameters (IV, AAD) in the stream header
@@ -210,7 +202,7 @@ class AesTest {
         // Sample message to encrypt
         byte[] msg = randomBytes(100);
 
-        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
+        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).generateKey(256).modeGcm(128).withHeader();
 
         // The builder stores generated IV and AAD inside the stream header
         DataContent dccb = DataContentChainBuilder.encrypt().add(PlainBytesBuilder.builder().bytes(msg)).add(aesBuilder)
@@ -227,7 +219,7 @@ class AesTest {
 
         dccb = DataContentChainBuilder.decrypt().add(PlainBytesBuilder.builder().bytes(encrypted))
                 // Use the same AES key for decryption; IV and AAD are restored from the header
-                .add(AesDataContentBuilder.builder().importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
                 // Build the pipeline
                 .build();
         byte[] decrypted;

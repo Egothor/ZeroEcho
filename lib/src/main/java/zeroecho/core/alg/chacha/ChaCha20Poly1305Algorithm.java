@@ -74,19 +74,19 @@ import zeroecho.core.SymmetricHeaderCodec;
  * corresponding cipher context.
  *
  * <h3>Example</h3> <pre>{@code
- * var algo = new ChaCha20Poly1305Algorithm();
- * SecretKey key = algo.generateSecret(ChaChaKeyGenSpec.chacha256());
+ * ZeroEchoSession session = new ZeroEchoSession();
+ * SecretKey key = session.keyBuilders().symmetric()
+ *                        .generate("CHACHA20-POLY1305", ChaChaKeyGenSpec.chacha256());
  *
  * // Encrypt with explicit spec
- * var spec = ChaCha20Poly1305Spec.builder().header(null).build();
- * EncryptionContext enc = algo.newContext(
- *     zeroecho.core.AlgorithmFamily.SYMMETRIC,
- *     zeroecho.core.KeyUsage.ENCRYPT, key, spec);
+ * ChaCha20Poly1305Spec spec = ChaCha20Poly1305Spec.builder().header(null).build();
+ * EncryptionContext enc = session.createContext(
+ *     "CHACHA20-POLY1305", zeroecho.core.KeyUsage.ENCRYPT, key, spec);
  *
  * // Decrypt using VoidSpec default
- * EncryptionContext dec = algo.newContext(
- *     zeroecho.core.AlgorithmFamily.SYMMETRIC,
- *     zeroecho.core.KeyUsage.DECRYPT, key, zeroecho.core.spec.VoidSpec.INSTANCE);
+ * EncryptionContext dec = session.createContext(
+ *     "CHACHA20-POLY1305", zeroecho.core.KeyUsage.DECRYPT, key,
+ *     zeroecho.core.spec.VoidSpec.INSTANCE);
  * }</pre>
  *
  * @since 1.0

@@ -47,7 +47,6 @@ import javax.crypto.SecretKey;
 
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.alg.rsa.RsaKeyGenSpec;
 import zeroecho.core.alg.rsa.RsaSigSpec;
 import zeroecho.core.tag.TagEngine;
@@ -58,12 +57,15 @@ import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
+import zeroecho.sdk.ZeroEchoSession;
 
 class SigningAesTest {
+    private final ZeroEchoSession session = new ZeroEchoSession();
     private static final Logger LOG = Logger.getLogger(SigningAesTest.class.getName());
 
     KeyPair generateRsaKeys() throws GeneralSecurityException {
-        KeyPair kp = CryptoAlgorithms.generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
+        KeyPair kp = session.keyBuilders().asymmetric()
+                .generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
 
         LOG.log(Level.INFO, "RSA key public={0} private={1}",
                 new Object[] { Strings.toShortHexString(kp.getPublic().getEncoded()),
@@ -81,7 +83,7 @@ class SigningAesTest {
         // Configure AES in GCM mode with a 128-bit authentication tag. A fresh 256-bit
         // AES key will be generated automatically, and runtime parameters (IV, AAD)
         // will be written into the header.
-        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
+        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).generateKey(256).modeGcm(128).withHeader();
 
         // Generate RSA-4096 key pair (retrieved via algorithm registry for convenience)
         KeyPair rsa = generateRsaKeys();
@@ -89,9 +91,9 @@ class SigningAesTest {
         // Configure PSS signature parameters: SHA-256 hash, salt length = 32 bytes
         RsaSigSpec pss = RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32);
         // Create signing engine (RSA-PSS with private key)
-        TagEngine<Signature> tagEnc = TagEngineBuilder.rsaSign(rsa.getPrivate(), pss).get();
+        TagEngine<Signature> tagEnc = TagEngineBuilder.rsaSign(new zeroecho.sdk.ZeroEchoSession(), rsa.getPrivate(), pss).get();
         // Create verification engine (RSA-PSS with public key)
-        TagEngine<Signature> tagDec = TagEngineBuilder.rsaVerify(rsa.getPublic(), pss).get();
+        TagEngine<Signature> tagDec = TagEngineBuilder.rsaVerify(new zeroecho.sdk.ZeroEchoSession(), rsa.getPublic(), pss).get();
 
         // Build the encryption pipeline
         DataContent dccb = DataContentChainBuilder.encrypt()
@@ -119,7 +121,7 @@ class SigningAesTest {
                 .add(PlainBytesBuilder.builder().bytes(encrypted))
                 // AES-GCM decryption using the same key; IV and AAD are restored automatically
                 // from the header
-                .add(AesDataContentBuilder.builder().importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
                 // Verify the RSA-PSS signature trailer at the end of the stream (configured to
                 // throw on mismatch)
                 .add(new TagTrailerDataContentBuilder<>(tagDec).bufferSize(8192).throwOnMismatch())
@@ -142,15 +144,15 @@ class SigningAesTest {
         // Create a random sample message to be encrypted
         byte[] msg = randomBytes(100);
 
-        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder().generateKey(256).modeGcm(128).withHeader();
+        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).generateKey(256).modeGcm(128).withHeader();
 
         // Generate RSA-4096 key pair (retrieved via algorithm registry for convenience)
         KeyPair rsa = generateRsaKeys();
 
         // Configure PSS signature parameters: SHA-256 hash, salt length = 32 bytes
         RsaSigSpec pss = RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32);
-        TagEngine<Signature> tagEnc = TagEngineBuilder.rsaSign(rsa.getPrivate(), pss).get();
-        TagEngine<Signature> tagDec = TagEngineBuilder.rsaVerify(rsa.getPublic(), pss).get();
+        TagEngine<Signature> tagEnc = TagEngineBuilder.rsaSign(new zeroecho.sdk.ZeroEchoSession(), rsa.getPrivate(), pss).get();
+        TagEngine<Signature> tagDec = TagEngineBuilder.rsaVerify(new zeroecho.sdk.ZeroEchoSession(), rsa.getPublic(), pss).get();
 
         // Build the encryption pipeline
         DataContent dccb = DataContentChainBuilder.encrypt()
@@ -183,7 +185,7 @@ class SigningAesTest {
                 .add(new TagTrailerDataContentBuilder<>(tagDec).bufferSize(8192).throwOnMismatch())
                 // AES-GCM decryption using the same key; IV and AAD are restored automatically
                 // from the header
-                .add(AesDataContentBuilder.builder().importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
                 // Build the pipeline
                 .build();
         byte[] decrypted;

@@ -51,7 +51,6 @@ import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.common.sig.SignatureInteropProfile;
 import zeroecho.core.alg.common.sig.SignatureInteropProfiles;
@@ -67,6 +66,7 @@ import zeroecho.core.io.TailStrippingInputStream;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.storage.KeyringStore;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
@@ -82,7 +82,7 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
  * {@link KeyringStore}. It resolves opaque {@link KeyRef} values to provider-
  * local keyring aliases, materializes the required key objects inside this
  * boundary, and performs signing or verification through
- * {@link CryptoAlgorithms} and {@link SignatureContext}.
+ * the explicit {@link ZeroEchoSession} and {@link SignatureContext}.
  * </p>
  *
  * <p>
@@ -221,6 +221,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
     private final java.nio.file.Path keyringPath;
     private final String keyRefPrefix;
     private final boolean requireComponentSuffix;
+    private final ZeroEchoSession session;
 
     private final Map<PkiId, OperationStatus> statuses;
     private final Map<PkiId, NotificationSink> sinks;
@@ -242,6 +243,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         this.keyringPath = keyringPath;
         this.keyRefPrefix = keyRefPrefix;
         this.requireComponentSuffix = requireComponentSuffix;
+        this.session = new ZeroEchoSession();
 
         this.statuses = Collections.synchronizedMap(new HashMap<>());
         this.sinks = Collections.synchronizedMap(new HashMap<>());
@@ -268,7 +270,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
     @Override
     public Set<String> supportedAlgorithms() {
         // Informational only; runtime policy/key availability may still reject.
-        Set<String> supported = new java.util.LinkedHashSet<>(CryptoAlgorithms.available());
+        Set<String> supported = new java.util.LinkedHashSet<>(session.available());
         supported.addAll(SignatureInteropProfiles.algorithmIds());
         return Collections.unmodifiableSet(supported);
     }
@@ -559,7 +561,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         if (ks != null) {
             return ks;
         }
-        KeyringStore loaded = KeyringStore.load(this.keyringPath);
+        KeyringStore loaded = KeyringStore.load(this.session, this.keyringPath);
         this.keyringOrNull = loaded;
         return loaded;
     }
@@ -626,13 +628,20 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
             AlgorithmKeySpec spec = createPublicKeySpecOrThrow(request.algorithmId(), spki);
             String keyAlg = keyAlgorithmId(request.algorithmId());
             try {
-                return CryptoAlgorithms.importPublic(keyAlg, spec);
+                return importPublic(keyAlg, spec);
             } catch (GeneralSecurityException ex) {
                 throw new InvalidRequestException(DC_CRYPTO_FAILURE, ex);
             }
         }
 
         throw new InvalidRequestException(DC_UNSUPPORTED_PUBLICKEY_FORM);
+    }
+
+    private <S extends AlgorithmKeySpec> PublicKey importPublic(String algorithmId, S spec)
+            throws GeneralSecurityException {
+        @SuppressWarnings("unchecked")
+        Class<S> specType = (Class<S>) spec.getClass();
+        return session.keyBuilders().asymmetric().publicImporter(algorithmId, specType).importPublic(spec);
     }
 
     private static byte[] decodePublicKeyOrThrow(EncodedObject publicKey) throws InvalidRequestException {
@@ -697,7 +706,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         return a;
     }
 
-    private static byte[] signStreaming(String algorithmId, PrivateKey prv, PublicKey pub, byte[] msg)
+    private byte[] signStreaming(String algorithmId, PrivateKey prv, PublicKey pub, byte[] msg)
             throws GeneralSecurityException, IOException {
 
         Optional<SignatureInteropProfile> profile = SignatureInteropProfiles.resolve(algorithmId);
@@ -705,12 +714,12 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         ContextSpec contextSpec = profile.map(SignatureInteropProfile::contextSpec).orElse(null);
 
         int sigLen;
-        try (SignatureContext verifier = CryptoAlgorithms.create(contextAlgorithmId, KeyUsage.VERIFY, pub,
+        try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub,
                 contextSpec)) {
             sigLen = verifier.tagLength();
         }
 
-        try (SignatureContext signer = CryptoAlgorithms.create(contextAlgorithmId, KeyUsage.SIGN, prv, contextSpec)) {
+        try (SignatureContext signer = session.createContext(contextAlgorithmId, KeyUsage.SIGN, prv, contextSpec)) {
             final byte[][] sigHolder = new byte[1][];
             try (InputStream in = new TailStrippingInputStream(signer.wrap(new ByteArrayInputStream(msg)), sigLen,
                     8192) {
@@ -733,7 +742,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         }
     }
 
-    private static boolean verifyStreaming(String algorithmId, PublicKey pub, byte[] msg, byte[] signature)
+    private boolean verifyStreaming(String algorithmId, PublicKey pub, byte[] msg, byte[] signature)
             throws GeneralSecurityException, IOException {
 
         Optional<SignatureInteropProfile> profile = SignatureInteropProfiles.resolve(algorithmId);
@@ -744,7 +753,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
             internalSignature = profile.get().externalToInternalSignature(signature);
         }
 
-        try (SignatureContext verifier = CryptoAlgorithms.create(contextAlgorithmId, KeyUsage.VERIFY, pub,
+        try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub,
                 contextSpec)) {
             verifier.setExpectedTag(internalSignature);
             try (InputStream in = verifier.wrap(new ByteArrayInputStream(msg))) {

@@ -63,8 +63,10 @@ import zeroecho.core.alg.sphincsplus.SphincsPlusKeyGenSpec;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
-import zeroecho.core.spi.SymmetricKeyBuilder;
+import zeroecho.core.KeyOperation;
+import zeroecho.core.KeyOperationInfo;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.SymmetricKeyGenerator;
 import zeroecho.core.tag.TagEngine;
 import zeroecho.core.tag.TagEngineBuilder;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
@@ -173,26 +175,26 @@ public class TagTrailerDataContentBuilderTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         // AES key
-        SecretKey aesKey = CryptoAlgorithms.require("AES").symmetricKeyBuilder(AesKeyGenSpec.class)
+        SecretKey aesKey = CryptoAlgorithms.require("AES").symmetricKeyGenerator(AesKeyGenSpec.class)
                 .generateSecret(AesKeyGenSpec.aes256());
 
         // Ed25519 keys (JCA)
-        KeyPair ed = CryptoAlgorithms.keyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
+        KeyPair ed = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
 
-        TagEngine<Signature> tagEnc = TagEngineBuilder.ed25519Sign(ed.getPrivate()).get();
-        TagEngine<Signature> tagDec = TagEngineBuilder.ed25519Verify(ed.getPublic()).get();
+        TagEngine<Signature> tagEnc = TagEngineBuilder.ed25519Sign(new zeroecho.sdk.ZeroEchoSession(), ed.getPrivate()).get();
+        TagEngine<Signature> tagDec = TagEngineBuilder.ed25519Verify(new zeroecho.sdk.ZeroEchoSession(), ed.getPublic()).get();
 
         // ENCRYPT: body -> [body||signature] -> AES-GCM
         DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
                 .add(new TagTrailerDataContentBuilder<>(tagEnc).bufferSize(8192))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader()).build();
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader()).build();
 
         byte[] ct = readAll(enc.getStream());
         System.out.println("...ct=" + ct.length + " bytes");
 
         // DECRYPT: AES-GCM -> strip trailer -> verify Ed25519 at EOF
         DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(ct))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader())
                 .add(new TagTrailerDataContentBuilder<>(tagDec).bufferSize(8192).throwOnMismatch()).build();
 
         byte[] pt = readAll(dec.getStream());
@@ -210,28 +212,28 @@ public class TagTrailerDataContentBuilderTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         // AES key
-        SecretKey aesKey = CryptoAlgorithms.require("AES").symmetricKeyBuilder(AesKeyGenSpec.class)
+        SecretKey aesKey = CryptoAlgorithms.require("AES").symmetricKeyGenerator(AesKeyGenSpec.class)
                 .generateSecret(AesKeyGenSpec.aes256());
 
         // SPHINCS+ key pair via registry (uses default param set from
         // SphincsPlusKeyGenSpec)
-        KeyPair spx = CryptoAlgorithms.keyPair("SPHINCS+", SphincsPlusKeyGenSpec.defaultSpec());
+        KeyPair spx = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("SPHINCS+", SphincsPlusKeyGenSpec.defaultSpec());
 
         // Tag engines (SPHINCS+)
-        TagEngine<Signature> tagEnc = TagEngineBuilder.sphincsPlusSign(spx.getPrivate()).get();
-        TagEngine<Signature> tagDec = TagEngineBuilder.sphincsPlusVerify(spx.getPublic()).get();
+        TagEngine<Signature> tagEnc = TagEngineBuilder.sphincsPlusSign(new zeroecho.sdk.ZeroEchoSession(), spx.getPrivate()).get();
+        TagEngine<Signature> tagDec = TagEngineBuilder.sphincsPlusVerify(new zeroecho.sdk.ZeroEchoSession(), spx.getPublic()).get();
 
         // ENCRYPT: body -> [body||spxSig] -> AES-GCM
         DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
                 .add(new TagTrailerDataContentBuilder<>(tagEnc).bufferSize(8192))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader()).build();
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader()).build();
 
         byte[] ct = readAll(enc.getStream());
         System.out.println("...ct=" + ct.length + " bytes");
 
         // DECRYPT: AES-GCM -> strip trailer -> verify SPHINCS+ at EOF
         DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(ct))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader())
                 .add(new TagTrailerDataContentBuilder<>(tagDec).bufferSize(8192).throwOnMismatch()).build();
 
         byte[] pt = readAll(dec.getStream());
@@ -249,28 +251,28 @@ public class TagTrailerDataContentBuilderTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         // AES key
-        SecretKey aesKey = CryptoAlgorithms.require("AES").symmetricKeyBuilder(AesKeyGenSpec.class)
+        SecretKey aesKey = CryptoAlgorithms.require("AES").symmetricKeyGenerator(AesKeyGenSpec.class)
                 .generateSecret(AesKeyGenSpec.aes256());
 
         // RSA-2048 keys (use registry for convenience)
-        KeyPair rsa = CryptoAlgorithms.keyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair rsa = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
 
         // Tag engines (SHA-256, saltLen=32)
         RsaSigSpec pss = RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32);
-        TagEngine<Signature> tagEnc = TagEngineBuilder.rsaSign(rsa.getPrivate(), pss).get();
-        TagEngine<Signature> tagDec = TagEngineBuilder.rsaVerify(rsa.getPublic(), pss).get();
+        TagEngine<Signature> tagEnc = TagEngineBuilder.rsaSign(new zeroecho.sdk.ZeroEchoSession(), rsa.getPrivate(), pss).get();
+        TagEngine<Signature> tagDec = TagEngineBuilder.rsaVerify(new zeroecho.sdk.ZeroEchoSession(), rsa.getPublic(), pss).get();
 
         // ENCRYPT: body -> [body||pssSig] -> AES-GCM
         DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
                 .add(new TagTrailerDataContentBuilder<>(tagEnc).bufferSize(8192))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader()).build();
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader()).build();
 
         byte[] ct = readAll(enc.getStream());
         System.out.println("...ct=" + ct.length + " bytes");
 
         // DECRYPT: AES-GCM -> strip trailer -> verify PSS at EOF
         DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(ct))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader())
                 .add(new TagTrailerDataContentBuilder<>(tagDec).bufferSize(8192).throwOnMismatch()).build();
 
         byte[] pt = readAll(dec.getStream());
@@ -289,14 +291,14 @@ public class TagTrailerDataContentBuilderTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         // AES key up-front so decrypt can reuse it
-        SymmetricKeyBuilder<AesKeyGenSpec> gen = CryptoAlgorithms.require("AES")
-                .symmetricKeyBuilder(AesKeyGenSpec.class);
+        SymmetricKeyGenerator<AesKeyGenSpec> gen = CryptoAlgorithms.require("AES")
+                .symmetricKeyGenerator(AesKeyGenSpec.class);
         SecretKey aesKey = gen.generateSecret(AesKeyGenSpec.aes256());
 
         // ENCRYPT: [source] -> [tag trailer] -> [aes gcm]
         DataContent encChain = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader()) // writes IV/AAD headers
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192))
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader()) // writes IV/AAD headers
                                                                                                 // into stream
                 .build();
 
@@ -305,9 +307,9 @@ public class TagTrailerDataContentBuilderTest {
 
         // DECRYPT: [source(ct)] -> [aes gcm] -> [tag trailer verify]
         DataContent decChain = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(ciphertext))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader()) // reads IV/AAD headers
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader()) // reads IV/AAD headers
                                                                                                 // back
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192)
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192)
                         .throwOnMismatch())
                 .build();
 
@@ -328,12 +330,12 @@ public class TagTrailerDataContentBuilderTest {
         msg = Arrays.copyOf(msg, SIZE); // pad deterministic length for the test
         System.out.println("...msg=" + msg.length + " bytes");
 
-        KeyPair kp = CryptoAlgorithms.keyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
 
         // ENCRYPT: [source] -> [tag trailer] -> [rsa/oaep]
         DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192))
-                .add(RsaEncDataContentBuilder.builder().oaep(RsaEncSpec.Hash.SHA256).withPublicKey(kp.getPublic()))
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192))
+                .add(RsaEncDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).oaep(RsaEncSpec.Hash.SHA256).withPublicKey(kp.getPublic()))
                 .build();
 
         byte[] ct = readAll(enc.getStream());
@@ -341,8 +343,8 @@ public class TagTrailerDataContentBuilderTest {
 
         // DECRYPT: [source(ct)] -> [rsa/oaep] -> [tag verify]
         DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(ct))
-                .add(RsaEncDataContentBuilder.builder().oaep(RsaEncSpec.Hash.SHA256).withPrivateKey(kp.getPrivate()))
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192)
+                .add(RsaEncDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).oaep(RsaEncSpec.Hash.SHA256).withPrivateKey(kp.getPrivate()))
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192)
                         .throwOnMismatch())
                 .build();
 
@@ -377,12 +379,12 @@ public class TagTrailerDataContentBuilderTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         // ENCRYPT: [source] -> [tag trailer] -> [KEM envelope with AES/GCM payload]
-        AesDataContentBuilder aesEnc = AesDataContentBuilder.builder().modeGcm(128) // 128-bit tag
+        AesDataContentBuilder aesEnc = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128) // 128-bit tag
                 .withHeader(); // carry IV etc.
 
         DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192))
-                .add(KemDataContentBuilder.builder().kem(kemId).recipientPublic(kemKeys.getPublic()).derivedKeyBytes(32) // AES-256
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192))
+                .add(KemDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).kem(kemId).recipientPublic(kemKeys.getPublic()).derivedKeyBytes(32) // AES-256
                                                                                                                          // key
                                                                                                                          // derived
                                                                                                                          // from
@@ -396,14 +398,14 @@ public class TagTrailerDataContentBuilderTest {
         System.out.println("...envelope=" + envelope.length + " bytes");
 
         // DECRYPT: [source(envelope)] -> [KEM] -> [tag verify]
-        AesDataContentBuilder aesDec = AesDataContentBuilder.builder().modeGcm(128).withHeader();
+        AesDataContentBuilder aesDec = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128).withHeader();
 
         DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(envelope))
-                .add(KemDataContentBuilder.builder().kem(kemId).recipientPrivate(kemKeys.getPrivate())
+                .add(KemDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).kem(kemId).recipientPrivate(kemKeys.getPrivate())
                         .derivedKeyBytes(32)
                         .hkdfSha256("KEM-tag-demo".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
                         .withAes(aesDec))
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192)
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192)
                         .throwOnMismatch())
                 .build();
 
@@ -428,26 +430,26 @@ public class TagTrailerDataContentBuilderTest {
 
         // --- recipients ---
         // RSA
-        KeyPair rsa = CryptoAlgorithms.keyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair rsa = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
         // ML-KEM (Kyber768 as a good mid-level)
-        KeyPair kem = CryptoAlgorithms.keyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair kem = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // --- symmetric payload (AES-256/GCM, tag 128) ---
         // IV length is handled internally (12 bytes for GCM) and persisted via header.
-        AesDataContentBuilder aesEnc = AesDataContentBuilder.builder().modeGcm(128).withHeader(); // write
+        AesDataContentBuilder aesEnc = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128).withHeader(); // write
                                                                                                   // IV/tagBits/AAD-hash
                                                                                                   // header for decrypt
                                                                                                   // side
 
         // --- tag trailer (SHA-256 digest as a trailer) ---
         TagTrailerDataContentBuilder<byte[]> tagEnc = new TagTrailerDataContentBuilder<>(
-                TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192);
+                TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192);
 
-        EncryptionContext rsaEnc = CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, rsa.getPublic());
-        KemContext kybKem = CryptoAlgorithms.create("ML-KEM", KeyUsage.ENCAPSULATE, kem.getPublic());
+        EncryptionContext rsaEnc = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.ENCRYPT, rsa.getPublic());
+        KemContext kybKem = new zeroecho.sdk.ZeroEchoSession().createContext("ML-KEM", KeyUsage.ENCAPSULATE, kem.getPublic());
 
         // --- envelope (ENCRYPT) with 3 recipients ---
-        MultiRecipientDataSourceBuilder envEnc = new MultiRecipientDataSourceBuilder().withAes(aesEnc)
+        MultiRecipientDataSourceBuilder envEnc = MultiRecipientDataSourceBuilder.builder(new zeroecho.sdk.ZeroEchoSession().withPbkdf2Limits(new zeroecho.sdk.Pbkdf2Limits(1_000_000, 1_000_000))).withAes(aesEnc)
                 // .addRsaOaepRecipient(rsa.getPublic()) // RSA-OAEP with SHA-256 MGF1
                 // .addKemRecipient("ML-KEM", kem.getPublic(), 32 /* kekBytes */, 16 /*
                 // hkdfSaltLen */)
@@ -465,35 +467,35 @@ public class TagTrailerDataContentBuilderTest {
         // -------------- Decrypt three ways on the same ciphertext --------------
 
         // a) by RSA private key
-        AesDataContentBuilder aesDecRsa = AesDataContentBuilder.builder().modeGcm(128).withHeader(); // read header to
+        AesDataContentBuilder aesDecRsa = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128).withHeader(); // read header to
                                                                                                      // recover
                                                                                                      // IV/tagBits
-        MultiRecipientDataSourceBuilder envDecRsa = new MultiRecipientDataSourceBuilder().withAes(aesDecRsa)
+        MultiRecipientDataSourceBuilder envDecRsa = MultiRecipientDataSourceBuilder.builder(new zeroecho.sdk.ZeroEchoSession().withPbkdf2Limits(new zeroecho.sdk.Pbkdf2Limits(1_000_000, 1_000_000))).withAes(aesDecRsa)
                 .unlockWith(new UnlockMaterial.Private(rsa.getPrivate()));
         byte[] ptRsa = readAll(DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(encrypted)).add(envDecRsa)
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192)
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192)
                         .throwOnMismatch())
                 .build().getStream());
         System.out.println("...decrypted(RSA)=" + ptRsa.length);
         assertArrayEquals(msg, ptRsa, "RSA path failed to recover the original");
 
         // b) by KEM private key
-        AesDataContentBuilder aesDecKem = AesDataContentBuilder.builder().modeGcm(128).withHeader();
-        MultiRecipientDataSourceBuilder envDecKem = new MultiRecipientDataSourceBuilder().withAes(aesDecKem)
+        AesDataContentBuilder aesDecKem = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128).withHeader();
+        MultiRecipientDataSourceBuilder envDecKem = MultiRecipientDataSourceBuilder.builder(new zeroecho.sdk.ZeroEchoSession().withPbkdf2Limits(new zeroecho.sdk.Pbkdf2Limits(1_000_000, 1_000_000))).withAes(aesDecKem)
                 .unlockWith(new UnlockMaterial.Private(kem.getPrivate()));
         byte[] ptKem = readAll(DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(encrypted)).add(envDecKem)
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192)
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192)
                         .throwOnMismatch())
                 .build().getStream());
         System.out.println("...decrypted(KEM)=" + ptKem.length);
         assertArrayEquals(msg, ptKem, "KEM path failed to recover the original");
 
         // c) by password
-        AesDataContentBuilder aesDecPwd = AesDataContentBuilder.builder().modeGcm(128).withHeader();
-        MultiRecipientDataSourceBuilder envDecPwd = new MultiRecipientDataSourceBuilder().withAes(aesDecPwd)
+        AesDataContentBuilder aesDecPwd = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128).withHeader();
+        MultiRecipientDataSourceBuilder envDecPwd = MultiRecipientDataSourceBuilder.builder(new zeroecho.sdk.ZeroEchoSession().withPbkdf2Limits(new zeroecho.sdk.Pbkdf2Limits(1_000_000, 1_000_000))).withAes(aesDecPwd)
                 .unlockWith(new UnlockMaterial.Password(PASSWORD));
         byte[] ptPwd = readAll(DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(encrypted)).add(envDecPwd)
-                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192)
+                .add(new TagTrailerDataContentBuilder<>(TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192)
                         .throwOnMismatch())
                 .build().getStream());
         System.out.println("...decrypted(PASSWORD)=" + ptPwd.length);
@@ -514,23 +516,23 @@ public class TagTrailerDataContentBuilderTest {
         byte[] msg = random(SIZE);
         System.out.println("...input=" + msg.length);
 
-        KeyPair rsa = CryptoAlgorithms.keyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair rsa = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
 
         // AES-256/CBC with header so IV/params are serialized by the AES stage
-        AesDataContentBuilder aesCbc = AesDataContentBuilder.builder().modeCbcPkcs5().withHeader();
+        AesDataContentBuilder aesCbc = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeCbcPkcs5().withHeader();
 
         TagTrailerDataContentBuilder<byte[]> tagEnc = new TagTrailerDataContentBuilder<>(
-                TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192);
+                TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192);
 
         TagTrailerDataContentBuilder<byte[]> tagDec = new TagTrailerDataContentBuilder<>(
-                TagEngineBuilder.digest(DigestSpec.sha256())).bufferSize(8192)
+                TagEngineBuilder.digest(new zeroecho.sdk.ZeroEchoSession(), DigestSpec.sha256())).bufferSize(8192)
                 // explicit for clarity
                 .throwOnMismatch();
 
-        EncryptionContext rsaEnc = CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, rsa.getPublic());
+        EncryptionContext rsaEnc = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.ENCRYPT, rsa.getPublic());
 
         // Envelope: recipient table (RSA-OAEP) + AES payload (CBC/PKCS7 with header)
-        MultiRecipientDataSourceBuilder envEnc = new MultiRecipientDataSourceBuilder().withAes(aesCbc)
+        MultiRecipientDataSourceBuilder envEnc = MultiRecipientDataSourceBuilder.builder(new zeroecho.sdk.ZeroEchoSession().withPbkdf2Limits(new zeroecho.sdk.Pbkdf2Limits(1_000_000, 1_000_000))).withAes(aesCbc)
                 // CEK length for AES-256
                 .payloadKeyBytes(32)
                 // .addRsaOaepRecipient(rsa.getPublic()); old API
@@ -543,8 +545,8 @@ public class TagTrailerDataContentBuilderTest {
         byte[] encrypted = readAll(encTail.getStream());
         System.out.println("...encrypted=" + encrypted.length);
 
-        MultiRecipientDataSourceBuilder envDec = new MultiRecipientDataSourceBuilder()
-                .withAes(AesDataContentBuilder.builder().modeCbcPkcs5()
+        MultiRecipientDataSourceBuilder envDec = MultiRecipientDataSourceBuilder.builder(new zeroecho.sdk.ZeroEchoSession().withPbkdf2Limits(new zeroecho.sdk.Pbkdf2Limits(1_000_000, 1_000_000)))
+                .withAes(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeCbcPkcs5()
                         // must match encrypt side
                         .withHeader())
                 .payloadKeyBytes(32).unlockWith(new UnlockMaterial.Private(rsa.getPrivate()));
@@ -571,27 +573,27 @@ public class TagTrailerDataContentBuilderTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         // AES key
-        SecretKey aesKey = CryptoAlgorithms.require("AES").symmetricKeyBuilder(AesKeyGenSpec.class)
+        SecretKey aesKey = CryptoAlgorithms.require("AES").symmetricKeyGenerator(AesKeyGenSpec.class)
                 .generateSecret(AesKeyGenSpec.aes256());
 
         // ECDSA P-256 keys (via your unified ECDSA algorithm)
-        KeyPair ecdsa = CryptoAlgorithms.keyPair("ECDSA", zeroecho.core.alg.ecdsa.EcdsaCurveSpec.P256);
+        KeyPair ecdsa = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ECDSA", zeroecho.core.alg.ecdsa.EcdsaCurveSpec.P256);
 
         // Tag engines (ECDSA/P-256 using P1363 format, fixed 64-byte tag)
-        TagEngine<Signature> tagEnc = TagEngineBuilder.ecdsaP256Sign(ecdsa.getPrivate()).get();
-        TagEngine<Signature> tagDec = TagEngineBuilder.ecdsaP256Verify(ecdsa.getPublic()).get();
+        TagEngine<Signature> tagEnc = TagEngineBuilder.ecdsaP256Sign(new zeroecho.sdk.ZeroEchoSession(), ecdsa.getPrivate()).get();
+        TagEngine<Signature> tagDec = TagEngineBuilder.ecdsaP256Verify(new zeroecho.sdk.ZeroEchoSession(), ecdsa.getPublic()).get();
 
         // ENCRYPT: body -> [body||ecdsaSig] -> AES-GCM
         DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
                 .add(new TagTrailerDataContentBuilder<>(tagEnc).bufferSize(8192))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader()).build();
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader()).build();
 
         byte[] ct = readAll(enc.getStream());
         System.out.println("...ct=" + ct.length + " bytes");
 
         // DECRYPT: AES-GCM -> strip trailer -> verify ECDSA at EOF
         DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(ct))
-                .add(AesDataContentBuilder.builder().withKey(aesKey).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withKey(aesKey).modeGcm(128).withHeader())
                 .add(new TagTrailerDataContentBuilder<>(tagDec).bufferSize(8192).throwOnMismatch()).build();
 
         byte[] pt = readAll(dec.getStream());
@@ -612,14 +614,14 @@ public class TagTrailerDataContentBuilderTest {
 
     private static KeyPair tryKeyPairWithDefaultSpec(CryptoAlgorithm alg) {
         try {
-            for (CryptoAlgorithm.AsymBuilderInfo bi : alg.asymmetricBuildersInfo()) {
-                if (bi.defaultKeySpec == null) {
+            for (KeyOperationInfo bi : alg.keyOperations()) {
+                if (bi.operation() != KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE || bi.defaultSpec() == null) {
                     continue;
                 }
                 @SuppressWarnings("unchecked")
-                Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) bi.specType;
-                AlgorithmKeySpec spec = (AlgorithmKeySpec) bi.defaultKeySpec;
-                AsymmetricKeyBuilder<AlgorithmKeySpec> b = alg.asymmetricKeyBuilder(specType);
+                Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) bi.specType();
+                AlgorithmKeySpec spec = bi.defaultSpec();
+                AsymmetricKeyPairGenerator<AlgorithmKeySpec> b = alg.asymmetricKeyPairGenerator(specType);
                 KeyPair kp = b.generateKeyPair(spec);
                 if (kp != null) {
                     return kp;

@@ -34,6 +34,7 @@
 package zeroecho.sdk.util;
 
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -108,28 +109,43 @@ public final class Kdf { // NOPMD
         }
         final byte[] infoUse = (info == null) ? new byte[0] : info.clone();
 
-        // ----- Extract -----
-        Mac mac = Mac.getInstance(HMAC);
-        mac.init(new SecretKeySpec(saltUse, HMAC));
-        final byte[] prk = mac.doFinal(ikm);
-
-        // ----- Expand -----
-        final int n = (length + HASH_LEN - 1) / HASH_LEN; // ceil
-        final byte[] okm = new byte[length];
+        byte[] prk = null;
         byte[] t = new byte[0];
-        int pos = 0;
+        byte[] okm = null;
+        boolean returned = false;
+        try {
+            Mac mac = Mac.getInstance(HMAC);
+            mac.init(new SecretKeySpec(saltUse, HMAC));
+            prk = mac.doFinal(ikm);
 
-        for (int i = 1; i <= n; i++) {
-            mac.init(new SecretKeySpec(prk, HMAC)); // NOPMD
-            mac.update(t, 0, t.length);
-            mac.update(infoUse, 0, infoUse.length);
-            mac.update((byte) i);
-            t = mac.doFinal();
+            final int n = (length + HASH_LEN - 1) / HASH_LEN;
+            okm = new byte[length];
+            int pos = 0;
+            for (int i = 1; i <= n; i++) {
+                mac.init(new SecretKeySpec(prk, HMAC)); // NOPMD
+                mac.update(t, 0, t.length);
+                mac.update(infoUse, 0, infoUse.length);
+                mac.update((byte) i);
+                byte[] next = mac.doFinal();
+                Arrays.fill(t, (byte) 0);
+                t = next;
 
-            final int toCopy = Math.min(HASH_LEN, length - pos);
-            System.arraycopy(t, 0, okm, pos, toCopy);
-            pos += toCopy;
+                final int toCopy = Math.min(HASH_LEN, length - pos);
+                System.arraycopy(t, 0, okm, pos, toCopy);
+                pos += toCopy;
+            }
+            returned = true;
+            return okm;
+        } finally {
+            Arrays.fill(saltUse, (byte) 0);
+            Arrays.fill(infoUse, (byte) 0);
+            if (prk != null) {
+                Arrays.fill(prk, (byte) 0);
+            }
+            Arrays.fill(t, (byte) 0);
+            if (!returned && okm != null) {
+                Arrays.fill(okm, (byte) 0);
+            }
         }
-        return okm;
     }
 }

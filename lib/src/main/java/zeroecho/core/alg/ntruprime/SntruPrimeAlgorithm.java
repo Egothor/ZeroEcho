@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -56,7 +57,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * Configures and exposes the SNTRU Prime post-quantum KEM and a
@@ -93,7 +96,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * <h2>Example</h2> <pre>{@code
  * // Initialize the algorithm and generate a key pair
  * SntruPrimeAlgorithm alg = new SntruPrimeAlgorithm();
- * KeyPair kp = alg.keys(SntruPrimeKeyGenSpec.sntrup761())
+ * KeyPair kp = alg.asymmetricKeyPairGenerator(SntruPrimeKeyGenSpec.class)
  *                 .generateKeyPair(SntruPrimeKeyGenSpec.sntrup761());
  *
  * // Initiator (Alice) encapsulates to Bob's public key
@@ -159,7 +162,7 @@ public final class SntruPrimeAlgorithm extends AbstractCryptoAlgorithm {
                             .asResponder().build();
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(SntruPrimeKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(SntruPrimeKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(SntruPrimeKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
@@ -176,23 +179,9 @@ public final class SntruPrimeAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(SntruPrimeKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PrivateKey importPrivate(SntruPrimeKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
         }, SntruPrimeKeyGenSpec::sntrup1277);
 
-        registerAsymmetricKeyBuilder(SntruPrimePublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(SntruPrimePublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPublicKeyImporter(SntruPrimePublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(SntruPrimePublicKeySpec spec) throws GeneralSecurityException {
@@ -200,31 +189,22 @@ public final class SntruPrimeAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("SNTRUPrime", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(SntruPrimePublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(SntruPrimePrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(SntruPrimePrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PublicKey importPublic(SntruPrimePrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPrivateKeyImporter(SntruPrimePrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(SntruPrimePrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("SNTRUPrime", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     /**

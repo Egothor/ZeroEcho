@@ -35,11 +35,11 @@ package zeroecho.core.alg.dh;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
 
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.KeyUsage;
@@ -49,7 +49,8 @@ import zeroecho.core.alg.common.agreement.GenericJcaMessageAgreementContext;
 import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.MessageAgreementContext;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * Diffie-Hellman algorithm registration for use in the pluggable cryptography
@@ -88,10 +89,10 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * DhSpec spec = DhSpec.ffdhe3072();
  *
  * // Generate a key pair using the registered builder
- * KeyPair kp = CryptoAlgorithms.keyPair("DH", spec);
+ * KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("DH", spec);
  *
  * // Obtain an agreement context for DH key agreement
- * AgreementContext ctx = CryptoAlgorithms.create("DH", KeyUsage.AGREEMENT, kp.getPrivate(), spec);
+ * AgreementContext ctx = session.createContext("DH", KeyUsage.AGREEMENT, kp.getPrivate(), spec);
  *
  * // Use the context with a peer public key to derive a shared secret
  * ctx.setPeerPublic(peerPublicKey);
@@ -140,43 +141,28 @@ public final class DhAlgorithm extends AbstractCryptoAlgorithm {
                         "DiffieHellman", null, "DH", null),
                 DhSpec::ffdhe2048);
 
-        registerAsymmetricKeyBuilder(DhSpec.class, new DhKeyGenBuilder(), DhSpec::ffdhe2048);
-        registerAsymmetricKeyBuilder(DhPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-
-            @Override
-            public KeyPair generateKeyPair(DhPublicKeySpec spec) throws GeneralSecurityException {
-                throw new UnsupportedOperationException("Use DhKeyGenBuilder for keypair generation.");
-            }
+        registerAsymmetricKeyPairGenerator(DhSpec.class, new DhKeyGenBuilder(), DhSpec::ffdhe2048);
+        registerPublicKeyImporter(DhPublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(DhPublicKeySpec spec) throws GeneralSecurityException {
                 KeyFactory kf = KeyFactory.getInstance("DH");
                 return kf.generatePublic(new X509EncodedKeySpec(spec.encoded()));
             }
-
-            @Override
-            public PrivateKey importPrivate(DhPublicKeySpec spec) throws GeneralSecurityException {
-                throw new UnsupportedOperationException("Use DhPrivateKeySpec for private key import.");
-            }
-        }, null);
-        registerAsymmetricKeyBuilder(DhPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-
-            @Override
-            public KeyPair generateKeyPair(DhPrivateKeySpec spec) throws GeneralSecurityException {
-                throw new UnsupportedOperationException("Use DhKeyGenBuilder for keypair generation.");
-            }
-
-            @Override
-            public PublicKey importPublic(DhPrivateKeySpec spec) throws GeneralSecurityException {
-                throw new UnsupportedOperationException("Use DhPrivateKeySpec for public key import.");
-            }
+        });
+        registerPrivateKeyImporter(DhPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(DhPrivateKeySpec spec) throws GeneralSecurityException {
                 KeyFactory kf = KeyFactory.getInstance("DH");
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.encoded()));
+                byte[] encoded = spec.encoded();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
 
     }
 }

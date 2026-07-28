@@ -51,8 +51,8 @@
  * ad-hoc parameter generation.</li>
  * <li>Expose predefined RFC 7919 FFDHE groups for safe parameter selection.
  * </li>
- * <li>Allow import/export of encoded keys via immutable key specs supporting
- * PKCS#8 and X.509.</li>
+ * <li>Allow import/export of encoded keys via defensively copying key specs
+ * supporting PKCS#8 and X.509; private-key specs are destroyable.</li>
  * </ul>
  *
  * <h2>Components</h2>
@@ -65,9 +65,10 @@
  * {@link javax.crypto.spec.DHParameterSpec} instances.</li>
  * <li><b>DhSpec</b>: immutable container for DH parameters; provides static
  * factories for FFDHE groups (2048–8192 bits).</li>
- * <li><b>DhPublicKeySpec</b> and <b>DhPrivateKeySpec</b>: immutable encoded key
- * specs for importing/exporting X.509 and PKCS#8 encodings, with
- * {@link zeroecho.core.marshal.PairSeq} marshalling support.</li>
+ * <li><b>DhPublicKeySpec</b> and <b>DhPrivateKeySpec</b>: encoded key specs for
+ * importing/exporting X.509 and PKCS#8 encodings, with
+ * {@link zeroecho.core.marshal.PairSeq} marshalling support; the private-key
+ * form is destroyable.</li>
  * </ul>
  *
  * <h2>Design notes</h2>

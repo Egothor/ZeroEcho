@@ -39,33 +39,25 @@ import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
 
 import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * <h2>ECDSA Public Key Builder</h2>
  *
- * Implementation of {@link AsymmetricKeyBuilder} for
+ * Implementation of {@link zeroecho.core.spi.PublicKeyImporter} for
  * {@link EcdsaPublicKeySpec}. This builder is responsible for importing ECDSA
  * public keys from X.509 SubjectPublicKeyInfo encodings.
  *
- * <h2>Supported operations</h2>
- * <ul>
- * <li>{@link #importPublic(EcdsaPublicKeySpec)} - construct a {@link PublicKey}
- * instance from an X.509-encoded key.</li>
- * <li>{@link #generateKeyPair(EcdsaPublicKeySpec)} - unsupported; use
- * {@link EcdsaKeyGenBuilder} instead.</li>
- * <li>{@link #importPrivate(EcdsaPublicKeySpec)} - unsupported; use
- * {@link EcdsaPrivateKeySpec} with {@link EcdsaPrivateKeyBuilder} instead.</li>
- * </ul>
+ * <p>The exact supported operation is
+ * {@link #importPublic(EcdsaPublicKeySpec)}. Generation and private import are
+ * registered through their own operation-specific implementations.</p>
  *
  * <h2>Encoding</h2> The {@link EcdsaPublicKeySpec} stores the public key in
  * standard X.509 DER format. This builder delegates to a JCA {@link KeyFactory}
  * for the {@code "EC"} algorithm to reconstruct a usable {@link PublicKey}.
  *
- * <h2>Usage</h2> Typically accessed indirectly through
- * {@link CryptoAlgorithms#publicKey(String, zeroecho.core.spec.AlgorithmKeySpec)}
- * or {@link CryptoAlgorithm#importPublic(zeroecho.core.spec.AlgorithmKeySpec)}.
+ * <h2>Usage</h2> Typically accessed through the session key-operation API or
+ * {@link CryptoAlgorithm#publicKeyImporter(Class)}.
  *
  * <pre>{@code
  * // Example: Import an ECDSA public key
@@ -76,23 +68,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class EcdsaPublicKeyBuilder implements AsymmetricKeyBuilder<EcdsaPublicKeySpec> {
-    /**
-     * Unsupported operation for this builder.
-     *
-     * <p>
-     * ECDSA key pair generation should be performed using
-     * {@link EcdsaKeyGenBuilder}, not from a public key specification.
-     * </p>
-     *
-     * @param spec unused public key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public java.security.KeyPair generateKeyPair(EcdsaPublicKeySpec spec) {
-        throw new UnsupportedOperationException("Use EcdsaKeyGenBuilder for keypair generation.");
-    }
+public final class EcdsaPublicKeyBuilder implements PublicKeyImporter<EcdsaPublicKeySpec> {
 
     /**
      * Imports a public key from an X.509 SubjectPublicKeyInfo specification.
@@ -111,22 +87,5 @@ public final class EcdsaPublicKeyBuilder implements AsymmetricKeyBuilder<EcdsaPu
     public PublicKey importPublic(EcdsaPublicKeySpec spec) throws GeneralSecurityException {
         KeyFactory kf = KeyFactory.getInstance("EC");
         return kf.generatePublic(new X509EncodedKeySpec(spec.encoded()));
-    }
-
-    /**
-     * Unsupported operation for this builder.
-     *
-     * <p>
-     * Private key import should be performed using {@link EcdsaPrivateKeySpec} with
-     * {@link EcdsaPrivateKeyBuilder}.
-     * </p>
-     *
-     * @param spec unused public key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public java.security.PrivateKey importPrivate(EcdsaPublicKeySpec spec) {
-        throw new UnsupportedOperationException("Use EcdsaPrivateKeySpec with EcdsaPrivateKeyBuilder.");
     }
 }

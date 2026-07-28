@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -47,8 +49,6 @@ import java.util.Base64;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.rsa.RsaKeyGenSpec;
 import zeroecho.core.alg.rsa.RsaPrivateKeySpec;
@@ -56,7 +56,6 @@ import zeroecho.core.alg.rsa.RsaPublicKeySpec;
 import zeroecho.core.alg.rsa.RsaSigSpec;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.TailStrippingInputStream;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.PlainContent;
@@ -109,6 +108,8 @@ import zeroecho.sdk.content.api.PlainContent;
  * @see RsaKeyGenSpec
  */
 public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainContent> {
+    private static final String ALGORITHM_ID = "RSA";
+    private final ZeroEchoSession session;
     /**
      * Mode selects whether the builder signs or verifies.
      */
@@ -189,7 +190,8 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
     private Consumer<byte[]> onSignature;
     private Consumer<Boolean> onVerified;
 
-    private RsaSigDataContentBuilder() {
+    private RsaSigDataContentBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -201,8 +203,8 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
      *
      * @return a new {@code RsaSigDataContentBuilder} instance
      */
-    public static RsaSigDataContentBuilder builder() {
-        return new RsaSigDataContentBuilder();
+    public static RsaSigDataContentBuilder builder(ZeroEchoSession session) {
+        return new RsaSigDataContentBuilder(session);
     }
 
     /**
@@ -493,27 +495,25 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
     }
 
     private void resolveKeys() throws GeneralSecurityException {
-        CryptoAlgorithm alg = CryptoAlgorithms.require("RSA");
         if (genKeyPair) {
-            AsymmetricKeyBuilder<RsaKeyGenSpec> b = alg.asymmetricKeyBuilder(RsaKeyGenSpec.class);
-            KeyPair kp = b.generateKeyPair(keyGen);
+            KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair(ALGORITHM_ID, keyGen);
             this.privateKey = kp.getPrivate();
             this.publicKey = kp.getPublic();
         }
         if (importPrivatePkcs8 != null) {
-            AsymmetricKeyBuilder<RsaPrivateKeySpec> b = alg.asymmetricKeyBuilder(RsaPrivateKeySpec.class);
-            this.privateKey = b.importPrivate(new RsaPrivateKeySpec(importPrivatePkcs8));
+            this.privateKey = session.keyBuilders().asymmetric().importPrivate(ALGORITHM_ID,
+                    new RsaPrivateKeySpec(importPrivatePkcs8));
         }
         if (importPublicX509 != null) {
-            AsymmetricKeyBuilder<RsaPublicKeySpec> b = alg.asymmetricKeyBuilder(RsaPublicKeySpec.class);
-            this.publicKey = b.importPublic(new RsaPublicKeySpec(importPublicX509));
+            this.publicKey = session.keyBuilders().asymmetric().importPublic(ALGORITHM_ID,
+                    new RsaPublicKeySpec(importPublicX509));
         }
     }
 
     /**
      * SIGN + pass-through: return body only; capture signature from trailer.
      */
-    private static final class SignPass implements PlainContent {
+    private final class SignPass implements PlainContent {
         private final PrivateKey key;
         private final RsaSigSpec spec;
         private final Consumer<byte[]> cb;
@@ -534,7 +534,7 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "rsa sign: upstream not set");
 
-            SignatureContext sc = CryptoAlgorithms.create("RSA", KeyUsage.SIGN, key, spec);
+            SignatureContext sc = session.createContext(ALGORITHM_ID, KeyUsage.SIGN, key, spec);
             final InputStream produced = sc.wrap(upstream.getStream()); // NOPMD emits [body][signature]
             final int sigLen = sc.tagLength();
 
@@ -557,7 +557,7 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
     /**
      * SIGN + emit-only (raw/hex/base64).
      */
-    private static final class SignEmit implements PlainContent {
+    private final class SignEmit implements PlainContent {
         private final PrivateKey key;
         private final RsaSigSpec spec;
         private final Out out;
@@ -582,7 +582,7 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
             Objects.requireNonNull(upstream, "rsa sign: upstream not set");
 
             final byte[][] sigHolder = new byte[1][];
-            try (SignatureContext sc = CryptoAlgorithms.create("RSA", KeyUsage.SIGN, key, spec)) {
+            try (SignatureContext sc = session.createContext(ALGORITHM_ID, KeyUsage.SIGN, key, spec)) {
                 final int sigLen = sc.tagLength();
 
                 try (InputStream in = new TailStrippingInputStream(sc.wrap(upstream.getStream()), sigLen, IO_BUF) {
@@ -620,7 +620,7 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
      * VERIFY + pass-through: verify against expected; return body (throws on
      * mismatch).
      */
-    private static final class VerifyPass implements PlainContent {
+    private final class VerifyPass implements PlainContent {
         private final PublicKey key;
         private final RsaSigSpec spec;
         private final byte[] expected;
@@ -645,7 +645,7 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
             if (expected == null) {
                 throw new IllegalStateException("VERIFY requires expectedSignature(...)");
             }
-            SignatureContext sc = CryptoAlgorithms.create("RSA", KeyUsage.VERIFY, key, spec);
+            SignatureContext sc = session.createContext(ALGORITHM_ID, KeyUsage.VERIFY, key, spec);
             sc.setExpectedTag(expected);
             InputStream body = sc.wrap(upstream.getStream()); // throws at EOF on mismatch
 
@@ -667,7 +667,7 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
     /**
      * VERIFY + emit boolean ("true"/"false").
      */
-    private static final class VerifyEmit implements PlainContent {
+    private final class VerifyEmit implements PlainContent {
         private final PublicKey key;
         private final RsaSigSpec spec;
         private final byte[] expected;
@@ -694,7 +694,7 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
             }
 
             boolean ok;
-            try (SignatureContext sc = CryptoAlgorithms.create("RSA", KeyUsage.VERIFY, key, spec)) {
+            try (SignatureContext sc = session.createContext(ALGORITHM_ID, KeyUsage.VERIFY, key, spec)) {
                 sc.setExpectedTag(expected);
 
                 try (InputStream in = sc.wrap(upstream.getStream())) {

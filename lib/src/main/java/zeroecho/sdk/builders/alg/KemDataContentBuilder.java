@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -42,12 +44,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.util.Arrays;
 import java.util.Objects;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.KemContext.KemResult;
@@ -107,6 +109,7 @@ import zeroecho.sdk.content.api.EncryptedContent;
  * @since 1.0
  */
 public final class KemDataContentBuilder implements DataContentBuilder<DataContent> {
+    private final ZeroEchoSession session;
     // ---------- KEM configuration ----------
     private String kemId;
     private PublicKey recipientPublic;
@@ -126,7 +129,8 @@ public final class KemDataContentBuilder implements DataContentBuilder<DataConte
     private AesDataContentBuilder aesBuilder;
     private ChaChaDataContentBuilder chachaBuilder;
 
-    private KemDataContentBuilder() {
+    private KemDataContentBuilder(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session must not be null");
     }
 
     /**
@@ -134,15 +138,15 @@ public final class KemDataContentBuilder implements DataContentBuilder<DataConte
      *
      * @return fresh builder instance
      */
-    public static KemDataContentBuilder builder() {
-        return new KemDataContentBuilder();
+    public static KemDataContentBuilder builder(ZeroEchoSession session) {
+        return new KemDataContentBuilder(session);
     }
 
     /**
      * Sets the canonical KEM algorithm identifier to use (e.g., "ML-KEM").
      *
-     * @param id algorithm identifier resolved by
-     *           {@link CryptoAlgorithms#require(String)}
+     * @param id algorithm identifier resolved by the builder's
+     *           {@link ZeroEchoSession}
      * @return this builder
      * @throws NullPointerException if {@code id} is null
      */
@@ -361,7 +365,7 @@ public final class KemDataContentBuilder implements DataContentBuilder<DataConte
      * <h2>Thread-safety</h2> Instances are not thread-safe. Each instance must be
      * configured and used from a single thread.
      */
-    private static final class EncryptContent implements EncryptedContent {
+    private final class EncryptContent implements EncryptedContent {
         private final String kemId;
         private final PublicKey recipientPublic;
         private final boolean useHkdf;
@@ -416,35 +420,35 @@ public final class KemDataContentBuilder implements DataContentBuilder<DataConte
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "encrypt: missing input");
+            byte[] shared = null;
+            try (KemContext kem = session.createContext(kemId, KeyUsage.ENCAPSULATE, recipientPublic,
+                    VoidSpec.INSTANCE)) {
+                KemResult result = kem.encapsulate();
+                byte[] ciphertext = Objects.requireNonNull(result.ciphertext(), "kem ciphertext");
+                shared = Objects.requireNonNull(result.sharedSecret(), "kem sharedSecret");
+                if (ciphertext.length <= 0 || ciphertext.length > maxKemCtLen) {
+                    throw new IOException("KEM ciphertext length invalid: " + ciphertext.length);
+                }
 
-            final KemContext kem = CryptoAlgorithms.create(kemId, KeyUsage.ENCAPSULATE, recipientPublic, // NOPMD
-                    VoidSpec.INSTANCE);
-            final KemResult kr = kem.encapsulate();
-            final byte[] ct = Objects.requireNonNull(kr.ciphertext(), "kem ciphertext");
-            final byte[] shared = Objects.requireNonNull(kr.sharedSecret(), "kem sharedSecret");
-
-            if (ct.length <= 0 || ct.length > maxKemCtLen) {
-                throw new IOException("KEM ciphertext length invalid: " + ct.length);
+                DataContent symmetric = buildSymmetric(shared, true);
+                symmetric.setInput(upstream);
+                InputStream kemPrefix = writeLenPrefixedAsStream(ciphertext);
+                InputStream payloadStream = symmetric.getStream();
+                return new SequenceInputStream(kemPrefix, payloadStream);
+            } finally {
+                if (shared != null) {
+                    Arrays.fill(shared, (byte) 0);
+                }
             }
+        }
 
-            // Configure symmetric algorithm
-            DataContent symmetric;
-
+        private DataContent buildSymmetric(byte[] shared, boolean encrypt) throws IOException {
             if (aesBuilder != null) {
-                // aes
-                final SecretKey payloadKey = deriveKey(shared, "AES", derivedKeyBytes, useHkdf, hkdfInfo);
-                symmetric = aesBuilder.withKey(payloadKey).build(true);
-            } else {
-                // chacha20
-                final SecretKey payloadKey = deriveKey(shared, "ChaCha20", derivedKeyBytes, useHkdf, hkdfInfo);
-                symmetric = chachaBuilder.withKey(payloadKey).build(true);
+                SecretKey payloadKey = deriveKey(shared, "AES", derivedKeyBytes, useHkdf, hkdfInfo);
+                return aesBuilder.withKey(payloadKey).build(encrypt);
             }
-
-            symmetric.setInput(upstream);
-
-            final InputStream kemPrefix = writeLenPrefixedAsStream(ct);
-            final InputStream payloadStream = symmetric.getStream();
-            return new SequenceInputStream(kemPrefix, payloadStream);
+            SecretKey payloadKey = deriveKey(shared, "ChaCha20", derivedKeyBytes, useHkdf, hkdfInfo);
+            return chachaBuilder.withKey(payloadKey).build(encrypt);
         }
     }
 
@@ -466,7 +470,7 @@ public final class KemDataContentBuilder implements DataContentBuilder<DataConte
      * <h2>Thread-safety</h2> Instances are not thread-safe. Each instance must be
      * configured and used from a single thread.
      */
-    private static final class DecryptContent implements DataContent { // PlainContent would also be fine
+    private final class DecryptContent implements DataContent { // PlainContent would also be fine
         private final String kemId;
         private final PrivateKey recipientPrivate;
         private final boolean useHkdf;
@@ -523,33 +527,44 @@ public final class KemDataContentBuilder implements DataContentBuilder<DataConte
         @Override
         public InputStream getStream() throws IOException {
             Objects.requireNonNull(upstream, "decrypt: missing input");
-
             final InputStream in = upstream.getStream(); // NOPMD
+            Throwable failure = null;
+            boolean transferred = false;
+            try {
+                byte[] ciphertext = readLenPrefixed(in, maxKemCtLen);
+                byte[] shared = null;
+                DataContent symmetric;
+                try (KemContext kem = session.createContext(kemId, KeyUsage.DECAPSULATE, recipientPrivate,
+                        VoidSpec.INSTANCE)) {
+                    shared = kem.decapsulate(ciphertext);
+                    symmetric = buildSymmetric(shared);
+                } finally {
+                    if (shared != null) {
+                        Arrays.fill(shared, (byte) 0);
+                    }
+                }
 
-            // Read the KEM encapsulation prefix [Pack7 len][ct...]
-            final byte[] ct = readLenPrefixed(in, maxKemCtLen);
-
-            final KemContext kem = CryptoAlgorithms.create(kemId, KeyUsage.DECAPSULATE, recipientPrivate, // NOPMD
-                    VoidSpec.INSTANCE);
-            final byte[] shared = kem.decapsulate(ct);
-
-            // Configure symmetric algorithm
-            DataContent symmetric;
-
-            if (aesBuilder != null) {
-                // aes
-                final SecretKey payloadKey = deriveKey(shared, "AES", derivedKeyBytes, useHkdf, hkdfInfo);
-                symmetric = aesBuilder.withKey(payloadKey).build(false);
-            } else {
-                // chacha20
-                final SecretKey payloadKey = deriveKey(shared, "ChaCha20", derivedKeyBytes, useHkdf, hkdfInfo);
-                symmetric = chachaBuilder.withKey(payloadKey).build(false);
+                symmetric.setInput(new BridgeDataContent(in));
+                InputStream result = symmetric.getStream();
+                transferred = true;
+                return result;
+            } catch (IOException | RuntimeException | Error exception) { // NOPMD - retain primary failure
+                failure = exception;
+                throw exception;
+            } finally {
+                if (!transferred) {
+                    closeRejectedInput(in, failure);
+                }
             }
+        }
 
-            // The symmetric stage must consume exactly the remaining bytes of 'in'.
-            symmetric.setInput(new BridgeDataContent(in));
-
-            return symmetric.getStream();
+        private DataContent buildSymmetric(byte[] shared) throws IOException {
+            if (aesBuilder != null) {
+                SecretKey payloadKey = deriveKey(shared, "AES", derivedKeyBytes, useHkdf, hkdfInfo);
+                return aesBuilder.withKey(payloadKey).build(false);
+            }
+            SecretKey payloadKey = deriveKey(shared, "ChaCha20", derivedKeyBytes, useHkdf, hkdfInfo);
+            return chachaBuilder.withKey(payloadKey).build(false);
         }
     }
 
@@ -587,23 +602,38 @@ public final class KemDataContentBuilder implements DataContentBuilder<DataConte
 
     private static SecretKey deriveKey(byte[] shared, String algo, int keyBytes, boolean hkdf, byte[] info)
             throws IOException {
-        final byte[] material;
-        if (hkdf) {
-            // HKDF-SHA256 with empty salt; replace with your KDF utility if preferred.
-            try {
-                material = zeroecho.sdk.util.Kdf.hkdfSha256(shared, null, info, keyBytes);
-            } catch (GeneralSecurityException e) {
-                throw new IOException("HKDF-SHA256 failed", e);
+        byte[] material = null;
+        try {
+            if (hkdf) {
+                try {
+                    material = zeroecho.sdk.util.Kdf.hkdfSha256(shared, null, info, keyBytes);
+                } catch (GeneralSecurityException exception) {
+                    throw new IOException("HKDF-SHA256 failed", exception);
+                }
+            } else {
+                if (shared.length < keyBytes) {
+                    throw new IOException("Shared secret too short for direct use: " + shared.length);
+                }
+                material = Arrays.copyOf(shared, keyBytes);
             }
-        } else {
-            // Direct use or truncation.
-            if (shared.length < keyBytes) {
-                throw new IOException("Shared secret too short for direct use: " + shared.length);
+            return new SecretKeySpec(material, algo);
+        } finally {
+            if (material != null) {
+                Arrays.fill(material, (byte) 0);
             }
-            material = new byte[keyBytes];
-            System.arraycopy(shared, 0, material, 0, keyBytes);
         }
-        return new SecretKeySpec(material, algo);
+    }
+
+    private static void closeRejectedInput(InputStream input, Throwable primary) throws IOException {
+        try {
+            input.close();
+        } catch (IOException cleanupFailure) {
+            if (primary != null) {
+                primary.addSuppressed(cleanupFailure);
+            } else {
+                throw cleanupFailure;
+            }
+        }
     }
 
     private static InputStream writeLenPrefixedAsStream(byte[] ct) throws IOException {

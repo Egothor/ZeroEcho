@@ -40,7 +40,7 @@ import java.security.KeyPairGenerator;
 import java.util.Locale;
 import java.util.Objects;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
 /**
  * Key pair builder for the SPHINCS+ post-quantum signature scheme.
@@ -54,15 +54,10 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * Reflection is used to avoid a hard dependency on all parameter variants.
  * </p>
  *
- * <h2>Supported flows</h2>
- * <ul>
- * <li>{@link #generateKeyPair(SphincsPlusKeyGenSpec)}: creates a fresh key pair
- * using the specified parameter set and optional provider name.</li>
- * <li>{@link #importPublic(SphincsPlusKeyGenSpec)} and
- * {@link #importPrivate(SphincsPlusKeyGenSpec)}: not supported; use
- * {@link SphincsPlusPublicKeySpec} or {@link SphincsPlusPrivateKeySpec}
- * instead.</li>
- * </ul>
+ * <p>The exact supported operation is
+ * {@link #generateKeyPair(SphincsPlusKeyGenSpec)}. Public and private import are
+ * registered separately for {@link SphincsPlusPublicKeySpec} and
+ * {@link SphincsPlusPrivateKeySpec}.</p>
  *
  * <h2>Example</h2> <pre>{@code
  * SphincsPlusKeyGenSpec spec =
@@ -73,7 +68,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class SphincsPlusKeyGenBuilder implements AsymmetricKeyBuilder<SphincsPlusKeyGenSpec> {
+public final class SphincsPlusKeyGenBuilder implements AsymmetricKeyPairGenerator<SphincsPlusKeyGenSpec> {
 
     private static final String ALG = "SPHINCSPlus";
 
@@ -106,40 +101,6 @@ public final class SphincsPlusKeyGenBuilder implements AsymmetricKeyBuilder<Sphi
             kpg.initialize((java.security.spec.AlgorithmParameterSpec) bcParamSpec);
         }
         return kpg.generateKeyPair();
-    }
-
-    /**
-     * Not supported for this builder.
-     *
-     * <p>
-     * Public key import is delegated to {@link SphincsPlusPublicKeySpec} and its
-     * associated builder.
-     * </p>
-     *
-     * @param spec ignored
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public java.security.PublicKey importPublic(SphincsPlusKeyGenSpec spec) {
-        throw new UnsupportedOperationException("Use SphincsPlusPublicKeySpec to import a public key.");
-    }
-
-    /**
-     * Not supported for this builder.
-     *
-     * <p>
-     * Private key import is delegated to {@link SphincsPlusPrivateKeySpec} and its
-     * associated builder.
-     * </p>
-     *
-     * @param spec ignored
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public java.security.PrivateKey importPrivate(SphincsPlusKeyGenSpec spec) {
-        throw new UnsupportedOperationException("Use SphincsPlusPrivateKeySpec to import a private key.");
     }
 
     /**

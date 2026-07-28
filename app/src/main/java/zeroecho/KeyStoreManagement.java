@@ -42,6 +42,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -61,10 +62,11 @@ import org.apache.commons.cli.ParseException;
 
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.CryptoAlgorithms;
+import zeroecho.core.KeyOperation;
+import zeroecho.core.KeyOperationInfo;
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
-import zeroecho.core.spi.SymmetricKeyBuilder;
 import zeroecho.core.storage.KeyringStore;
+import zeroecho.sdk.ZeroEchoSession;
 
 /**
  * Command-line utility for managing key material in a text-based keyring store.
@@ -231,6 +233,7 @@ public final class KeyStoreManagement { // NOPMD
      * @throws IOException    if I/O fails
      */
     public static int main(final String[] args, final Options dispatcherOptions) throws ParseException, IOException {
+        ZeroEchoSession session = new ZeroEchoSession();
         defineOptions(dispatcherOptions);
         CommandLineParser parser = new DefaultParser();
         CommandLine cmd = parser.parse(dispatcherOptions, args);
@@ -245,14 +248,15 @@ public final class KeyStoreManagement { // NOPMD
         }
 
         Path keyringPath = Path.of(cmd.getOptionValue(KEYSTORE_OPTION.getLongOpt()));
-        KeyringStore store = Files.exists(keyringPath) ? KeyringStore.load(keyringPath) : new KeyringStore();
+        KeyringStore store = Files.exists(keyringPath) ? KeyringStore.load(session, keyringPath)
+                : new KeyringStore(session);
 
         if (cmd.hasOption(LIST_ALIASES_OPTION.getLongOpt())) {
             listAliases(store);
             return 0;
         }
         if (cmd.hasOption(GENERATE_OPTION.getLongOpt())) {
-            doGenerate(store, cmd);
+            doGenerate(session, store, cmd);
             store.save(keyringPath);
             return 0;
         }
@@ -311,8 +315,12 @@ public final class KeyStoreManagement { // NOPMD
         Set<String> ids = CryptoAlgorithms.available();
         for (String id : ids) {
             CryptoAlgorithm a = CryptoAlgorithms.require(id);
-            boolean hasAsym = !a.asymmetricBuildersInfo().isEmpty();
-            boolean hasSym = !a.symmetricBuildersInfo().isEmpty();
+            boolean hasAsym = a.keyOperations().stream()
+                    .anyMatch(info -> info.operation() != KeyOperation.SYMMETRIC_GENERATE
+                            && info.operation() != KeyOperation.SYMMETRIC_IMPORT);
+            boolean hasSym = a.keyOperations().stream()
+                    .anyMatch(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE
+                            || info.operation() == KeyOperation.SYMMETRIC_IMPORT);
             out.printf(Locale.ROOT, "%-12s  asym:%s  sym:%s%n", id, hasAsym, hasSym);
         }
     }
@@ -346,7 +354,8 @@ public final class KeyStoreManagement { // NOPMD
      * @param store keyring store to mutate
      * @param cmd   parsed command line
      */
-    public static void doGenerate(final KeyringStore store, final CommandLine cmd) { // NOPMD
+    public static void doGenerate(final ZeroEchoSession session, final KeyringStore store,
+            final CommandLine cmd) {
         String algId = required(cmd, ALG_OPTION, "--alg is required for --generate");
         String aliasBase = required(cmd, ALIAS_OPTION, "--alias is required for --generate");
         String kind = cmd.getOptionValue(KIND_OPTION.getLongOpt());
@@ -355,119 +364,155 @@ public final class KeyStoreManagement { // NOPMD
         boolean overwrite = cmd.hasOption(OVERWRITE_OPTION.getLongOpt());
 
         CryptoAlgorithm alg = CryptoAlgorithms.require(algId);
-        boolean canAsym = !alg.asymmetricBuildersInfo().isEmpty();
-        boolean canSym = !alg.symmetricBuildersInfo().isEmpty();
+        boolean canAsym = alg.keyOperations().stream()
+                .anyMatch(info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE);
+        boolean canSym = alg.keyOperations().stream()
+                .anyMatch(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE);
 
-        boolean doAsym = "asym".equalsIgnoreCase(kind) || (kind == null && canAsym && !canSym);
-        boolean doSym = "sym".equalsIgnoreCase(kind) || (kind == null && canSym && !canAsym);
+        GenerationKind generationKind = selectGenerationKind(kind, canAsym, canSym);
+        if (generationKind == GenerationKind.ASYMMETRIC) {
+            generateAsymmetric(session, store, alg, algId, aliasBase, pubSfx, prvSfx, overwrite);
+        }
+        if (generationKind == GenerationKind.SYMMETRIC) {
+            generateSymmetric(session, store, alg, algId, aliasBase, overwrite);
+        }
+    }
 
-        if (!doAsym && !doSym && canAsym && canSym) {
+    private static GenerationKind selectGenerationKind(String requestedKind, boolean canAsymmetric,
+            boolean canSymmetric) {
+        if ("asym".equalsIgnoreCase(requestedKind) || requestedKind == null && canAsymmetric && !canSymmetric) {
+            return GenerationKind.ASYMMETRIC;
+        }
+        if ("sym".equalsIgnoreCase(requestedKind) || requestedKind == null && canSymmetric && !canAsymmetric) {
+            return GenerationKind.SYMMETRIC;
+        }
+        if (canAsymmetric && canSymmetric) {
             throw new IllegalArgumentException("Algorithm supports both; specify --kind sym|asym");
         }
+        return GenerationKind.NONE;
+    }
 
-        if (doAsym) {
-            KeyPair kp = null;
-            CryptoAlgorithm.AsymBuilderInfo used = null;
-            for (CryptoAlgorithm.AsymBuilderInfo bi : alg.asymmetricBuildersInfo()) {
-                if (bi.defaultKeySpec == null) {
-                    continue;
-                }
-                @SuppressWarnings("unchecked")
-                Class<AlgorithmKeySpec> st = (Class<AlgorithmKeySpec>) bi.specType;
-                AsymmetricKeyBuilder<AlgorithmKeySpec> b = alg.asymmetricKeyBuilder(st);
-                try {
-                    kp = b.generateKeyPair((AlgorithmKeySpec) bi.defaultKeySpec);
-                    if (kp != null) {
-                        used = bi;
-                        break;
-                    }
-                } catch (Throwable ignore) { // NOPMD
-                }
-            }
-            if (kp == null || used == null) {
-                throw new IllegalStateException("No asymmetric builder with default spec worked for " + algId);
-            }
-
-            Class<?> pubImp = null;
-            Class<?> prvImp = null;
-            for (CryptoAlgorithm.AsymBuilderInfo x : alg.asymmetricBuildersInfo()) {
-                if (looksLikeImportSpecForPublic(x.specType)) {
-                    pubImp = x.specType;
-                }
-                if (looksLikeImportSpecForPrivate(x.specType)) {
-                    prvImp = x.specType;
-                }
-            }
-            if (pubImp == null && prvImp == null) {
-                throw new IllegalStateException("No import spec class found for " + algId + " (asymmetric)");
-            }
-
-            byte[] spki = kp.getPublic() != null ? kp.getPublic().getEncoded() : null;
-            byte[] pkcs8 = kp.getPrivate() != null ? kp.getPrivate().getEncoded() : null;
-
-            AlgorithmKeySpec pubSpec = pubImp != null ? makeImportSpec(pubImp, spki, algId, used.defaultKeySpec) : null;
-            AlgorithmKeySpec prvSpec = prvImp != null ? makeImportSpec(prvImp, pkcs8, algId, used.defaultKeySpec)
-                    : null;
-
-            if (pubImp != null && pubSpec == null) {
-                throw new IllegalStateException("Cannot construct public import spec for " + algId);
-            }
-            if (prvImp != null && prvSpec == null) {
-                throw new IllegalStateException("Cannot construct private import spec for " + algId);
-            }
-
-            String pubAlias = aliasBase + pubSfx;
-            String prvAlias = aliasBase + prvSfx;
-            ensureWritable(store, pubAlias, overwrite);
-            ensureWritable(store, prvAlias, overwrite);
-
-            store.putPublic(pubAlias, algId, pubSpec);
-            store.putPrivate(prvAlias, algId, prvSpec);
-
-            PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8); // NOPMD
-            out.printf("Generated %s -> %s, %s%n", algId, pubAlias, prvAlias);
+    private static void generateAsymmetric(ZeroEchoSession session, KeyringStore store, CryptoAlgorithm algorithm,
+            String algorithmId, String aliasBase, String publicSuffix, String privateSuffix, boolean overwrite) {
+        GeneratedKeyPair generated = firstGeneratedKeyPair(session, algorithm, algorithmId);
+        Class<?> publicImport = findImportSpecClass(algorithm, KeyOperation.ASYMMETRIC_PUBLIC_IMPORT, true);
+        Class<?> privateImport = findImportSpecClass(algorithm, KeyOperation.ASYMMETRIC_PRIVATE_IMPORT, false);
+        if (publicImport == null && privateImport == null) {
+            throw new IllegalStateException("No import spec class found for " + algorithmId + " (asymmetric)");
         }
 
-        if (doSym) {
-            SecretKey sk = null;
-            CryptoAlgorithm.SymBuilderInfo used = null;
-            for (CryptoAlgorithm.SymBuilderInfo bi : alg.symmetricBuildersInfo()) {
-                if (bi.defaultKeySpec() == null) {
-                    continue;
+        KeyPair pair = generated.pair();
+        byte[] publicEncoding = pair.getPublic() == null ? null : pair.getPublic().getEncoded();
+        byte[] privateEncoding = pair.getPrivate() == null ? null : pair.getPrivate().getEncoded();
+        AlgorithmKeySpec publicSpec = publicImport == null ? null
+                : makeImportSpec(publicImport, publicEncoding, algorithmId, generated.info().defaultSpec());
+        AlgorithmKeySpec privateSpec = privateImport == null ? null
+                : makeImportSpec(privateImport, privateEncoding, algorithmId, generated.info().defaultSpec());
+        requireImportSpec(publicImport, publicSpec, "public", algorithmId);
+        requireImportSpec(privateImport, privateSpec, "private", algorithmId);
+
+        String publicAlias = aliasBase + publicSuffix;
+        String privateAlias = aliasBase + privateSuffix;
+        ensureWritable(store, publicAlias, overwrite);
+        ensureWritable(store, privateAlias, overwrite);
+        store.putPublic(publicAlias, algorithmId, publicSpec);
+        store.putPrivate(privateAlias, algorithmId, privateSpec);
+
+        PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8); // NOPMD
+        out.printf("Generated %s -> %s, %s%n", algorithmId, publicAlias, privateAlias);
+    }
+
+    private static GeneratedKeyPair firstGeneratedKeyPair(ZeroEchoSession session, CryptoAlgorithm algorithm,
+            String algorithmId) {
+        for (KeyOperationInfo info : algorithm.keyOperations()) {
+            if (info.operation() != KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE || info.defaultSpec() == null) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) info.specType();
+            try {
+                KeyPair pair = session.keyBuilders().asymmetric().keyPairGenerator(algorithmId, specType)
+                        .generateKeyPair(info.defaultSpec());
+                if (pair != null) {
+                    return new GeneratedKeyPair(pair, info);
                 }
-                @SuppressWarnings("unchecked")
-                Class<AlgorithmKeySpec> st = (Class<AlgorithmKeySpec>) bi.specType();
-                SymmetricKeyBuilder<AlgorithmKeySpec> b = alg.symmetricKeyBuilder(st);
-                try {
-                    sk = b.generateSecret((AlgorithmKeySpec) bi.defaultKeySpec());
-                    if (sk != null) {
-                        used = bi;
-                        break;
-                    }
-                } catch (Throwable ignore) { // NOPMD
-                }
+            } catch (GeneralSecurityException | RuntimeException ignored) { // NOPMD
+                // Try the next registered default specification.
             }
-            if (sk == null || used == null) {
-                throw new IllegalStateException("No symmetric builder with default spec worked for " + algId);
-            }
-
-            Class<?> impSym = findSymmetricImportSpecClass(alg);
-            if (impSym == null) {
-                throw new IllegalStateException("No symmetric import spec class for " + algId);
-            }
-
-            byte[] raw = sk.getEncoded();
-            AlgorithmKeySpec secSpec = makeImportSpec(impSym, raw, algId, used.defaultKeySpec());
-            if (secSpec == null) {
-                throw new IllegalStateException("Cannot construct symmetric import spec for " + algId);
-            }
-
-            ensureWritable(store, aliasBase, overwrite);
-            store.putSecret(aliasBase, algId, secSpec);
-
-            PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8); // NOPMD
-            out.printf("Generated %s -> %s%n", algId, aliasBase);
         }
+        throw new IllegalStateException("No asymmetric builder with default spec worked for " + algorithmId);
+    }
+
+    private static Class<?> findImportSpecClass(CryptoAlgorithm algorithm, KeyOperation operation,
+            boolean publicImport) {
+        for (KeyOperationInfo info : algorithm.keyOperations()) {
+            boolean matchingName = publicImport ? looksLikeImportSpecForPublic(info.specType())
+                    : looksLikeImportSpecForPrivate(info.specType());
+            if (info.operation() == operation && matchingName) {
+                return info.specType();
+            }
+        }
+        return null;
+    }
+
+    private static void requireImportSpec(Class<?> specType, AlgorithmKeySpec spec, String kind, String algorithmId) {
+        if (specType != null && spec == null) {
+            throw new IllegalStateException("Cannot construct " + kind + " import spec for " + algorithmId);
+        }
+    }
+
+    private static void generateSymmetric(ZeroEchoSession session, KeyringStore store, CryptoAlgorithm algorithm,
+            String algorithmId, String alias, boolean overwrite) {
+        GeneratedSecret generated = firstGeneratedSecret(session, algorithm, algorithmId);
+        Class<?> importType = findSymmetricImportSpecClass(algorithm);
+        if (importType == null) {
+            throw new IllegalStateException("No symmetric import spec class for " + algorithmId);
+        }
+
+        byte[] encoding = generated.key().getEncoded();
+        AlgorithmKeySpec spec = makeImportSpec(importType, encoding, algorithmId, generated.info().defaultSpec());
+        if (spec == null) {
+            throw new IllegalStateException("Cannot construct symmetric import spec for " + algorithmId);
+        }
+        ensureWritable(store, alias, overwrite);
+        store.putSecret(alias, algorithmId, spec);
+
+        PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8); // NOPMD
+        out.printf("Generated %s -> %s%n", algorithmId, alias);
+    }
+
+    private static GeneratedSecret firstGeneratedSecret(ZeroEchoSession session, CryptoAlgorithm algorithm,
+            String algorithmId) {
+        for (KeyOperationInfo info : algorithm.keyOperations()) {
+            if (info.operation() != KeyOperation.SYMMETRIC_GENERATE || info.defaultSpec() == null) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            Class<AlgorithmKeySpec> specType = (Class<AlgorithmKeySpec>) info.specType();
+            try {
+                SecretKey key = session.keyBuilders().symmetric().generator(algorithmId, specType)
+                        .generateSecret(info.defaultSpec());
+                if (key != null) {
+                    return new GeneratedSecret(key, info);
+                }
+            } catch (GeneralSecurityException | RuntimeException ignored) { // NOPMD
+                // Try the next registered default specification.
+            }
+        }
+        throw new IllegalStateException("No symmetric builder with default spec worked for " + algorithmId);
+    }
+
+    private record GeneratedKeyPair(KeyPair pair, KeyOperationInfo info) {
+    }
+
+    private record GeneratedSecret(SecretKey key, KeyOperationInfo info) {
+    }
+
+    /** Selects the exact key-generation operation requested by the command. */
+    private enum GenerationKind {
+        ASYMMETRIC,
+        SYMMETRIC,
+        NONE
     }
 
     /**
@@ -545,17 +590,9 @@ public final class KeyStoreManagement { // NOPMD
     }
 
     private static Class<?> findSymmetricImportSpecClass(CryptoAlgorithm alg) {
-        for (CryptoAlgorithm.SymBuilderInfo x : alg.symmetricBuildersInfo()) {
-            String n = x.specType().getSimpleName();
-            if (n.contains("Import") || n.endsWith("KeyImportSpec") || n.endsWith("SecretSpec")) {
+        for (KeyOperationInfo x : alg.keyOperations()) {
+            if (x.operation() == KeyOperation.SYMMETRIC_IMPORT) {
                 return x.specType();
-            }
-        }
-        for (CryptoAlgorithm.SymBuilderInfo x : alg.symmetricBuildersInfo()) {
-            try {
-                x.specType().getConstructor(byte[].class);
-                return x.specType();
-            } catch (NoSuchMethodException ignored) {
             }
         }
         return null;

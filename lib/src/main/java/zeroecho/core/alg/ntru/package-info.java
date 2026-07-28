@@ -48,8 +48,9 @@
  * DECAPSULATE roles, with an optional message-style agreement adapter.</li>
  * <li>Provide a {@link zeroecho.core.context.KemContext} bound to either a
  * public key (encapsulation) or a private key (decapsulation).</li>
- * <li>Expose immutable specifications for key generation variants and encoded
- * key carriers with simple marshalling helpers.</li>
+ * <li>Expose immutable key-generation specifications and defensively copying
+ * encoded-key carriers with simple marshalling helpers; private-key carriers
+ * are destroyable.</li>
  * <li>Validate the presence of a suitable PQC provider before performing JCA
  * operations.</li>
  * </ul>

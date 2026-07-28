@@ -54,7 +54,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h2>Usage</h2> Instances of this class are passed to the Kyber key builder to
  * select the desired parameter set: <pre>{@code
  * CryptoAlgorithm kyber = new KyberAlgorithm();
- * KeyPair kp = kyber.asymmetricKeyBuilder(KyberKeyGenSpec.class)
+ * KeyPair kp = kyber.asymmetricKeyPairGenerator(KyberKeyGenSpec.class)
  *                   .generateKeyPair(KyberKeyGenSpec.kyber768());
  * }</pre>
  *
@@ -63,7 +63,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * </p>
  *
  * @see KyberAlgorithm
- * @see zeroecho.core.CryptoAlgorithm#generateKeyPair(zeroecho.core.spec.AlgorithmKeySpec)
+ * @see zeroecho.sdk.KeyBuilders.Asymmetric#generateKeyPair(String, AlgorithmKeySpec)
  */
 public final class KyberKeyGenSpec implements AlgorithmKeySpec, Describable {
     /**

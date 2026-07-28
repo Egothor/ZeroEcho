@@ -104,9 +104,9 @@ import zeroecho.core.context.MessageAgreementContext;
  *
  * @since 1.0
  */
-public final class GenericJcaMessageAgreementContext extends GenericJcaAgreementContext
-        implements MessageAgreementContext {
+public final class GenericJcaMessageAgreementContext implements MessageAgreementContext {
 
+    private final GenericJcaAgreementContext agreement;
     private final PublicKey localPublic;
     private final String keyFactoryAlg;
     private final String keyFactoryProvider;
@@ -139,7 +139,8 @@ public final class GenericJcaMessageAgreementContext extends GenericJcaAgreement
      */
     public GenericJcaMessageAgreementContext(CryptoAlgorithm alg, KeyPairKey keyPairKey, String jcaAgreementName,
             String agreementProvider, String keyFactoryAlg, String keyFactoryProvider) {
-        super(Objects.requireNonNull(alg, "alg"), Objects.requireNonNull(keyPairKey, "keyPairKey").privateKey(),
+        this.agreement = new GenericJcaAgreementContext(Objects.requireNonNull(alg, "alg"),
+                Objects.requireNonNull(keyPairKey, "keyPairKey").privateKey(),
                 Objects.requireNonNull(jcaAgreementName, "jcaAgreementName"), agreementProvider);
         this.localPublic = Objects.requireNonNull(keyPairKey.publicKey(), "keyPairKey.public");
         this.keyFactoryAlg = Objects.requireNonNull(keyFactoryAlg, "keyFactoryAlg");
@@ -199,12 +200,18 @@ public final class GenericJcaMessageAgreementContext extends GenericJcaAgreement
     @Override
     public void setPeerMessage(byte[] message) {
         if (message == null) {
-            setPeerPublic(null);
+            agreement.setPeerPublic(null);
             return;
         }
 
         PublicKey peerPublic = importPeerPublic(message);
-        setPeerPublic(peerPublic);
+        agreement.setPeerPublic(peerPublic);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void setPeerPublic(PublicKey peer) {
+        agreement.setPeerPublic(peer);
     }
 
     /**
@@ -231,5 +238,29 @@ public final class GenericJcaMessageAgreementContext extends GenericJcaAgreement
         } catch (GeneralSecurityException e) {
             throw new IllegalArgumentException("Failed to import peer public key using KeyFactory " + keyFactoryAlg, e);
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public byte[] deriveSecret() {
+        return agreement.deriveSecret();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public CryptoAlgorithm algorithm() {
+        return agreement.algorithm();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public java.security.Key key() {
+        return agreement.key();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void close() {
+        agreement.close();
     }
 }

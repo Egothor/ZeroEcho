@@ -33,7 +33,11 @@
  ******************************************************************************/
 package zeroecho.core.alg.sphincsplus;
 
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -44,7 +48,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <p>
  * {@code SphincsPlusPrivateKeySpec} wraps a PKCS#8-encoded SPHINCS+ private key
  * along with the provider name that should be used for import. It is a simple
- * immutable holder designed for use with {@link SphincsPlusPrivateKeyBuilder}.
+ * destroyable holder designed for use with {@link SphincsPlusPrivateKeyBuilder}.
  * </p>
  *
  * <h2>Encoding</h2>
@@ -57,8 +61,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * provider) if not explicitly supplied.</li>
  * </ul>
  *
- * <h2>Thread-safety</h2> Instances are immutable and can be shared safely
- * across threads. Defensive copies are returned for all sensitive material.
+ * <h2>Thread-safety</h2> Access and destruction are synchronized. Defensive
+ * copies are returned for all sensitive material.
  *
  * <h2>Example</h2> <pre>{@code
  * // Wrap a PKCS#8-encoded private key
@@ -77,9 +81,11 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * @since 1.0
  */
-public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec {
+public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
     private final byte[] encodedPkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
     private final String providerName; // e.g. "BCPQC"
+    private boolean destroyed;
 
     /**
      * Constructs a new specification with the default provider {@code "BCPQC"}.
@@ -113,7 +119,13 @@ public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec {
      * @return clone of the encoded key bytes
      */
     public byte[] encoded() {
-        return encodedPkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return encodedPkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -137,7 +149,7 @@ public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec {
      * @return serialized {@link PairSeq} representation
      */
     public static PairSeq marshal(SphincsPlusPrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.encodedPkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "SPHINCSPLUS-PRIV", "pkcs8.b64", b64, "provider", spec.providerName);
     }
 
@@ -156,20 +168,74 @@ public final class SphincsPlusPrivateKeySpec implements AlgorithmKeySpec {
     public static SphincsPlusPrivateKeySpec unmarshal(PairSeq p) {
         byte[] out = null;
         String prov = "BCPQC";
-        PairSeq.Cursor c = p.cursor();
-        while (c.next()) {
-            String k = c.key();
-            String v = c.value();
-            switch (k) {
-                case "pkcs8.b64" -> out = Base64.getDecoder().decode(v);
-                case "provider" -> prov = v;
-                default -> {
+        try {
+            PairSeq.Cursor c = p.cursor();
+            while (c.next()) {
+                String k = c.key();
+                String v = c.value();
+                switch (k) {
+                    case "pkcs8.b64" -> out = decodeReplacing(out, v);
+                    case "provider" -> prov = v;
+                    default -> {
+                    }
                 }
             }
+            if (out == null) {
+                throw new IllegalArgumentException("pkcs8.b64 missing for SPHINCS+ private key");
+            }
+            return new SphincsPlusPrivateKeySpec(out, prov);
+        } finally {
+            wipe(out);
         }
-        if (out == null) {
-            throw new IllegalArgumentException("pkcs8.b64 missing for SPHINCS+ private key");
+    }
+
+    private static byte[] decodeReplacing(byte[] current, String encoded) {
+        wipe(current);
+        return Base64.getDecoder().decode(encoded);
+    }
+
+    private static void wipe(byte[] current) {
+        if (current != null) {
+            Arrays.fill(current, (byte) 0);
         }
-        return new SphincsPlusPrivateKeySpec(out, prov);
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(encodedPkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(encodedPkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("SPHINCS+ private key specification has been destroyed");
+        }
     }
 }

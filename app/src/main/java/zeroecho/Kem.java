@@ -63,6 +63,7 @@ import zeroecho.core.storage.KeyringStore;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.alg.ChaChaDataContentBuilder;
 import zeroecho.sdk.builders.alg.KemDataContentBuilder;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainFileBuilder;
 import zeroecho.sdk.content.api.DataContent;
@@ -203,6 +204,7 @@ public final class Kem { // NOPMD
     }
 
     public static int main(String[] args, Options opts) throws ParseException, IOException, GeneralSecurityException { // NOPMD
+        ZeroEchoSession session = new ZeroEchoSession();
         defineOptions(opts);
         CommandLineParser parser = new DefaultParser();
         CommandLine cmd = parser.parse(opts, args);
@@ -240,10 +242,10 @@ public final class Kem { // NOPMD
 
         final String kemId = cmd.getOptionValue(OPT_KEM.getLongOpt());
         final Path keyringPath = Path.of(cmd.getOptionValue(OPT_KEYRING.getLongOpt()));
-        final KeyringStore keyring = KeyringStore.load(keyringPath);
+        final KeyringStore keyring = KeyringStore.load(session, keyringPath);
 
         // Configure KEM envelope
-        KemDataContentBuilder kem = KemDataContentBuilder.builder().kem(kemId);
+        KemDataContentBuilder kem = KemDataContentBuilder.builder(session).kem(kemId);
         if (cmd.hasOption(OPT_DIRECT.getLongOpt())) {
             kem = kem.directSecret();
         } else {
@@ -267,7 +269,7 @@ public final class Kem { // NOPMD
         // AES payload
         if (wantAes) {
             String mode = cmd.getOptionValue(OPT_AES_CIPHER.getLongOpt(), "gcm").toLowerCase(Locale.ROOT);
-            AesDataContentBuilder aes = AesDataContentBuilder.builder();
+            AesDataContentBuilder aes = AesDataContentBuilder.builder(session);
             switch (mode) {
                 case "gcm" -> {
                     Integer tagBitsOpt = parsedIntOpt(cmd, OPT_AES_TAG_BITS);
@@ -294,7 +296,7 @@ public final class Kem { // NOPMD
 
         // ChaCha payload
         if (wantChaCha) {
-            ChaChaDataContentBuilder cc = ChaChaDataContentBuilder.builder();
+            ChaChaDataContentBuilder cc = ChaChaDataContentBuilder.builder(session);
             byte[] nonce = parseHexOpt(cmd, OPT_CHACHA_NONCE);
             if (nonce != null) {
                 cc = cc.withNonce(nonce);

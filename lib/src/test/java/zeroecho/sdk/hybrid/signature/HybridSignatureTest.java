@@ -53,10 +53,14 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
+import zeroecho.core.alg.ed25519.Ed25519KeyGenSpec;
+import zeroecho.core.alg.rsa.RsaKeyGenSpec;
+import zeroecho.core.alg.sphincsplus.SphincsPlusKeyGenSpec;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.TailStrippingInputStream;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.sdk.builders.TagTrailerDataContentBuilder;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.content.api.DataContent;
@@ -167,7 +171,7 @@ public class HybridSignatureTest {
     }
 
     private static int tagLen(String algoId, KeyUsage role, Key key, ContextSpec specOrNull) throws Exception {
-        try (SignatureContext ctx = CryptoAlgorithms.create(algoId, role, key, specOrNull)) {
+        try (SignatureContext ctx = new zeroecho.sdk.ZeroEchoSession().createContext(algoId, role, key, specOrNull)) {
             return ctx.tagLength();
         }
     }
@@ -237,8 +241,11 @@ public class HybridSignatureTest {
         byte[] msg = randomBytes(size);
         System.out.println("...msg=" + msg.length + " bytes");
 
-        KeyPair ed = CryptoAlgorithms.require("Ed25519").generateKeyPair();
-        KeyPair spx = CryptoAlgorithms.require("SPHINCS+").generateKeyPair();
+        ZeroEchoSession session = new ZeroEchoSession();
+        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519",
+                Ed25519KeyGenSpec.defaultSpec());
+        KeyPair spx = session.keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
+                SphincsPlusKeyGenSpec.defaultSpec());
 
         int edLen = tagLen("Ed25519", KeyUsage.SIGN, ed.getPrivate(), null);
         int spxLen = tagLen("SPHINCS+", KeyUsage.SIGN, spx.getPrivate(), null);
@@ -249,14 +256,14 @@ public class HybridSignatureTest {
                 HybridSignatureProfile.VerifyRule.AND);
 
         byte[] sigAnd;
-        try (SignatureContext signer = HybridSignatureContexts.sign(andProfile, ed.getPrivate(), spx.getPrivate(),
+        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), andProfile, ed.getPrivate(), spx.getPrivate(),
                 2 * 1024 * 1024)) {
             sigAnd = signTrailer(signer, msg);
         }
         System.out.println("...sig(AND).len=" + sigAnd.length + ", head=" + hexShort(sigAnd));
 
         // verify OK
-        try (SignatureContext verifier = HybridSignatureContexts.verify(andProfile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(sigAnd);
@@ -268,7 +275,7 @@ public class HybridSignatureTest {
 
         // corrupt classic => must fail
         byte[] badClassic = concat(flipOneBit(sub(sigAnd, 0, edLen), 0), sub(sigAnd, edLen, spxLen));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(andProfile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(badClassic);
@@ -282,7 +289,7 @@ public class HybridSignatureTest {
 
         // corrupt pqc => must fail
         byte[] badPqc = concat(sub(sigAnd, 0, edLen), flipOneBit(sub(sigAnd, edLen, spxLen), 0));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(andProfile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(badPqc);
@@ -299,7 +306,7 @@ public class HybridSignatureTest {
                 HybridSignatureProfile.VerifyRule.OR);
 
         byte[] sigOr;
-        try (SignatureContext signer = HybridSignatureContexts.sign(orProfile, ed.getPrivate(), spx.getPrivate(),
+        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), orProfile, ed.getPrivate(), spx.getPrivate(),
                 2 * 1024 * 1024)) {
             sigOr = signTrailer(signer, msg);
         }
@@ -307,7 +314,7 @@ public class HybridSignatureTest {
 
         // corrupt classic => OR must pass
         byte[] orBadClassic = concat(flipOneBit(sub(sigOr, 0, edLen), 0), sub(sigOr, edLen, spxLen));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(orProfile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(orBadClassic);
@@ -319,7 +326,7 @@ public class HybridSignatureTest {
 
         // corrupt pqc => OR must pass
         byte[] orBadPqc = concat(sub(sigOr, 0, edLen), flipOneBit(sub(sigOr, edLen, spxLen), 0));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(orProfile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(orBadPqc);
@@ -331,7 +338,7 @@ public class HybridSignatureTest {
 
         // corrupt both => OR must fail
         byte[] orBadBoth = concat(flipOneBit(sub(sigOr, 0, edLen), 0), flipOneBit(sub(sigOr, edLen, spxLen), 0));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(orProfile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(orBadBoth);
@@ -357,8 +364,10 @@ public class HybridSignatureTest {
         byte[] msg = randomBytes(size);
         System.out.println("...msg=" + msg.length + " bytes");
 
-        KeyPair rsa = CryptoAlgorithms.require("RSA").generateKeyPair();
-        KeyPair spx = CryptoAlgorithms.require("SPHINCS+").generateKeyPair();
+        ZeroEchoSession session = new ZeroEchoSession();
+        KeyPair rsa = session.keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair spx = session.keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
+                SphincsPlusKeyGenSpec.defaultSpec());
 
         int rsaLen = tagLen("RSA", KeyUsage.SIGN, rsa.getPrivate(), null);
         int spxLen = tagLen("SPHINCS+", KeyUsage.SIGN, spx.getPrivate(), null);
@@ -368,13 +377,13 @@ public class HybridSignatureTest {
                 HybridSignatureProfile.VerifyRule.AND);
 
         byte[] sig;
-        try (SignatureContext signer = HybridSignatureContexts.sign(profile, rsa.getPrivate(), spx.getPrivate(),
+        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPrivate(), spx.getPrivate(),
                 2 * 1024 * 1024)) {
             sig = signTrailer(signer, msg);
         }
         System.out.println("...sig.len=" + sig.length + ", head=" + hexShort(sig));
 
-        try (SignatureContext verifier = HybridSignatureContexts.verify(profile, rsa.getPublic(), spx.getPublic(),
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(sig);
@@ -386,7 +395,7 @@ public class HybridSignatureTest {
 
         // negative sanity: corrupt classic => must fail (AND)
         byte[] badClassic = concat(flipOneBit(sub(sig, 0, rsaLen), 0), sub(sig, rsaLen, spxLen));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(profile, rsa.getPublic(), spx.getPublic(),
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(badClassic);
@@ -416,8 +425,11 @@ public class HybridSignatureTest {
         byte[] msg = randomBytes(size);
         System.out.println("...msg=" + msg.length + " bytes");
 
-        KeyPair ed = CryptoAlgorithms.require("Ed25519").generateKeyPair();
-        KeyPair spx = CryptoAlgorithms.require("SPHINCS+").generateKeyPair();
+        ZeroEchoSession session = new ZeroEchoSession();
+        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519",
+                Ed25519KeyGenSpec.defaultSpec());
+        KeyPair spx = session.keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
+                SphincsPlusKeyGenSpec.defaultSpec());
 
         HybridSignatureProfile profile = new HybridSignatureProfile("Ed25519", "SPHINCS+", null, null,
                 HybridSignatureProfile.VerifyRule.AND);
@@ -425,7 +437,7 @@ public class HybridSignatureTest {
         byte[] out;
         int tagLen;
 
-        try (SignatureContext tagEnc = HybridSignatureContexts.sign(profile, ed.getPrivate(), spx.getPrivate(),
+        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPrivate(), spx.getPrivate(),
                 2 * 1024 * 1024)) {
 
             DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
@@ -437,7 +449,7 @@ public class HybridSignatureTest {
 
         System.out.println("...out=" + out.length + " bytes");
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(profile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
@@ -468,8 +480,11 @@ public class HybridSignatureTest {
         msg = Arrays.copyOf(msg, size);
         System.out.println("...msg=" + msg.length + " bytes");
 
-        KeyPair ed = CryptoAlgorithms.require("Ed25519").generateKeyPair();
-        KeyPair spx = CryptoAlgorithms.require("SPHINCS+").generateKeyPair();
+        ZeroEchoSession session = new ZeroEchoSession();
+        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519",
+                Ed25519KeyGenSpec.defaultSpec());
+        KeyPair spx = session.keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
+                SphincsPlusKeyGenSpec.defaultSpec());
 
         int edLen = tagLen("Ed25519", KeyUsage.SIGN, ed.getPrivate(), null);
         int spxLen = tagLen("SPHINCS+", KeyUsage.SIGN, spx.getPrivate(), null);
@@ -481,7 +496,7 @@ public class HybridSignatureTest {
         byte[] out;
         int tagLen;
 
-        try (SignatureContext tagEnc = HybridSignatureContexts.sign(profile, ed.getPrivate(), spx.getPrivate(),
+        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPrivate(), spx.getPrivate(),
                 2 * 1024 * 1024)) {
 
             DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
@@ -500,7 +515,7 @@ public class HybridSignatureTest {
         byte[] badClassic = concat(flipOneBit(sub(tag, 0, edLen), 0), sub(tag, edLen, spxLen));
         byte[] outBadClassic = concat(body, badClassic);
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(profile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
@@ -518,7 +533,7 @@ public class HybridSignatureTest {
         byte[] badPqc = concat(sub(tag, 0, edLen), flipOneBit(sub(tag, edLen, spxLen), 0));
         byte[] outBadPqc = concat(body, badPqc);
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(profile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
@@ -536,7 +551,7 @@ public class HybridSignatureTest {
         byte[] badBoth = concat(flipOneBit(sub(tag, 0, edLen), 0), flipOneBit(sub(tag, edLen, spxLen), 0));
         byte[] outBadBoth = concat(body, badBoth);
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(profile, ed.getPublic(), spx.getPublic(),
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
@@ -564,15 +579,17 @@ public class HybridSignatureTest {
         byte[] msg = randomBytes(size);
         System.out.println("...msg=" + msg.length + " bytes");
 
-        KeyPair rsa = CryptoAlgorithms.require("RSA").generateKeyPair();
-        KeyPair spx = CryptoAlgorithms.require("SPHINCS+").generateKeyPair();
+        ZeroEchoSession session = new ZeroEchoSession();
+        KeyPair rsa = session.keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair spx = session.keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
+                SphincsPlusKeyGenSpec.defaultSpec());
 
         HybridSignatureProfile profile = new HybridSignatureProfile("RSA", "SPHINCS+", null, null,
                 HybridSignatureProfile.VerifyRule.AND);
 
         byte[] out;
 
-        try (SignatureContext tagEnc = HybridSignatureContexts.sign(profile, rsa.getPrivate(), spx.getPrivate(),
+        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPrivate(), spx.getPrivate(),
                 2 * 1024 * 1024)) {
 
             DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
@@ -583,7 +600,7 @@ public class HybridSignatureTest {
 
         System.out.println("...out=" + out.length + " bytes");
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(profile, rsa.getPublic(), spx.getPublic(),
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPublic(), spx.getPublic(),
                 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 

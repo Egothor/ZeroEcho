@@ -67,8 +67,8 @@
  * selects a CMCE parameter set (variant) used by the key-pair builder.</li>
  * <li><b>Key import specs:</b> {@link zeroecho.core.alg.cmce.CmcePublicKeySpec}
  * wraps X.509 public keys and {@link zeroecho.core.alg.cmce.CmcePrivateKeySpec}
- * wraps PKCS#8 private keys; both are immutable and defensively copy their byte
- * arrays.</li>
+ * wraps PKCS#8 private keys; both defensively copy their byte arrays, and the
+ * private-key form is destroyable.</li>
  * </ul>
  *
  * <h2>Provider requirements</h2>

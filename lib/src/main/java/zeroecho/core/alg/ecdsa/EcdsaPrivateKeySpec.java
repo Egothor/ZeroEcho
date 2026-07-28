@@ -33,7 +33,11 @@
  ******************************************************************************/
 package zeroecho.core.alg.ecdsa;
 
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -41,7 +45,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
 /**
  * <h2>ECDSA Private Key Specification</h2>
  *
- * An immutable wrapper around a PKCS#8-encoded ECDSA private key. This
+ * A destroyable wrapper around a PKCS#8-encoded ECDSA private key. This
  * specification is used by {@link EcdsaPrivateKeyBuilder} to import keys into
  * the JCA {@link java.security.PrivateKey} representation.
  *
@@ -69,10 +73,12 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * @since 1.0
  */
-public final class EcdsaPrivateKeySpec implements AlgorithmKeySpec {
+public final class EcdsaPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
 
     private static final String PKCS8_B64 = "pkcs8.b64";
     private final byte[] pkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Creates a new private key specification from a PKCS#8 encoded byte array.
@@ -93,7 +99,13 @@ public final class EcdsaPrivateKeySpec implements AlgorithmKeySpec {
      * @return cloned PKCS#8 byte array
      */
     public byte[] encoded() {
-        return pkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return pkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -108,7 +120,7 @@ public final class EcdsaPrivateKeySpec implements AlgorithmKeySpec {
      * @return serialized representation in key-value form
      */
     public static PairSeq marshal(EcdsaPrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.pkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "ECDSA-PRIV", PKCS8_B64, b64);
     }
 
@@ -131,12 +143,62 @@ public final class EcdsaPrivateKeySpec implements AlgorithmKeySpec {
             String k = cur.key();
             String v = cur.value();
             if (PKCS8_B64.equals(k)) {
-                out = Base64.getDecoder().decode(v);
+                out = decodeReplacing(out, v);
             }
         }
         if (out == null) {
             throw new IllegalArgumentException("pkcs8.b64 missing for ECDSA private key");
         }
-        return new EcdsaPrivateKeySpec(out);
+        try {
+            return new EcdsaPrivateKeySpec(out);
+        } finally {
+            Arrays.fill(out, (byte) 0);
+        }
+    }
+
+    private static byte[] decodeReplacing(byte[] current, String encoded) {
+        if (current != null) {
+            Arrays.fill(current, (byte) 0);
+        }
+        return Base64.getDecoder().decode(encoded);
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(pkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(pkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("ECDSA private key specification has been destroyed");
+        }
     }
 }

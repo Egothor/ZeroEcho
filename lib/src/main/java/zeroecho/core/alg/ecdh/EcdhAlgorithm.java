@@ -90,18 +90,18 @@ import zeroecho.core.context.MessageAgreementContext;
  *
  * <h2>Example</h2> <pre>{@code
  * // Generate a key pair for Alice
- * KeyPair aliceKeys = CryptoAlgorithms.generateKeyPair("ECDH", EcdhCurveSpec.P256);
+ * KeyPair aliceKeys = session.keyBuilders().asymmetric().generateKeyPair("ECDH", EcdhCurveSpec.P256);
  *
  * // Generate a key pair for Bob
- * KeyPair bobKeys = CryptoAlgorithms.generateKeyPair("ECDH", EcdhCurveSpec.P256);
+ * KeyPair bobKeys = session.keyBuilders().asymmetric().generateKeyPair("ECDH", EcdhCurveSpec.P256);
  *
  * // Alice computes shared secret using her private key
- * AgreementContext aliceCtx = CryptoAlgorithms.create("ECDH",
+ * AgreementContext aliceCtx = session.createContext("ECDH",
  *         KeyUsage.AGREEMENT, aliceKeys.getPrivate(), EcdsaCurveSpec.P256);
  * byte[] aliceSecret = aliceCtx.derive(bobKeys.getPublic());
  *
  * // Bob computes shared secret using his private key
- * AgreementContext bobCtx = CryptoAlgorithms.create("ECDH",
+ * AgreementContext bobCtx = session.createContext("ECDH",
  *         KeyUsage.AGREEMENT, bobKeys.getPrivate(), EcdsaCurveSpec.P256);
  * byte[] bobSecret = bobCtx.derive(aliceKeys.getPublic());
  *
@@ -160,8 +160,9 @@ public final class EcdhAlgorithm extends AbstractCryptoAlgorithm {
                 () -> EcdsaCurveSpec.P256);
 
         // Reuse EC builders/importers
-        registerAsymmetricKeyBuilder(EcdhCurveSpec.class, new EcdhKeyGenBuilder(), () -> EcdhCurveSpec.P256);
-        registerAsymmetricKeyBuilder(EcdsaPublicKeySpec.class, new EcdsaPublicKeyBuilder(), null);
-        registerAsymmetricKeyBuilder(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder(), null);
+        registerAsymmetricKeyPairGenerator(EcdhCurveSpec.class, new EcdhKeyGenBuilder(),
+                () -> EcdhCurveSpec.P256);
+        registerPublicKeyImporter(EcdsaPublicKeySpec.class, new EcdsaPublicKeyBuilder());
+        registerPrivateKeyImporter(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder());
     }
 }

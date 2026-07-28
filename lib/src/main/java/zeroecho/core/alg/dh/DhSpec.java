@@ -80,10 +80,10 @@ import zeroecho.core.spec.ContextSpec;
  *
  * <h2>Example</h2> <pre>{@code
  * // Create a key pair in the FFDHE-3072 group
- * KeyPair kp = CryptoAlgorithms.keyPair("DH", DhSpec.ffdhe3072());
+ * KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("DH", DhSpec.ffdhe3072());
  *
  * // Establish an agreement context
- * AgreementContext ctx = CryptoAlgorithms.create(
+ * AgreementContext ctx = session.createContext(
  *     "DH", KeyUsage.AGREEMENT, kp.getPrivate(), DhSpec.ffdhe3072());
  * }</pre>
  *

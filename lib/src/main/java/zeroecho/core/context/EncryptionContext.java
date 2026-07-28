@@ -48,7 +48,7 @@ import java.io.InputStream;
  *
  * <h2>Lifecycle</h2>
  * <ul>
- * <li>Create a context via {@code CryptoAlgorithm#create(...)} for the
+ * <li>Create a context via {@code ZeroEchoSession#createContext(...)} for the
  * {@link zeroecho.core.KeyUsage#ENCRYPT} or
  * {@link zeroecho.core.KeyUsage#DECRYPT} role.</li>
  * <li>Call {@link #attach(InputStream)} to obtain a wrapped stream.</li>

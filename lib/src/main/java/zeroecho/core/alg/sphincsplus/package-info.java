@@ -51,8 +51,9 @@
  * the key's parameter set.</li>
  * <li>Provide key builders for generating new key pairs and for importing
  * encoded public and private keys.</li>
- * <li>Expose immutable key specification types that defensively copy sensitive
- * material and support compact marshalling.</li>
+ * <li>Expose key specification types that defensively copy sensitive material
+ * and support compact marshalling; private-key specifications are
+ * destroyable.</li>
  * </ul>
  *
  * <h2>Components</h2>
@@ -67,8 +68,8 @@
  * <li><b>SphincsPlusPublicKeyBuilder</b> / <b>SphincsPlusPrivateKeyBuilder</b>:
  * importers backed by JCA key factories.</li>
  * <li><b>SphincsPlusPublicKeySpec</b> / <b>SphincsPlusPrivateKeySpec</b>:
- * immutable wrappers over X.509 and PKCS#8 encodings with marshalling
- * helpers.</li>
+ * wrappers over X.509 and PKCS#8 encodings with marshalling helpers; the
+ * private-key form is destroyable.</li>
  * </ul>
  *
  * <h2>Design notes</h2>

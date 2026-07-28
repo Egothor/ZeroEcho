@@ -123,6 +123,7 @@ import java.io.InputStream;
  * @since 1.0
  */
 public abstract class AbstractChunkTransformInputStream extends FilterInputStream {
+    private static final int MIN_INPUT_CHUNK_SIZE = 2;
     /** Input buffer storing data read from the upstream stream. */
     protected final byte[] inBuf;
     /** Output buffer storing transformed bytes awaiting consumption. */
@@ -156,15 +157,14 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
      * @param outChunkSize size of output chunks produced by the transform (must be
      *                     > 0)
      * @param chunks       number of chunks buffered at once (must be > 0)
-     * @throws AssertionError if {@code chunks <= 0}, {@code inChunkSize <= 1}, or
-     *                        {@code outChunkSize <= 0}
+     * @throws IllegalArgumentException if a size is outside its documented range
+     *                                  or a buffer size overflows
      */
     protected AbstractChunkTransformInputStream(InputStream upstream, int inChunkSize, int outChunkSize, int chunks) {
         super(upstream);
-        assert chunks > 0 && inChunkSize > 1 && outChunkSize > 0;
-
-        this.inBuf = new byte[inChunkSize * chunks];
-        this.outBuf = new byte[outChunkSize * chunks];
+        validateGeometry(inChunkSize, outChunkSize, chunks, 0);
+        this.inBuf = new byte[checkedMultiply(inChunkSize, chunks, "input buffer size")];
+        this.outBuf = new byte[checkedMultiply(outChunkSize, chunks, "output buffer size")];
 
         this.inChunkSize = inChunkSize;
         this.outChunkSize = outChunkSize;
@@ -190,16 +190,16 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
      *                                 steady-state (must be > 0)
      * @param finalizationOutputChunks number of extra output chunks reserved for
      *                                 finalization (must be >= 0)
-     * @throws AssertionError if {@code chunks <= 0}, {@code inChunkSize <= 1}, or
-     *                        {@code outChunkSize <= 0}
+     * @throws IllegalArgumentException if a size is outside its documented range
+     *                                  or a buffer size overflows
      */
     protected AbstractChunkTransformInputStream(InputStream upstream, int inChunkSize, int outChunkSize, int chunks,
             int finalizationOutputChunks) {
         super(upstream);
-        assert chunks > 0 && inChunkSize > 1 && outChunkSize > 0;
-
-        this.inBuf = new byte[inChunkSize * chunks];
-        this.outBuf = new byte[outChunkSize * (chunks + finalizationOutputChunks)];
+        validateGeometry(inChunkSize, outChunkSize, chunks, finalizationOutputChunks);
+        int outputChunks = checkedAdd(chunks, finalizationOutputChunks, "output chunk count");
+        this.inBuf = new byte[checkedMultiply(inChunkSize, chunks, "input buffer size")];
+        this.outBuf = new byte[checkedMultiply(outChunkSize, outputChunks, "output buffer size")];
 
         this.inChunkSize = inChunkSize;
         this.outChunkSize = outChunkSize;
@@ -252,14 +252,17 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
      * @throws IOException if the upstream read or the transformation fails
      */
     private boolean fillBuffers() throws IOException {
-        assert outPtr == outLen;
+        if (outPtr != outLen) {
+            throw new IllegalStateException("Output buffer was refilled before it was drained");
+        }
 
         inLen = in.readNBytes(inBuf, 0, inBuf.length);
         if (inLen == 0) {
             // EOF: run finalization exactly once, even if there's no remainder,
             // and surface any produced bytes (e.g., padding block, GCM tag).
             if (!eofSeen) {
-                int finalOut = doFinal(inBuf, 0, 0, outBuf, 0);
+                int finalOut = validateOutputCount(doFinal(inBuf, 0, 0, outBuf, 0), outBuf.length,
+                        "finalization");
                 outPtr = 0;
                 outLen = finalOut;
                 eofSeen = true;
@@ -270,20 +273,69 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
 
         // all chunks are aligned to the specified boundary (inChunkSize) -> transform
         // can be simply invoked
-        outLen = transform(inBuf, 0, inLen / inChunkSize, outBuf);
+        outLen = validateOutputCount(transform(inBuf, 0, inLen / inChunkSize, outBuf), outBuf.length,
+                "transformation");
         outPtr = 0;
 
         int left = inLen % inChunkSize;
 
         if (left > 0) {
             int finalOutChunkSize = doFinal(inBuf, inLen - left, left, outBuf, outLen);
-            outLen = outLen + finalOutChunkSize;
+            finalOutChunkSize = validateOutputCount(finalOutChunkSize, outBuf.length - outLen, "finalization");
+            outLen = checkedAddState(outLen, finalOutChunkSize);
             // we ask for whole inBufSize chunks, if readNBytes returns a partial chunk, it
             // must be eof
             eofSeen = true;
         }
 
         return true;
+    }
+
+    private static void validateGeometry(int inChunkSize, int outChunkSize, int chunks,
+            int finalizationOutputChunks) {
+        if (inChunkSize < MIN_INPUT_CHUNK_SIZE) {
+            throw new IllegalArgumentException("inChunkSize must be greater than 1");
+        }
+        if (outChunkSize <= 0) {
+            throw new IllegalArgumentException("outChunkSize must be greater than 0");
+        }
+        if (chunks <= 0) {
+            throw new IllegalArgumentException("chunks must be greater than 0");
+        }
+        if (finalizationOutputChunks < 0) {
+            throw new IllegalArgumentException("finalizationOutputChunks must not be negative");
+        }
+    }
+
+    private static int checkedMultiply(int left, int right, String description) {
+        try {
+            return Math.multiplyExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(description + " exceeds the supported range", exception);
+        }
+    }
+
+    private static int checkedAdd(int left, int right, String description) {
+        try {
+            return Math.addExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(description + " exceeds the supported range", exception);
+        }
+    }
+
+    private static int checkedAddState(int left, int right) {
+        try {
+            return Math.addExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new IllegalStateException("Transform output length overflowed", exception);
+        }
+    }
+
+    private static int validateOutputCount(int count, int capacity, String operation) {
+        if (count < 0 || count > capacity) {
+            throw new IllegalStateException(operation + " returned an invalid output count: " + count);
+        }
+        return count;
     }
 
     /**
@@ -295,11 +347,12 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
      */
     @Override
     public int read() throws IOException {
-        if (outPtr < outLen) {
-            return outBuf[outPtr++] & 0xff;
+        while (outPtr >= outLen) {
+            if (!fillBuffers()) {
+                return -1;
+            }
         }
-
-        return fillBuffers() ? outBuf[outPtr++] & 0xff : -1 /* eof */;
+        return outBuf[outPtr++] & 0xff;
     }
 
     /**

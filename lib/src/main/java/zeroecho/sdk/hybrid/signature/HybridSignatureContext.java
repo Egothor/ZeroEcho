@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.hybrid.signature;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -88,6 +90,7 @@ import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
  */
 final class HybridSignatureContext implements SignatureContext {
 
+    private final ZeroEchoSession session;
     private final HybridSignatureProfile profile;
 
     private final boolean produceMode;
@@ -115,8 +118,10 @@ final class HybridSignatureContext implements SignatureContext {
      *                                  or {@code pqcPrivate} is {@code null}
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
      */
-    protected HybridSignatureContext(HybridSignatureProfile profile, PrivateKey classicPrivate, PrivateKey pqcPrivate,
-            int maxBufferedBytes) {
+    /* default */ HybridSignatureContext(ZeroEchoSession session, HybridSignatureProfile profile,
+            PrivateKey classicPrivate,
+            PrivateKey pqcPrivate, int maxBufferedBytes) {
+        this.session = Objects.requireNonNull(session, "session");
         this.profile = Objects.requireNonNull(profile, "profile");
         this.classicPrivate = Objects.requireNonNull(classicPrivate, "classicPrivate");
         this.pqcPrivate = Objects.requireNonNull(pqcPrivate, "pqcPrivate");
@@ -146,8 +151,10 @@ final class HybridSignatureContext implements SignatureContext {
      *                                  or {@code pqcPublic} is {@code null}
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
      */
-    protected HybridSignatureContext(HybridSignatureProfile profile, PublicKey classicPublic, PublicKey pqcPublic,
-            int maxBufferedBytes) {
+    /* default */ HybridSignatureContext(ZeroEchoSession session, HybridSignatureProfile profile,
+            PublicKey classicPublic,
+            PublicKey pqcPublic, int maxBufferedBytes) {
+        this.session = Objects.requireNonNull(session, "session");
         this.profile = Objects.requireNonNull(profile, "profile");
         this.classicPublic = Objects.requireNonNull(classicPublic, "classicPublic");
         this.pqcPublic = Objects.requireNonNull(pqcPublic, "pqcPublic");
@@ -219,17 +226,17 @@ final class HybridSignatureContext implements SignatureContext {
     private SignatureContext createClassic(KeyUsage usage) throws IOException {
         ContextSpec spec = profile.classicSpec();
         if (usage == KeyUsage.SIGN) {
-            return CryptoAlgorithms.create(profile.classicSigId(), usage, classicPrivate, spec);
+            return session.createContext(profile.classicSigId(), usage, classicPrivate, spec);
         }
-        return CryptoAlgorithms.create(profile.classicSigId(), usage, classicPublic, spec);
+        return session.createContext(profile.classicSigId(), usage, classicPublic, spec);
     }
 
     private SignatureContext createPqc(KeyUsage usage) throws IOException {
         ContextSpec spec = profile.pqcSpec();
         if (usage == KeyUsage.SIGN) {
-            return CryptoAlgorithms.create(profile.pqcSigId(), usage, pqcPrivate, spec);
+            return session.createContext(profile.pqcSigId(), usage, pqcPrivate, spec);
         }
-        return CryptoAlgorithms.create(profile.pqcSigId(), usage, pqcPublic, spec);
+        return session.createContext(profile.pqcSigId(), usage, pqcPublic, spec);
     }
 
     /**
@@ -559,10 +566,10 @@ final class HybridSignatureContext implements SignatureContext {
         }
     }
 
-    private static byte[] signOne(String id, PrivateKey key, ContextSpec spec, byte[] body) throws IOException {
+    private byte[] signOne(String id, PrivateKey key, ContextSpec spec, byte[] body) throws IOException {
         final byte[][] sigHolder = new byte[1][];
 
-        try (SignatureContext signer = CryptoAlgorithms.create(id, KeyUsage.SIGN, key, spec);
+        try (SignatureContext signer = session.createContext(id, KeyUsage.SIGN, key, spec);
                 InputStream in = new TailStrippingInputStream(signer.wrap(new ByteArrayInputStream(body)),
                         signer.tagLength(), 8192) {
                     @Override
@@ -584,12 +591,12 @@ final class HybridSignatureContext implements SignatureContext {
         }
     }
 
-    private static boolean verifyOne(String id, PublicKey key, ContextSpec spec, byte[] body, byte[] expected)
+    private boolean verifyOne(String id, PublicKey key, ContextSpec spec, byte[] body, byte[] expected)
             throws IOException {
 
         AtomicBoolean ok = new AtomicBoolean(false);
 
-        try (SignatureContext verifier = CryptoAlgorithms.create(id, KeyUsage.VERIFY, key, spec)) {
+        try (SignatureContext verifier = session.createContext(id, KeyUsage.VERIFY, key, spec)) {
             verifier.setVerificationApproach(new CapturePredicate(verifier.getVerificationCore(), ok));
             verifier.setExpectedTag(expected);
 

@@ -33,10 +33,13 @@
  ******************************************************************************/
 package zeroecho.core.alg.frodo;
 
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
-import zeroecho.core.CryptoAlgorithm;
+import javax.security.auth.Destroyable;
+
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.marshal.PairSeq.Cursor;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -45,7 +48,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h2>Specification for importing a Frodo private key</h2>
  *
  * {@code FrodoPrivateKeySpec} is a simple wrapper around a PKCS#8-encoded
- * FrodoKEM private key. It provides immutable access to the raw encoding and
+ * FrodoKEM private key. It provides defensive access to the raw encoding and
  * utilities for serialization.
  *
  * <h2>Encoding format</h2>
@@ -59,9 +62,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h2>Usage</h2>
  * <ul>
  * <li>Instances of this spec can be passed to
- * {@link CryptoAlgorithm#importPrivate(AlgorithmKeySpec)
- * importPrivate(FrodoPrivateKeySpec)} to construct a usable
- * {@link java.security.PrivateKey} object.</li>
+ * {@link zeroecho.sdk.KeyBuilders.Asymmetric#importPrivate(String, AlgorithmKeySpec)}
+ * to construct a usable {@link java.security.PrivateKey} object.</li>
  * <li>The {@link #marshal(FrodoPrivateKeySpec)} and {@link #unmarshal(PairSeq)}
  * helpers allow safe conversion to/from structured textual form for persistence
  * or transmission.</li>
@@ -71,21 +73,23 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * // Import an existing Frodo private key
  * byte[] encoded = Files.readAllBytes(Paths.get("frodo.key"));
  * FrodoPrivateKeySpec spec = new FrodoPrivateKeySpec(encoded);
- * PrivateKey priv = frodo.importPrivate(spec);
+ * PrivateKey priv = session.keyBuilders().asymmetric().importPrivate("FrodoKEM", spec);
  * }</pre>
  *
  * <h2>Thread-safety</h2>
  * <p>
- * This class is immutable; the internal byte array is cloned on construction
- * and when accessed via {@link #pkcs8()}.
+ * The internal byte array is cloned on construction and when accessed via
+ * {@link #pkcs8()}. Access and destruction are synchronized.
  * </p>
  *
  * @since 1.0
  */
-public final class FrodoPrivateKeySpec implements AlgorithmKeySpec {
+public final class FrodoPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
 
     private static final String PKCS8_B64 = "pkcs8.b64";
     private final byte[] pkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Creates a new specification from a PKCS#8 DER-encoded key.
@@ -103,7 +107,13 @@ public final class FrodoPrivateKeySpec implements AlgorithmKeySpec {
      * @return defensive copy of the PKCS#8-encoded private key
      */
     public byte[] pkcs8() {
-        return pkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return pkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -114,7 +124,7 @@ public final class FrodoPrivateKeySpec implements AlgorithmKeySpec {
      * @return a {@code PairSeq} with type and Base64-encoded key
      */
     public static PairSeq marshal(FrodoPrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.pkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "FrodoPrivateKeySpec", PKCS8_B64, b64);
     }
 
@@ -136,7 +146,12 @@ public final class FrodoPrivateKeySpec implements AlgorithmKeySpec {
         if (b64 == null) {
             throw new IllegalArgumentException("FrodoPrivateKeySpec: missing pkcs8.b64");
         }
-        return new FrodoPrivateKeySpec(Base64.getDecoder().decode(b64));
+        byte[] decoded = Base64.getDecoder().decode(b64);
+        try {
+            return new FrodoPrivateKeySpec(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -147,5 +162,44 @@ public final class FrodoPrivateKeySpec implements AlgorithmKeySpec {
     @Override
     public String toString() {
         return "FrodoPrivateKeySpec[len=" + pkcs8.length + "]";
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(pkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(pkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("Frodo private key specification has been destroyed");
+        }
     }
 }

@@ -35,25 +35,15 @@ package zeroecho.sdk.util;
 
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
  * Utility class providing support for secure random number generation.
  * <p>
- * This class encapsulates logic for generating cryptographically secure random
- * data using Java's {@link SecureRandom}. It optionally supports a singleton
- * instance pattern for the {@code SecureRandom} generator, controlled by the
- * {@code UNSAFE_SINGLE_SECURE} flag.
- * </p>
- *
- * <p>
- * <strong>Note:</strong> Reusing a single {@code SecureRandom} instance can
- * improve performance, but may reduce randomness guarantees in some
- * multi-threaded or long-lived contexts. Always assess your threat model and
- * performance needs when toggling {@code UNSAFE_SINGLE_SECURE}.
+ * This class provides cryptographically secure random data through one
+ * process-wide, thread-safe {@link SecureRandom}. It selects the platform's
+ * strong implementation when available and otherwise uses the platform default.
  * </p>
  *
  * @author Leo Galambos
@@ -61,45 +51,28 @@ import java.util.logging.Logger;
 public final class RandomSupport {
     private static final Logger LOG = Logger.getLogger(RandomSupport.class.getName());
 
-    /** Flag indicating whether a single {@link SecureRandom} instance is reused. */
-    private final static boolean UNSAFE_SINGLE_SECURE = true;
-    /** Lock for thread-safe access to the {@link SecureRandom} instance. */
-    private static Lock instanceLock = new ReentrantLock();
     /** Shared {@link SecureRandom} instance. */
-    private static SecureRandom RANDOM;
-
-    static {
-        try {
-            RANDOM = SecureRandom.getInstanceStrong();
-        } catch (NoSuchAlgorithmException e) {
-            LOG.logp(Level.WARNING, "Password", "", "NoSuchAlgorithmException", e);
-            RANDOM = new SecureRandom();
-        }
-    }
+    private static final SecureRandom RANDOM = createRandom();
 
     private RandomSupport() {
         // this is a utility class
     }
 
     /**
-     * Retrieves a {@link SecureRandom} instance.
-     * <p>
-     * If {@code UNSAFE_SINGLE_SECURE} is true, returns a shared instance;
-     * otherwise, creates a new {@link SecureRandom} instance.
+     * Returns the shared {@link SecureRandom} instance.
      *
-     * @return A {@link SecureRandom} instance for random number generation.
+     * @return the shared random source
      */
     public static SecureRandom getRandom() {
-        instanceLock.lock();
+        return RANDOM;
+    }
+
+    private static SecureRandom createRandom() {
         try {
-            if (UNSAFE_SINGLE_SECURE) {
-                return RANDOM;
-            } else {
-                LOG.log(Level.INFO, "creating a new SecureRandom");
-                return new SecureRandom();
-            }
-        } finally {
-            instanceLock.unlock();
+            return SecureRandom.getInstanceStrong();
+        } catch (NoSuchAlgorithmException exception) {
+            LOG.log(Level.WARNING, "Strong SecureRandom unavailable; using the platform default");
+            return new SecureRandom();
         }
     }
 
@@ -124,7 +97,19 @@ public final class RandomSupport {
      * @throws NullPointerException if {@code buffer} is {@code null}
      */
     public static byte[] generateRandom(final byte[] buffer) {
-        getRandom().nextBytes(buffer);
+        RANDOM.nextBytes(buffer);
         return buffer;
+    }
+
+    /**
+     * Returns a uniformly distributed value between zero (inclusive) and the
+     * specified bound (exclusive).
+     *
+     * @param bound exclusive upper bound; must be positive
+     * @return a uniformly distributed value
+     * @throws IllegalArgumentException if {@code bound} is not positive
+     */
+    public static int nextInt(final int bound) {
+        return RANDOM.nextInt(bound);
     }
 }

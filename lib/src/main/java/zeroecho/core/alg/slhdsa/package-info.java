@@ -76,7 +76,8 @@
  * <li>Encoded public and private keys are represented by
  * {@link zeroecho.core.alg.slhdsa.SlhDsaPublicKeySpec} and
  * {@link zeroecho.core.alg.slhdsa.SlhDsaPrivateKeySpec}.</li>
- * <li>All key specifications are immutable and use defensive copies.</li>
+ * <li>All key specifications use defensive copies; private-key specifications
+ * are destroyable.</li>
  * </ul>
  *
  * <h2>Streaming signature model</h2>

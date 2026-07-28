@@ -76,7 +76,7 @@ import zeroecho.core.spec.ContextSpec;
  * DigestSpec spec = DigestSpec.shake256(64);
  *
  * // Use in context creation
- * DigestContext ctx = CryptoAlgorithms.create(
+ * DigestContext ctx = session.createContext(
  *         "DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE, spec);
  *
  * byte[] digest = ctx.doFinal(data);

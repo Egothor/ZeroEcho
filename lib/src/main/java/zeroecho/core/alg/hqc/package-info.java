@@ -49,8 +49,9 @@
  * workflows.</li>
  * <li>Provide a {@link zeroecho.core.context.KemContext} bound to a public or
  * private key for encapsulation or decapsulation.</li>
- * <li>Expose immutable specifications for key generation variants and encoded
- * key carriers with simple marshalling helpers.</li>
+ * <li>Expose immutable key-generation specifications and defensively copying
+ * encoded-key carriers with simple marshalling helpers; private-key carriers
+ * are destroyable.</li>
  * <li>Ensure operations use a supported PQC provider and fail fast if the
  * provider is absent.</li>
  * </ul>

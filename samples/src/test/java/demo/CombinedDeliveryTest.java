@@ -46,7 +46,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.elgamal.ElgamalParamSpec;
 import zeroecho.core.alg.kyber.KyberKeyGenSpec;
@@ -58,11 +57,15 @@ import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.guard.MultiRecipientDataSourceBuilder;
 import zeroecho.sdk.guard.UnlockMaterial;
+import zeroecho.sdk.Pbkdf2Limits;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CombinedDeliveryTest {
     private static final Logger LOG = Logger.getLogger(CombinedDeliveryTest.class.getName());
+    private final ZeroEchoSession session = new ZeroEchoSession()
+            .withPbkdf2Limits(new Pbkdf2Limits(1_000_000, 1_000_000));
 
     @BeforeAll
     void setupProviders() {
@@ -70,31 +73,25 @@ class CombinedDeliveryTest {
     }
 
     KeyPair generateKyberKeys() throws GeneralSecurityException {
-        KeyPair kp = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
-
-        LOG.log(Level.INFO, "ML-KEM key public={0} private={1}",
-                new Object[] { Strings.toShortHexString(kp.getPublic().getEncoded()),
-                        Strings.toShortHexString(kp.getPrivate().getEncoded()) });
+        KeyPair kp = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
+        LOG.log(Level.INFO, "ML-KEM key pair generated");
 
         return kp;
     }
 
     KeyPair generateRsaKeys() throws GeneralSecurityException {
-        KeyPair kp = CryptoAlgorithms.generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
-
-        LOG.log(Level.INFO, "RSA key public={0} private={1}",
-                new Object[] { Strings.toShortHexString(kp.getPublic().getEncoded()),
-                        Strings.toShortHexString(kp.getPrivate().getEncoded()) });
+        KeyPair kp = session.keyBuilders().asymmetric()
+                .generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
+        LOG.log(Level.INFO, "RSA key pair generated");
 
         return kp;
     }
 
     KeyPair generateElGamalKeys() throws GeneralSecurityException {
-        KeyPair kp = CryptoAlgorithms.generateKeyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
-
-        LOG.log(Level.INFO, "ElGamal key public={0} private={1}",
-                new Object[] { Strings.toShortHexString(kp.getPublic().getEncoded()),
-                        Strings.toShortHexString(kp.getPrivate().getEncoded()) });
+        KeyPair kp = session.keyBuilders().asymmetric()
+                .generateKeyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
+        LOG.log(Level.INFO, "ElGamal key pair generated");
 
         return kp;
     }
@@ -112,16 +109,16 @@ class CombinedDeliveryTest {
         KeyPair decoy1rsa = generateRsaKeys();
         KeyPair decoy2rsa = generateRsaKeys();
 
-        AesDataContentBuilder payload = AesDataContentBuilder.builder().modeCbcPkcs5().withHeader();
+        AesDataContentBuilder payload = AesDataContentBuilder.builder(session).modeCbcPkcs5().withHeader();
 
-        MultiRecipientDataSourceBuilder multi = MultiRecipientDataSourceBuilder.builder()
+        MultiRecipientDataSourceBuilder multi = MultiRecipientDataSourceBuilder.builder(session)
                 // AES-256 - 32 bytes of key material
                 .payloadKeyBytes(32).withAes(payload)
                 // add recipients - the context initialized with the public key
-                .addRecipient(CryptoAlgorithms.create("ElGamal", KeyUsage.ENCRYPT, elg.getPublic()))
-                .addRecipient(CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, rsa.getPublic()))
+                .addRecipient(session.createContext("ElGamal", KeyUsage.ENCRYPT, elg.getPublic()))
+                .addRecipient(session.createContext("RSA", KeyUsage.ENCRYPT, rsa.getPublic()))
                 // ML-KEM PostQuantum uses AES for the inner payload
-                .addRecipient(CryptoAlgorithms.create("ML-KEM", KeyUsage.ENCAPSULATE, kem.getPublic()),
+                .addRecipient(session.createContext("ML-KEM", KeyUsage.ENCAPSULATE, kem.getPublic()),
                         /* AES256 key size */
                         32,
                         /* salt size in hkdf */
@@ -129,8 +126,8 @@ class CombinedDeliveryTest {
                 // Password (via KDF)
                 .addPasswordRecipient(password, /* iterations */ 200_000, /* saltLen */ 16, /* kekBytes */ 32)
                 // and some decoys
-                .addRecipientDecoy(CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, decoy1rsa.getPublic()))
-                .addRecipientDecoy(CryptoAlgorithms.create("RSA", KeyUsage.ENCRYPT, decoy2rsa.getPublic()));
+                .addRecipientDecoy(session.createContext("RSA", KeyUsage.ENCRYPT, decoy1rsa.getPublic()))
+                .addRecipientDecoy(session.createContext("RSA", KeyUsage.ENCRYPT, decoy2rsa.getPublic()));
 
         // shuffle all the recipients
         multi.shuffle();
@@ -153,8 +150,8 @@ class CombinedDeliveryTest {
 
     private void recipientProcessing(String method, byte[] msg, byte[] encrypted, UnlockMaterial unlock)
             throws IOException {
-        AesDataContentBuilder payload = AesDataContentBuilder.builder().modeCbcPkcs5().withHeader();
-        MultiRecipientDataSourceBuilder multi = MultiRecipientDataSourceBuilder.builder()
+        AesDataContentBuilder payload = AesDataContentBuilder.builder(session).modeCbcPkcs5().withHeader();
+        MultiRecipientDataSourceBuilder multi = MultiRecipientDataSourceBuilder.builder(session)
                 // define our payload
                 .payloadKeyBytes(32).withAes(payload)
                 // one recipient

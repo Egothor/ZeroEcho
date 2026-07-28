@@ -35,13 +35,12 @@ package zeroecho.core.alg.common.eddsa;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
 import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PrivateKeyImporter;
 
 /**
  * <h2>Abstract EdDSA Encoded Private Key Builder</h2>
@@ -74,7 +73,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public abstract class AbstractEncodedPrivateKeyBuilder<S extends AlgorithmKeySpec> implements AsymmetricKeyBuilder<S> {
+public abstract class AbstractEncodedPrivateKeyBuilder<S extends AlgorithmKeySpec> implements PrivateKeyImporter<S> {
     /**
      * Returns the canonical JCA algorithm identifier used by
      * {@link KeyFactory#getInstance(String)}.
@@ -102,32 +101,6 @@ public abstract class AbstractEncodedPrivateKeyBuilder<S extends AlgorithmKeySpe
     protected abstract byte[] encodedPkcs8(S spec);
 
     /**
-     * Unsupported in this builder, since generation is handled by the
-     * {@link AbstractEdDSAKeyGenBuilder}.
-     *
-     * @param spec algorithm-specific key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public KeyPair generateKeyPair(S spec) {
-        throw new UnsupportedOperationException("Generation not supported by this spec.");
-    }
-
-    /**
-     * Unsupported in this builder, since public key import is delegated to the
-     * matching {@code *PublicKeySpec} builder.
-     *
-     * @param spec algorithm-specific key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public PublicKey importPublic(S spec) {
-        throw new UnsupportedOperationException("Use the corresponding PublicKeySpec.");
-    }
-
-    /**
      * Imports an EdDSA private key from its PKCS#8-encoded form.
      *
      * <p>
@@ -144,6 +117,11 @@ public abstract class AbstractEncodedPrivateKeyBuilder<S extends AlgorithmKeySpe
     @Override
     public PrivateKey importPrivate(S spec) throws GeneralSecurityException {
         KeyFactory kf = KeyFactory.getInstance(jcaKeyFactoryAlg());
-        return kf.generatePrivate(new PKCS8EncodedKeySpec(encodedPkcs8(spec)));
+        byte[] encoded = encodedPkcs8(spec);
+        try {
+            return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+        } finally {
+            Arrays.fill(encoded, (byte) 0);
+        }
     }
 }

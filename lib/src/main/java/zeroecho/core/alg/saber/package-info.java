@@ -49,8 +49,9 @@
  * KEM.</li>
  * <li>Provide a {@link zeroecho.core.context.KemContext} bound to a public key
  * (encapsulation) or a private key (decapsulation).</li>
- * <li>Expose immutable specifications for key generation and encoded-key
- * carriers with compact marshalling helpers.</li>
+ * <li>Expose immutable key-generation specifications and defensively copying
+ * encoded-key carriers with compact marshalling helpers; private-key carriers
+ * are destroyable.</li>
  * <li>Validate presence of a suitable PQC provider before performing
  * operations.</li>
  * </ul>

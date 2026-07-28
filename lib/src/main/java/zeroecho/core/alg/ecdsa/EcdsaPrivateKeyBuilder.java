@@ -37,36 +37,28 @@ import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 
 import zeroecho.core.CryptoAlgorithm;
-import zeroecho.core.CryptoAlgorithms;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PrivateKeyImporter;
 
 /**
  * <h2>ECDSA Private Key Builder</h2>
  *
- * Implementation of {@link AsymmetricKeyBuilder} for
+ * Implementation of {@link zeroecho.core.spi.PrivateKeyImporter} for
  * {@link EcdsaPrivateKeySpec}. This builder is responsible for importing ECDSA
  * private keys from encoded representations.
  *
- * <h2>Supported operations</h2>
- * <ul>
- * <li>{@link #importPrivate(EcdsaPrivateKeySpec)} - construct a
- * {@link PrivateKey} instance from a PKCS#8 encoded key.</li>
- * <li>{@link #generateKeyPair(EcdsaPrivateKeySpec)} - unsupported; use
- * {@link EcdsaKeyGenBuilder} instead.</li>
- * <li>{@link #importPublic(EcdsaPrivateKeySpec)} - unsupported; use
- * {@link EcdsaPublicKeySpec} with {@link EcdsaPublicKeyBuilder} instead.</li>
- * </ul>
+ * <p>The exact supported operation is
+ * {@link #importPrivate(EcdsaPrivateKeySpec)}. Generation and public import are
+ * registered through their own operation-specific implementations.</p>
  *
  * <h2>Encoding</h2> The {@link EcdsaPrivateKeySpec} stores the private key in
  * PKCS#8 DER format. This builder delegates to a JCA {@link KeyFactory} for the
  * {@code "EC"} algorithm to reconstruct a usable {@link PrivateKey}.
  *
- * <h2>Usage</h2> Typically accessed indirectly through
- * {@link CryptoAlgorithms#privateKey(String, zeroecho.core.spec.AlgorithmKeySpec)}
- * or
- * {@link CryptoAlgorithm#importPrivate(zeroecho.core.spec.AlgorithmKeySpec)}.
+ * <h2>Usage</h2> Typically accessed through the session key-operation API or
+ * {@link CryptoAlgorithm#privateKeyImporter(Class)}.
  *
  * <pre>{@code
  * // Example: Import an ECDSA private key
@@ -77,40 +69,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class EcdsaPrivateKeyBuilder implements AsymmetricKeyBuilder<EcdsaPrivateKeySpec> {
-    /**
-     * Unsupported operation for this builder.
-     *
-     * <p>
-     * ECDSA key pair generation should be performed using
-     * {@link EcdsaKeyGenBuilder}, not from a private key specification.
-     * </p>
-     *
-     * @param spec unused private key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public java.security.KeyPair generateKeyPair(EcdsaPrivateKeySpec spec) {
-        throw new UnsupportedOperationException("Use EcdsaKeyGenBuilder for keypair generation.");
-    }
-
-    /**
-     * Unsupported operation for this builder.
-     *
-     * <p>
-     * Public key import should be performed using {@link EcdsaPublicKeySpec} with
-     * {@link EcdsaPublicKeyBuilder}.
-     * </p>
-     *
-     * @param spec unused private key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown
-     */
-    @Override
-    public java.security.PublicKey importPublic(EcdsaPrivateKeySpec spec) {
-        throw new UnsupportedOperationException("Use EcdsaPublicKeySpec with EcdsaPublicKeyBuilder.");
-    }
+public final class EcdsaPrivateKeyBuilder implements PrivateKeyImporter<EcdsaPrivateKeySpec> {
 
     /**
      * Imports a private key from a PKCS#8 encoded specification.
@@ -128,6 +87,11 @@ public final class EcdsaPrivateKeyBuilder implements AsymmetricKeyBuilder<EcdsaP
     @Override
     public PrivateKey importPrivate(EcdsaPrivateKeySpec spec) throws GeneralSecurityException {
         KeyFactory kf = KeyFactory.getInstance("EC");
-        return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.encoded()));
+        byte[] encoded = spec.encoded();
+        try {
+            return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+        } finally {
+            Arrays.fill(encoded, (byte) 0);
+        }
     }
 }

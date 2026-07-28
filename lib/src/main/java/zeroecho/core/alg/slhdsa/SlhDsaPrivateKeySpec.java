@@ -33,7 +33,11 @@
  ******************************************************************************/
 package zeroecho.core.alg.slhdsa;
 
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -42,7 +46,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * Encoded representation of an SLH-DSA private key.
  *
  * <p>
- * {@code SlhDsaPrivateKeySpec} is an immutable value object that wraps a
+ * {@code SlhDsaPrivateKeySpec} is a destroyable value object that wraps a
  * PKCS#8-encoded SLH-DSA private key together with the JCA provider name that
  * should be used when importing the key.
  * </p>
@@ -71,15 +75,17 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * <h2>Thread-safety</h2>
  * <p>
- * Instances are immutable and therefore thread-safe.
+ * Access and destruction are synchronized.
  * </p>
  *
  * @since 1.0
  */
-public final class SlhDsaPrivateKeySpec implements AlgorithmKeySpec {
+public final class SlhDsaPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
 
     private final byte[] encodedPkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
     private final String providerName;
+    private boolean destroyed;
 
     /**
      * Creates a new specification using the default provider {@code "BC"}.
@@ -117,7 +123,13 @@ public final class SlhDsaPrivateKeySpec implements AlgorithmKeySpec {
      * @return a copy of the encoded private key
      */
     public byte[] encoded() {
-        return encodedPkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return encodedPkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -142,7 +154,7 @@ public final class SlhDsaPrivateKeySpec implements AlgorithmKeySpec {
      * @throws NullPointerException if {@code spec} is {@code null}
      */
     public static PairSeq marshal(SlhDsaPrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.encodedPkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "SLHDSA-PRIV", "pkcs8.b64", b64, "provider", spec.providerName);
     }
 
@@ -162,20 +174,74 @@ public final class SlhDsaPrivateKeySpec implements AlgorithmKeySpec {
     public static SlhDsaPrivateKeySpec unmarshal(PairSeq p) {
         byte[] out = null;
         String prov = "BC";
-        PairSeq.Cursor c = p.cursor();
-        while (c.next()) {
-            String k = c.key();
-            String v = c.value();
-            switch (k) {
-                case "pkcs8.b64" -> out = Base64.getDecoder().decode(v);
-                case "provider" -> prov = v;
-                default -> {
+        try {
+            PairSeq.Cursor c = p.cursor();
+            while (c.next()) {
+                String k = c.key();
+                String v = c.value();
+                switch (k) {
+                    case "pkcs8.b64" -> out = decodeReplacing(out, v);
+                    case "provider" -> prov = v;
+                    default -> {
+                    }
                 }
             }
+            if (out == null) {
+                throw new IllegalArgumentException("pkcs8.b64 missing for SLH-DSA private key");
+            }
+            return new SlhDsaPrivateKeySpec(out, prov);
+        } finally {
+            wipe(out);
         }
-        if (out == null) {
-            throw new IllegalArgumentException("pkcs8.b64 missing for SLH-DSA private key");
+    }
+
+    private static byte[] decodeReplacing(byte[] current, String encoded) {
+        wipe(current);
+        return Base64.getDecoder().decode(encoded);
+    }
+
+    private static void wipe(byte[] current) {
+        if (current != null) {
+            Arrays.fill(current, (byte) 0);
         }
-        return new SlhDsaPrivateKeySpec(out, prov);
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(encodedPkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(encodedPkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("SLH-DSA private key specification has been destroyed");
+        }
     }
 }

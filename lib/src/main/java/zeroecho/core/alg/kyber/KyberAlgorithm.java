@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -56,7 +57,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * Concrete CryptoAlgorithm implementation for the post-quantum key
@@ -112,22 +115,22 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * KyberAlgorithm kyber = new KyberAlgorithm();
  *
  * // Generate a Kyber-768 key pair:
- * KeyPair kp = kyber.asymmetricKeyBuilder(KyberKeyGenSpec.class)
+ * KeyPair kp = kyber.asymmetricKeyPairGenerator(KyberKeyGenSpec.class)
  *                   .generateKeyPair(KyberKeyGenSpec.kyber768());
  *
  * // Encapsulation by initiator (recipient public key known):
- * KemContext enc = kyber.create(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
+ * KemContext enc = kyber.createContext(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
  *
  * // Decapsulation by responder (own private key):
- * KemContext dec = kyber.create(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
+ * KemContext dec = kyber.createContext(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
  *
  * // Message-style agreement (initiator):
  * MessageAgreementContext initCtx =
- *     kyber.create(KeyUsage.AGREEMENT, kp.getPublic(), VoidSpec.INSTANCE);
+ *     kyber.createContext(KeyUsage.AGREEMENT, kp.getPublic(), VoidSpec.INSTANCE);
  *
  * // Message-style agreement (responder):
  * MessageAgreementContext respCtx =
- *     kyber.create(KeyUsage.AGREEMENT, kp.getPrivate(), VoidSpec.INSTANCE);
+ *     kyber.createContext(KeyUsage.AGREEMENT, kp.getPrivate(), VoidSpec.INSTANCE);
  * }</pre>
  */
 public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
@@ -154,7 +157,7 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
      * Security.addProvider(new BouncyCastlePQCProvider());
      * KyberAlgorithm alg = new KyberAlgorithm();
      *
-     * KeyPair kp = alg.asymmetricKeyBuilder(KyberKeyGenSpec.class)
+     * KeyPair kp = alg.asymmetricKeyPairGenerator(KyberKeyGenSpec.class)
      *                 .generateKeyPair(KyberKeyGenSpec.kyber768());
      * }</pre>
      */
@@ -189,7 +192,7 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
                 }, () -> VoidSpec.INSTANCE);
 
         // Keypair builder via BCPQC
-        registerAsymmetricKeyBuilder(KyberKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(KyberKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             /**
              * Generates a Kyber key pair for the variant defined by the provided spec.
              *
@@ -206,53 +209,10 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            /**
-             * Unsupported operation for this builder. Use {@code KyberPublicKeySpec} for
-             * public key import.
-             *
-             * @param spec the key generation spec; not used.
-             * @return never returns normally.
-             * @throws UnsupportedOperationException always thrown to indicate that public
-             *                                       key import uses a dedicated encoded
-             *                                       spec.
-             */
-            @Override
-            public PublicKey importPublic(KyberKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Import with a dedicated encoded spec, if needed.");
-            }
-
-            /**
-             * Unsupported operation for this builder. Use {@code KyberPrivateKeySpec} for
-             * private key import.
-             *
-             * @param spec the key generation spec; not used.
-             * @return never returns normally.
-             * @throws UnsupportedOperationException always thrown to indicate that private
-             *                                       key import uses a dedicated encoded
-             *                                       spec.
-             */
-            @Override
-            public PrivateKey importPrivate(KyberKeyGenSpec spec) {
-                throw new UnsupportedOperationException("Import with a dedicated encoded spec, if needed.");
-            }
         }, KyberKeyGenSpec::kyber768);
 
         // Public-key import (X.509)
-        registerAsymmetricKeyBuilder(KyberPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            /**
-             * Unsupported operation for this builder. Use {@code KyberKeyGenSpec} for
-             * generation.
-             *
-             * @param spec the public key spec; not used.
-             * @return never returns normally.
-             * @throws UnsupportedOperationException always thrown to indicate that key
-             *                                       generation is not supported here.
-             */
-            @Override
-            public KeyPair generateKeyPair(KyberPublicKeySpec spec) {
-                throw new UnsupportedOperationException("Use KyberKeyGenSpec for generation");
-            }
+        registerPublicKeyImporter(KyberPublicKeySpec.class, new PublicKeyImporter<>() {
 
             /**
              * Imports a Kyber public key from an X.509 SubjectPublicKeyInfo encoding.
@@ -269,52 +229,10 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("Kyber", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
-
-            /**
-             * Unsupported operation for this builder. Use {@code KyberPrivateKeySpec} for
-             * private key import.
-             *
-             * @param spec the public key spec; not used.
-             * @return never returns normally.
-             * @throws UnsupportedOperationException always thrown to indicate that private
-             *                                       key import is not supported here.
-             */
-            @Override
-            public PrivateKey importPrivate(KyberPublicKeySpec spec) {
-                throw new UnsupportedOperationException("Use KyberPrivateKeySpec for private key import");
-            }
-        }, null // no default spec
-        );
+        });
 
         // Private-key import (PKCS#8)
-        registerAsymmetricKeyBuilder(KyberPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            /**
-             * Unsupported operation for this builder. Use {@code KyberKeyGenSpec} for
-             * generation.
-             *
-             * @param spec the private key spec; not used.
-             * @return never returns normally.
-             * @throws UnsupportedOperationException always thrown to indicate that key
-             *                                       generation is not supported here.
-             */
-            @Override
-            public KeyPair generateKeyPair(KyberPrivateKeySpec spec) {
-                throw new UnsupportedOperationException("Use KyberKeyGenSpec for generation");
-            }
-
-            /**
-             * Unsupported operation for this builder. Use {@code KyberPublicKeySpec} for
-             * public key import.
-             *
-             * @param spec the private key spec; not used.
-             * @return never returns normally.
-             * @throws UnsupportedOperationException always thrown to indicate that public
-             *                                       key import is not supported here.
-             */
-            @Override
-            public PublicKey importPublic(KyberPrivateKeySpec spec) {
-                throw new UnsupportedOperationException("Use KyberPublicKeySpec for public key import");
-            }
+        registerPrivateKeyImporter(KyberPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             /**
              * Imports a Kyber private key from a PKCS#8 PrivateKeyInfo encoding.
@@ -328,9 +246,14 @@ public final class KyberAlgorithm extends AbstractCryptoAlgorithm {
             public PrivateKey importPrivate(KyberPrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("Kyber", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     /**

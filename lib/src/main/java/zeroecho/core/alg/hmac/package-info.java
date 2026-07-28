@@ -48,8 +48,8 @@
  * <li>Expose a streaming {@link zeroecho.core.context.MacContext} that appends
  * tags in produce mode or verifies an expected tag at end of stream in verify
  * mode.</li>
- * <li>Provide immutable specs for selecting the HMAC variant and for supplying
- * keys (generation or import of raw key material).</li>
+ * <li>Provide immutable specs for selecting the HMAC variant and destroyable
+ * specs for importing raw key material.</li>
  * <li>Encapsulate JCA/JCE interop and provider checks behind small
  * factories.</li>
  * </ul>
@@ -68,7 +68,7 @@
  * specific HMAC variant.</li>
  * <li><b>HmacKeyImportSpec</b>: wrapper for importing existing raw keys, with
  * Base64/hex helpers.</li>
- * <li><b>Stream</b>: internal passthrough input stream implementing the
+ * <li><b>HmacStream</b>: internal passthrough input stream implementing the
  * byte-pumping and trailer/verification logic for the MAC context.</li>
  * </ul>
  *

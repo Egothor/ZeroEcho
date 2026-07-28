@@ -132,10 +132,10 @@ public class EcdsaLargeDataTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         // Key pair via your unified ECDSA algorithm and enum spec
-        KeyPair kp = CryptoAlgorithms.keyPair("ECDSA", spec);
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ECDSA", spec);
 
         // SIGN (streaming): emits [body][signature]; capture trailer
-        SignatureContext signer = CryptoAlgorithms.create("ECDSA", KeyUsage.SIGN, kp.getPrivate(), spec);
+        SignatureContext signer = new zeroecho.sdk.ZeroEchoSession().createContext("ECDSA", KeyUsage.SIGN, kp.getPrivate(), spec);
         final byte[][] sigHolder = new byte[1][];
         final int sigLen = signer.tagLength(); // should equal spec.signFixedLength()
 
@@ -160,7 +160,7 @@ public class EcdsaLargeDataTest {
         System.out.println("...signature size: " + ourSig.length + " (expected " + spec.signFixedLength() + ")");
 
         // VERIFY with our streaming verifier
-        SignatureContext verifier = CryptoAlgorithms.create("ECDSA", KeyUsage.VERIFY, kp.getPublic(), spec);
+        SignatureContext verifier = new zeroecho.sdk.ZeroEchoSession().createContext("ECDSA", KeyUsage.VERIFY, kp.getPublic(), spec);
         verifier.setExpectedTag(ourSig);
         byte[] sink2;
         try (InputStream verIn = verifier.wrap(new ByteArrayInputStream(msg))) {
@@ -181,7 +181,7 @@ public class EcdsaLargeDataTest {
         // Extra symmetry check (optional): our verifier must accept a JCA signature
         // (different bytes)
         byte[] jcaSig = jcaEcdsaSign(spec.jcaFactory(), kp.getPrivate(), msg);
-        SignatureContext verifier2 = CryptoAlgorithms.create("ECDSA", KeyUsage.VERIFY, kp.getPublic(), spec);
+        SignatureContext verifier2 = new zeroecho.sdk.ZeroEchoSession().createContext("ECDSA", KeyUsage.VERIFY, kp.getPublic(), spec);
         verifier2.setExpectedTag(jcaSig);
         try (InputStream verIn2 = verifier2.wrap(new ByteArrayInputStream(msg))) {
             byte[] passthrough = readAll(verIn2);

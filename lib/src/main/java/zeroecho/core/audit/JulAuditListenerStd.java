@@ -37,24 +37,25 @@ import java.security.Key;
 import java.security.KeyPair;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import zeroecho.core.KeyUsage;
-import zeroecho.core.context.CryptoContext;
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.spec.ContextSpec;
 
 /**
  * AuditListener implementation that emits structured Java Util Logging records.
  *
  * <p>
  * The listener produces parameterized JUL messages in a stable key=value format
- * suitable for ingestion by log processors. It never logs secret material: keys
- * are represented only by short, non-reversible fingerprints and specification
- * objects are summarized by simple type names.
+ * suitable for ingestion by log processors. It never logs secret material:
+ * public keys may be represented by short, non-reversible fingerprints, while
+ * private and secret keys are represented only by algorithm and implementation
+ * type. Specification objects are summarized by simple type names.
  * </p>
  *
  * <h2>Configuration</h2>
@@ -75,8 +76,8 @@ import zeroecho.core.spec.ContextSpec;
  * // Progress tick:
  * PROGRESS ctxId=abc-123 body=4096 trailer=16
  *
- * // Failure with stack trace when enabled:
- * FAILURE ctxId=abc-123 stage=read op=wrap error=IOException message=stream closed
+ * // Failure summary:
+ * FAILURE ctxId=abc-123 stage=read op=wrap error=IOException
  * }</pre>
  *
  * <p>
@@ -134,7 +135,7 @@ public final class JulAuditListenerStd implements AuditListener {
      * <li>{@code infoLevel}: {@code Level.INFO}</li>
      * <li>{@code warnLevel}: {@code Level.WARNING}</li>
      * <li>{@code progressLevel}: {@code Level.FINE}</li>
-     * <li>{@code includeStackTraces}: {@code true}</li>
+     * <li>{@code includeStackTraces}: {@code false}</li>
      * </ul>
      *
      * <h2>Example</h2> <pre>{@code
@@ -152,7 +153,7 @@ public final class JulAuditListenerStd implements AuditListener {
         private Level infoLevel = Level.INFO;
         private Level warnLevel = Level.WARNING;
         private Level progressLevel = Level.FINE;
-        private boolean includeStackTraces = true;
+        private boolean includeStackTraces;
 
         /**
          * Sets the JUL logger that will receive audit messages.
@@ -202,6 +203,12 @@ public final class JulAuditListenerStd implements AuditListener {
          * Controls whether {@link #onFailure(String, String, String, Throwable)}
          * appends a stack trace in addition to the structured summary.
          *
+         * <p>
+         * Stack traces may contain provider exception messages or application
+         * values. Enabling them is an explicit diagnostic opt-in and requires a
+         * suitably protected log destination.
+         * </p>
+         *
          * @param include true to include stack traces, false to omit them
          * @return this builder for chaining
          */
@@ -227,44 +234,6 @@ public final class JulAuditListenerStd implements AuditListener {
      */
     public static Builder builder() {
         return new Builder();
-    }
-
-    /**
-     * Logs a structured context creation event.
-     *
-     * @param <S>      context specification type
-     * @param <K>      key type
-     * @param id       algorithm or implementation identifier
-     * @param provider provider or vendor label
-     * @param role     key usage role for the context
-     * @param key      associated key, if any
-     * @param spec     context specification, if any
-     */
-    @Override
-    public <S extends ContextSpec, K extends Key> void onContextCreated(String id, String provider, KeyUsage role,
-            K key, S spec) {
-        if (!log.isLoggable(infoLevel)) {
-            return;
-        }
-        log.log(infoLevel, "CTX_CREATED algo={0} provider={1} role={2} keyFp={3} spec={4}",
-                new Object[] { id, provider, role, fingerprint(key), specName(spec) });
-    }
-
-    /**
-     * Logs a structured context closure event in generic form.
-     *
-     * @param id       algorithm or implementation identifier
-     * @param provider provider or vendor label
-     * @param role     key usage role for the context
-     * @param key      associated key, if any
-     */
-    @Override
-    public void onContextClosed(String id, String provider, KeyUsage role, Key key) {
-        if (!log.isLoggable(infoLevel)) {
-            return;
-        }
-        log.log(infoLevel, "CTX_CLOSED algo={0} provider={1} role={2} keyFp={3}",
-                new Object[] { id, provider, role, fingerprint(key) });
     }
 
     /**
@@ -298,7 +267,7 @@ public final class JulAuditListenerStd implements AuditListener {
         if (!log.isLoggable(infoLevel)) {
             return;
         }
-        log.log(infoLevel, "KEY_BUILT algo={0} provider={1} spec={2} keyFp={3}",
+        log.log(infoLevel, "KEY_BUILT algo={0} provider={1} spec={2} key={3}",
                 new Object[] { id, provider, specType(spec), fingerprint(key) });
     }
 
@@ -314,7 +283,7 @@ public final class JulAuditListenerStd implements AuditListener {
         if (!log.isLoggable(infoLevel)) {
             return;
         }
-        log.log(infoLevel, "KEY_DESTROYED algo={0} provider={1} keyFp={2}",
+        log.log(infoLevel, "KEY_DESTROYED algo={0} provider={1} key={2}",
                 new Object[] { id, provider, fingerprint(key) });
     }
 
@@ -469,9 +438,8 @@ public final class JulAuditListenerStd implements AuditListener {
         if (!log.isLoggable(warnLevel)) {
             return;
         }
-        String msg = "FAILURE ctxId={0} stage={1} op={2} error={3} message={4}";
-        Object[] params = { ctxId, stage, op, (cause == null ? "unknown" : cause.getClass().getSimpleName()),
-                (cause == null ? "" : safeMessage(cause.getMessage())) };
+        String msg = "FAILURE ctxId={0} stage={1} op={2} error={3}";
+        Object[] params = { ctxId, stage, op, (cause == null ? "unknown" : cause.getClass().getSimpleName()) };
         if (includeStackTraces && cause != null) {
             log.log(warnLevel, msg, params);
             log.log(warnLevel, "STACKTRACE", cause);
@@ -519,19 +487,6 @@ public final class JulAuditListenerStd implements AuditListener {
     public void onAgreementPeerMessageGet(String ctxId, int msgLen) {
         if (log.isLoggable(infoLevel)) {
             log.log(infoLevel, "AGREE_MSG_GET ctxId={0} msgLen={1}", new Object[] { ctxId, msgLen });
-        }
-    }
-
-    /**
-     * Logs the legacy single-argument creation callback with the context type.
-     *
-     * @param ctx the wrapped context
-     */
-    @Override
-    public void onContextCreated(CryptoContext ctx) {
-        if (log.isLoggable(progressLevel)) {
-            log.log(progressLevel, "CTX_CREATED_LEGACY type={0}",
-                    new Object[] { (ctx == null ? "null" : ctx.getClass().getSimpleName()) });
         }
     }
 
@@ -599,16 +554,6 @@ public final class JulAuditListenerStd implements AuditListener {
     }
 
     /**
-     * Returns the simple name of the provided specification or "null".
-     *
-     * @param spec a context specification, possibly null
-     * @return simple class name or "null"
-     */
-    private static String specName(ContextSpec spec) {
-        return spec == null ? "null" : spec.getClass().getSimpleName();
-    }
-
-    /**
      * Returns the simple name of the provided key specification or "null".
      *
      * @param spec an algorithm key specification, possibly null
@@ -629,8 +574,9 @@ public final class JulAuditListenerStd implements AuditListener {
     }
 
     /**
-     * Computes a short, non-reversible fingerprint for the key without logging raw
-     * key bytes. Non-extractable keys fall back to algorithm and type.
+     * Computes a short, non-reversible fingerprint for a public key. Private and
+     * secret keys are summarized only by algorithm and type, and their encodings
+     * are never requested.
      *
      * @param key the key to summarize; may be null
      * @return a fingerprint string or "n/a" if the key is null
@@ -639,30 +585,34 @@ public final class JulAuditListenerStd implements AuditListener {
         if (key == null) {
             return "n/a";
         }
+        if (!(key instanceof PublicKey)) {
+            return keyType(key);
+        }
+        byte[] enc = null;
+        byte[] digest = null;
         try {
-            byte[] enc = key.getEncoded();
+            enc = key.getEncoded();
             if (enc == null) {
                 return key.getAlgorithm() + ":" + key.getClass().getSimpleName();
             }
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] d = md.digest(enc);
+            digest = md.digest(enc);
             StringBuilder sb = new StringBuilder(key.getAlgorithm()).append(':');
-            for (int i = 0; i < Math.min(8, d.length); i++) {
-                sb.append(String.format("%02x", d[i]));
+            for (int i = 0; i < Math.min(8, digest.length); i++) {
+                int value = digest[i] & 0xff;
+                sb.append(Character.forDigit(value >>> 4, 16))
+                        .append(Character.forDigit(value & 0x0f, 16));
             }
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {
             return key.getAlgorithm() + ":fp-error";
+        } finally {
+            if (enc != null) {
+                Arrays.fill(enc, (byte) 0);
+            }
+            if (digest != null) {
+                Arrays.fill(digest, (byte) 0);
+            }
         }
-    }
-
-    /**
-     * Returns a non-null message string for logging.
-     *
-     * @param s a message, possibly null
-     * @return the message or an empty string if null
-     */
-    private static String safeMessage(String s) {
-        return s == null ? "" : s;
     }
 }

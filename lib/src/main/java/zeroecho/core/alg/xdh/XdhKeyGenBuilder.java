@@ -37,7 +37,7 @@ import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
 /**
  * KeyPair generator for XDH curves using the JCA KeyPairGenerator SPI.
@@ -50,9 +50,8 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * <h2>Design and scope</h2>
  * <ul>
- * <li><b>Generation only:</b> This builder supports key generation.
- * Public/private import is intentionally unsupported and will throw
- * {@link UnsupportedOperationException}.</li>
+ * <li><b>Generation only:</b> This implementation exposes only the exact
+ * key-pair generation capability; import operations are registered separately.</li>
  * <li><b>Provider resolution:</b> The default JCA provider selection is used.
  * If a specific provider is required, supply or register one that exposes the
  * requested XDH algorithm name.</li>
@@ -69,7 +68,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class XdhKeyGenBuilder implements AsymmetricKeyBuilder<XdhSpec> {
+public final class XdhKeyGenBuilder implements AsymmetricKeyPairGenerator<XdhSpec> {
     /**
      * Generates a new XDH key pair using the JCA
      * {@link java.security.KeyPairGenerator}.
@@ -94,43 +93,5 @@ public final class XdhKeyGenBuilder implements AsymmetricKeyBuilder<XdhSpec> {
     public KeyPair generateKeyPair(XdhSpec spec) throws GeneralSecurityException {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance(spec.kpgName());
         return kpg.generateKeyPair();
-    }
-
-    /**
-     * Not supported: importing XDH public keys is outside the scope of this
-     * builder.
-     *
-     * <p>
-     * Use a dedicated import builder or provider-specific utilities if you need to
-     * wrap encoded public keys.
-     * </p>
-     *
-     * @param spec the XDH key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown to indicate unsupported
-     *                                       operation
-     */
-    @Override
-    public java.security.PublicKey importPublic(XdhSpec spec) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Not supported: importing XDH private keys is outside the scope of this
-     * builder.
-     *
-     * <p>
-     * Use a dedicated import builder or provider-specific utilities if you need to
-     * wrap encoded private keys.
-     * </p>
-     *
-     * @param spec the XDH key specification
-     * @return never returns normally
-     * @throws UnsupportedOperationException always thrown to indicate unsupported
-     *                                       operation
-     */
-    @Override
-    public java.security.PrivateKey importPrivate(XdhSpec spec) {
-        throw new UnsupportedOperationException();
     }
 }

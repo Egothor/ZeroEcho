@@ -33,7 +33,11 @@
  ******************************************************************************/
 package zeroecho.core.alg.rsa;
 
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -64,15 +68,18 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * }</pre>
  *
  * <p>
- * Instances are immutable and defensively copy their input. The encoded key
- * material remains sensitive and should be handled with care.
+ * Instances defensively copy their input and may be destroyed to wipe the owned
+ * encoding. The encoded key material remains sensitive and should be handled
+ * with care.
  * </p>
  *
  * @since 1.0
  */
-public final class RsaPrivateKeySpec implements AlgorithmKeySpec {
+public final class RsaPrivateKeySpec implements AlgorithmKeySpec, Destroyable {
     private static final String PKCS8_B64 = "pkcs8.b64";
     private final byte[] pkcs8;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Constructs a new RSA private key spec from a PKCS#8-encoded key.
@@ -90,7 +97,13 @@ public final class RsaPrivateKeySpec implements AlgorithmKeySpec {
      * @return defensive copy of the encoded key
      */
     public byte[] encoded() {
-        return pkcs8.clone();
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return pkcs8.clone();
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -107,7 +120,7 @@ public final class RsaPrivateKeySpec implements AlgorithmKeySpec {
      * @return pair sequence with type and base64-encoded key material
      */
     public static PairSeq marshal(RsaPrivateKeySpec spec) {
-        String b64 = Base64.getEncoder().withoutPadding().encodeToString(spec.pkcs8);
+        String b64 = spec.encodedKey();
         return PairSeq.of("type", "RSA-PRIV", PKCS8_B64, b64);
     }
 
@@ -131,12 +144,62 @@ public final class RsaPrivateKeySpec implements AlgorithmKeySpec {
             String k = cur.key();
             String v = cur.value();
             if (PKCS8_B64.equals(k)) {
-                out = Base64.getDecoder().decode(v);
+                out = decodeReplacing(out, v);
             }
         }
         if (out == null) {
             throw new IllegalArgumentException("pkcs8.b64 missing for RSA private key");
         }
-        return new RsaPrivateKeySpec(out);
+        try {
+            return new RsaPrivateKeySpec(out);
+        } finally {
+            Arrays.fill(out, (byte) 0);
+        }
+    }
+
+    private static byte[] decodeReplacing(byte[] current, String encoded) {
+        if (current != null) {
+            Arrays.fill(current, (byte) 0);
+        }
+        return Base64.getDecoder().decode(encoded);
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(pkcs8);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(pkcs8, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("RSA private key specification has been destroyed");
+        }
     }
 }

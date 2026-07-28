@@ -157,12 +157,18 @@ final class SmartContinuousBlockStream extends AbstractChunkTransformInputStream
     protected int doFinal(byte[] in, int inOff, int len, byte[] out, int outOff) throws IOException {
         try {
             int finBlockSize = cipher.getOutputSize(len);
-            if (out.length < outOff + finBlockSize) {
+            final int required;
+            try {
+                required = Math.addExact(outOff, finBlockSize);
+            } catch (ArithmeticException exception) {
+                throw new IOException("Final cipher output size exceeds the supported range", exception);
+            }
+            if (out.length < required) {
                 if (LOG.isLoggable(Level.WARNING)) {
                     LOG.log(Level.WARNING, "Expanding buffer of {0} from {1} bytes to {2} bytes",
-                            new Object[] { cipher.getAlgorithm(), outBuf.length, outOff + finBlockSize });
+                            new Object[] { cipher.getAlgorithm(), outBuf.length, required });
                 }
-                out = outBuf = Arrays.copyOf(outBuf, outOff + finBlockSize); // NOPMD
+                out = outBuf = Arrays.copyOf(outBuf, required); // NOPMD
             }
 
             int written = cipher.doFinal(in, inOff, len, out, outOff);

@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -56,7 +57,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * <h2>Frodo Key Encapsulation Mechanism (KEM)</h2>
@@ -104,9 +107,8 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * X.509 encoding.</li>
  * <li>Private keys may be imported from {@link FrodoPrivateKeySpec} using a
  * PKCS#8 encoding.</li>
- * <li>Direct import of key specs via {@code generateKeyPair} in the spec-based
- * builders is not supported and will throw
- * {@link UnsupportedOperationException}.</li>
+ * <li>Generation and public/private import are registered as independent exact
+ * capabilities.</li>
  * </ul>
  *
  * <h2>Provider requirements</h2>
@@ -120,13 +122,14 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * <h2>Example usage</h2> <pre>{@code
  * // Generate a Frodo keypair
  * CryptoAlgorithm frodo = CryptoAlgorithms.require("Frodo");
- * KeyPair kp = frodo.generateKeyPair(FrodoKeyGenSpec.frodo1344aes());
+ * KeyPair kp = frodo.asymmetricKeyPairGenerator(FrodoKeyGenSpec.class)
+ *                   .generateKeyPair(FrodoKeyGenSpec.frodo1344aes());
  *
  * // Encapsulate using the recipient's public key
- * KemContext enc = frodo.create(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
+ * KemContext enc = frodo.createContext(KeyUsage.ENCAPSULATE, kp.getPublic(), VoidSpec.INSTANCE);
  * 
  * // Decapsulate using the recipient's private key
- * KemContext dec = frodo.create(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
+ * KemContext dec = frodo.createContext(KeyUsage.DECAPSULATE, kp.getPrivate(), VoidSpec.INSTANCE);
  * }</pre>
  *
  * <h2>Thread-safety</h2>
@@ -201,7 +204,7 @@ public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
                             .build();
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(FrodoKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(FrodoKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(FrodoKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
@@ -217,23 +220,9 @@ public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(FrodoKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PrivateKey importPrivate(FrodoKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
         }, FrodoKeyGenSpec::frodo1344aes);
 
-        registerAsymmetricKeyBuilder(FrodoPublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(FrodoPublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPublicKeyImporter(FrodoPublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(FrodoPublicKeySpec spec) throws GeneralSecurityException {
@@ -241,31 +230,22 @@ public final class FrodoAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("Frodo", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(FrodoPublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(FrodoPrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(FrodoPrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PublicKey importPublic(FrodoPrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPrivateKeyImporter(FrodoPrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(FrodoPrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("Frodo", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     private static void ensureProvider() throws NoSuchProviderException {

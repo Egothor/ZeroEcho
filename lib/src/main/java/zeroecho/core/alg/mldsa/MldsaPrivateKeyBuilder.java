@@ -35,45 +35,20 @@ package zeroecho.core.alg.mldsa;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.KeyPair;
 import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.PrivateKeyImporter;
 
 /**
  * Builder for importing ML-DSA private keys from encoded specifications.
  *
  * @since 1.0
  */
-public final class MldsaPrivateKeyBuilder implements AsymmetricKeyBuilder<MldsaPrivateKeySpec> {
+public final class MldsaPrivateKeyBuilder implements PrivateKeyImporter<MldsaPrivateKeySpec> {
 
     private static final String ALG = "ML-DSA";
-
-    /**
-     * Generation is not supported by this spec.
-     *
-     * @param spec encoded private key spec
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public KeyPair generateKeyPair(MldsaPrivateKeySpec spec) {
-        throw new UnsupportedOperationException("Generation not supported by this spec.");
-    }
-
-    /**
-     * Public key import is not supported by this spec.
-     *
-     * @param spec encoded private key spec
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public PublicKey importPublic(MldsaPrivateKeySpec spec) {
-        throw new UnsupportedOperationException("Use MldsaPublicKeySpec for public keys.");
-    }
 
     /**
      * Imports a private key from PKCS#8 encoding.
@@ -87,6 +62,11 @@ public final class MldsaPrivateKeyBuilder implements AsymmetricKeyBuilder<MldsaP
     public PrivateKey importPrivate(MldsaPrivateKeySpec spec) throws GeneralSecurityException {
         KeyFactory kf = (spec.providerName() == null) ? KeyFactory.getInstance(ALG)
                 : KeyFactory.getInstance(ALG, spec.providerName());
-        return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.encoded()));
+        byte[] encoded = spec.encoded();
+        try {
+            return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+        } finally {
+            Arrays.fill(encoded, (byte) 0);
+        }
     }
 }

@@ -39,15 +39,13 @@ import java.security.KeyPairGenerator;
 import java.security.spec.ECGenParameterSpec;
 
 import zeroecho.core.alg.ecdsa.EcdsaPrivateKeyBuilder;
-import zeroecho.core.alg.ecdsa.EcdsaPrivateKeySpec;
 import zeroecho.core.alg.ecdsa.EcdsaPublicKeyBuilder;
-import zeroecho.core.alg.ecdsa.EcdsaPublicKeySpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 
 /**
  * <h2>ECDH Key Pair Generator</h2>
  *
- * Implementation of {@link AsymmetricKeyBuilder} for elliptic curve
+ * Implementation of {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} for elliptic curve
  * Diffie-Hellman (ECDH) key pairs.
  *
  * <p>
@@ -70,7 +68,7 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  *
  * @since 1.0
  */
-public final class EcdhKeyGenBuilder implements AsymmetricKeyBuilder<EcdhCurveSpec> {
+public final class EcdhKeyGenBuilder implements AsymmetricKeyPairGenerator<EcdhCurveSpec> {
     /**
      * Generates a new elliptic curve key pair for use in ECDH key agreement.
      *
@@ -91,41 +89,5 @@ public final class EcdhKeyGenBuilder implements AsymmetricKeyBuilder<EcdhCurveSp
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
         kpg.initialize(new ECGenParameterSpec(spec.curveName()));
         return kpg.generateKeyPair();
-    }
-
-    /**
-     * Unsupported operation for this builder.
-     *
-     * <p>
-     * Importing existing ECDH public keys should be performed via
-     * {@link EcdsaPublicKeyBuilder} with an {@link EcdsaPublicKeySpec}. This method
-     * will always throw an {@link UnsupportedOperationException}.
-     * </p>
-     *
-     * @param spec ignored
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public java.security.PublicKey importPublic(EcdhCurveSpec spec) {
-        throw new UnsupportedOperationException("Use EcdhPublicKeySpec with EcdsaPublicKeyBuilder.");
-    }
-
-    /**
-     * Unsupported operation for this builder.
-     *
-     * <p>
-     * Importing existing ECDH private keys should be performed via
-     * {@link EcdsaPrivateKeyBuilder} with an {@link EcdsaPrivateKeySpec}. This
-     * method will always throw an {@link UnsupportedOperationException}.
-     * </p>
-     *
-     * @param spec ignored
-     * @return never returns normally
-     * @throws UnsupportedOperationException always
-     */
-    @Override
-    public java.security.PrivateKey importPrivate(EcdhCurveSpec spec) {
-        throw new UnsupportedOperationException("Use EcdhPrivateKeySpec with EcdsaPrivateKeyBuilder.");
     }
 }

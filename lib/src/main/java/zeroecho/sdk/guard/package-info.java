@@ -33,7 +33,7 @@
  ******************************************************************************/
 /**
  * Multi-recipient envelope for symmetric payloads with pluggable recipients,
- * stateless openers, and a compact header.
+ * reusable openers, and a compact header.
  *
  * <h2>Overview</h2> This package implements a streaming envelope that protects
  * one content-encryption key (CEK) for multiple recipients and delegates the
@@ -107,9 +107,9 @@
  * <li><strong>Separation of concerns:</strong> the envelope manages CEK
  * generation and recipient entries; the symmetric builder manages algorithm
  * parameters and payload framing.</li>
- * <li><strong>Stateless strategy objects:</strong> recipients encode entries;
- * openers attempt recovery of the CEK; neither carries long-lived secret
- * state.</li>
+ * <li><strong>Reusable opener strategies:</strong> recipients encode entries;
+ * openers attempt every applicable entry and create fresh cryptographic contexts
+ * per attempt. Neither carries long-lived secret state.</li>
  * <li><strong>Defensive parsing:</strong> the builder applies limits to the
  * number of recipients and the size of each entry blob; the symmetric stage
  * applies its own limits to its header and payload.</li>
@@ -122,8 +122,8 @@
  * stateless; unlocking material centralizes ownership of secrets (private keys
  * or passwords), which simplifies secret lifecycle management and allows the
  * envelope to try one piece of material across heterogeneous entries in a
- * uniform scan. If desired, an adapter can bind material to an opener instance
- * in calling code without changing these interfaces.
+ * uniform scan. Custom openers receive the borrowed material for each attempt
+ * and must not retain it.
  *
  * <h2>Hardening options</h2> The following options are design targets and not
  * yet implemented in this package:
@@ -139,19 +139,24 @@
  * above.
  *
  * <h2>Typical usage</h2> <pre>{@code
+ * ZeroEchoSession session = new ZeroEchoSession();
+ * EncryptionContext rsaRecipient =
+ *     session.createContext("RSA", KeyUsage.ENCRYPT, rsaPub);
+ * KemContext kemRecipient =
+ *     session.createContext("ML-KEM", KeyUsage.ENCAPSULATE, kemPub);
+ *
  * // Encrypt for multiple recipients; AES-256/GCM carries its own header.
- * DataContent enc = new MultiRecipientDataSourceBuilder()
- *     .withAes(AesDataContentBuilder.builder().modeGcm(128).withHeader())
+ * MultiRecipientContent enc = MultiRecipientDataSourceBuilder.builder(session)
+ *     .withAes(AesDataContentBuilder.builder(session).modeGcm(128).withHeader())
  *     .payloadKeyBytes(32)
- *     .addRsaOaepRecipient(rsaPub)
- *     .addKemRecipient("ML-KEM", kemPub, 32, 16)
- *     .addPasswordRecipient(pass, 120_000, 16, 32)
+ *     .addRecipient(rsaRecipient)
+ *     .addRecipient(kemRecipient, 32, 16)
  *     .build(true);
  * enc.setInput(plainSource);
  *
  * // Decrypt with any one unlocking material; openers are installed by default.
- * DataContent dec = new MultiRecipientDataSourceBuilder()
- *     .withAes(AesDataContentBuilder.builder().modeGcm(128).withHeader())
+ * MultiRecipientContent dec = MultiRecipientDataSourceBuilder.builder(session)
+ *     .withAes(AesDataContentBuilder.builder(session).modeGcm(128).withHeader())
  *     .payloadKeyBytes(32)
  *     .unlockWith(new UnlockMaterial.Private(rsaPrv))
  *     .build(false);

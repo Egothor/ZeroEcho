@@ -79,6 +79,8 @@ public final class Util { // NOPMD
      * </p>
      */
     private static final int DEFAULT_BUFFER_SIZE = 32 * 1024;
+    /** Largest unsigned 32-bit value accepted by the packed integer decoder. */
+    private static final long MAX_PACKED_INTEGER = 0xffff_ffffL;
 
     /**
      * Private constructor to prevent instantiation of this utility class.
@@ -271,15 +273,29 @@ public final class Util { // NOPMD
      * @throws IOException if an I/O error occurs or if the stream ends prematurely
      */
     public static int readPack7I(final InputStream in) throws IOException {
-        int result = in.read();
-        if (result > 0x7f) { // NOPMD
-            return result & 0x7f;
+        int current = in.read();
+        if (current < 0) {
+            throw new EOFException("read packed integer EOF");
         }
-        int i;
-        for (i = in.read(); i < 0x80; i = in.read()) {
-            result = (result << 7) | i;
+        if (current > 0x7f) { // NOPMD
+            return current & 0x7f;
         }
-        return (result << 7) | (i & 0x7f);
+
+        long result = current;
+        for (int bytes = 1; bytes < 5; bytes++) {
+            current = in.read();
+            if (current < 0) {
+                throw new EOFException("read packed integer EOF");
+            }
+            result = (result << 7) | (current & 0x7f);
+            if (current > 0x7f) { // NOPMD
+                if (result > MAX_PACKED_INTEGER) {
+                    throw new IOException("packed integer exceeds 32 bits");
+                }
+                return (int) result;
+            }
+        }
+        throw new IOException("packed integer exceeds five bytes");
     }
 
     /**

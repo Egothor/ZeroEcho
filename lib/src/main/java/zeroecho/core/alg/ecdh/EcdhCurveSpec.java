@@ -63,7 +63,7 @@ import zeroecho.core.spec.ContextSpec;
  *
  * <h2>Usage</h2> <pre>{@code
  * // Generate a key pair on P-256
- * KeyPair kp = CryptoAlgorithms.generateKeyPair("ECDH", EcdhCurveSpec.P256);
+ * KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("ECDH", EcdhCurveSpec.P256);
  *
  * // Use curve metadata
  * String jcaName = EcdhCurveSpec.P256.curveName(); // "secp256r1"

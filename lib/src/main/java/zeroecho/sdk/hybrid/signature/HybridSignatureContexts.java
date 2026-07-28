@@ -38,6 +38,7 @@ import java.security.PublicKey;
 import java.util.Objects;
 
 import zeroecho.core.context.SignatureContext;
+import zeroecho.sdk.ZeroEchoSession;
 
 /**
  * Factory for {@link SignatureContext}-compatible hybrid signature contexts.
@@ -67,12 +68,14 @@ public final class HybridSignatureContexts {
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
      * @since 1.0
      */
-    public static SignatureContext sign(HybridSignatureProfile profile, PrivateKey classicPrivate,
+    public static SignatureContext sign(ZeroEchoSession session, HybridSignatureProfile profile,
+            PrivateKey classicPrivate,
             PrivateKey pqcPrivate, int maxBufferedBytes) {
+        Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(classicPrivate, "classicPrivate");
         Objects.requireNonNull(pqcPrivate, "pqcPrivate");
-        return new HybridSignatureContext(profile, classicPrivate, pqcPrivate, maxBufferedBytes);
+        return new HybridSignatureContext(session, profile, classicPrivate, pqcPrivate, maxBufferedBytes);
     }
 
     /**
@@ -88,11 +91,12 @@ public final class HybridSignatureContexts {
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
      * @since 1.0
      */
-    public static SignatureContext verify(HybridSignatureProfile profile, PublicKey classicPublic, PublicKey pqcPublic,
-            int maxBufferedBytes) {
+    public static SignatureContext verify(ZeroEchoSession session, HybridSignatureProfile profile,
+            PublicKey classicPublic, PublicKey pqcPublic, int maxBufferedBytes) {
+        Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(classicPublic, "classicPublic");
         Objects.requireNonNull(pqcPublic, "pqcPublic");
-        return new HybridSignatureContext(profile, classicPublic, pqcPublic, maxBufferedBytes);
+        return new HybridSignatureContext(session, profile, classicPublic, pqcPublic, maxBufferedBytes);
     }
 }

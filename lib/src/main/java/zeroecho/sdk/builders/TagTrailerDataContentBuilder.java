@@ -108,9 +108,9 @@ public final class TagTrailerDataContentBuilder<T> implements DataContentBuilder
      * Creates a builder bound to a fixed engine instance.
      *
      * <p>
-     * This constructor is backward compatible but ties the builder to a single-use
-     * engine. Prefer {@link #TagTrailerDataContentBuilder(Supplier)} when multiple
-     * streams are expected.
+     * This form ties the builder to a single-use engine. Prefer
+     * {@link #TagTrailerDataContentBuilder(Supplier)} when multiple streams are
+     * expected.
      * </p>
      *
      * @param engine preconstructed engine instance; must not be {@code null}

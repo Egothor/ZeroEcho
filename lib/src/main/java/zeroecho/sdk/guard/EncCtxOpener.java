@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.sdk.guard;
 
+import zeroecho.sdk.ZeroEchoSession;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -40,30 +42,29 @@ import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.util.Objects;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 
 /**
- * Opener that recognizes "CTX-ENC:&lt;algId&gt;" entries and attempts CEK
- * recovery using an {@link EncryptionContext} in DECRYPT role. If constructed
- * without a context, it derives one from the entryId and the supplied private
- * key.
+ * Reusable opener for {@code CTX-ENC:<algorithm>} entries.
+ *
+ * <p>
+ * Each applicable recipient entry receives a fresh decryption context from the
+ * explicit session. A failed same-algorithm entry therefore cannot consume the
+ * opener state needed by a later legitimate entry.
+ * </p>
  */
 public final class EncCtxOpener implements RecipientOpener {
-    private final EncryptionContext provided; // may be null
-
-    /** Derive the context on demand from entryId and private key. */
-    public EncCtxOpener() {
-        this.provided = null;
-    }
+    private final ZeroEchoSession session;
 
     /**
-     * Use the provided context once for the matching entry. The opener will consume
-     * and close this context when used.
+     * Creates an opener that derives contexts through the explicit session.
+     *
+     * @param session runtime configuration used for context creation
+     * @throws NullPointerException if {@code session} is {@code null}
      */
-    public EncCtxOpener(EncryptionContext ctx) {
-        this.provided = Objects.requireNonNull(ctx);
+    public EncCtxOpener(ZeroEchoSession session) {
+        this.session = Objects.requireNonNull(session, "session");
     }
 
     @Override
@@ -73,23 +74,22 @@ public final class EncCtxOpener implements RecipientOpener {
             return null; // NOPMD
         }
 
-        final EncryptionContext dec;
-        if (provided != null) {
-            dec = provided;
-        } else {
-            if (!(material instanceof UnlockMaterial.Private)) {
-                return null; // NOPMD
-            }
-            final String algId = entryId.substring("CTX-ENC:".length());
-            final java.security.PrivateKey priv = ((UnlockMaterial.Private) material).key();
-            dec = CryptoAlgorithms.create(algId, KeyUsage.DECRYPT, priv);
+        if (!(material instanceof UnlockMaterial.Private)) {
+            return null; // NOPMD
         }
+        String algorithmId = entryId.substring("CTX-ENC:".length());
+        java.security.PrivateKey privateKey = ((UnlockMaterial.Private) material).key();
+        try (EncryptionContext context = session.createContext(algorithmId, KeyUsage.DECRYPT, privateKey)) {
+            return openWithContext(context, blob);
+        }
+    }
 
-        try (dec;
-                InputStream s = dec.attach(new ByteArrayInputStream(blob));
+    private static byte[] openWithContext(EncryptionContext context, byte[] blob) throws IOException {
+        try (InputStream s = context.attach(new ByteArrayInputStream(blob));
                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             s.transferTo(out);
             return out.toByteArray();
         }
     }
+
 }

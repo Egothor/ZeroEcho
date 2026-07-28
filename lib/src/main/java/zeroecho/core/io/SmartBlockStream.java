@@ -58,8 +58,6 @@ final class SmartBlockStream extends AbstractChunkTransformInputStream {
     private static final Logger LOG = Logger.getLogger(SmartBlockStream.class.getName());
 
     private final Cipher cipher;
-    private boolean doFinalCalled;
-
     /* package */ SmartBlockStream(InputStream upstream, Cipher cipher, int inChunkSize, int outChunkSize,
             int bufferedBlocks) {
         super(upstream, inChunkSize, outChunkSize, bufferedBlocks);
@@ -81,7 +79,6 @@ final class SmartBlockStream extends AbstractChunkTransformInputStream {
     protected int transform(byte[] in, int inOff, int inChunks, byte[] out) throws IOException {
         try {
             int output = 0;
-            doFinalCalled = inChunks > 0;
             for (int i = 0; i < inChunks; i++) {
                 int outOne = cipher.doFinal(in, inOff, inChunkSize, out, output);
                 output = output + outOne;
@@ -108,11 +105,10 @@ final class SmartBlockStream extends AbstractChunkTransformInputStream {
     @Override
     protected int doFinal(byte[] in, int inOff, int len, byte[] out, int outOff) throws IOException {
         try {
-            if (doFinalCalled && len == 0) {
+            if (len == 0) {
                 return 0;
             }
 
-            doFinalCalled = true;
             return cipher.doFinal(in, inOff, len, out, outOff);
         } catch (ShortBufferException | IllegalBlockSizeException | BadPaddingException e) {
             LOG.logp(Level.WARNING, "SmartBlockStream", "transform", "Exception", e);

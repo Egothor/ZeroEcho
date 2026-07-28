@@ -44,6 +44,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
@@ -56,7 +57,9 @@ import zeroecho.core.alg.common.agreement.KemMessageAgreementAdapter;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.spi.AsymmetricKeyBuilder;
+import zeroecho.core.spi.AsymmetricKeyPairGenerator;
+import zeroecho.core.spi.PrivateKeyImporter;
+import zeroecho.core.spi.PublicKeyImporter;
 
 /**
  * Configures and exposes the NTRU LPRime post-quantum KEM and a
@@ -93,17 +96,16 @@ import zeroecho.core.spi.AsymmetricKeyBuilder;
  * <h2>Example</h2> <pre>{@code
  * // Initialize the algorithm and generate a key pair
  * NtrulPrimeAlgorithm alg = new NtrulPrimeAlgorithm();
- * KeyPair kp = alg.keys(NtrulPrimeKeyGenSpec.ntrulpr761()).generateKeyPair(NtrulPrimeKeyGenSpec.ntrulpr761());
+ * KeyPair kp = alg.asymmetricKeyPairGenerator(NtrulPrimeKeyGenSpec.class)
+ *                 .generateKeyPair(NtrulPrimeKeyGenSpec.ntrulpr761());
  *
  * // Initiator (Alice) encapsulates to Bob's public key
- * MessageAgreementContext alice = alg
- *     .context(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, MessageAgreementContext.class,
- *              kp.getPublic(), VoidSpec.INSTANCE);
+ * MessageAgreementContext alice =
+ *     alg.createContext(KeyUsage.AGREEMENT, kp.getPublic(), VoidSpec.INSTANCE);
  *
  * // Responder (Bob) decapsulates with his private key
- * MessageAgreementContext bob = alg
- *     .context(AlgorithmFamily.AGREEMENT, KeyUsage.AGREEMENT, MessageAgreementContext.class,
- *              kp.getPrivate(), VoidSpec.INSTANCE);
+ * MessageAgreementContext bob =
+ *     alg.createContext(KeyUsage.AGREEMENT, kp.getPrivate(), VoidSpec.INSTANCE);
  * }</pre>
  *
  * @see KemContext
@@ -158,7 +160,7 @@ public final class NtrulPrimeAlgorithm extends AbstractCryptoAlgorithm {
                             .asResponder().build();
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(NtrulPrimeKeyGenSpec.class, new AsymmetricKeyBuilder<>() {
+        registerAsymmetricKeyPairGenerator(NtrulPrimeKeyGenSpec.class, new AsymmetricKeyPairGenerator<>() {
             @Override
             public KeyPair generateKeyPair(NtrulPrimeKeyGenSpec spec) throws GeneralSecurityException {
                 ensureProvider();
@@ -174,23 +176,9 @@ public final class NtrulPrimeAlgorithm extends AbstractCryptoAlgorithm {
                 kpg.initialize(params, new SecureRandom());
                 return kpg.generateKeyPair();
             }
-
-            @Override
-            public PublicKey importPublic(NtrulPrimeKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PrivateKey importPrivate(NtrulPrimeKeyGenSpec spec) {
-                throw new UnsupportedOperationException();
-            }
         }, NtrulPrimeKeyGenSpec::ntrulpr1277);
 
-        registerAsymmetricKeyBuilder(NtrulPrimePublicKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(NtrulPrimePublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPublicKeyImporter(NtrulPrimePublicKeySpec.class, new PublicKeyImporter<>() {
 
             @Override
             public PublicKey importPublic(NtrulPrimePublicKeySpec spec) throws GeneralSecurityException {
@@ -198,31 +186,22 @@ public final class NtrulPrimeAlgorithm extends AbstractCryptoAlgorithm {
                 KeyFactory kf = KeyFactory.getInstance("NTRULPRime", providerName());
                 return kf.generatePublic(new X509EncodedKeySpec(spec.x509()));
             }
+        });
 
-            @Override
-            public PrivateKey importPrivate(NtrulPrimePublicKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-        }, null);
-
-        registerAsymmetricKeyBuilder(NtrulPrimePrivateKeySpec.class, new AsymmetricKeyBuilder<>() {
-            @Override
-            public KeyPair generateKeyPair(NtrulPrimePrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PublicKey importPublic(NtrulPrimePrivateKeySpec spec) {
-                throw new UnsupportedOperationException();
-            }
+        registerPrivateKeyImporter(NtrulPrimePrivateKeySpec.class, new PrivateKeyImporter<>() {
 
             @Override
             public PrivateKey importPrivate(NtrulPrimePrivateKeySpec spec) throws GeneralSecurityException {
                 ensureProvider();
                 KeyFactory kf = KeyFactory.getInstance("NTRULPRime", providerName());
-                return kf.generatePrivate(new PKCS8EncodedKeySpec(spec.pkcs8()));
+                byte[] encoded = spec.pkcs8();
+                try {
+                    return kf.generatePrivate(new PKCS8EncodedKeySpec(encoded));
+                } finally {
+                    Arrays.fill(encoded, (byte) 0);
+                }
             }
-        }, null);
+        });
     }
 
     /**

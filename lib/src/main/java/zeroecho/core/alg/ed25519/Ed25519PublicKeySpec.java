@@ -65,7 +65,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * Ed25519PublicKeySpec spec = new Ed25519PublicKeySpec(x509Bytes);
  *
  * // Import into a PublicKey using ZeroEcho
- * PublicKey pub = CryptoAlgorithms.publicKey("Ed25519", spec);
+ * PublicKey pub = session.keyBuilders().asymmetric().importPublic("Ed25519", spec);
  *
  * // Serialize to PairSeq (e.g., for configuration or transport)
  * PairSeq seq = Ed25519PublicKeySpec.marshal(spec);

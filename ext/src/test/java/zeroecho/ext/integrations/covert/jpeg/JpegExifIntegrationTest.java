@@ -55,13 +55,13 @@ import org.junit.jupiter.api.io.TempDir;
 
 import conflux.Ctx;
 import conflux.CtxInterface;
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.alg.aes.AesKeyGenSpec;
 import zeroecho.core.alg.aes.AesSpec;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
+import zeroecho.sdk.ZeroEchoSession;
 
 class JpegExifIntegrationTest {
 
@@ -91,17 +91,17 @@ class JpegExifIntegrationTest {
 
         // AES encryption setup
         /*
-         * CryptoAlgorithm aes = CryptoAlgorithms.require("AES"); SecretKey key =
-         * aes.symmetricKeyBuilder(AesKeyGenSpec.class).generateSecret(AesKeyGenSpec.
-         * aes256()); AesSpec spec =
+         * SecretKey key = zeroEchoSession.keyBuilders().symmetric()
+         *     .generate("AES", AesKeyGenSpec.aes256()); AesSpec spec =
          * AesSpec.builder().mode(Mode.GCM).tagLenBits(128).header(null).build();
-         * EncryptionContext enc = CryptoAlgorithms.create("AES", KeyUsage.ENCRYPT, key,
+         * EncryptionContext enc = zeroEchoSession.createContext("AES", KeyUsage.ENCRYPT, key,
          * spec); CtxInterface session = Ctx.INSTANCE.getContext("aes-ctx-" +
          * System.nanoTime()); session.put(ConfluxKeys.aad("AES"), aad); ((ContextAware)
          * enc).setContext(session);
          */
-        SecretKey key = CryptoAlgorithms.require("AES").symmetricKeyBuilder(AesKeyGenSpec.class)
-                .generateSecret(AesKeyGenSpec.aes256());
+        ZeroEchoSession zeroEchoSession = new ZeroEchoSession();
+        SecretKey key = zeroEchoSession.keyBuilders().symmetric()
+                .generate("AES", AesKeyGenSpec.aes256());
         CtxInterface session = Ctx.INSTANCE.getContext("aes-ctx-" + System.nanoTime());
 
         byte[] encryptedBytes;
@@ -109,7 +109,7 @@ class JpegExifIntegrationTest {
                 // input
                 .add(PlainBytesBuilder.builder().bytes(inputBytes))
                 // encryption
-                .add(AesDataContentBuilder.builder().importKeyRaw(key.getEncoded())
+                .add(AesDataContentBuilder.builder(zeroEchoSession).importKeyRaw(key.getEncoded())
                         // using general AES/GCM/128 without specified header
                         .spec(AesSpec.gcm128(null))
                         // but let the builder add the default header for storing AAD and IV
@@ -152,7 +152,7 @@ class JpegExifIntegrationTest {
                 // input
                 .add(PlainBytesBuilder.builder().bytes(extractedEncryptedBytes))
                 // encryption
-                .add(AesDataContentBuilder.builder().importKeyRaw(key.getEncoded()).spec(AesSpec.gcm128(null))
+                .add(AesDataContentBuilder.builder(zeroEchoSession).importKeyRaw(key.getEncoded()).spec(AesSpec.gcm128(null))
                         // let us use the default header for AAD and IV
                         .withHeader().withAad(aad).context(session))
                 // and create the pipeline
@@ -164,7 +164,7 @@ class JpegExifIntegrationTest {
         /*
          * AesSpec spec =
          * AesSpec.builder().mode(Mode.GCM).tagLenBits(128).header(null).build();
-         * EncryptionContext dec1 = CryptoAlgorithms.create("AES", KeyUsage.DECRYPT,
+         * EncryptionContext dec1 = zeroEchoSession.createContext("AES", KeyUsage.DECRYPT,
          * key, spec); ((ContextAware) dec1).setContext(session); // same IV/AAD in ctx
          * byte[] pt1 = readAll(dec1.attach(new
          * ByteArrayInputStream(extractedEncryptedBytes))); dec1.close();

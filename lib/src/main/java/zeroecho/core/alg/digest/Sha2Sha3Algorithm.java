@@ -33,7 +33,6 @@
  ******************************************************************************/
 package zeroecho.core.alg.digest;
 
-import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 
@@ -43,6 +42,7 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.NullKey;
 import zeroecho.core.alg.AbstractCryptoAlgorithm;
 import zeroecho.core.context.DigestContext;
+import zeroecho.core.err.ProviderFailureException;
 
 /**
  * <h2>SHA-2, SHA-3, and SHAKE digest algorithms</h2>
@@ -77,7 +77,7 @@ import zeroecho.core.context.DigestContext;
  * CryptoAlgorithm algo = CryptoAlgorithms.require("DIGEST");
  *
  * // Create a digest context for SHA3-512
- * DigestContext ctx = CryptoAlgorithms.create(
+ * DigestContext ctx = session.createContext(
  *         "DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE, DigestSpec.sha3_512());
  *
  * // Stream data into the digest
@@ -117,7 +117,8 @@ public final class Sha2Sha3Algorithm extends AbstractCryptoAlgorithm {
                         MessageDigest md = MessageDigest.getInstance(s.algorithm().jca());
                         return new JcaDigestContext(this, md, s);
                     } catch (GeneralSecurityException e) {
-                        throw new IOException("Failed to init MessageDigest: " + s.algorithm().jca(), e);
+                        throw new ProviderFailureException(
+                                "Failed to initialize MessageDigest " + s.algorithm().jca(), e);
                     }
                 }, DigestSpec::sha256 // default for catalog/tests
         );

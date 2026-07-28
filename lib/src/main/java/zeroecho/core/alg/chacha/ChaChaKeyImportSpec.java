@@ -38,6 +38,9 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.security.auth.Destroyable;
 
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -66,7 +69,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h3>Usage</h3> <pre>{@code
  * // Import from raw key bytes
  * ChaChaKeyImportSpec spec = ChaChaKeyImportSpec.fromRaw(keyBytes);
- * SecretKey key = cryptoAlgorithm.importSecret(spec);
+ * SecretKey key = cryptoAlgorithm.symmetricKeyImporter(ChaChaKeyImportSpec.class).importSecret(spec);
  *
  * // Serialize to PairSeq
  * PairSeq seq = ChaChaKeyImportSpec.marshal(spec);
@@ -77,8 +80,10 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * @since 1.0
  */
-public final class ChaChaKeyImportSpec implements AlgorithmKeySpec {
+public final class ChaChaKeyImportSpec implements AlgorithmKeySpec, Destroyable {
     private final byte[] key;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private boolean destroyed;
 
     /**
      * Creates a new import spec with the given raw key.
@@ -112,7 +117,12 @@ public final class ChaChaKeyImportSpec implements AlgorithmKeySpec {
      * @return spec wrapping the decoded key
      */
     public static ChaChaKeyImportSpec fromHex(String hex) {
-        return fromRaw(HexFormat.of().parseHex(hex));
+        byte[] decoded = HexFormat.of().parseHex(hex);
+        try {
+            return fromRaw(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -122,7 +132,12 @@ public final class ChaChaKeyImportSpec implements AlgorithmKeySpec {
      * @return spec wrapping the decoded key
      */
     public static ChaChaKeyImportSpec fromBase64(String b64) {
-        return fromRaw(Base64.getDecoder().decode(b64));
+        byte[] decoded = Base64.getDecoder().decode(b64);
+        try {
+            return fromRaw(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
     }
 
     /**
@@ -131,7 +146,13 @@ public final class ChaChaKeyImportSpec implements AlgorithmKeySpec {
      * @return 32-byte key array
      */
     public byte[] key() {
-        return Arrays.copyOf(key, key.length);
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Arrays.copyOf(key, key.length);
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -141,7 +162,7 @@ public final class ChaChaKeyImportSpec implements AlgorithmKeySpec {
      * @return serialized key representation
      */
     public static PairSeq marshal(ChaChaKeyImportSpec spec) {
-        String k = Base64.getEncoder().withoutPadding().encodeToString(spec.key);
+        String k = spec.encodedKey();
         return PairSeq.of("type", "CHACHA-KEY", "k.b64", k);
     }
 
@@ -163,21 +184,81 @@ public final class ChaChaKeyImportSpec implements AlgorithmKeySpec {
      */
     public static ChaChaKeyImportSpec unmarshal(PairSeq p) {
         byte[] out = null;
-        PairSeq.Cursor c = p.cursor();
-        while (c.next()) {
-            String k = c.key();
-            String v = c.value();
-            switch (k) {
-                case "k.b64" -> out = Base64.getDecoder().decode(v);
-                case "k.hex" -> out = HexFormat.of().parseHex(v);
-                case "k.raw" -> out = v.getBytes(StandardCharsets.ISO_8859_1);
-                default -> {
+        try {
+            PairSeq.Cursor c = p.cursor();
+            while (c.next()) {
+                String k = c.key();
+                String v = c.value();
+                switch (k) {
+                    case "k.b64" -> {
+                        wipe(out);
+                        out = Base64.getDecoder().decode(v);
+                    }
+                    case "k.hex" -> {
+                        wipe(out);
+                        out = HexFormat.of().parseHex(v);
+                    }
+                    case "k.raw" -> {
+                        wipe(out);
+                        out = v.getBytes(StandardCharsets.ISO_8859_1);
+                    }
+                    default -> {
+                    }
                 }
             }
+            if (out == null) {
+                throw new IllegalArgumentException("ChaCha20 key missing (k.b64 / k.hex / k.raw)");
+            }
+            return new ChaChaKeyImportSpec(out);
+        } finally {
+            wipe(out);
         }
-        if (out == null) {
-            throw new IllegalArgumentException("ChaCha20 key missing (k.b64 / k.hex / k.raw)");
+    }
+
+    private static void wipe(byte[] current) {
+        if (current != null) {
+            Arrays.fill(current, (byte) 0);
         }
-        return new ChaChaKeyImportSpec(out);
+    }
+
+    private String encodedKey() {
+        lifecycleLock.lock();
+        try {
+            ensureActive();
+            return Base64.getEncoder().withoutPadding().encodeToString(key);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void destroy() {
+        lifecycleLock.lock();
+        try {
+            if (!destroyed) {
+                Arrays.fill(key, (byte) 0);
+                destroyed = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean isDestroyed() {
+        lifecycleLock.lock();
+        try {
+            return destroyed;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    private void ensureActive() {
+        if (destroyed) {
+            throw new IllegalStateException("ChaCha key import specification has been destroyed");
+        }
     }
 }

@@ -62,7 +62,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * // Import from X.509 DER
  * byte[] der = Files.readAllBytes(Path.of("elgamal-pub.der"));
  * ElgamalPublicKeySpec spec = new ElgamalPublicKeySpec(der);
- * PublicKey pub = algo.importPublic(spec);
+ * PublicKey pub = algo.publicKeyImporter(ElgamalPublicKeySpec.class).importPublic(spec);
  *
  * // Marshal for serialization
  * PairSeq ps = ElgamalPublicKeySpec.marshal(spec);

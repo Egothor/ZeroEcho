@@ -98,8 +98,9 @@ public final class SlhDsaAlgorithm extends AbstractCryptoAlgorithm {
                     }
                 }, () -> VoidSpec.INSTANCE);
 
-        registerAsymmetricKeyBuilder(SlhDsaKeyGenSpec.class, new SlhDsaKeyGenBuilder(), SlhDsaKeyGenSpec::defaultSpec);
-        registerAsymmetricKeyBuilder(SlhDsaPublicKeySpec.class, new SlhDsaPublicKeyBuilder(), null);
-        registerAsymmetricKeyBuilder(SlhDsaPrivateKeySpec.class, new SlhDsaPrivateKeyBuilder(), null);
+        registerAsymmetricKeyPairGenerator(SlhDsaKeyGenSpec.class, new SlhDsaKeyGenBuilder(),
+                SlhDsaKeyGenSpec::defaultSpec);
+        registerPublicKeyImporter(SlhDsaPublicKeySpec.class, new SlhDsaPublicKeyBuilder());
+        registerPrivateKeyImporter(SlhDsaPrivateKeySpec.class, new SlhDsaPrivateKeyBuilder());
     }
 }

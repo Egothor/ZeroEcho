@@ -32,6 +32,11 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 /**
- * 
+ * Consumer-facing ZeroEcho runtime and high-level integration APIs.
+ *
+ * <p>
+ * {@link zeroecho.sdk.ZeroEchoSession} provides immutable, explicitly scoped
+ * policy and audit configuration for direct cryptographic operations.
+ * </p>
  */
 package zeroecho.sdk;

@@ -42,13 +42,13 @@ import java.util.logging.Logger;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.alg.kyber.KyberKeyGenSpec;
 import zeroecho.core.alg.xdh.XdhSpec;
 import zeroecho.sdk.hybrid.kex.HybridKexContext;
 import zeroecho.sdk.hybrid.kex.HybridKexContexts;
 import zeroecho.sdk.hybrid.kex.HybridKexProfile;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
 /**
@@ -103,6 +103,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * </p>
  */
 class HybridKexDemoTest {
+    private final ZeroEchoSession session = new ZeroEchoSession();
 
     private static final Logger LOG = Logger.getLogger(HybridKexDemoTest.class.getName());
 
@@ -121,11 +122,12 @@ class HybridKexDemoTest {
         logBegin("CLASSIC_AGREEMENT + KEM_ADAPTER", "Xdh/X25519 + ML-KEM-768", "HKDF-SHA256", "OKM=32B");
 
         // Classic leg keys (Xdh + XdhSpec.X25519).
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // PQC leg: Bob is the KEM recipient (has ML-KEM keypair).
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // Hybrid profile: default HKDF label, 32-byte output suitable for symmetric
         // keys.
@@ -138,13 +140,13 @@ class HybridKexDemoTest {
             // Alice (initiator): classic uses Alice private + Bob classic public
             // (out-of-band).
             // ...PQC uses Bob PQC public and will produce a KEM ciphertext.
-            alice = HybridKexContexts.initiator(profile, "Xdh", aliceClassic.getPrivate(), bobClassic.getPublic(),
+            alice = HybridKexContexts.initiator(session, profile, "Xdh", aliceClassic.getPrivate(), bobClassic.getPublic(),
                     XdhSpec.X25519, "ML-KEM", bobPqc.getPublic(), null);
 
             // Bob (responder): classic uses Bob private + Alice classic public
             // (out-of-band).
             // ...PQC uses Bob PQC private and will consume Alice's ciphertext.
-            bob = HybridKexContexts.responder(profile, "Xdh", bobClassic.getPrivate(), aliceClassic.getPublic(),
+            bob = HybridKexContexts.responder(session, profile, "Xdh", bobClassic.getPrivate(), aliceClassic.getPublic(),
                     XdhSpec.X25519, "ML-KEM", bobPqc.getPrivate(), null);
 
             // Alice -> Bob: hybrid message carries PQC ciphertext; classic part is empty.
@@ -175,11 +177,12 @@ class HybridKexDemoTest {
         logBegin("PAIR_MESSAGE + KEM_ADAPTER", "Xdh/X25519 + ML-KEM-768", "HKDF-SHA256", "OKM=32B");
 
         // Classic leg keys (Xdh + XdhSpec.X25519).
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // PQC leg: Bob is the KEM recipient (has ML-KEM keypair).
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
 
@@ -190,14 +193,14 @@ class HybridKexDemoTest {
             // Alice classic leg is message-based (PAIR_MESSAGE): it will emit her public
             // key as SPKI bytes.
             // ...PQC leg (KEM initiator) will emit ciphertext.
-            alice = HybridKexContexts.initiatorPairMessage(profile, "Xdh", new KeyPairKey(aliceClassic), XdhSpec.X25519,
+            alice = HybridKexContexts.initiatorPairMessage(session, profile, "Xdh", new KeyPairKey(aliceClassic), XdhSpec.X25519,
                     "ML-KEM", bobPqc.getPublic(), null);
 
             // Bob classic leg is message-based (PAIR_MESSAGE): it will emit his public key
             // as SPKI bytes.
             // ...PQC leg (KEM responder) consumes ciphertext and typically does not emit a
             // PQC message.
-            bob = HybridKexContexts.responderPairMessage(profile, "Xdh", new KeyPairKey(bobClassic), XdhSpec.X25519,
+            bob = HybridKexContexts.responderPairMessage(session, profile, "Xdh", new KeyPairKey(bobClassic), XdhSpec.X25519,
                     "ML-KEM", bobPqc.getPrivate(), null);
 
             // Alice -> Bob: hybrid message carries classic SPKI + PQC ciphertext.
@@ -231,13 +234,13 @@ class HybridKexDemoTest {
         logBegin("Builder", "CLASSIC_AGREEMENT + KEM_ADAPTER", "Xdh/X25519 + ML-KEM-768", "HKDF-SHA256", "OKM=32B");
 
         // ...Generate classic leg keys (Xdh + XdhSpec.X25519).
-        java.security.KeyPair aliceClassic = zeroecho.core.CryptoAlgorithms.generateKeyPair("Xdh",
+        java.security.KeyPair aliceClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh",
                 zeroecho.core.alg.xdh.XdhSpec.X25519);
-        java.security.KeyPair bobClassic = zeroecho.core.CryptoAlgorithms.generateKeyPair("Xdh",
+        java.security.KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh",
                 zeroecho.core.alg.xdh.XdhSpec.X25519);
 
         // ...Generate PQC (recipient) keys (ML-KEM-768).
-        java.security.KeyPair bobPqc = zeroecho.core.CryptoAlgorithms.generateKeyPair("ML-KEM",
+        java.security.KeyPair bobPqc = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM",
                 zeroecho.core.alg.kyber.KyberKeyGenSpec.kyber768());
 
         // ...Create a profile for HKDF (output length 32 bytes).
@@ -252,7 +255,7 @@ class HybridKexDemoTest {
         zeroecho.sdk.hybrid.kex.HybridKexPolicy policy = new zeroecho.sdk.hybrid.kex.HybridKexPolicy(128, 192, 32);
 
         // ...Start the builder.
-        zeroecho.sdk.builders.HybridKexBuilder b = zeroecho.sdk.builders.HybridKexBuilder.builder()
+        zeroecho.sdk.builders.HybridKexBuilder b = zeroecho.sdk.builders.HybridKexBuilder.builder(session)
                 // ...Set HKDF profile (salt/info/outLen).
                 .profile(profile)
                 // ...Bind HKDF info to transcript (protocol context).
@@ -283,7 +286,7 @@ class HybridKexDemoTest {
 
         // ...Build responder-side context (Bob) with symmetric configuration (note: PQC
         // uses private key).
-        zeroecho.sdk.hybrid.kex.HybridKexContext bob = zeroecho.sdk.builders.HybridKexBuilder.builder()
+        zeroecho.sdk.hybrid.kex.HybridKexContext bob = zeroecho.sdk.builders.HybridKexBuilder.builder(session)
                 // ...Set the same HKDF profile to derive the same OKM.
                 .profile(profile)
                 // ...Bind the same transcript to ensure both sides derive the same OKM.
@@ -346,11 +349,12 @@ class HybridKexDemoTest {
         logBegin("Builder", "PAIR_MESSAGE + KEM_ADAPTER", "Xdh/X25519 + ML-KEM-768", "HKDF-SHA256", "OKM=32B");
 
         // ...Generate classic leg keys (Xdh + XdhSpec.X25519).
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // ...Generate PQC (recipient) keys (ML-KEM-768).
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric()
+                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // ...Create a profile for HKDF (output length 32 bytes).
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
@@ -365,7 +369,7 @@ class HybridKexDemoTest {
         zeroecho.sdk.hybrid.kex.HybridKexPolicy policy = new zeroecho.sdk.hybrid.kex.HybridKexPolicy(128, 192, 32);
 
         // ...Start the initiator builder.
-        zeroecho.sdk.builders.HybridKexBuilder initBuilder = zeroecho.sdk.builders.HybridKexBuilder.builder()
+        zeroecho.sdk.builders.HybridKexBuilder initBuilder = zeroecho.sdk.builders.HybridKexBuilder.builder(session)
                 // ...Set HKDF profile (salt/info/outLen).
                 .profile(profile)
                 // ...Bind HKDF info to transcript (protocol context).
@@ -395,7 +399,7 @@ class HybridKexDemoTest {
                 .buildInitiator();
 
         // ...Start the responder builder.
-        zeroecho.sdk.builders.HybridKexBuilder respBuilder = zeroecho.sdk.builders.HybridKexBuilder.builder()
+        zeroecho.sdk.builders.HybridKexBuilder respBuilder = zeroecho.sdk.builders.HybridKexBuilder.builder(session)
                 // ...Set the same HKDF profile to derive the same OKM.
                 .profile(profile)
                 // ...Bind the same transcript to ensure both sides derive the same OKM.

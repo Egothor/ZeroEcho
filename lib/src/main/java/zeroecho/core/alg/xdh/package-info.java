@@ -50,8 +50,8 @@
  * suitable for KDF input.</li>
  * <li>Provide key builders for generating key pairs and importing encoded
  * public/private keys.</li>
- * <li>Offer immutable key specifications that defensively copy encoded material
- * and support compact marshalling.</li>
+ * <li>Offer key specifications that defensively copy encoded material and
+ * support compact marshalling; private-key specifications are destroyable.</li>
  * </ul>
  *
  * <h2>Components</h2>

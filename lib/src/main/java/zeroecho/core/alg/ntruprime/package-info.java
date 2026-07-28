@@ -49,8 +49,9 @@
  * a message-style initiator/responder API.</li>
  * <li>Provide {@link zeroecho.core.context.KemContext} implementations bound to
  * a public key (encapsulation) or a private key (decapsulation).</li>
- * <li>Expose immutable specifications for key generation variants and
- * encoded-key carriers with compact marshalling helpers.</li>
+ * <li>Expose immutable key-generation specifications and defensively copying
+ * encoded-key carriers with compact marshalling helpers; private-key carriers
+ * are destroyable.</li>
  * <li>Validate provider availability and fail fast if the PQC provider is
  * absent.</li>
  * </ul>

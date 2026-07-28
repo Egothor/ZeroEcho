@@ -85,20 +85,21 @@
  * <li><code>static SpecType unmarshal(PairSeq pairs)</code></li>
  * </ul>
  * <p>
- * See {@link KeyringStore#marshalSpec(zeroecho.core.spec.AlgorithmKeySpec)} and
- * {@link KeyringStore#unmarshalSpec(String, zeroecho.core.marshal.PairSeq)} for
- * details.
+ * {@link KeyringStore} validates each persisted specification type against the
+ * selected algorithm's registered import operation before invoking these
+ * methods.
  * </p>
  *
  * <h2>Typical usage</h2> <pre>{@code
  * // Create and persist a keyring.
- * KeyringStore ks = new KeyringStore();
+ * zeroecho.sdk.ZeroEchoSession session = new zeroecho.sdk.ZeroEchoSession();
+ * KeyringStore ks = new KeyringStore(session);
  * ks.putPublic("site-signing", "Ed25519", myEd25519PublicSpec);
  * ks.putPrivate("site-signing", "Ed25519", myEd25519PrivateSpec);
  * ks.save(java.nio.file.Path.of("keyring.txt"));
  *
  * // Load and resolve a key later.
- * KeyringStore reloaded = KeyringStore.load(java.nio.file.Path.of("keyring.txt"));
+ * KeyringStore reloaded = KeyringStore.load(session, java.nio.file.Path.of("keyring.txt"));
  * java.security.PublicKey pub = reloaded.getPublic("site-signing");
  * }</pre>
  *

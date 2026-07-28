@@ -76,7 +76,7 @@ public class HybridDerivedTest {
         byte[] aad = "aad".getBytes(StandardCharsets.UTF_8);
         byte[] msg = fixedBytes(1024, (byte) 0x5A);
 
-        AesDataContentBuilder encAes = AesDataContentBuilder.builder().withHeader().modeGcm(128);
+        AesDataContentBuilder encAes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader().modeGcm(128);
 
         AesDataContentBuilder returnedEnc = HybridDerived.from(exporter).label("app/enc/aes").transcript(transcript)
                 .aad(aad).applyToAesGcm(encAes, 256, 12);
@@ -88,7 +88,7 @@ public class HybridDerivedTest {
         System.out.println("...ciphertextLen=" + ciphertext.length);
         System.out.println("...ciphertextPrefix=" + shortHex(ciphertext, 32));
 
-        AesDataContentBuilder decAes = AesDataContentBuilder.builder().withHeader().modeGcm(128);
+        AesDataContentBuilder decAes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader().modeGcm(128);
 
         HybridDerived.from(exporter).label("app/enc/aes").transcript(transcript).aad(aad).applyToAesGcm(decAes, 256,
                 12);
@@ -109,7 +109,7 @@ public class HybridDerivedTest {
         byte[] aad = "aad".getBytes(StandardCharsets.UTF_8);
         byte[] msg = fixedBytes(256, (byte) 0x1C);
 
-        AesDataContentBuilder encAes = AesDataContentBuilder.builder().withHeader().modeGcm(128);
+        AesDataContentBuilder encAes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader().modeGcm(128);
 
         HybridDerived.from(exporter).label("app/enc/aes").transcript(transcript).aad(aad).applyToAesGcm(encAes, 256,
                 12);
@@ -117,7 +117,7 @@ public class HybridDerivedTest {
         byte[] ciphertext = runEncrypt(encAes, msg);
         System.out.println("...ciphertextLen=" + ciphertext.length);
 
-        AesDataContentBuilder decAesWrong = AesDataContentBuilder.builder().withHeader().modeGcm(128);
+        AesDataContentBuilder decAesWrong = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader().modeGcm(128);
 
         // ...label mismatch -> wrong key/iv/aad -> decryption must fail
         HybridDerived.from(exporter).label("app/enc/aes_WRONG").transcript(transcript).aad(aad)
@@ -137,7 +137,7 @@ public class HybridDerivedTest {
         byte[] aad = "aad".getBytes(StandardCharsets.UTF_8);
         byte[] msg = fixedBytes(777, (byte) 0x33);
 
-        ChaChaDataContentBuilder encChaCha = ChaChaDataContentBuilder.builder().withHeader();
+        ChaChaDataContentBuilder encChaCha = ChaChaDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader();
 
         ChaChaDataContentBuilder returnedEnc = HybridDerived.from(exporter).label("app/enc/chacha")
                 .transcript(transcript).aad(aad).applyToChaChaAead(encChaCha, 256, 12);
@@ -149,7 +149,7 @@ public class HybridDerivedTest {
         System.out.println("...ciphertextLen=" + ciphertext.length);
         System.out.println("...ciphertextPrefix=" + shortHex(ciphertext, 32));
 
-        ChaChaDataContentBuilder decChaCha = ChaChaDataContentBuilder.builder().withHeader();
+        ChaChaDataContentBuilder decChaCha = ChaChaDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader();
 
         HybridDerived.from(exporter).label("app/enc/chacha").transcript(transcript).aad(aad)
                 .applyToChaChaAead(decChaCha, 256, 12);
@@ -174,7 +174,7 @@ public class HybridDerivedTest {
         // recommended bits
         // --------------------
 
-        HmacDataContentBuilder macBuilder = HmacDataContentBuilder.builder().sha256().emitHexTag();
+        HmacDataContentBuilder macBuilder = HmacDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).sha256().emitHexTag();
 
         int recommendedBits = macBuilder.recommendedKeyBits();
         System.out.println("...recommendedBits=" + recommendedBits);
@@ -184,7 +184,7 @@ public class HybridDerivedTest {
         String tagHex = runHmacHex(macBuilder, msg);
         System.out.println("...tagHexPrefix=" + shortText(tagHex, 64));
 
-        HmacDataContentBuilder verifyBuilder = HmacDataContentBuilder.builder().sha256().expectedTagHex(tagHex)
+        HmacDataContentBuilder verifyBuilder = HmacDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).sha256().expectedTagHex(tagHex)
                 .emitVerificationBoolean();
 
         HybridDerived.from(exporter).label("app/mac/hmac-default").transcript(transcript).applyToHmac(verifyBuilder);
@@ -197,7 +197,7 @@ public class HybridDerivedTest {
         // Override key size path: applyToHmac(hmac, keyBits)
         // --------------------
 
-        HmacDataContentBuilder macBuilderOv = HmacDataContentBuilder.builder().sha256().emitHexTag();
+        HmacDataContentBuilder macBuilderOv = HmacDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).sha256().emitHexTag();
 
         // ...override to 512-bit keying material (still valid for HMAC; explicit expert
         // choice)
@@ -207,7 +207,7 @@ public class HybridDerivedTest {
         String tagHexOv = runHmacHex(macBuilderOv, msg);
         System.out.println("...tagHexOvPrefix=" + shortText(tagHexOv, 64));
 
-        HmacDataContentBuilder verifyBuilderOv = HmacDataContentBuilder.builder().sha256().expectedTagHex(tagHexOv)
+        HmacDataContentBuilder verifyBuilderOv = HmacDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).sha256().expectedTagHex(tagHexOv)
                 .emitVerificationBoolean();
 
         HybridDerived.from(exporter).label("app/mac/hmac-override").transcript(transcript).applyToHmac(verifyBuilderOv,
@@ -221,7 +221,7 @@ public class HybridDerivedTest {
         // Negative: wrong expected tag -> must emit "false"
         // --------------------
 
-        HmacDataContentBuilder verifyBad = HmacDataContentBuilder.builder().sha256()
+        HmacDataContentBuilder verifyBad = HmacDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).sha256()
                 .expectedTagHex(tagHex.substring(0, Math.max(0, tagHex.length() - 2)) + "00").emitVerificationBoolean();
 
         HybridDerived.from(exporter).label("app/mac/hmac-default").transcript(transcript).applyToHmac(verifyBad);

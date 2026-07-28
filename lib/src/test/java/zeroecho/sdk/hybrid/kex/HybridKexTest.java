@@ -129,11 +129,11 @@ public class HybridKexTest {
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
 
         // Classic: X25519 key pairs (Xdh + XdhSpec.X25519)
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // PQC: ML-KEM key pair (Kyber variant)
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         HybridKexContext alice = null;
         HybridKexContext bob = null;
@@ -141,12 +141,12 @@ public class HybridKexTest {
         try {
             // Initiator: classic uses Alice private + Bob classic public; PQC uses Bob PQC
             // public
-            alice = HybridKexContexts.initiator(profile, "Xdh", aliceClassic.getPrivate(), bobClassic.getPublic(),
+            alice = HybridKexContexts.initiator(new zeroecho.sdk.ZeroEchoSession(), profile, "Xdh", aliceClassic.getPrivate(), bobClassic.getPublic(),
                     XdhSpec.X25519, "ML-KEM", bobPqc.getPublic(), null);
 
             // Responder: classic uses Bob private + Alice classic public; PQC uses Bob PQC
             // private
-            bob = HybridKexContexts.responder(profile, "Xdh", bobClassic.getPrivate(), aliceClassic.getPublic(),
+            bob = HybridKexContexts.responder(new zeroecho.sdk.ZeroEchoSession(), profile, "Xdh", bobClassic.getPrivate(), aliceClassic.getPublic(),
                     XdhSpec.X25519, "ML-KEM", bobPqc.getPrivate(), null);
 
             // Alice produces message (contains PQC ciphertext; classic part is empty here)
@@ -190,11 +190,11 @@ public class HybridKexTest {
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
 
         // Classic: X25519 key pairs (Xdh + XdhSpec.X25519)
-        KeyPair aliceClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
-        KeyPair bobClassic = CryptoAlgorithms.generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair aliceClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
+        KeyPair bobClassic = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // PQC: ML-KEM key pair (recipient/responder)
-        KeyPair bobPqc = CryptoAlgorithms.generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         HybridKexContext alice = null;
         HybridKexContext bob = null;
@@ -204,10 +204,10 @@ public class HybridKexTest {
             // KeyPairKey + ContextSpec).
             // PQC leg is KEM-style: initiator uses recipient public key; responder uses
             // recipient private key.
-            alice = HybridKexContexts.initiatorPairMessage(profile, "Xdh", new KeyPairKey(aliceClassic), XdhSpec.X25519,
+            alice = HybridKexContexts.initiatorPairMessage(new zeroecho.sdk.ZeroEchoSession(), profile, "Xdh", new KeyPairKey(aliceClassic), XdhSpec.X25519,
                     "ML-KEM", bobPqc.getPublic(), null);
 
-            bob = HybridKexContexts.responderPairMessage(profile, "Xdh", new KeyPairKey(bobClassic), XdhSpec.X25519,
+            bob = HybridKexContexts.responderPairMessage(new zeroecho.sdk.ZeroEchoSession(), profile, "Xdh", new KeyPairKey(bobClassic), XdhSpec.X25519,
                     "ML-KEM", bobPqc.getPrivate(), null);
 
             // Step 1: Alice -> Bob (classic SPKI + PQC ciphertext)

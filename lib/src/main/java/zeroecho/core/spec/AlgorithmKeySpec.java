@@ -33,7 +33,6 @@
  ******************************************************************************/
 package zeroecho.core.spec;
 
-import zeroecho.core.spi.SymmetricKeyBuilder;
 
 /**
  * Marker interface for algorithm-specific key specifications.
@@ -46,7 +45,7 @@ import zeroecho.core.spi.SymmetricKeyBuilder;
  * <h2>Design</h2>
  * <ul>
  * <li>Separates algorithm parameters from key builders such as
- * {@link SymmetricKeyBuilder}.</li>
+ * operation-specific key generator or importer.</li>
  * <li>Provides a type-safe way to pass algorithm requirements around instead of
  * raw integers or opaque byte arrays.</li>
  * <li>Allows higher layers to work generically with {@code AlgorithmKeySpec}

@@ -67,7 +67,7 @@
  * <h2>Typical usage</h2> <pre>{@code
  * try {
  *     zeroecho.core.context.EncryptionContext ctx =
- *         algo.create(zeroecho.core.KeyUsage.ENCRYPT, key, spec);
+ *         algo.createContext(zeroecho.core.KeyUsage.ENCRYPT, key, spec);
  *     // use ctx...
  * } catch (zeroecho.core.err.UnsupportedRoleException
  *        | zeroecho.core.err.UnsupportedSpecException e) {

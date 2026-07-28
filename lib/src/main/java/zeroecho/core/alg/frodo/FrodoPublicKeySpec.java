@@ -36,7 +36,6 @@ package zeroecho.core.alg.frodo;
 import java.util.Base64;
 import java.util.Objects;
 
-import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.marshal.PairSeq;
 import zeroecho.core.marshal.PairSeq.Cursor;
 import zeroecho.core.spec.AlgorithmKeySpec;
@@ -59,9 +58,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <h2>Usage</h2>
  * <ul>
  * <li>Instances of this spec can be passed to
- * {@link CryptoAlgorithm#importPublic(AlgorithmKeySpec)
- * importPublic(FrodoPublicKeySpec)} to construct a usable
- * {@link java.security.PublicKey}.</li>
+ * {@link zeroecho.sdk.KeyBuilders.Asymmetric#importPublic(String, AlgorithmKeySpec)}
+ * to construct a usable {@link java.security.PublicKey}.</li>
  * <li>The {@link #marshal(FrodoPublicKeySpec)} and {@link #unmarshal(PairSeq)}
  * methods allow safe serialization into and recovery from structured textual
  * form.</li>
@@ -71,7 +69,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * // Import an existing Frodo public key
  * byte[] encoded = Files.readAllBytes(Paths.get("frodo.pub"));
  * FrodoPublicKeySpec spec = new FrodoPublicKeySpec(encoded);
- * PublicKey pub = frodo.importPublic(spec);
+ * PublicKey pub = session.keyBuilders().asymmetric().importPublic("FrodoKEM", spec);
  * }</pre>
  *
  * <h2>Thread-safety</h2>

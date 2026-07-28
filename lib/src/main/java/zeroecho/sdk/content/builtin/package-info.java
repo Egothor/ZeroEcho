@@ -50,9 +50,8 @@
  * demand.</li>
  * <li>{@link PlainFile} - reads content from a {@link java.net.URL} such as
  * {@code file:} or {@code https:}.</li>
- * <li>{@link SecretPassword} - specialization for secret phrases; extends
- * {@link PlainString} and publishes the password into a process context for
- * downstream consumers when constructed.</li>
+ * <li>{@link SecretPassword} - destroyable secret content backed by an owned
+ * character array. Its inherited string representation is always redacted.</li>
  * </ul>
  *
  * <h2>Behavior</h2>
@@ -82,8 +81,14 @@
  *     in.transferTo(out);
  * }
  *
- * // Use a password source (also published to a shared context by the constructor).
- * zeroecho.sdk.content.api.DataContent secret = new zeroecho.sdk.content.builtin.SecretPassword(24);
+ * // Use a password source and destroy it after consumption.
+ * zeroecho.sdk.content.builtin.SecretPassword secret =
+ *     new zeroecho.sdk.content.builtin.SecretPassword(24);
+ * try (java.io.InputStream in = secret.getStream()) {
+ *     in.transferTo(out);
+ * } finally {
+ *     secret.destroy();
+ * }
  * }</pre>
  *
  * @since 1.0

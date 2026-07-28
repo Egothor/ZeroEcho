@@ -116,17 +116,17 @@ public class ChaChaLargeDataTest {
 
         byte[] msg = randomBytes(SIZE);
         CryptoAlgorithm chacha = CryptoAlgorithms.require("CHACHA20");
-        SecretKey key = chacha.symmetricKeyBuilder(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
+        SecretKey key = chacha.symmetricKeyGenerator(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
 
         CtxInterface session = Ctx.INSTANCE.getContext("chacha-ctx-" + System.nanoTime());
         ChaChaSpec spec = ChaChaSpec.builder().initialCounter(1).header(null).build();
 
-        EncryptionContext enc = CryptoAlgorithms.create("CHACHA20", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(session);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
 
-        EncryptionContext dec = CryptoAlgorithms.create("CHACHA20", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec).setContext(session);
         byte[] pt = readAll(dec.attach(new ByteArrayInputStream(ct)));
         dec.close();
@@ -143,17 +143,17 @@ public class ChaChaLargeDataTest {
 
         byte[] msg = randomBytes(SIZE);
         CryptoAlgorithm chacha = CryptoAlgorithms.require("CHACHA20");
-        SecretKey key = chacha.symmetricKeyBuilder(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
+        SecretKey key = chacha.symmetricKeyGenerator(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
 
         CtxInterface session = Ctx.INSTANCE.getContext("chacha-hdr-" + System.nanoTime());
         ChaChaSpec spec = ChaChaSpec.builder().initialCounter(1).header(new ChaChaHeaderCodec()).build();
 
-        EncryptionContext enc = CryptoAlgorithms.create("CHACHA20", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(session);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
 
-        EncryptionContext dec = CryptoAlgorithms.create("CHACHA20", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec).setContext(session);
         byte[] pt = readAll(dec.attach(new ByteArrayInputStream(ct)));
         dec.close();
@@ -174,14 +174,14 @@ public class ChaChaLargeDataTest {
 
         byte[] msg = randomBytes(SIZE);
         CryptoAlgorithm chacha = CryptoAlgorithms.require("CHACHA20");
-        SecretKey key = chacha.symmetricKeyBuilder(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
+        SecretKey key = chacha.symmetricKeyGenerator(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
 
         // Encrypt with explicit counter=7 (in ctx), headerless (ctx-only).
         CtxInterface encCtx = Ctx.INSTANCE.getContext("chacha-ctr-enc-" + System.nanoTime());
         encCtx.put(ConfluxKeys.tagBits("CHACHA20"), 7);
         ChaChaSpec spec = ChaChaSpec.builder().initialCounter(1).header(null).build();
 
-        EncryptionContext enc = CryptoAlgorithms.create("CHACHA20", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(encCtx);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
@@ -194,7 +194,7 @@ public class ChaChaLargeDataTest {
         decCtxOk.put(ConfluxKeys.iv("CHACHA20"), nonce);
         decCtxOk.put(ConfluxKeys.tagBits("CHACHA20"), 7);
 
-        EncryptionContext decOk = CryptoAlgorithms.create("CHACHA20", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext decOk = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) decOk).setContext(decCtxOk);
         byte[] ptOk = readAll(decOk.attach(new ByteArrayInputStream(ct)));
         decOk.close();
@@ -205,7 +205,7 @@ public class ChaChaLargeDataTest {
         decCtxBad.put(ConfluxKeys.iv("CHACHA20"), nonce);
         decCtxBad.put(ConfluxKeys.tagBits("CHACHA20"), 8);
 
-        EncryptionContext decBad = CryptoAlgorithms.create("CHACHA20", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext decBad = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) decBad).setContext(decCtxBad);
         byte[] ptBad = readAll(decBad.attach(new ByteArrayInputStream(ct)));
         decBad.close();
@@ -228,19 +228,19 @@ public class ChaChaLargeDataTest {
         byte[] aad = "associated-data-ctx-only".getBytes();
 
         CryptoAlgorithm aead = CryptoAlgorithms.require("CHACHA20-POLY1305");
-        SecretKey key = aead.symmetricKeyBuilder(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
+        SecretKey key = aead.symmetricKeyGenerator(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
 
         CtxInterface session = Ctx.INSTANCE.getContext("chacha-aead-ctx-" + System.nanoTime());
         session.put(ConfluxKeys.aad("CHACHA20-POLY1305"), aad);
 
         ChaCha20Poly1305Spec spec = ChaCha20Poly1305Spec.builder().header(null).build();
 
-        EncryptionContext enc = CryptoAlgorithms.create("CHACHA20-POLY1305", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20-POLY1305", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(session);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
 
-        EncryptionContext dec = CryptoAlgorithms.create("CHACHA20-POLY1305", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20-POLY1305", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec).setContext(session);
         byte[] pt = readAll(dec.attach(new ByteArrayInputStream(ct)));
         dec.close();
@@ -259,19 +259,19 @@ public class ChaChaLargeDataTest {
         byte[] aad = "associated-data-header".getBytes();
 
         CryptoAlgorithm aead = CryptoAlgorithms.require("CHACHA20-POLY1305");
-        SecretKey key = aead.symmetricKeyBuilder(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
+        SecretKey key = aead.symmetricKeyGenerator(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
 
         CtxInterface session = Ctx.INSTANCE.getContext("chacha-aead-hdr-" + System.nanoTime());
         session.put(ConfluxKeys.aad("CHACHA20-POLY1305"), aad);
 
         ChaCha20Poly1305Spec spec = ChaCha20Poly1305Spec.builder().header(new ChaCha20Poly1305HeaderCodec()).build();
 
-        EncryptionContext enc = CryptoAlgorithms.create("CHACHA20-POLY1305", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20-POLY1305", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(session);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
 
-        EncryptionContext dec = CryptoAlgorithms.create("CHACHA20-POLY1305", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20-POLY1305", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec).setContext(session);
         byte[] pt = readAll(dec.attach(new ByteArrayInputStream(ct)));
         dec.close();
@@ -294,7 +294,7 @@ public class ChaChaLargeDataTest {
         byte[] aadDec = "aad-dec-different".getBytes();
 
         CryptoAlgorithm aead = CryptoAlgorithms.require("CHACHA20-POLY1305");
-        SecretKey key = aead.symmetricKeyBuilder(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
+        SecretKey key = aead.symmetricKeyGenerator(ChaChaKeyGenSpec.class).generateSecret(ChaChaKeyGenSpec.chacha256());
 
         // Encrypt with AAD = aadEnc (ctx-only, no header)
         CtxInterface encCtx = Ctx.INSTANCE.getContext("chacha-aead-enc-" + System.nanoTime());
@@ -302,7 +302,7 @@ public class ChaChaLargeDataTest {
 
         ChaCha20Poly1305Spec spec = ChaCha20Poly1305Spec.builder().header(null).build();
 
-        EncryptionContext enc = CryptoAlgorithms.create("CHACHA20-POLY1305", KeyUsage.ENCRYPT, key, spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20-POLY1305", KeyUsage.ENCRYPT, key, spec);
         ((ContextAware) enc).setContext(encCtx);
         byte[] ct = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
@@ -314,7 +314,7 @@ public class ChaChaLargeDataTest {
         byte[] nonce = encCtx.get(ConfluxKeys.iv("CHACHA20-POLY1305"));
         decCtx.put(ConfluxKeys.iv("CHACHA20-POLY1305"), nonce);
 
-        EncryptionContext dec = CryptoAlgorithms.create("CHACHA20-POLY1305", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("CHACHA20-POLY1305", KeyUsage.DECRYPT, key, spec);
         ((ContextAware) dec).setContext(decCtx);
 
         assertThrows(IOException.class, () -> {
