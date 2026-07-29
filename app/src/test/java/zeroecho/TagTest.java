@@ -127,8 +127,11 @@ public class TagTest {
         Path ring = tmp.resolve("ring-ed25519.txt");
         KeyAliases ed = generateIntoKeyStore(ring, "Ed25519", "ed");
         // sanity
-        KeyringStore ks = KeyringStore.load(new zeroecho.sdk.ZeroEchoSession(), ring);
-        assertTrue(ks.contains(ed.pub) && ks.contains(ed.prv), "missing expected aliases");
+        try (zeroecho.core.storage.KeyringPassword password =
+                TestKeyringUnlocks.provider().acquire();
+                KeyringStore ks = KeyringStore.open(ring, password)) {
+            assertTrue(ks.contains(ed.pub) && ks.contains(ed.prv), "missing expected aliases");
+        }
 
         byte[] pt = randomBytes(4096);
         Path plain = tmp.resolve("plain.bin");
@@ -139,12 +142,12 @@ public class TagTest {
         // produce
         String[] produce = { "--type", "signature", "--mode", "produce", "--alg", "Ed25519", "--ks", ring.toString(),
                 "--priv", ed.prv, "--in", plain.toString(), "--out", signed.toString() };
-        assertEquals(0, Tag.main(produce, new Options()), "produce rc");
+        assertEquals(0, Tag.main(produce, new Options(), TestKeyringUnlocks.provider()), "produce rc");
 
         // verify (match)
         String[] verify = { "--type", "signature", "--mode", "verify", "--alg", "Ed25519", "--ks", ring.toString(),
                 "--pub", ed.pub, "--in", signed.toString(), "--out", recovered.toString() };
-        assertEquals(0, Tag.main(verify, new Options()), "verify rc");
+        assertEquals(0, Tag.main(verify, new Options(), TestKeyringUnlocks.provider()), "verify rc");
 
         assertArrayEquals(pt, Files.readAllBytes(recovered), "round-trip mismatch");
 
@@ -168,7 +171,7 @@ public class TagTest {
         assertEquals(0,
                 Tag.main(new String[] { "--type", "signature", "--mode", "produce", "--alg", "Ed25519", "--ks",
                         ring.toString(), "--priv", ed.prv, "--in", plain.toString(), "--out", signed.toString() },
-                        new Options()));
+                        new Options(), TestKeyringUnlocks.provider()));
 
         // corrupt last byte -> break signature
         flipLastByte(signed);
@@ -178,7 +181,7 @@ public class TagTest {
                 Tag.main(
                         new String[] { "--type", "signature", "--mode", "verify", "--alg", "Ed25519", "--ks",
                                 ring.toString(), "--pub", ed.pub, "--in", signed.toString(), "--out", out.toString() },
-                        new Options()));
+                        new Options(), TestKeyringUnlocks.provider()));
 
         assertTrue(Files.notExists(out, LinkOption.NOFOLLOW_LINKS));
 
@@ -198,11 +201,11 @@ public class TagTest {
 
         // produce
         assertEquals(0, Tag.main(new String[] { "--type", "digest", "--mode", "produce", "--alg", "SHA-256", "--in",
-                plain.toString(), "--out", tagged.toString() }, new Options()));
+                plain.toString(), "--out", tagged.toString() }, new Options(), TestKeyringUnlocks.provider()));
 
         // verify (match)
         assertEquals(0, Tag.main(new String[] { "--type", "digest", "--mode", "verify", "--alg", "SHA-256", "--in",
-                tagged.toString(), "--out", recovered.toString() }, new Options()));
+                tagged.toString(), "--out", recovered.toString() }, new Options(), TestKeyringUnlocks.provider()));
 
         assertArrayEquals(pt, Files.readAllBytes(recovered), "digest round-trip mismatch");
 
@@ -221,14 +224,14 @@ public class TagTest {
 
         // produce
         assertEquals(0, Tag.main(new String[] { "--type", "digest", "--mode", "produce", "--alg", "SHA-256", "--in",
-                plain.toString(), "--out", tagged.toString() }, new Options()));
+                plain.toString(), "--out", tagged.toString() }, new Options(), TestKeyringUnlocks.provider()));
 
         // corrupt last byte -> break digest
         flipLastByte(tagged);
 
         // verify (mismatch): expect throw + default marker ("digest invalid")
         assertEquals(1, Tag.main(new String[] { "--type", "digest", "--mode", "verify", "--alg", "SHA-256", "--in",
-                tagged.toString(), "--out", out.toString() }, new Options()));
+                tagged.toString(), "--out", out.toString() }, new Options(), TestKeyringUnlocks.provider()));
 
         assertTrue(Files.notExists(out, LinkOption.NOFOLLOW_LINKS));
 
@@ -252,7 +255,7 @@ public class TagTest {
 
         assertEquals(0, Tag.main(
                 new String[] { "--type", "digest", "--mode", "produce", "--alg", "SHA-256", "--in", "-", "--out", "-" },
-                new Options()));
+                new Options(), TestKeyringUnlocks.provider()));
 
         // save produced bytes
         Path tagged = tmp.resolve("stdio-tagged.bin");
@@ -264,7 +267,7 @@ public class TagTest {
         System.setOut(new PrintStream(verifiedSink, true, StandardCharsets.UTF_8));
 
         assertEquals(0, Tag.main(new String[] { "--type", "digest", "--mode", "verify", "--alg", "SHA-256", "--in",
-                tagged.toString(), "--out", "-" }, new Options()));
+                tagged.toString(), "--out", "-" }, new Options(), TestKeyringUnlocks.provider()));
 
         assertArrayEquals(pt, verifiedSink.toByteArray(), "stdio round-trip mismatch");
 
@@ -279,7 +282,7 @@ public class TagTest {
     private static KeyAliases generateIntoKeyStore(Path ring, String algId, String baseAlias) throws Exception {
         String[] genArgs = { "--keystore", ring.toString(), "--generate", "--alg", algId, "--alias", baseAlias,
                 "--kind", "asym" };
-        int rc = KeyStoreManagement.main(genArgs, new Options());
+        int rc = KeyStoreManagement.main(genArgs, new Options(), TestKeyringUnlocks.provider());
         if (rc != 0) {
             throw new GeneralSecurityException("KeyStoreManagement failed with rc=" + rc + " for " + algId);
         }

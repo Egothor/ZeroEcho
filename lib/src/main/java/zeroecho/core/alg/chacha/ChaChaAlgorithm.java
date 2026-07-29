@@ -33,7 +33,7 @@
  ******************************************************************************/
 package zeroecho.core.alg.chacha;
 
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 /**
  * <h2>ChaCha20 (stream) algorithm</h2>
  *

@@ -43,6 +43,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
@@ -61,6 +62,7 @@ import zeroecho.sdk.Pbkdf2Limits;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 
+@Tag("sample")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CombinedDeliveryTest {
     private static final Logger LOG = Logger.getLogger(CombinedDeliveryTest.class.getName());

@@ -42,7 +42,7 @@ import java.util.Objects;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.context.KemContext.KemResult;
 import zeroecho.core.io.Util;
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 /**
  * Recipient implementation that derives a key-encryption key (KEK) via a

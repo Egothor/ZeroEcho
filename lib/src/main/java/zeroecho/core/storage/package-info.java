@@ -1,25 +1,25 @@
 /*******************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright notice, this
  *    list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- * 
+ *
  * 3. All advertising materials mentioning features or use of this software must
  *    display the following acknowledgement:
  *    This product includes software developed by the Egothor project.
- * 
+ *
  * 4. Neither the name of the copyright holder nor the names of its contributors
  *    may be used to endorse or promote products derived from this software without
  *    specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -32,93 +32,50 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 /**
- * Human-editable key storage persisted in a compact UTF-8 text format.
+ * Encrypted local software-keyring storage.
  *
  * <p>
- * This package provides a lightweight keyring that applications can read and
- * write without specialized tooling. The store keeps entries in insertion
- * order, allows simple alias-based lookups, and materializes keys through the
- * core catalog.
+ * {@link zeroecho.core.storage.KeyringStore} binds an unlocked store to one
+ * filesystem path and holds exclusive process-lifetime ownership until close.
+ * It wraps one random store master key with PBKDF2-HMAC-SHA-256 and
+ * AES-256-GCM, encrypts every entry independently, and authenticates the
+ * ordered entry manifest. Mutations use owner-only temporary files and atomic
+ * replacement.
  * </p>
  *
- * <h2>Key elements</h2>
- * <ul>
- * <li>{@link KeyringStore} - in-memory map of aliases to immutable records with
- * helpers to add, load, save, import, export, and resolve keys.</li>
- * <li>{@link KeyringStore.Record} - value object describing one entry: alias,
- * algorithm id, {@link KeyringStore.Record.Kind kind}, spec class, and a
- * {@link zeroecho.core.marshal.PairSeq} payload.</li>
- * <li><i>Resolution helpers</i> - {@link KeyringStore#getPublic(String)},
- * {@link KeyringStore#getPrivate(String)}, and
- * {@link KeyringStore#getSecret(String)} plus
- * {@link KeyringStore.PublicWithId}, {@link KeyringStore.PrivateWithId},
- * {@link KeyringStore.SecretWithId} to return the algorithm id together with
- * the key.</li>
- * </ul>
- *
- * <h2>File format</h2>
  * <p>
- * Files begin with a magic header followed by one or more <code>@entry</code>
- * blocks. Keys that belong to the spec payload are prefixed with
- * <code>s.</code> to avoid collisions with top-level fields; in-memory they are
- * stored without the prefix. Lines beginning with <code>#</code> are comments.
- * A blank line terminates an entry.
+ * Nonce-reservation authentication is cryptographically separated from AES
+ * entry and manifest encryption. A dedicated 256-bit MAC key is derived with
+ * HKDF-HMAC-SHA-256 from the store master key, canonical binary store UUID, and
+ * fixed nonce-reservation domain. It is never persisted, remains owned by the
+ * open store, and is destroyed on close. Only the current sidecar version is
+ * accepted.
  * </p>
  *
- * <pre>{@code
- * # KeyringStore v1
- * &#64;entry
- * alias=my-rsa
- * algorithm=RSA
- * kind=PUBLIC_KEY
- * spec=zeroecho.core.alg.rsa.RsaPublicKeySpec
- * s.x509B64=MIIBIjANBgkqh...
- * }</pre>
- *
- * <h2>Spec marshaling contract</h2>
  * <p>
- * Each spec class named in the <code>spec</code> field must expose two public
- * static methods discovered by reflection:
+ * Unlock passwords are destroyable, transfer ownership to the receiver, and
+ * are destroyed immediately after the master key is unwrapped. The unlocked
+ * store retains the master key, its domain-separated nonce-reservation MAC
+ * key, and encrypted entry records; closing the store clears this material.
+ * The store requires a POSIX filesystem on which owner-only permissions can be
+ * verified. A directory-force failure after atomic replacement makes the open
+ * instance unusable until close and authenticated reopen resolves which
+ * complete image is current. Non-exportable keys must remain behind an
+ * external provider reference.
  * </p>
- * <ul>
- * <li><code>static PairSeq marshal(SpecType spec)</code></li>
- * <li><code>static SpecType unmarshal(PairSeq pairs)</code></li>
- * </ul>
+ *
  * <p>
- * {@link KeyringStore} validates each persisted specification type against the
- * selected algorithm's registered import operation before invoking these
- * methods.
+ * Only the current binary format is accepted. Earlier plaintext development
+ * formats are rejected without migration. Persisted input contains no Java
+ * class or provider names and cannot trigger runtime class loading. Import
+ * specifications are selected from a closed mapping of canonical ZeroEcho
+ * algorithm, key kind, standard encoding, and (only for HMAC) one of the
+ * explicit SHA-256, SHA-384, or SHA-512 variants. Standard encodings are
+ * reconstructed through the current runtime's canonical importer; the
+ * originating JCA provider identity is not persisted or guaranteed. Keys that
+ * are provider-bound, non-exportable, or not canonically reconstructable must
+ * remain behind an external provider reference.
  * </p>
- *
- * <h2>Typical usage</h2> <pre>{@code
- * // Create and persist a keyring.
- * zeroecho.sdk.ZeroEchoSession session = new zeroecho.sdk.ZeroEchoSession();
- * KeyringStore ks = new KeyringStore(session);
- * ks.putPublic("site-signing", "Ed25519", myEd25519PublicSpec);
- * ks.putPrivate("site-signing", "Ed25519", myEd25519PrivateSpec);
- * ks.save(java.nio.file.Path.of("keyring.txt"));
- *
- * // Load and resolve a key later.
- * KeyringStore reloaded = KeyringStore.load(session, java.nio.file.Path.of("keyring.txt"));
- * java.security.PublicKey pub = reloaded.getPublic("site-signing");
- * }</pre>
- *
- * <h2>Notes and recommendations</h2>
- * <ul>
- * <li>Persistence is plaintext. Treat files as sensitive, protect with OS
- * permissions, and avoid committing to VCS.</li>
- * <li>Resolution delegates to {@link zeroecho.core.CryptoAlgorithms}; the
- * algorithm id must be one that the catalog recognizes.</li>
- * <li>Records are immutable;
- * {@link KeyringStore#putPublic(String, String, zeroecho.core.spec.AlgorithmKeySpec)},
- * {@link KeyringStore#putPrivate(String, String, zeroecho.core.spec.AlgorithmKeySpec)},
- * and
- * {@link KeyringStore#putSecret(String, String, zeroecho.core.spec.AlgorithmKeySpec)}
- * replace entries by alias.</li>
- * <li>Lookups validate kind; for example,
- * {@link KeyringStore#getPublic(String)} fails if the alias stores a private
- * key.</li>
- * </ul>
  *
  * @since 1.0
  */

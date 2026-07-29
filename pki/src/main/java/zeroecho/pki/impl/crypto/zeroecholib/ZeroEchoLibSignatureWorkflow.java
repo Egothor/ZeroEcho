@@ -91,6 +91,8 @@ import zeroecho.core.io.TailStrippingInputStream;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.storage.KeyringStore;
+import zeroecho.core.storage.KeyringPassword;
+import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -275,6 +277,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
     private final String keyRefPrefix;
     private final boolean requireComponentSuffix;
     private final ZeroEchoSession session;
+    private final KeyringUnlockProvider keyringUnlockProvider;
 
     private final ConcurrentMap<PkiId, OperationStatus> statuses;
     private final ConcurrentMap<PkiId, String> fingerprints;
@@ -288,19 +291,33 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
     private final ReentrantLock timeWatermarkLock;
     private final AtomicReference<String> boundNamespace;
     private final ReentrantLock domainLock;
+    private final ReentrantLock keyringLifecycleLock;
     private final BiConsumer<String, byte[]> cleanupObserver;
 
     private volatile KeyringStore keyringOrNull; // NOPMD
+    private boolean closed;
 
     /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
-            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix) {
+            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
+            KeyringUnlockProvider keyringUnlockProvider) {
         this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
+                keyringUnlockProvider,
                 (category, cleared) -> {
                 });
     }
 
     /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
+            KeyringUnlockProvider keyringUnlockProvider, KeyringStore keyring) {
+        this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix,
+                requireComponentSuffix, keyringUnlockProvider);
+        this.keyringOrNull = java.util.Objects.requireNonNull(
+                keyring, "keyring must not be null");
+    }
+
+    /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
+            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
+            KeyringUnlockProvider keyringUnlockProvider,
             BiConsumer<String, byte[]> cleanupObserver) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("id must not be blank");
@@ -323,6 +340,9 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         if (cleanupObserver == null) {
             throw new IllegalArgumentException("cleanupObserver must not be null");
         }
+        if (keyringUnlockProvider == null) {
+            throw new IllegalArgumentException("keyringUnlockProvider must not be null");
+        }
         this.id = id;
         this.keyringPath = keyringPath;
         this.operationRoot = operationRoot.toAbsolutePath().normalize();
@@ -331,6 +351,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         this.keyRefPrefix = keyRefPrefix;
         this.requireComponentSuffix = requireComponentSuffix;
         this.cleanupObserver = cleanupObserver;
+        this.keyringUnlockProvider = keyringUnlockProvider;
         this.session = new ZeroEchoSession();
 
         this.statuses = new ConcurrentHashMap<>();
@@ -340,6 +361,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         this.sinks = new ConcurrentHashMap<>();
         this.operationLocks = new ConcurrentHashMap<>();
         this.domainLock = new ReentrantLock();
+        this.keyringLifecycleLock = new ReentrantLock();
         this.timeWatermarkLock = new ReentrantLock();
         try {
             Files.createDirectories(this.operationRoot);
@@ -451,6 +473,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
      * @throws IllegalArgumentException if {@code request} is {@code null}
      */
     @Override
+    @SuppressWarnings("PMD.CloseResource")
     public PkiId submitSign(SignRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
@@ -837,13 +860,28 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
      * </p>
      */
     @Override
+    @SuppressWarnings("PMD.CloseResource")
     public void close() {
+        KeyringStore keyring;
+        keyringLifecycleLock.lock();
+        try {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            keyring = this.keyringOrNull;
+            this.keyringOrNull = null;
+        } finally {
+            keyringLifecycleLock.unlock();
+        }
         this.statuses.clear();
         this.fingerprints.clear();
         this.fences.clear();
         this.requests.clear();
         this.sinks.clear();
-        this.keyringOrNull = null;
+        if (keyring != null) {
+            keyring.close();
+        }
         try {
             this.ownershipLock.release();
             this.ownershipChannel.close();
@@ -852,14 +890,37 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         }
     }
 
-    private KeyringStore requireKeyringOrThrow() throws IOException {
-        KeyringStore ks = this.keyringOrNull;
-        if (ks != null) {
-            return ks;
+    @SuppressWarnings("PMD.CloseResource")
+    private KeyringStore requireKeyringOrThrow() throws IOException, GeneralSecurityException {
+        keyringLifecycleLock.lock();
+        try {
+            if (closed) {
+                throw new IOException("Signature workflow is closed");
+            }
+            KeyringStore ks = this.keyringOrNull;
+            if (ks != null) {
+                return ks;
+            }
+            try (KeyringPassword password = acquireKeyringPassword()) {
+                KeyringStore loaded = KeyringStore.open(this.keyringPath, password);
+                if (closed) {
+                    loaded.close();
+                    throw new IOException("Signature workflow is closed");
+                }
+                this.keyringOrNull = loaded;
+                return loaded;
+            }
+        } finally {
+            keyringLifecycleLock.unlock();
         }
-        KeyringStore loaded = KeyringStore.load(this.session, this.keyringPath);
-        this.keyringOrNull = loaded;
-        return loaded;
+    }
+
+    private KeyringPassword acquireKeyringPassword() throws IOException {
+        KeyringPassword password = this.keyringUnlockProvider.acquire();
+        if (password == null) {
+            throw new IOException("Keyring unlock provider returned no password");
+        }
+        return password;
     }
 
     private static void enforceAlgorithmMatchOrThrow(String requested, String stored) throws InvalidRequestException {
@@ -900,6 +961,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         return new KeyRefParts(publicAlias, publicAlias);
     }
 
+    @SuppressWarnings("PMD.CloseResource")
     private PublicKey resolvePublicKeyOrThrow(VerifyRequest request)
             throws InvalidRequestException, IOException, GeneralSecurityException {
 

@@ -47,7 +47,7 @@ import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spec.VoidSpec;
 import zeroecho.core.spi.SymmetricKeyGenerator;
 import zeroecho.core.spi.SymmetricKeyImporter;
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 /**
  * AES algorithm registration and capability wiring.

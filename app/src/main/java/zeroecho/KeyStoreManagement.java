@@ -33,19 +33,13 @@
  ******************************************************************************/
 package zeroecho;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
-import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -65,21 +59,19 @@ import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyOperation;
 import zeroecho.core.KeyOperationInfo;
 import zeroecho.core.spec.AlgorithmKeySpec;
+import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringStore;
 import zeroecho.sdk.ZeroEchoSession;
 
 /**
- * Command-line utility for managing key material in a text-based keyring store.
+ * Command-line utility for managing an encrypted software keyring.
  *
  * <h2>Overview</h2> The {@code KeyStoreManagement} subcommand provides
  * lifecycle operations on key material stored in
  * {@link zeroecho.core.storage.KeyringStore}. It supports listing algorithms
- * and aliases, generating key pairs or symmetric keys, exporting/importing
- * versioned text snippets, and overwriting existing entries.
- * 
- * The keystore is a plain-text file with aliases mapped to keys. Import/export
- * uses line-oriented snippets with format-version headers, suitable for
- * exchanging public keys or migrating key material between systems.
+ * and aliases and generating key pairs or symmetric keys. Passwords are
+ * supplied through a destroyable unlock provider and are never accepted as
+ * command-line text.
  *
  * <h2>Usage</h2> Invoked as: <pre>{@code
  * ZeroEcho -K [options]
@@ -92,9 +84,6 @@ import zeroecho.sdk.ZeroEchoSession;
  * <li>{@code --list-aliases} - list aliases present in the keystore.</li>
  * <li>{@code --generate} - generate a new key pair or secret and store under
  * the given alias.</li>
- * <li>{@code --export} - export one or more aliases as a versioned
- * snippet.</li>
- * <li>{@code --import} - import a versioned snippet into the keystore.</li>
  * </ul>
  *
  * <h2>General options</h2>
@@ -116,38 +105,18 @@ import zeroecho.sdk.ZeroEchoSession;
  * .prv).</li>
  * </ul>
  *
- * <h2>Export options</h2>
- * <ul>
- * <li>{@code --aliases a,b,c} - comma-separated list of aliases to export
- * (default: all).</li>
- * <li>{@code --out <file|-} - output file path (default: "-" for stdout).</li>
- * </ul>
- *
- * <h2>Import options</h2>
- * <ul>
- * <li>{@code --in <file|-} - input file path (default: "-" for stdin).</li>
- * <li>{@code --overwrite} - allow replacing existing aliases when
- * importing.</li>
- * </ul>
- *
  * <h2>Examples</h2> <pre>{@code
  * # List available algorithms
  * ZeroEcho -K --list-algorithms
  *
  * # Generate a new RSA key pair and store as alice.pub / alice.prv
- * ZeroEcho -K --generate --alg RSA --alias alice --keystore keys.txt
+ * ZeroEcho -K --generate --alg RSA --alias alice --keystore keys.zekr
  *
  * # Generate a new AES secret key and store as "backup-key"
- * ZeroEcho -K --generate --alg AES --alias backup-key --kind sym --keystore keys.txt
+ * ZeroEcho -K --generate --alg AES --alias backup-key --kind sym --keystore keys.zekr
  *
  * # List aliases in the keystore
- * ZeroEcho -K --list-aliases --keystore keys.txt
- *
- * # Export selected aliases to a file
- * ZeroEcho -K --export --aliases alice.pub,alice.prv --out alice-keys.txt --keystore keys.txt
- *
- * # Import aliases from stdin, overwriting if necessary
- * ZeroEcho -K --import --in - --overwrite --keystore keys.txt < alice-keys.txt
+ * ZeroEcho -K --list-aliases --keystore keys.zekr
  * }</pre>
  *
  * <h2>Exit codes</h2>
@@ -159,9 +128,7 @@ import zeroecho.sdk.ZeroEchoSession;
  *
  * @since 1.0
  */
-public final class KeyStoreManagement { // NOPMD
-
-    private final static String STD_IN_OUT = "-";
+public final class KeyStoreManagement {
 
     // ---------------------------------------------------------------------
     // Option constants (centralized for maintainability)
@@ -197,21 +164,6 @@ public final class KeyStoreManagement { // NOPMD
     private static final Option OVERWRITE_OPTION = Option.builder().longOpt("overwrite")
             .desc("Overwrite existing aliases on conflict").get();
 
-    private static final Option EXPORT_OPTION = Option.builder().longOpt("export")
-            .desc("Export selected aliases as a versioned text snippet").get();
-
-    private static final Option IMPORT_OPTION = Option.builder().longOpt("import")
-            .desc("Import a versioned text snippet into the keyring").get();
-
-    private static final Option ALIASES_OPTION = Option.builder().longOpt("aliases").hasArg().argName("a,b,c")
-            .desc("Comma-separated aliases to export; empty means all").get();
-
-    private static final Option OUTFILE_OPTION = Option.builder().longOpt("out").hasArg().argName("file|-")
-            .desc("Output file for export (default '-' for stdout)").get();
-
-    private static final Option INFILE_OPTION = Option.builder().longOpt("in").hasArg().argName("file|-")
-            .desc("Input file for import (default '-' for stdin)").get();
-
     /** Prevents instantiation. */
     private KeyStoreManagement() {
     }
@@ -232,7 +184,25 @@ public final class KeyStoreManagement { // NOPMD
      * @throws ParseException if the parser fails
      * @throws IOException    if I/O fails
      */
-    public static int main(final String[] args, final Options dispatcherOptions) throws ParseException, IOException {
+    public static int main(final String[] args, final Options dispatcherOptions)
+            throws ParseException, IOException, GeneralSecurityException {
+        return main(args, dispatcherOptions, KeyringUnlocks.console());
+    }
+
+    /**
+     * Executes the command with an explicit unlock source.
+     *
+     * @param args arguments passed by the application dispatcher
+     * @param dispatcherOptions dispatcher options
+     * @param unlockProvider explicit destroyable-password provider
+     * @return process exit code
+     * @throws ParseException if parsing fails
+     * @throws IOException if keyring I/O fails
+     * @throws GeneralSecurityException if cryptographic processing fails
+     */
+    public static int main(final String[] args, final Options dispatcherOptions,
+            KeyringUnlockProvider unlockProvider)
+            throws ParseException, IOException, GeneralSecurityException {
         ZeroEchoSession session = new ZeroEchoSession();
         defineOptions(dispatcherOptions);
         CommandLineParser parser = new DefaultParser();
@@ -248,26 +218,17 @@ public final class KeyStoreManagement { // NOPMD
         }
 
         Path keyringPath = Path.of(cmd.getOptionValue(KEYSTORE_OPTION.getLongOpt()));
-        KeyringStore store = Files.exists(keyringPath) ? KeyringStore.load(session, keyringPath)
-                : new KeyringStore(session);
-
-        if (cmd.hasOption(LIST_ALIASES_OPTION.getLongOpt())) {
-            listAliases(store);
-            return 0;
-        }
-        if (cmd.hasOption(GENERATE_OPTION.getLongOpt())) {
-            doGenerate(session, store, cmd);
-            store.save(keyringPath);
-            return 0;
-        }
-        if (cmd.hasOption(EXPORT_OPTION.getLongOpt())) {
-            doExportSnippet(store, cmd);
-            return 0;
-        }
-        if (cmd.hasOption(IMPORT_OPTION.getLongOpt())) {
-            doImportSnippet(store, cmd);
-            store.save(keyringPath);
-            return 0;
+        try (KeyringStore store = Files.exists(keyringPath)
+                ? KeyringUnlocks.open(keyringPath, unlockProvider)
+                : KeyringUnlocks.create(keyringPath, unlockProvider)) {
+            if (cmd.hasOption(LIST_ALIASES_OPTION.getLongOpt())) {
+                listAliases(store);
+                return 0;
+            }
+            if (cmd.hasOption(GENERATE_OPTION.getLongOpt())) {
+                doGenerate(session, store, cmd);
+                return 0;
+            }
         }
 
         throw new IllegalArgumentException("No operation selected");
@@ -287,8 +248,6 @@ public final class KeyStoreManagement { // NOPMD
         actions.addOption(LIST_ALGORITHMS_OPTION);
         actions.addOption(LIST_ALIASES_OPTION);
         actions.addOption(GENERATE_OPTION);
-        actions.addOption(EXPORT_OPTION);
-        actions.addOption(IMPORT_OPTION);
         options.addOptionGroup(actions);
 
         options.addOption(ALG_OPTION);
@@ -298,9 +257,6 @@ public final class KeyStoreManagement { // NOPMD
         options.addOption(PRV_SUFFIX_OPTION);
         options.addOption(OVERWRITE_OPTION);
 
-        options.addOption(ALIASES_OPTION);
-        options.addOption(OUTFILE_OPTION);
-        options.addOption(INFILE_OPTION);
     }
 
     // ---------------------------------------------------------------------
@@ -355,7 +311,7 @@ public final class KeyStoreManagement { // NOPMD
      * @param cmd   parsed command line
      */
     public static void doGenerate(final ZeroEchoSession session, final KeyringStore store,
-            final CommandLine cmd) {
+            final CommandLine cmd) throws IOException, GeneralSecurityException {
         String algId = required(cmd, ALG_OPTION, "--alg is required for --generate");
         String aliasBase = required(cmd, ALIAS_OPTION, "--alias is required for --generate");
         String kind = cmd.getOptionValue(KIND_OPTION.getLongOpt());
@@ -393,30 +349,21 @@ public final class KeyStoreManagement { // NOPMD
     }
 
     private static void generateAsymmetric(ZeroEchoSession session, KeyringStore store, CryptoAlgorithm algorithm,
-            String algorithmId, String aliasBase, String publicSuffix, String privateSuffix, boolean overwrite) {
+            String algorithmId, String aliasBase, String publicSuffix, String privateSuffix, boolean overwrite)
+            throws IOException, GeneralSecurityException {
         GeneratedKeyPair generated = firstGeneratedKeyPair(session, algorithm, algorithmId);
-        Class<?> publicImport = findImportSpecClass(algorithm, KeyOperation.ASYMMETRIC_PUBLIC_IMPORT, true);
-        Class<?> privateImport = findImportSpecClass(algorithm, KeyOperation.ASYMMETRIC_PRIVATE_IMPORT, false);
-        if (publicImport == null && privateImport == null) {
-            throw new IllegalStateException("No import spec class found for " + algorithmId + " (asymmetric)");
-        }
 
         KeyPair pair = generated.pair();
-        byte[] publicEncoding = pair.getPublic() == null ? null : pair.getPublic().getEncoded();
-        byte[] privateEncoding = pair.getPrivate() == null ? null : pair.getPrivate().getEncoded();
-        AlgorithmKeySpec publicSpec = publicImport == null ? null
-                : makeImportSpec(publicImport, publicEncoding, algorithmId, generated.info().defaultSpec());
-        AlgorithmKeySpec privateSpec = privateImport == null ? null
-                : makeImportSpec(privateImport, privateEncoding, algorithmId, generated.info().defaultSpec());
-        requireImportSpec(publicImport, publicSpec, "public", algorithmId);
-        requireImportSpec(privateImport, privateSpec, "private", algorithmId);
+        if (pair.getPublic() == null || pair.getPrivate() == null) {
+            throw new IllegalStateException("Generated key pair is incomplete");
+        }
 
         String publicAlias = aliasBase + publicSuffix;
         String privateAlias = aliasBase + privateSuffix;
         ensureWritable(store, publicAlias, overwrite);
         ensureWritable(store, privateAlias, overwrite);
-        store.putPublic(publicAlias, algorithmId, publicSpec);
-        store.putPrivate(privateAlias, algorithmId, privateSpec);
+        store.putPublic(publicAlias, algorithmId, pair.getPublic());
+        store.putPrivate(privateAlias, algorithmId, pair.getPrivate());
 
         PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8); // NOPMD
         out.printf("Generated %s -> %s, %s%n", algorithmId, publicAlias, privateAlias);
@@ -443,39 +390,12 @@ public final class KeyStoreManagement { // NOPMD
         throw new IllegalStateException("No asymmetric builder with default spec worked for " + algorithmId);
     }
 
-    private static Class<?> findImportSpecClass(CryptoAlgorithm algorithm, KeyOperation operation,
-            boolean publicImport) {
-        for (KeyOperationInfo info : algorithm.keyOperations()) {
-            boolean matchingName = publicImport ? looksLikeImportSpecForPublic(info.specType())
-                    : looksLikeImportSpecForPrivate(info.specType());
-            if (info.operation() == operation && matchingName) {
-                return info.specType();
-            }
-        }
-        return null;
-    }
-
-    private static void requireImportSpec(Class<?> specType, AlgorithmKeySpec spec, String kind, String algorithmId) {
-        if (specType != null && spec == null) {
-            throw new IllegalStateException("Cannot construct " + kind + " import spec for " + algorithmId);
-        }
-    }
-
     private static void generateSymmetric(ZeroEchoSession session, KeyringStore store, CryptoAlgorithm algorithm,
-            String algorithmId, String alias, boolean overwrite) {
+            String algorithmId, String alias, boolean overwrite)
+            throws IOException, GeneralSecurityException {
         GeneratedSecret generated = firstGeneratedSecret(session, algorithm, algorithmId);
-        Class<?> importType = findSymmetricImportSpecClass(algorithm);
-        if (importType == null) {
-            throw new IllegalStateException("No symmetric import spec class for " + algorithmId);
-        }
-
-        byte[] encoding = generated.key().getEncoded();
-        AlgorithmKeySpec spec = makeImportSpec(importType, encoding, algorithmId, generated.info().defaultSpec());
-        if (spec == null) {
-            throw new IllegalStateException("Cannot construct symmetric import spec for " + algorithmId);
-        }
         ensureWritable(store, alias, overwrite);
-        store.putSecret(alias, algorithmId, spec);
+        store.putSecret(alias, algorithmId, generated.key());
 
         PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8); // NOPMD
         out.printf("Generated %s -> %s%n", algorithmId, alias);
@@ -515,182 +435,11 @@ public final class KeyStoreManagement { // NOPMD
         NONE
     }
 
-    /**
-     * Exports a versioned, line-oriented snippet to stdout or a file.
-     *
-     * @param store source keyring store
-     * @param cmd   parsed command line
-     * @throws IOException if writing fails
-     */
-    public static void doExportSnippet(final KeyringStore store, final CommandLine cmd) throws IOException {
-        List<String> aliases = parseCsv(cmd.getOptionValue(ALIASES_OPTION.getLongOpt(), ""));
-        if (aliases.isEmpty()) {
-            aliases = store.aliases();
-        }
-
-        String text = store.exportText(aliases);
-        String outFile = cmd.getOptionValue(OUTFILE_OPTION.getLongOpt(), STD_IN_OUT);
-
-        if (STD_IN_OUT.equals(outFile)) {
-            try (PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8)) {
-                out.print(text);
-                if (!text.endsWith("\n")) {
-                    out.println();
-                }
-            }
-        } else {
-            Files.writeString(Path.of(outFile), text, StandardCharsets.UTF_8);
-            System.out.printf("Wrote snippet: %s%n", outFile);
-        }
-    }
-
-    /**
-     * Imports a versioned, line-oriented snippet from stdin or a file.
-     *
-     * @param store destination keyring store
-     * @param cmd   parsed command line
-     * @throws IOException if reading fails or the snippet is invalid
-     */
-    public static void doImportSnippet(final KeyringStore store, final CommandLine cmd) throws IOException {
-        boolean overwrite = cmd.hasOption(OVERWRITE_OPTION.getLongOpt());
-        String inFile = cmd.getOptionValue(INFILE_OPTION.getLongOpt(), STD_IN_OUT);
-
-        String text;
-        if (STD_IN_OUT.equals(inFile)) {
-            StringBuilder sb = new StringBuilder(1024);
-            try (BufferedReader br = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
-                String line = br.readLine();
-                while (line != null) {
-                    sb.append(line).append('\n');
-                    line = br.readLine();
-                }
-            }
-            text = sb.toString();
-        } else {
-            text = Files.readString(Path.of(inFile), StandardCharsets.UTF_8);
-        }
-
-        store.importText(text, overwrite);
-        PrintWriter out = new PrintWriter(System.out, true, StandardCharsets.UTF_8); // NOPMD
-        out.println("Imported snippet.");
-    }
-
-    // ---------------------------------------------------------------------
-    // Helpers - EXACTLY the dynamic-test strategy
-    // ---------------------------------------------------------------------
-
-    private static boolean looksLikeImportSpecForPublic(Class<?> specType) {
-        String n = specType.getSimpleName();
-        return n.contains("Public") || n.endsWith("PublicKeySpec");
-    }
-
-    private static boolean looksLikeImportSpecForPrivate(Class<?> specType) {
-        String n = specType.getSimpleName();
-        return n.contains("Private") || n.endsWith("PrivateKeySpec");
-    }
-
-    private static Class<?> findSymmetricImportSpecClass(CryptoAlgorithm alg) {
-        for (KeyOperationInfo x : alg.keyOperations()) {
-            if (x.operation() == KeyOperation.SYMMETRIC_IMPORT) {
-                return x.specType();
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Constructs an AlgorithmKeySpec from encoded bytes using conventional
-     * factories/ctors. Mirrors the makeImportSpec approach used in the dynamic
-     * test.
-     *
-     * @param specType    target spec class
-     * @param material    encoded bytes (SPKI, PKCS#8, or RAW)
-     * @param algId       algorithm id (used for variant name heuristics)
-     * @param defaultSpec the default spec used by the builder (for optional variant
-     *                    hints)
-     * @return constructed AlgorithmKeySpec or null if none matched
-     */
-    private static AlgorithmKeySpec makeImportSpec(Class<?> specType, byte[] material, String algId,
-            Object defaultSpec) {
-        if (material == null) {
-            return null;
-        }
-        try {
-            Method m = specType.getMethod("fromRaw", byte[].class);
-            Object spec = m.invoke(null, material);
-            return (AlgorithmKeySpec) spec;
-        } catch (NoSuchMethodException ignored) {
-        } catch (Throwable t) { // NOPMD
-        }
-        try {
-            Method m = specType.getMethod("fromRaw", String.class, byte[].class);
-            String name = deriveVariantNameForImport(algId, defaultSpec);
-            Object spec = m.invoke(null, name, material);
-            return (AlgorithmKeySpec) spec;
-        } catch (NoSuchMethodException ignored) {
-        } catch (Throwable t) { // NOPMD
-        }
-        try {
-            Method m = specType.getMethod("of", byte[].class);
-            Object spec = m.invoke(null, material);
-            return (AlgorithmKeySpec) spec;
-        } catch (NoSuchMethodException ignored) {
-        } catch (Throwable t) { // NOPMD
-        }
-        try {
-            Constructor<?> c = specType.getConstructor(byte[].class);
-            Object spec = c.newInstance(material);
-            return (AlgorithmKeySpec) spec;
-        } catch (NoSuchMethodException ignored) {
-        } catch (Throwable t) { // NOPMD
-        }
-        try {
-            Constructor<?> c = specType.getConstructor(String.class);
-            String b64 = Base64.getEncoder().encodeToString(material);
-            Object spec = c.newInstance(b64);
-            return (AlgorithmKeySpec) spec;
-        } catch (NoSuchMethodException ignored) {
-        } catch (Throwable t) { // NOPMD
-        }
-        return null;
-    }
-
-    private static String deriveVariantNameForImport(String algId, Object defaultSpec) {
-        if (defaultSpec != null) {
-            try {
-                Method m = defaultSpec.getClass().getMethod("macName");
-                Object v = m.invoke(defaultSpec);
-                if (v instanceof String) {
-                    return (String) v;
-                }
-            } catch (Throwable ignored) { // NOPMD
-            }
-        }
-        if ("HMAC".equalsIgnoreCase(algId)) { // NOPMD
-            return "HmacSHA256";
-        }
-        return algId;
-    }
-
     private static String required(CommandLine cmd, Option opt, String message) {
         if (!cmd.hasOption(opt.getLongOpt())) {
             throw new IllegalArgumentException(message);
         }
         return cmd.getOptionValue(opt.getLongOpt());
-    }
-
-    private static List<String> parseCsv(String csv) {
-        List<String> list = new ArrayList<>();
-        if (csv == null || csv.isBlank()) {
-            return list;
-        }
-        String[] parts = csv.split("\\s*,\\s*");
-        for (String part : parts) {
-            if (!part.isBlank()) {
-                list.add(part);
-            }
-        }
-        return list;
     }
 
     /**

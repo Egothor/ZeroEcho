@@ -71,11 +71,14 @@ public final class ZeroEchoLibSignatureWorkflowVerifyEncodedEcdsaTest {
         System.out.println("verifyFromSpkiDerEcdsaSucceeds");
 
         Path keyring = tempDir.resolve("keyring.txt");
-        KeyringStore ks = new KeyringStore(new zeroecho.sdk.ZeroEchoSession());
-        ks.save(keyring);
+        try (zeroecho.core.storage.KeyringPassword password =
+                TestKeyringUnlocks.provider().acquire();
+                KeyringStore ignored = KeyringStore.create(keyring, password)) {
+            // Empty keyring is sufficient for encoded-key verification.
+        }
 
         try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("wf", keyring,
-                tempDir.resolve("operations"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true)) {
+                tempDir.resolve("operations"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true, TestKeyringUnlocks.provider())) {
             KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
             kpg.initialize(new ECGenParameterSpec("secp256r1"));
             KeyPair kp = kpg.generateKeyPair();

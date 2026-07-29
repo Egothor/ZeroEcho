@@ -56,7 +56,7 @@ import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.err.ProviderFailureException;
 import zeroecho.core.io.CipherTransformInputStreamBuilder;
 import zeroecho.core.spi.ContextAware;
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 /**
  * Streaming AES cipher context for GCM / CBC / CTR.

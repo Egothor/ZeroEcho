@@ -165,9 +165,12 @@ public class KemTest {
                 KeyAliases aliases = generateKemIntoKeyStore(ring, kemId, "alias-" + shortId(kemId));
 
                 // Sanity: re-open to ensure the file is valid
-                KeyringStore ks = KeyringStore.load(new zeroecho.sdk.ZeroEchoSession(), ring);
-                if (!(ks.contains(aliases.pub) && ks.contains(aliases.prv))) {
-                    throw new IllegalStateException("Keyring does not contain expected aliases for " + kemId);
+                try (zeroecho.core.storage.KeyringPassword password =
+                        TestKeyringUnlocks.provider().acquire();
+                        KeyringStore ks = KeyringStore.open(ring, password)) {
+                    if (!(ks.contains(aliases.pub) && ks.contains(aliases.prv))) {
+                        throw new IllegalStateException("Keyring does not contain expected aliases for " + kemId);
+                    }
                 }
 
                 // AES-GCM round-trip
@@ -181,7 +184,7 @@ public class KemTest {
                     int e = Kem.main(new String[] { "--encrypt", plain.toString(), "--output", enc.toString(),
                             "--keyring", ring.toString(), "--pub", aliases.pub, "--kem", kemId, "--aes", "--aes-cipher",
                             "gcm", "--aes-tag-bits", Integer.toString(gcmTagBits), "--header", "--aad", aadAes },
-                            new Options());
+                            new Options(), TestKeyringUnlocks.provider());
                     if (e != 0) {
                         throw new IllegalStateException("AES encrypt rc=" + e);
                     }
@@ -189,7 +192,7 @@ public class KemTest {
                     int d = Kem.main(new String[] { "--decrypt", enc.toString(), "--output", dec.toString(),
                             "--keyring", ring.toString(), "--priv", aliases.prv, "--kem", kemId, "--aes",
                             "--aes-cipher", "gcm", "--aes-tag-bits", Integer.toString(gcmTagBits), "--header", "--aad",
-                            aadAes }, new Options());
+                            aadAes }, new Options(), TestKeyringUnlocks.provider());
                     if (d != 0) {
                         throw new IllegalStateException("AES decrypt rc=" + d);
                     }
@@ -208,14 +211,14 @@ public class KemTest {
                     System.out.println("...[" + kemId + "] ChaCha encrypt");
                     int e = Kem.main(new String[] { "--encrypt", plain.toString(), "--output", enc.toString(),
                             "--keyring", ring.toString(), "--pub", aliases.pub, "--kem", kemId, "--chacha",
-                            "--aad", aadChaCha, "--header" }, new Options());
+                            "--aad", aadChaCha, "--header" }, new Options(), TestKeyringUnlocks.provider());
                     if (e != 0) {
                         throw new IllegalStateException("ChaCha encrypt rc=" + e);
                     }
                     System.out.println("...[" + kemId + "] ChaCha decrypt");
                     int d = Kem.main(new String[] { "--decrypt", enc.toString(), "--output", dec.toString(),
                             "--keyring", ring.toString(), "--priv", aliases.prv, "--kem", kemId, "--chacha",
-                            "--aad", aadChaCha, "--header" }, new Options());
+                            "--aad", aadChaCha, "--header" }, new Options(), TestKeyringUnlocks.provider());
                     if (d != 0) {
                         throw new IllegalStateException("ChaCha decrypt rc=" + d);
                     }
@@ -256,7 +259,7 @@ public class KemTest {
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         System.setOut(new PrintStream(sink, true, StandardCharsets.UTF_8));
         try {
-            int rc = Kem.main(new String[] { "--list-kems" }, new Options());
+            int rc = Kem.main(new String[] { "--list-kems" }, new Options(), TestKeyringUnlocks.provider());
             if (rc != 0) {
                 throw new IllegalStateException("--list-kems rc=" + rc);
             }
@@ -284,7 +287,7 @@ public class KemTest {
         String[] genArgs = { "--keystore", ring.toString(), "--generate", "--alg", kemId, "--alias", baseAlias,
                 "--kind", "asym" };
         System.out.println("...KeyStoreManagement generate: " + Arrays.toString(genArgs));
-        int rc = KeyStoreManagement.main(genArgs, new Options());
+        int rc = KeyStoreManagement.main(genArgs, new Options(), TestKeyringUnlocks.provider());
         if (rc != 0) {
             throw new GeneralSecurityException("KeyStoreManagement failed with rc=" + rc + " for " + kemId);
         }

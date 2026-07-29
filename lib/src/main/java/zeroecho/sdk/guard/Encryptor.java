@@ -52,7 +52,7 @@ import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.alg.ChaChaDataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.EncryptedContent;
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 /**
  * Encrypting stage that emits the recipient table followed by the symmetric

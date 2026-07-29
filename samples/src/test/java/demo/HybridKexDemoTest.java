@@ -40,6 +40,7 @@ import java.util.Arrays;
 import java.util.logging.Logger;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.core.alg.common.agreement.KeyPairKey;
@@ -102,6 +103,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * explicit close blocks keeps the handshake lifecycle visible to the reader.
  * </p>
  */
+@Tag("sample")
 class HybridKexDemoTest {
     private final ZeroEchoSession session = new ZeroEchoSession();
 

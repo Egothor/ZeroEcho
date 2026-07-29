@@ -56,6 +56,7 @@ import zeroecho.core.alg.digest.DigestSpec;
 import zeroecho.core.err.VerificationException;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.spec.VoidSpec;
+import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringStore;
 import zeroecho.core.tag.TagEngineBuilder;
 import zeroecho.sdk.builders.TagTrailerDataContentBuilder;
@@ -157,7 +158,25 @@ public final class Tag { // NOPMD
      * @throws GeneralSecurityException if a cryptographic error occurs during
      *                                  signature or digest processing
      */
-    public static int main(String[] args, Options root) throws ParseException, IOException, GeneralSecurityException {
+    public static int main(String[] args, Options root)
+            throws ParseException, IOException, GeneralSecurityException {
+        return main(args, root, KeyringUnlocks.console());
+    }
+
+    /**
+     * Executes the command with an explicit keyring unlock source.
+     *
+     * @param args command arguments
+     * @param root root options
+     * @param unlockProvider keyring password provider
+     * @return process exit code
+     * @throws ParseException if parsing fails
+     * @throws IOException if I/O fails
+     * @throws GeneralSecurityException if cryptographic processing fails
+     */
+    public static int main(String[] args, Options root,
+            KeyringUnlockProvider unlockProvider)
+            throws ParseException, IOException, GeneralSecurityException {
         ZeroEchoSession session = new ZeroEchoSession();
         Options opts = root;
         opts.addOption(TYPE_OPT);
@@ -198,19 +217,19 @@ public final class Tag { // NOPMD
 
         if (TYPE_SIGNATURE.equals(type)) {
             String ksPath = require(cli, KS_OPT, "--ks <file> is required for --type signature");
-            KeyringStore keyring = KeyringStore.load(session, Path.of(ksPath));
-            ContextSpec spec = VoidSpec.INSTANCE;
-
-            if (produce) {
-                String privAlias = require(cli, PRIV_OPT, "signature produce requires --priv <alias>");
-                PrivateKey priv = keyring.getPrivate(privAlias);
-                tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.signature(session, alg, priv, spec))
-                        .build(true);
-            } else {
-                String pubAlias = require(cli, PUB_OPT, "signature verify requires --pub <alias>");
-                PublicKey pub = keyring.getPublic(pubAlias);
-                tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.signature(session, alg, pub, spec))
-                        .build(false);
+            try (KeyringStore keyring = KeyringUnlocks.open(Path.of(ksPath), unlockProvider)) {
+                ContextSpec spec = VoidSpec.INSTANCE;
+                if (produce) {
+                    String privAlias = require(cli, PRIV_OPT, "signature produce requires --priv <alias>");
+                    PrivateKey priv = keyring.getPrivate(privAlias);
+                    tail = new TagTrailerDataContentBuilder<>(
+                            TagEngineBuilder.signature(session, alg, priv, spec)).build(true);
+                } else {
+                    String pubAlias = require(cli, PUB_OPT, "signature verify requires --pub <alias>");
+                    PublicKey pub = keyring.getPublic(pubAlias);
+                    tail = new TagTrailerDataContentBuilder<>(
+                            TagEngineBuilder.signature(session, alg, pub, spec)).build(false);
+                }
             }
         } else { // digest
             DigestSpec spec = parseDigest(alg);

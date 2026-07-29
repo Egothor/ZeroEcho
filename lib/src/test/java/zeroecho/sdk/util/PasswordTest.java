@@ -19,6 +19,8 @@ import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.Test;
 
+import zeroecho.core.util.RandomSupport;
+
 class PasswordTest {
     @Test
     void canonicalRandomFacadeValidatesNullAndAcceptsEmptyArrays() {

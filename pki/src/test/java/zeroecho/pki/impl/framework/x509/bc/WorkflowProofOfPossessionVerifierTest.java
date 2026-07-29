@@ -48,6 +48,8 @@ import org.bouncycastle.asn1.x500.X500Name;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.core.storage.KeyringPassword;
+import zeroecho.core.storage.KeyringStore;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.issuance.VerificationPolicy;
@@ -68,8 +70,12 @@ public final class WorkflowProofOfPossessionVerifierTest {
     public void verifyRsaCsrViaWorkflow_ok() throws Exception {
         System.out.println("verifyRsaCsrViaWorkflow_ok");
 
-        Path keyringPath = tempDir.resolve("keyring.txt");
-        java.nio.file.Files.writeString(keyringPath, "", java.nio.charset.StandardCharsets.UTF_8);
+        Path keyringPath = tempDir.resolve("keyring.zek");
+        try (KeyringPassword password =
+                zeroecho.pki.impl.crypto.zeroecholib.TestKeyringUnlocks.provider().acquire();
+                KeyringStore ignored = KeyringStore.create(keyringPath, password)) {
+            // Encoded-key verification needs no persisted key entry.
+        }
         System.out.println("...keyringPath=" + keyringPath.getFileName());
 
         KeyPair kp = KeyPairGenerator.getInstance("RSA").generateKeyPair();
@@ -86,7 +92,9 @@ public final class WorkflowProofOfPossessionVerifierTest {
 
         ParsedCertificationRequest parsed = new BcX509CertificationRequestParser().parse(req);
 
-        ZeroEchoLibSignatureWorkflowProvider provider = new ZeroEchoLibSignatureWorkflowProvider();
+        ZeroEchoLibSignatureWorkflowProvider provider =
+                new ZeroEchoLibSignatureWorkflowProvider(
+                        zeroecho.pki.impl.crypto.zeroecholib.TestKeyringUnlocks.provider());
         ProviderConfig cfg = new ProviderConfig(provider.id(), Map.of("keyringPath", keyringPath.toString(),
                 "operationRoot", tempDir.resolve("signing-operations").toString()));
         SignatureWorkflow wf = provider.allocate(cfg);

@@ -59,6 +59,7 @@ import org.apache.commons.cli.ParseException;
 import zeroecho.core.AlgorithmFamily;
 import zeroecho.core.CatalogSelector;
 import zeroecho.core.KeyUsage;
+import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringStore;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.alg.ChaChaDataContentBuilder;
@@ -203,7 +204,37 @@ public final class Kem { // NOPMD
         // no instances
     }
 
-    public static int main(String[] args, Options opts) throws ParseException, IOException, GeneralSecurityException { // NOPMD
+    /**
+     * Executes the KEM command using interactive keyring unlocking.
+     *
+     * @param args command arguments
+     * @param opts command options
+     * @return process exit code
+     * @throws ParseException if arguments are invalid
+     * @throws IOException if I/O fails
+     * @throws GeneralSecurityException if cryptographic processing fails
+     */
+    public static int main(String[] args, Options opts)
+            throws ParseException, IOException, GeneralSecurityException {
+        return main(args, opts, KeyringUnlocks.console());
+    }
+
+    /**
+     * Executes the KEM command with an explicit keyring unlock source.
+     *
+     * @param args command arguments
+     * @param opts command options
+     * @param unlockProvider keyring password provider
+     * @return process exit code
+     * @throws ParseException if arguments are invalid
+     * @throws IOException if I/O fails
+     * @throws GeneralSecurityException if cryptographic processing fails
+     */
+    @SuppressWarnings({ "PMD.NcssCount", "PMD.CyclomaticComplexity",
+            "PMD.NPathComplexity" })
+    public static int main(String[] args, Options opts,
+            KeyringUnlockProvider unlockProvider)
+            throws ParseException, IOException, GeneralSecurityException {
         ZeroEchoSession session = new ZeroEchoSession();
         defineOptions(opts);
         CommandLineParser parser = new DefaultParser();
@@ -242,7 +273,7 @@ public final class Kem { // NOPMD
 
         final String kemId = cmd.getOptionValue(OPT_KEM.getLongOpt());
         final Path keyringPath = Path.of(cmd.getOptionValue(OPT_KEYRING.getLongOpt()));
-        final KeyringStore keyring = KeyringStore.load(session, keyringPath);
+        try (KeyringStore keyring = KeyringUnlocks.open(keyringPath, unlockProvider)) {
 
         // Configure KEM envelope
         KemDataContentBuilder kem = KemDataContentBuilder.builder(session).kem(kemId);
@@ -343,7 +374,8 @@ public final class Kem { // NOPMD
             }
             return 1;
         }
-        return 0;
+            return 0;
+        }
     }
 
     /**

@@ -34,7 +34,7 @@
 package zeroecho.core.alg.chacha;
 
 import zeroecho.core.SymmetricHeaderCodec;
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 /**
  * <h2>ChaCha20-Poly1305 (AEAD) algorithm</h2>

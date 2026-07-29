@@ -44,7 +44,7 @@ import javax.security.auth.Destroyable;
 
 import zeroecho.core.io.Util;
 import zeroecho.sdk.Pbkdf2Limits;
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 /**
  * Password recipient that derives a KEK via PBKDF2(HMAC-SHA-256) and wraps the

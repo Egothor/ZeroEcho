@@ -60,9 +60,6 @@
  * stream.</li>
  * <li>{@link Password} - helpers for generating random bytes and printable
  * passwords.</li>
- * <li>{@link RandomSupport} - shared or per-call
- * {@link java.security.SecureRandom} access with thread-safe helpers for
- * filling arrays.</li>
  * <li>{@link X509Support} - minimal PEM-based load and print helpers for
  * certificates, private keys, and certificate signing requests.</li>
  * </ul>

@@ -46,6 +46,7 @@ import java.util.logging.Logger;
 import javax.crypto.SecretKey;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.core.alg.ed25519.Ed25519KeyGenSpec;
@@ -77,6 +78,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * with AND verification.
  * </p>
  */
+@Tag("sample")
 class HybridSigningAesTest {
 
     private static final Logger LOG = Logger.getLogger(HybridSigningAesTest.class.getName());

@@ -39,7 +39,7 @@ import java.util.NavigableMap;
 import java.util.Queue;
 import java.util.TreeMap;
 
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 /**
  * A utility class for generating pseudo-random textual content based on

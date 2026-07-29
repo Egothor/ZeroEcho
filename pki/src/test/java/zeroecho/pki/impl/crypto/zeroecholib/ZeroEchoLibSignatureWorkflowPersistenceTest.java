@@ -90,10 +90,12 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         Instant now = Instant.parse("2026-02-03T04:05:06.789Z");
         Path keyring = root.resolve("keyring.txt");
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
-        KeyringStore keyringStore = new KeyringStore(new zeroecho.sdk.ZeroEchoSession());
-        keyringStore.putPrivate("test.prv", "RSA", new RsaPrivateKeySpec(pair.getPrivate().getEncoded()));
-        keyringStore.putPublic("test.pub", "RSA", new RsaPublicKeySpec(pair.getPublic().getEncoded()));
-        keyringStore.save(keyring);
+        try (zeroecho.core.storage.KeyringPassword password =
+                TestKeyringUnlocks.provider().acquire();
+                KeyringStore keyringStore = KeyringStore.create(keyring, password)) {
+            keyringStore.putPrivate("test.prv", "RSA", pair.getPrivate());
+            keyringStore.putPublic("test.pub", "RSA", pair.getPublic());
+        }
 
         List<ObservedBuffer> cleared = new ArrayList<>();
         List<LogRecord> records = new ArrayList<>();
@@ -120,7 +122,7 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         logger.addHandler(handler);
         try (ZeroEchoLibSignatureWorkflow workflow = new ZeroEchoLibSignatureWorkflow("zeroecho-lib", keyring,
                 root.resolve("cleanup-operations"), Clock.fixed(now, ZoneOffset.UTC), Duration.ofDays(90),
-                "zeroecho-lib:", true, (category, bytes) -> cleared.add(new ObservedBuffer(category, bytes)));
+                "zeroecho-lib:", true, TestKeyringUnlocks.provider(), (category, bytes) -> cleared.add(new ObservedBuffer(category, bytes)));
                 SignatureWorkflow.Registration registration = workflow.register((operationId, status) -> {
                     throw new IllegalStateException("DO_NOT_LOG_SIGNATURE_SENTINEL");
                 })) {
@@ -194,10 +196,12 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         Instant base = Instant.parse("2026-02-03T04:05:06Z");
         Path keyring = root.resolve("keyring.txt");
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
-        KeyringStore keyringStore = new KeyringStore(new zeroecho.sdk.ZeroEchoSession());
-        keyringStore.putPrivate("test.prv", "RSA", new RsaPrivateKeySpec(pair.getPrivate().getEncoded()));
-        keyringStore.putPublic("test.pub", "RSA", new RsaPublicKeySpec(pair.getPublic().getEncoded()));
-        keyringStore.save(keyring);
+        try (zeroecho.core.storage.KeyringPassword password =
+                TestKeyringUnlocks.provider().acquire();
+                KeyringStore keyringStore = KeyringStore.create(keyring, password)) {
+            keyringStore.putPrivate("test.prv", "RSA", pair.getPrivate());
+            keyringStore.putPublic("test.pub", "RSA", pair.getPublic());
+        }
 
         PkiId onTimeId = SigningSubmissionId.create(NAMESPACE, base, new SecureRandom()).id();
         Clock onTimeClock = Clock.fixed(base, ZoneOffset.UTC);
@@ -360,7 +364,7 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
 
     private static ZeroEchoLibSignatureWorkflow workflow(Path root, Path operations, Path keyring, Clock clock) {
         return new ZeroEchoLibSignatureWorkflow("zeroecho-lib", keyring, operations, clock,
-                Duration.ofDays(90), "zeroecho-lib:", true);
+                Duration.ofDays(90), "zeroecho-lib:", true, TestKeyringUnlocks.provider());
     }
 
     private static SignatureWorkflow.SignRequest request(PkiId id, long fence, byte[] payload) {

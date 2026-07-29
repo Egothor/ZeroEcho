@@ -42,7 +42,7 @@ import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spec.VoidSpec;
 import zeroecho.core.spi.ContextAware;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 class AesRandomSupportTest {
     private static final SecretKey KEY = new SecretKeySpec(new byte[16], "AES");

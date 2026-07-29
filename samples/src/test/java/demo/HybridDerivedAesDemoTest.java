@@ -42,6 +42,7 @@ import java.util.Arrays;
 import java.util.logging.Logger;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.core.alg.kyber.KyberKeyGenSpec;
@@ -77,6 +78,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * HKDF salt) and injects key/IV/AAD into existing streaming builders.
  * </p>
  */
+@Tag("sample")
 class HybridDerivedAesDemoTest {
     private final ZeroEchoSession session = new ZeroEchoSession();
 

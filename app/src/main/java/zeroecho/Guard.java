@@ -56,6 +56,7 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.err.UnsupportedRoleException;
+import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringStore;
 import zeroecho.sdk.Pbkdf2Limits;
 import zeroecho.sdk.ZeroEchoSession;
@@ -66,7 +67,7 @@ import zeroecho.sdk.guard.MultiRecipientContent;
 import zeroecho.sdk.guard.MultiRecipientDataSourceBuilder;
 import zeroecho.sdk.guard.RecipientKekSizes;
 import zeroecho.sdk.guard.UnlockMaterial;
-import zeroecho.sdk.util.RandomSupport;
+import zeroecho.core.util.RandomSupport;
 
 /**
  * Guard is a unified subcommand that encrypts and decrypts using a
@@ -111,6 +112,7 @@ import zeroecho.sdk.util.RandomSupport;
  *   --alg chacha-aead
  * }</pre>
  */
+@SuppressWarnings("PMD.CyclomaticComplexity")
 public final class Guard {
 
     private Guard() {
@@ -128,7 +130,26 @@ public final class Guard {
      * @throws IOException              on I/O errors
      * @throws GeneralSecurityException on cryptographic setup or keyring errors
      */
-    public static int main(final String[] args, final Options options) // NOPMD
+    public static int main(final String[] args, final Options options)
+            throws ParseException, IOException, GeneralSecurityException {
+        return main(args, options, KeyringUnlocks.console());
+    }
+
+    /**
+     * Executes Guard with an explicit keyring unlock source.
+     *
+     * @param args command arguments
+     * @param options dispatcher options
+     * @param keyringUnlockProvider destroyable-password provider
+     * @return process exit code
+     * @throws ParseException if parsing fails
+     * @throws IOException if I/O fails
+     * @throws GeneralSecurityException if cryptographic processing fails
+     */
+    @SuppressWarnings({ "PMD.NcssCount", "PMD.CognitiveComplexity",
+            "PMD.CyclomaticComplexity", "PMD.NPathComplexity" })
+    public static int main(final String[] args, final Options options,
+            KeyringUnlockProvider keyringUnlockProvider)
             throws ParseException, IOException, GeneralSecurityException {
         // ---- operation selection
         final Option OPT_ENCRYPT = Option.builder("e").longOpt("encrypt").hasArg().argName("in-file")
@@ -356,40 +377,43 @@ public final class Guard {
                 final int kekLen = RecipientKekSizes.requireSupported(
                         Integer.parseInt(cmd.getOptionValue(OPT_PSW_KEK, "32")));
 
-                final KeyringStore ks = loadKeyringIfPresent(session, cmd, OPT_KEYRING);
-                for (String alias : cmd.getOptionValues(OPT_TO_ALIAS) == null ? new String[0]
-                        : cmd.getOptionValues(OPT_TO_ALIAS)) {
-                    addRecipientFromAlias(session, env, ks, alias, kekLen, saltLen, false);
-                }
-                for (String psw : cmd.getOptionValues(OPT_TO_PSW) == null ? new String[0]
-                        : cmd.getOptionValues(OPT_TO_PSW)) {
-                    char[] passwordChars = psw.toCharArray();
-                    try {
-                        env.addPasswordRecipient(passwordChars, iter, saltLen, kekLen);
-                    } finally {
-                        Arrays.fill(passwordChars, '\0');
+                KeyringStore ks = loadKeyringIfPresent(cmd, OPT_KEYRING,
+                        keyringUnlockProvider);
+                try (ks) {
+                    for (String alias : cmd.getOptionValues(OPT_TO_ALIAS) == null ? new String[0]
+                            : cmd.getOptionValues(OPT_TO_ALIAS)) {
+                        addRecipientFromAlias(session, env, ks, alias, kekLen, saltLen, false);
                     }
-                }
-                for (String alias : cmd.getOptionValues(OPT_DECOY_ALIAS) == null ? new String[0]
-                        : cmd.getOptionValues(OPT_DECOY_ALIAS)) {
-                    addRecipientFromAlias(session, env, ks, alias, kekLen, saltLen, true);
-                }
-                for (String psw : cmd.getOptionValues(OPT_DECOY_PSW) == null ? new String[0]
-                        : cmd.getOptionValues(OPT_DECOY_PSW)) {
-                    char[] passwordChars = psw.toCharArray();
-                    try {
-                        env.addPasswordRecipientDecoy(passwordChars, iter, saltLen, kekLen);
-                    } finally {
-                        Arrays.fill(passwordChars, '\0');
+                    for (String psw : cmd.getOptionValues(OPT_TO_PSW) == null ? new String[0]
+                            : cmd.getOptionValues(OPT_TO_PSW)) {
+                        char[] passwordChars = psw.toCharArray();
+                        try {
+                            env.addPasswordRecipient(passwordChars, iter, saltLen, kekLen);
+                        } finally {
+                            Arrays.fill(passwordChars, '\0');
+                        }
                     }
-                }
-                final int rndCount = Integer.parseInt(cmd.getOptionValue(OPT_DECOY_PSW_RAND, "0"));
-                for (int i = 0; i < rndCount; i++) {
-                    char[] passwordChars = randomPassword();
-                    try {
-                        env.addPasswordRecipientDecoy(passwordChars, iter, saltLen, kekLen);
-                    } finally {
-                        Arrays.fill(passwordChars, '\0');
+                    for (String alias : cmd.getOptionValues(OPT_DECOY_ALIAS) == null ? new String[0]
+                            : cmd.getOptionValues(OPT_DECOY_ALIAS)) {
+                        addRecipientFromAlias(session, env, ks, alias, kekLen, saltLen, true);
+                    }
+                    for (String psw : cmd.getOptionValues(OPT_DECOY_PSW) == null ? new String[0]
+                            : cmd.getOptionValues(OPT_DECOY_PSW)) {
+                        char[] passwordChars = psw.toCharArray();
+                        try {
+                            env.addPasswordRecipientDecoy(passwordChars, iter, saltLen, kekLen);
+                        } finally {
+                            Arrays.fill(passwordChars, '\0');
+                        }
+                    }
+                    final int rndCount = Integer.parseInt(cmd.getOptionValue(OPT_DECOY_PSW_RAND, "0"));
+                    for (int i = 0; i < rndCount; i++) {
+                        char[] passwordChars = randomPassword();
+                        try {
+                            env.addPasswordRecipientDecoy(passwordChars, iter, saltLen, kekLen);
+                        } finally {
+                            Arrays.fill(passwordChars, '\0');
+                        }
                     }
                 }
             } else {
@@ -400,9 +424,11 @@ public final class Guard {
                     throw new ParseException("Specify exactly one of --priv-alias or --password for decryption");
                 }
                 if (privAlias != null) {
-                    final KeyringStore ks = requireKeyring(session, cmd, OPT_KEYRING);
-                    final KeyringStore.PrivateWithId pr = ks.getPrivateWithId(privAlias);
-                    borrowedUnlockMaterial = new UnlockMaterial.Private(pr.key());
+                    try (KeyringStore ks = requireKeyring(cmd, OPT_KEYRING,
+                            keyringUnlockProvider)) {
+                        final KeyringStore.PrivateWithId pr = ks.getPrivateWithId(privAlias);
+                        borrowedUnlockMaterial = new UnlockMaterial.Private(pr.key());
+                    }
                 } else {
                     char[] passwordChars = password.toCharArray();
                     try {
@@ -575,19 +601,21 @@ public final class Guard {
         return out;
     }
 
-    private static KeyringStore loadKeyringIfPresent(ZeroEchoSession session, CommandLine cmd, Option optKs)
-            throws IOException {
+    private static KeyringStore loadKeyringIfPresent(CommandLine cmd, Option optKs,
+            KeyringUnlockProvider unlockProvider)
+            throws IOException, GeneralSecurityException {
         if (!cmd.hasOption(optKs)) {
-            return new KeyringStore(session);
+            return null;
         }
-        return KeyringStore.load(session, Paths.get(cmd.getOptionValue(optKs)));
+        return KeyringUnlocks.open(Paths.get(cmd.getOptionValue(optKs)), unlockProvider);
     }
 
-    private static KeyringStore requireKeyring(ZeroEchoSession session, CommandLine cmd, Option optKs)
-            throws IOException, ParseException {
+    private static KeyringStore requireKeyring(CommandLine cmd, Option optKs,
+            KeyringUnlockProvider unlockProvider)
+            throws IOException, ParseException, GeneralSecurityException {
         if (!cmd.hasOption(optKs)) {
             throw new ParseException("--keyring <file> is required when aliases are used");
         }
-        return KeyringStore.load(session, Paths.get(cmd.getOptionValue(optKs)));
+        return KeyringUnlocks.open(Paths.get(cmd.getOptionValue(optKs)), unlockProvider);
     }
 }

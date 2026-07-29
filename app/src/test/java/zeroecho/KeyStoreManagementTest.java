@@ -109,7 +109,7 @@ public class KeyStoreManagementTest {
                 String[] argv = new String[] { "--keystore", ring.toString(), "--generate", "--alg", id, "--alias",
                         alias, "--kind", "asym" };
                 try {
-                    int rc = KeyStoreManagement.main(argv, dispatcher);
+                    int rc = KeyStoreManagement.main(argv, dispatcher, TestKeyringUnlocks.provider());
                     System.out.println("  rc=" + rc);
                     assertTrue(rc == 0, "asymmetric generation failed for " + id);
                     attempted++;
@@ -125,7 +125,7 @@ public class KeyStoreManagementTest {
                 String[] argv = new String[] { "--keystore", ring.toString(), "--generate", "--alg", id, "--alias",
                         alias, "--kind", "sym" };
                 try {
-                    int rc = KeyStoreManagement.main(argv, dispatcher);
+                    int rc = KeyStoreManagement.main(argv, dispatcher, TestKeyringUnlocks.provider());
                     System.out.println("  rc=" + rc);
                     assertTrue(rc == 0, "symmetric generation failed for " + id);
                     attempted++;
@@ -139,7 +139,14 @@ public class KeyStoreManagementTest {
         assertTrue(attempted > 0, "No generation attempts were successful");
 
         // Verify by reloading and materializing.
-        KeyringStore store = KeyringStore.load(session, ring);
+        zeroecho.core.storage.KeyringPassword password =
+                TestKeyringUnlocks.provider().acquire();
+        KeyringStore store;
+        try {
+            store = KeyringStore.open(ring, password);
+        } finally {
+            password.close();
+        }
         List<String> aliases = store.aliases();
         System.out.println("Reloaded aliases (" + aliases.size() + "): " + aliases);
 
@@ -184,6 +191,7 @@ public class KeyStoreManagementTest {
             }
         }
         assertTrue(ok > 0, "No entries could be materialized back");
+        store.close();
     }
 
     // ---- helpers ----

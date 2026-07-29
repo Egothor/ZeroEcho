@@ -48,6 +48,7 @@ import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.audit.AuditSinkProvider;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
+import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialFrameworkProvider;
 import zeroecho.pki.spi.store.PkiStore;
@@ -203,9 +204,19 @@ public final class PkiBootstrap {
      * Opens a {@link SignatureWorkflow} using {@link SignatureWorkflowProvider}
      * discovered via ServiceLoader.
      *
+     * <p>Runtime capabilities are supplied explicitly and are not represented
+     * in system properties or {@link ProviderConfig}. Providers that do not use
+     * a software keyring ignore an absent keyring dependency; a keyring-backed
+     * provider rejects it before allocating a workflow.</p>
+     *
+     * @param dependencies explicit process-local runtime dependencies
      * @return signature workflow (never {@code null})
+     * @throws NullPointerException if {@code dependencies} is {@code null}
+     * @throws RuntimeException if provider selection or workflow allocation fails
      */
-    public static SignatureWorkflow openSignatureWorkflow() {
+    public static SignatureWorkflow openSignatureWorkflow(
+            SignatureWorkflowRuntimeDependencies dependencies) {
+        Objects.requireNonNull(dependencies, "dependencies must not be null");
         String requestedId = System.getProperty(PROP_CRYPTO_WORKFLOW_BACKEND);
 
         SignatureWorkflowProvider provider = SpiSelector.select(SignatureWorkflowProvider.class, requestedId,
@@ -224,7 +235,7 @@ public final class PkiBootstrap {
             LOG.info("Selected crypto workflow provider: " + provider.id() + " (keys: " + props.keySet() + ")");
         }
 
-        return provider.allocate(config);
+        return provider.allocate(config, dependencies);
     }
 
     /**

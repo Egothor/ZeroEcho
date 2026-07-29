@@ -44,6 +44,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
@@ -57,6 +58,7 @@ import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.util.BouncyCastleActivator;
 import zeroecho.sdk.ZeroEchoSession;
 
+@Tag("sample")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PostQuantumTest {
     private final ZeroEchoSession session = new ZeroEchoSession();

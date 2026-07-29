@@ -41,6 +41,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.core.CryptoAlgorithm;
@@ -107,6 +108,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * for didactic reasons.
  * </p>
  */
+@Tag("sample")
 class AgreementVariantsTest {
     private final ZeroEchoSession session = new ZeroEchoSession();
 

@@ -44,6 +44,7 @@ import java.util.logging.Logger;
 
 import javax.crypto.SecretKey;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import conflux.Ctx;
@@ -62,6 +63,7 @@ import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.ZeroEchoSession;
 
+@Tag("sample")
 class AesTest {
     private static final Logger LOG = Logger.getLogger(AesTest.class.getName());
     private final ZeroEchoSession zeroEchoSession = new ZeroEchoSession();

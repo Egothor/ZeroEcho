@@ -127,7 +127,7 @@ public class GuardTest {
                 "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aadHex };
         System.out.println("...encrypt: " + Arrays.toString(encArgs));
-        int e = Guard.main(encArgs, new Options());
+        int e = Guard.main(encArgs, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, e, "... encrypt expected exit code 0");
 
         // Decrypt (using password)
@@ -135,7 +135,7 @@ public class GuardTest {
                 "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aadHex };
         System.out.println("...decrypt: " + Arrays.toString(decArgs));
-        int d = Guard.main(decArgs, new Options());
+        int d = Guard.main(decArgs, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, d, "... decrypt expected exit code 0");
 
         assertArrayEquals(Files.readAllBytes(in), Files.readAllBytes(dec), "AES-GCM password round-trip mismatch");
@@ -150,7 +150,7 @@ public class GuardTest {
         String[] arguments = { "--encrypt", input.toString(), "--to-psw", "controlled", "--alg", "aes-gcm" };
 
         ParseException failure = assertThrows(ParseException.class,
-                () -> Guard.main(arguments, new Options()));
+                () -> Guard.main(arguments, new Options(), TestKeyringUnlocks.provider()));
 
         assertTrue(failure.getMessage().contains("--pbkdf2-max"));
         System.out.println("...rejected=missingLimits");
@@ -170,7 +170,7 @@ public class GuardTest {
                 "--alg", "aes-gcm" };
 
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
-                () -> Guard.main(arguments, new Options()));
+                () -> Guard.main(arguments, new Options(), TestKeyringUnlocks.provider()));
 
         assertTrue(failure.getMessage().contains("exactly 16 or 32"));
         assertTrue(Files.notExists(output));
@@ -215,14 +215,14 @@ public class GuardTest {
                     "--to-alias", rsa.pub, "--alg", "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex",
                     aadAes };
             System.out.println("...AES encrypt: " + Arrays.toString(encArgs));
-            int e = Guard.main(encArgs, new Options());
+            int e = Guard.main(encArgs, new Options(), TestKeyringUnlocks.provider());
             assertEquals(0, e, "... AES encrypt rc");
 
             String[] decArgs = { "--decrypt", enc.toString(), "--output", dec.toString(), "--keyring", ring.toString(),
                     "--priv-alias", rsa.prv, "--alg", "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex",
                     aadAes };
             System.out.println("...AES decrypt: " + Arrays.toString(decArgs));
-            int d = Guard.main(decArgs, new Options());
+            int d = Guard.main(decArgs, new Options(), TestKeyringUnlocks.provider());
             assertEquals(0, d, "... AES decrypt rc");
 
             assertArrayEquals(Files.readAllBytes(in), Files.readAllBytes(dec), "RSA AES-GCM round-trip mismatch");
@@ -238,13 +238,13 @@ public class GuardTest {
             String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--keyring", ring.toString(),
                     "--to-alias", rsa.pub, "--alg", "chacha-aead", "--aad-hex", aadCha };
             System.out.println("...ChaCha encrypt: " + Arrays.toString(encArgs));
-            int e = Guard.main(encArgs, new Options());
+            int e = Guard.main(encArgs, new Options(), TestKeyringUnlocks.provider());
             assertEquals(0, e, "... ChaCha encrypt rc");
 
             String[] decArgs = { "--decrypt", enc.toString(), "--output", dec.toString(), "--keyring", ring.toString(),
                     "--priv-alias", rsa.prv, "--alg", "chacha-aead", "--aad-hex", aadCha };
             System.out.println("...ChaCha decrypt: " + Arrays.toString(decArgs));
-            int d = Guard.main(decArgs, new Options());
+            int d = Guard.main(decArgs, new Options(), TestKeyringUnlocks.provider());
             assertEquals(0, d, "... ChaCha decrypt rc");
 
             assertArrayEquals(Files.readAllBytes(in), Files.readAllBytes(dec),
@@ -293,7 +293,7 @@ public class GuardTest {
                 "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aad };
         System.out.println("...encrypt: " + Arrays.toString(encArgs));
-        int e = Guard.main(encArgs, new Options());
+        int e = Guard.main(encArgs, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, e, "... encrypt rc");
 
         // Decrypt via private RSA key
@@ -301,7 +301,7 @@ public class GuardTest {
                 "--priv-alias", rsa.prv, "--alg", "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex",
                 aad };
         System.out.println("...decrypt(private): " + Arrays.toString(decPriv));
-        int d1 = Guard.main(decPriv, new Options());
+        int d1 = Guard.main(decPriv, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, d1, "... decrypt(private) rc");
         assertArrayEquals(Files.readAllBytes(in), Files.readAllBytes(dec1),
                 "mixed recipients decrypt(private) mismatch");
@@ -311,7 +311,7 @@ public class GuardTest {
                 "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aad };
         System.out.println("...decrypt(password): " + Arrays.toString(decPwd));
-        int d2 = Guard.main(decPwd, new Options());
+        int d2 = Guard.main(decPwd, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, d2, "... decrypt(password) rc");
         assertArrayEquals(Files.readAllBytes(in), Files.readAllBytes(dec2),
                 "mixed recipients decrypt(password) mismatch");
@@ -337,14 +337,14 @@ public class GuardTest {
         String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--to-psw", pwd,
                 "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
                 "aes-gcm", "--tag-bits", "128" };
-        int e = Guard.main(encArgs, new Options());
+        int e = Guard.main(encArgs, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, e, "... encrypt rc");
 
         // Supply both options on purpose
         Exception ex = assertThrows(Exception.class, () -> {
             String[] bad = { "--decrypt", enc.toString(), "--output", tmp.resolve("out-neg.bin").toString(),
                     "--password", pwd, "--priv-alias", "whatever", "--alg", "aes-gcm" };
-            Guard.main(bad, new Options());
+            Guard.main(bad, new Options(), TestKeyringUnlocks.provider());
         });
         System.out.println("...got expected exception: " + ex);
         System.out.println("...ok");
@@ -377,7 +377,7 @@ public class GuardTest {
         String[] genArgs = { "--keystore", ring.toString(), "--generate", "--alg", algId, "--alias", baseAlias,
                 "--kind", "asym" };
         System.out.println("...KeyStoreManagement generate: " + Arrays.toString(genArgs));
-        int rc = KeyStoreManagement.main(genArgs, new Options());
+        int rc = KeyStoreManagement.main(genArgs, new Options(), TestKeyringUnlocks.provider());
         if (rc != 0) {
             throw new GeneralSecurityException("KeyStoreManagement failed with rc=" + rc + " for " + algId);
         }

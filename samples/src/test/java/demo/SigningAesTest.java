@@ -45,6 +45,7 @@ import java.util.logging.Logger;
 
 import javax.crypto.SecretKey;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.core.alg.rsa.RsaKeyGenSpec;
@@ -59,6 +60,7 @@ import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.ZeroEchoSession;
 
+@Tag("sample")
 class SigningAesTest {
     private final ZeroEchoSession session = new ZeroEchoSession();
     private static final Logger LOG = Logger.getLogger(SigningAesTest.class.getName());
