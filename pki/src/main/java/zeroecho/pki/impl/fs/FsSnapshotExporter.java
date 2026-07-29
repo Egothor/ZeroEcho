@@ -86,7 +86,7 @@ final class FsSnapshotExporter {
             FsOperations.ensureDir(targetRoot);
             FsPaths dst = new FsPaths(targetRoot);
 
-            Files.writeString(dst.versionFile(), "v1");
+            Files.writeString(dst.versionFile(), FilesystemPkiStore.CURRENT_STORE_VERSION);
             copyFile(sourceRoot.resolve("SIGNING_NAMESPACE"), targetRoot.resolve("SIGNING_NAMESPACE"));
             copyFile(sourceRoot.resolve("SIGNING_TIME_WATERMARK"), targetRoot.resolve("SIGNING_TIME_WATERMARK"));
 

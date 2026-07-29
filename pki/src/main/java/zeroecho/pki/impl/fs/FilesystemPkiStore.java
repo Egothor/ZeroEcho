@@ -120,9 +120,11 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
  * <h2>Security Notes</h2>
  *
  * <p>
- * This reference implementation stores objects as-is. It does not implement
- * encryption at rest. It also must not persist private key material; higher
- * layers must respect the SPI security requirements.
+ * This reference implementation stores domain objects through a closed,
+ * current-version schema. It does not implement encryption at rest. It also
+ * must not persist private key material; higher layers must respect the SPI
+ * security requirements. Earlier pre-release formats are rejected rather than
+ * migrated.
  * </p>
  *
  * <p>
@@ -135,9 +137,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
 
-    private static final String VERSION_V1 = "v1";
+    /* package */ static final String CURRENT_STORE_VERSION = "v2";
     private static final int SIGN_RECORD_MAGIC = 0x5A455352;
-    private static final int SIGN_RECORD_VERSION = 1;
+    private static final int CURRENT_SIGN_RECORD_VERSION = 2;
     private static final int SIGN_RECORD_HEADER_BYTES = Integer.BYTES * 2;
     private static final String SIGN_FINGERPRINT_PREFIX = "signfp:v1:";
     private static final int SIGN_FINGERPRINT_HEX_LENGTH = 64;
@@ -248,21 +250,21 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         PkiId caId = record.caId();
         Path current = this.paths.caCurrent(caId);
 
-        writeWithHistory(this.paths.caHistoryDir(caId), current, FsCodec.encode(record), this.options.caHistoryPolicy(),
-                "CA", FsUtil.safeId(caId));
+        writeWithHistory(this.paths.caHistoryDir(caId), current, FsCodec.encode(FsCodec.CA_RECORD, record),
+                this.options.caHistoryPolicy(), "CA", FsUtil.safeId(caId));
     }
 
     @Override
     public Optional<CaRecord> getCa(final PkiId caId) {
         Objects.requireNonNull(caId, "caId");
         Path p = this.paths.caCurrent(caId);
-        return readOptional(p, CaRecord.class);
+        return readOptional(p, FsCodec.CA_RECORD);
     }
 
     @Override
     public List<CaRecord> listCas() {
         Path casRoot = this.paths.root().resolve("cas").resolve("by-id");
-        return listCurrentRecords(casRoot, CaRecord.class);
+        return listCurrentRecords(casRoot, FsCodec.CA_RECORD);
     }
 
     @Override
@@ -270,26 +272,27 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         Objects.requireNonNull(credential, "credential");
         PkiId id = credential.credentialId();
         Path p = this.paths.credentialPath(id);
-        writeOnce(p, FsCodec.encode(credential), "CREDENTIAL", FsUtil.safeId(id));
+        writeOnce(p, FsCodec.encode(FsCodec.CREDENTIAL, credential), "CREDENTIAL", FsUtil.safeId(id));
     }
 
     @Override
     public Optional<Credential> getCredential(final PkiId credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
-        return readOptional(this.paths.credentialPath(credentialId), Credential.class);
+        return readOptional(this.paths.credentialPath(credentialId), FsCodec.CREDENTIAL);
     }
 
     @Override
     public void putRequest(final ParsedCertificationRequest request) {
         Objects.requireNonNull(request, "request");
         PkiId id = request.requestId();
-        writeOnce(this.paths.requestPath(id), FsCodec.encode(request), "REQUEST", FsUtil.safeId(id));
+        writeOnce(this.paths.requestPath(id), FsCodec.encode(FsCodec.PARSED_REQUEST, request), "REQUEST",
+                FsUtil.safeId(id));
     }
 
     @Override
     public Optional<ParsedCertificationRequest> getRequest(final PkiId requestId) {
         Objects.requireNonNull(requestId, "requestId");
-        return readOptional(this.paths.requestPath(requestId), ParsedCertificationRequest.class);
+        return readOptional(this.paths.requestPath(requestId), FsCodec.PARSED_REQUEST);
     }
 
     @Override
@@ -298,33 +301,34 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         PkiId credId = record.credentialId();
         Path current = this.paths.revocationCurrent(credId);
 
-        writeWithHistory(this.paths.revocationHistoryDir(credId), current, FsCodec.encode(record),
+        writeWithHistory(this.paths.revocationHistoryDir(credId), current, FsCodec.encode(FsCodec.REVOCATION, record),
                 this.options.revocationHistoryPolicy(), "REVOCATION", FsUtil.safeId(credId));
     }
 
     @Override
     public Optional<RevokedRecord> getRevocation(final PkiId credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
-        return readOptional(this.paths.revocationCurrent(credentialId), RevokedRecord.class);
+        return readOptional(this.paths.revocationCurrent(credentialId), FsCodec.REVOCATION);
     }
 
     @Override
     public List<RevokedRecord> listRevocations() {
         Path root = this.paths.root().resolve("revocations").resolve("by-credential");
-        return listCurrentRecords(root, RevokedRecord.class);
+        return listCurrentRecords(root, FsCodec.REVOCATION);
     }
 
     @Override
     public void putStatusObject(final StatusObject object) {
         Objects.requireNonNull(object, "object");
         PkiId id = object.statusObjectId();
-        writeOnce(this.paths.statusObjectPath(id), FsCodec.encode(object), "STATUS_OBJECT", FsUtil.safeId(id));
+        writeOnce(this.paths.statusObjectPath(id), FsCodec.encode(FsCodec.STATUS_OBJECT, object), "STATUS_OBJECT",
+                FsUtil.safeId(id));
     }
 
     @Override
     public Optional<StatusObject> getStatusObject(final PkiId statusObjectId) {
         Objects.requireNonNull(statusObjectId, "statusObjectId");
-        return readOptional(this.paths.statusObjectPath(statusObjectId), StatusObject.class);
+        return readOptional(this.paths.statusObjectPath(statusObjectId), FsCodec.STATUS_OBJECT);
     }
 
     @Override
@@ -335,7 +339,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         // This is acceptable for a reference implementation; indexes can be added
         // later.
         Path byId = this.paths.root().resolve("status").resolve("by-id");
-        List<StatusObject> all = listBinaryFiles(byId, StatusObject.class);
+        List<StatusObject> all = listBinaryFiles(byId, FsCodec.STATUS_OBJECT);
         List<StatusObject> out = new ArrayList<>();
         for (StatusObject o : all) {
             if (issuerCaId.equals(o.issuerCaId())) {
@@ -349,13 +353,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public void putPublicationRecord(final PublicationRecord record) {
         Objects.requireNonNull(record, "record");
         PkiId id = record.publicationId();
-        writeOnce(this.paths.publicationPath(id), FsCodec.encode(record), "PUBLICATION", FsUtil.safeId(id));
+        writeOnce(this.paths.publicationPath(id), FsCodec.encode(FsCodec.PUBLICATION, record), "PUBLICATION",
+                FsUtil.safeId(id));
     }
 
     @Override
     public List<PublicationRecord> listPublicationRecords() {
         Path byId = this.paths.root().resolve("publications").resolve("by-id");
-        return listBinaryFiles(byId, PublicationRecord.class);
+        return listBinaryFiles(byId, FsCodec.PUBLICATION);
     }
 
     @Override
@@ -364,7 +369,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         String profileId = profile.profileId();
         Path current = this.paths.profileCurrent(profileId);
 
-        writeWithHistory(this.paths.profileHistoryDir(profileId), current, FsCodec.encode(profile),
+        writeWithHistory(this.paths.profileHistoryDir(profileId), current,
+                FsCodec.encode(FsCodec.CERTIFICATE_PROFILE, profile),
                 this.options.profileHistoryPolicy(), "PROFILE", FsUtil.safeSegment(profileId));
     }
 
@@ -373,26 +379,27 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         if (profileId == null || profileId.isBlank()) {
             throw new IllegalArgumentException("profileId must not be null/blank");
         }
-        return readOptional(this.paths.profileCurrent(profileId), CertificateProfile.class);
+        return readOptional(this.paths.profileCurrent(profileId), FsCodec.CERTIFICATE_PROFILE);
     }
 
     @Override
     public List<CertificateProfile> listProfiles() {
         Path root = this.paths.root().resolve("profiles").resolve("by-id");
-        return listCurrentRecords(root, CertificateProfile.class);
+        return listCurrentRecords(root, FsCodec.CERTIFICATE_PROFILE);
     }
 
     @Override
     public void putPolicyTrace(final PolicyTrace trace) {
         Objects.requireNonNull(trace, "trace");
         PkiId id = trace.decisionId();
-        writeOnce(this.paths.policyTracePath(id), FsCodec.encode(trace), "POLICY_TRACE", FsUtil.safeId(id));
+        writeOnce(this.paths.policyTracePath(id), FsCodec.encode(FsCodec.POLICY_TRACE, trace), "POLICY_TRACE",
+                FsUtil.safeId(id));
     }
 
     @Override
     public Optional<PolicyTrace> getPolicyTrace(final PkiId decisionId) {
         Objects.requireNonNull(decisionId, "decisionId");
-        return readOptional(this.paths.policyTracePath(decisionId), PolicyTrace.class);
+        return readOptional(this.paths.policyTracePath(decisionId), FsCodec.POLICY_TRACE);
     }
 
     // -------------------------------------------------------------------------
@@ -407,14 +414,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         Path current = this.paths.workflowCurrent(opId);
 
         // Never log payload; writeWithHistory logs only type + safe identifiers.
-        writeWithHistory(this.paths.workflowHistoryDir(opId), current, FsCodec.encode(record),
+        writeWithHistory(this.paths.workflowHistoryDir(opId), current, FsCodec.encode(FsCodec.WORKFLOW_STATE, record),
                 this.options.workflowHistoryPolicy(), "WORKFLOW", FsUtil.safeId(opId));
     }
 
     @Override
     public Optional<WorkflowStateRecord> getWorkflowState(final PkiId opId) {
         Objects.requireNonNull(opId, "opId");
-        return readOptional(this.paths.workflowCurrent(opId), WorkflowStateRecord.class);
+        return readOptional(this.paths.workflowCurrent(opId), FsCodec.WORKFLOW_STATE);
     }
 
     @Override
@@ -432,7 +439,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public List<WorkflowStateRecord> listWorkflowStates() {
         // List by operation directory (workflows/by-op/<opId>/current.bin)
-        return listCurrentRecords(this.paths.workflowRoot(), WorkflowStateRecord.class);
+        return listCurrentRecords(this.paths.workflowRoot(), FsCodec.WORKFLOW_STATE);
     }
 
     @Override
@@ -710,12 +717,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             if (input.getInt() != SIGN_RECORD_MAGIC) {
                 throw new IllegalStateException("Invalid signing record envelope");
             }
-            if (input.getInt() != SIGN_RECORD_VERSION) {
+            if (input.getInt() != CURRENT_SIGN_RECORD_VERSION) {
                 throw new IllegalStateException("Unsupported signing record version");
             }
             byte[] payload = new byte[input.remaining()];
             input.get(payload);
-            return FsCodec.decode(payload, SignWorkflowStore.Record.class);
+            return FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, payload);
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to read authoritative signing record", ex);
         }
@@ -796,10 +803,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private void writeSignRecord(SignWorkflowStore.Record record) {
         validateSignRecord(record.submissionId(), record);
         try {
-            byte[] payload = FsCodec.encode(record);
+            byte[] payload = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record);
             ByteBuffer envelope = ByteBuffer.allocate(SIGN_RECORD_HEADER_BYTES + payload.length);
             envelope.putInt(SIGN_RECORD_MAGIC);
-            envelope.putInt(SIGN_RECORD_VERSION);
+            envelope.putInt(CURRENT_SIGN_RECORD_VERSION);
             envelope.put(payload);
             FsOperations.writeAtomic(paths.signWorkflowPath(record.submissionId()), envelope.array());
         } catch (IOException ex) {
@@ -970,7 +977,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static IllegalStateException invalidSignRecord(SignWorkflowStore.Record record, String code) {
         return new IllegalStateException("Signing record corruption: type=sign-workflow version="
-                + SIGN_RECORD_VERSION + " state=" + record.state() + " code=" + code);
+                + CURRENT_SIGN_RECORD_VERSION + " state=" + record.state() + " code=" + code);
     }
 
     private static void requirePositive(Duration value, String name) {
@@ -1145,28 +1152,28 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private void ensureVersionFile() throws IOException {
         Path vf = this.paths.versionFile();
         if (!Files.exists(vf)) {
-            FsOperations.writeAtomic(vf, VERSION_V1.getBytes());
+            FsOperations.writeAtomic(vf, CURRENT_STORE_VERSION.getBytes());
             return;
         }
         String ver = Files.readString(vf).trim();
-        if (!VERSION_V1.equals(ver)) {
+        if (!CURRENT_STORE_VERSION.equals(ver)) {
             throw new IllegalStateException("unsupported store version: " + ver);
         }
     }
 
-    private static <T> Optional<T> readOptional(final Path path, final Class<T> type) {
+    private static <T> Optional<T> readOptional(final Path path, final FsCodec.Schema<T> schema) {
         try {
             if (!Files.exists(path)) {
                 return Optional.empty();
             }
             byte[] data = FsOperations.readAll(path);
-            return Optional.of(FsCodec.decode(data, type));
+            return Optional.of(FsCodec.decode(schema, data));
         } catch (IOException e) {
             throw new IllegalStateException("read failed: " + path, e);
         }
     }
 
-    private static <T> List<T> listBinaryFiles(final Path byIdDir, final Class<T> type) {
+    private static <T> List<T> listBinaryFiles(final Path byIdDir, final FsCodec.Schema<T> schema) {
         if (!Files.isDirectory(byIdDir)) {
             return List.of();
         }
@@ -1174,7 +1181,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             return Files.list(byIdDir).filter(Files::isRegularFile)
                     .sorted(Comparator.comparing(p -> p.getFileName().toString())).map(p -> {
                         try {
-                            return FsCodec.decode(FsOperations.readAll(p), type);
+                            return FsCodec.decode(schema, FsOperations.readAll(p));
                         } catch (IOException e) {
                             throw new IllegalStateException("read failed: " + p, e);
                         }
@@ -1184,7 +1191,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private static <T> List<T> listCurrentRecords(final Path byIdDir, final Class<T> type) {
+    private static <T> List<T> listCurrentRecords(final Path byIdDir, final FsCodec.Schema<T> schema) {
         if (!Files.isDirectory(byIdDir)) {
             return List.of();
         }
@@ -1196,7 +1203,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             for (Path entityDir : entityDirs) {
                 Path current = entityDir.resolve(FsPaths.CURRENT_FILE);
                 if (Files.exists(current)) {
-                    out.add(FsCodec.decode(FsOperations.readAll(current), type));
+                    out.add(FsCodec.decode(schema, FsOperations.readAll(current)));
                 }
             }
             return out;

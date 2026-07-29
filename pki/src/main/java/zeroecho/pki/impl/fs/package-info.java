@@ -52,6 +52,10 @@
  * append-only history with timestamped entries.</li>
  * <li><strong>Atomic updates</strong> – all writes use a write-to-temp +
  * move-into-place strategy based on NIO.</li>
+ * <li><strong>Closed current schema</strong> – persisted values use fixed type
+ * identifiers and compile-time codecs. Java class names are never persisted or
+ * resolved, nested collections have exact element schemas, and attribute sets
+ * are stored structurally and decoded to the canonical core implementation.</li>
  * <li><strong>Strict snapshot semantics</strong> – snapshot export reconstructs
  * a complete store state for a given point in time and fails explicitly if no
  * valid history entry exists.</li>
@@ -82,6 +86,8 @@
  * implementation).</li>
  * <li>Logging uses {@code java.util.logging} exclusively and never includes
  * sensitive domain data.</li>
+ * <li>The codec performs no runtime class loading or reflective construction.
+ * Earlier pre-release persistence formats are rejected rather than migrated.</li>
  * </ul>
  *
  * <h2>Scope</h2>

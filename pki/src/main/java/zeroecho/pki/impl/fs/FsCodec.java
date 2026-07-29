@@ -23,555 +23,1021 @@
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.invoke.MethodHandles;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.reflect.RecordComponent;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.DateTimeException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.core.io.Util;
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.IssuerRef;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.SubjectRef;
+import zeroecho.pki.api.Validity;
+import zeroecho.pki.api.attr.AttributeId;
+import zeroecho.pki.api.attr.AttributeSet;
+import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.ca.CaKind;
+import zeroecho.pki.api.ca.CaRecord;
+import zeroecho.pki.api.ca.CaState;
+import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
+import zeroecho.pki.api.orch.WorkflowStateRecord;
+import zeroecho.pki.api.policy.PolicyTrace;
+import zeroecho.pki.api.policy.PolicyTraceStep;
+import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.publication.PublicationRecord;
+import zeroecho.pki.api.publication.PublicationStatus;
+import zeroecho.pki.api.publication.PublicationTarget;
+import zeroecho.pki.api.publication.PublicationTargetType;
+import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.revocation.RevocationReason;
+import zeroecho.pki.api.revocation.RevokedRecord;
+import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.api.status.StatusObjectType;
+import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
 /**
- * Compact binary codec for filesystem persistence.
- *
- * <h2>Encoding format</h2>
- * <p>
- * The codec supports two on-wire formats:
- * </p>
- * <ul>
- * <li><b>Compact format (current)</b>: begins with a 1-byte MAGIC marker
- * {@code 0xFF}, followed by a 1-byte TAG and tag-specific payload.</li>
- * <li><b>Legacy format (backward-compatible)</b>: begins with a UTF-8 encoded
- * Java class name (written by
- * {@link zeroecho.core.io.Util#writeUTF8(OutputStream, String)}), followed by
- * value payload based on that class.</li>
- * </ul>
+ * Closed binary codec for the current filesystem persistence schema.
  *
  * <p>
- * The compact format eliminates the pathological overhead of writing a full
- * Java class name for every scalar value (e.g., {@code boolean}). It also
- * substantially reduces class-loading activity during decode.
+ * Every payload carries a fixed magic value, one current codec version, and one
+ * of ten explicit top-level type identifiers. Nested values are decoded only
+ * through the schema selected by trusted store code. Java class names are never
+ * persisted or resolved, and this codec performs no runtime class loading,
+ * reflective construction, or factory discovery.
  * </p>
  *
- * <h2>Type compatibility</h2>
  * <p>
- * During decode, the codec enforces that the encoded value type is compatible
- * with the expected type. Primitive/wrapper pairs (e.g.,
- * {@code boolean}/{@link Boolean}) are treated as compatible because values are
- * boxed when represented as {@link Object}.
+ * Pre-release payloads written by earlier class-name-based codecs are rejected.
+ * No compatibility or migration decoder is provided. Lists and optional values
+ * carry their exact element schema, and attribute sets are represented
+ * structurally and decoded to {@link SimpleAttributeSet}.
  * </p>
  */
-@SuppressWarnings("PMD.CyclomaticComplexity")
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 final class FsCodec {
 
     /* package */ static final int MAX_COMPONENT_BYTES = 256 * 1024;
+    /* package */ static final int CURRENT_CODEC_VERSION = 2;
 
-    private static final Map<Class<?>, Class<?>> PRIMITIVE_TO_WRAPPER = Map.of(boolean.class, Boolean.class, byte.class,
-            Byte.class, short.class, Short.class, int.class, Integer.class, long.class, Long.class, char.class,
-            Character.class, float.class, Float.class, double.class, Double.class);
+    private static final int CODEC_MAGIC = 0x5A454346;
+    private static final int MAX_COLLECTION_ELEMENTS = MAX_COMPONENT_BYTES;
 
-    /**
-     * Magic byte that marks the compact format.
-     *
-     * <p>
-     * This value is chosen to be extremely unlikely as a first byte of the legacy
-     * UTF-8 class-name length prefix. Class names are short; legacy length prefix
-     * first byte will be &lt; 0x80.
-     * </p>
-     */
-    private static final int MAGIC_COMPACT = 0xFF;
+    private static final int TOP_CA_RECORD = 1;
+    private static final int TOP_CREDENTIAL = 2;
+    private static final int TOP_PARSED_REQUEST = 3;
+    private static final int TOP_REVOCATION = 4;
+    private static final int TOP_STATUS_OBJECT = 5;
+    private static final int TOP_PUBLICATION = 6;
+    private static final int TOP_CERTIFICATE_PROFILE = 7;
+    private static final int TOP_POLICY_TRACE = 8;
+    private static final int TOP_WORKFLOW_STATE = 9;
+    private static final int TOP_SIGN_WORKFLOW_RECORD = 10;
 
-    // Compact tags (1 byte). Keep stable.
-    private static final int TAG_STRING = 1;
-    private static final int TAG_INT = 2;
-    private static final int TAG_LONG = 3;
-    private static final int TAG_BOOL = 4;
-    private static final int TAG_BYTES = 5;
-    private static final int TAG_INSTANT = 6;
-    private static final int TAG_DURATION = 7;
-    private static final int TAG_ENUM = 8;
-    private static final int TAG_RECORD = 9;
-    private static final int TAG_FALLBACK_STRING = 10;
-    private static final int TAG_LIST = 11;
-    private static final int TAG_SET = 12;
-    private static final int TAG_OPTIONAL = 13;
+    private static final int TYPE_STRING = 1;
+    private static final int TYPE_BOOLEAN = 2;
+    private static final int TYPE_LONG = 3;
+    private static final int TYPE_BYTES = 4;
+    private static final int TYPE_INSTANT = 5;
+    private static final int TYPE_DURATION = 6;
+    private static final int TYPE_LIST = 7;
+    private static final int TYPE_OPTIONAL = 8;
+    private static final int TYPE_PKI_ID = 20;
+    private static final int TYPE_KEY_REF = 21;
+    private static final int TYPE_SUBJECT_REF = 22;
+    private static final int TYPE_ISSUER_REF = 23;
+    private static final int TYPE_FORMAT_ID = 24;
+    private static final int TYPE_VALIDITY = 25;
+    private static final int TYPE_ENCODED_OBJECT = 26;
+    private static final int TYPE_PRINCIPAL = 27;
+    private static final int TYPE_ATTRIBUTE_ID = 28;
+    private static final int TYPE_POLICY_TRACE_STEP = 29;
+    private static final int TYPE_PUBLICATION_TARGET = 30;
+    private static final int TYPE_ATTRIBUTE_SET = 31;
+    private static final int TYPE_ATTRIBUTE_VALUE = 33;
+    private static final int TYPE_CREDENTIAL_RECORD = 34;
+    private static final int TYPE_ENCODING_ENUM = 50;
+    private static final int TYPE_CA_KIND_ENUM = 51;
+    private static final int TYPE_CA_STATE_ENUM = 52;
+    private static final int TYPE_CREDENTIAL_STATUS_ENUM = 53;
+    private static final int TYPE_REVOCATION_REASON_ENUM = 54;
+    private static final int TYPE_STATUS_OBJECT_TYPE_ENUM = 55;
+    private static final int TYPE_PUBLICATION_TARGET_TYPE_ENUM = 56;
+    private static final int TYPE_PUBLICATION_STATUS_ENUM = 57;
+    private static final int TYPE_DURABILITY_POLICY_ENUM = 58;
+    private static final int TYPE_SIGN_STATE_ENUM = 59;
+
+    private static final int ATTRIBUTE_STRING = 1;
+    private static final int ATTRIBUTE_BOOLEAN = 2;
+    private static final int ATTRIBUTE_INTEGER = 3;
+    private static final int ATTRIBUTE_INSTANT = 4;
+    private static final int ATTRIBUTE_BYTES = 5;
+    private static final int MARKER_ABSENT = 0;
+    private static final int MARKER_PRESENT = 1;
+
+    private static final ValueSchema<String> STRING = valueSchema(TYPE_STRING, Writer::writeString,
+            Reader::readString);
+    private static final ValueSchema<Boolean> BOOLEAN = valueSchema(TYPE_BOOLEAN, Writer::writeBoolean,
+            Reader::readBoolean);
+    private static final ValueSchema<Long> LONG = valueSchema(TYPE_LONG, Writer::writeLong, Reader::readLong);
+    private static final ValueSchema<byte[]> BYTES = valueSchema(TYPE_BYTES, Writer::writeBytes, Reader::readBytes);
+    private static final ValueSchema<Instant> INSTANT = valueSchema(TYPE_INSTANT, Writer::writeInstant,
+            Reader::readInstant);
+    private static final ValueSchema<Duration> DURATION = valueSchema(TYPE_DURATION, Writer::writeDuration,
+            Reader::readDuration);
+
+    private static final ValueSchema<Encoding> ENCODING = enumSchema(TYPE_ENCODING_ENUM,
+            value -> switch (value) {
+                case DER -> 1;
+                case PEM -> 2;
+                case BINARY -> 3;
+            },
+            code -> switch (code) {
+                case 1 -> Encoding.DER;
+                case 2 -> Encoding.PEM;
+                case 3 -> Encoding.BINARY;
+                default -> throw unknownEnum("Encoding", code);
+            });
+    private static final ValueSchema<CaKind> CA_KIND = enumSchema(TYPE_CA_KIND_ENUM,
+            value -> switch (value) {
+                case ROOT -> 1;
+                case INTERMEDIATE -> 2;
+            },
+            code -> switch (code) {
+                case 1 -> CaKind.ROOT;
+                case 2 -> CaKind.INTERMEDIATE;
+                default -> throw unknownEnum("CaKind", code);
+            });
+    private static final ValueSchema<CaState> CA_STATE = enumSchema(TYPE_CA_STATE_ENUM,
+            value -> switch (value) {
+                case ACTIVE -> 1;
+                case RETIRED -> 2;
+                case COMPROMISED -> 3;
+                case DISABLED -> 4;
+            },
+            code -> switch (code) {
+                case 1 -> CaState.ACTIVE;
+                case 2 -> CaState.RETIRED;
+                case 3 -> CaState.COMPROMISED;
+                case 4 -> CaState.DISABLED;
+                default -> throw unknownEnum("CaState", code);
+            });
+    private static final ValueSchema<CredentialStatus> CREDENTIAL_STATUS = enumSchema(TYPE_CREDENTIAL_STATUS_ENUM,
+            value -> switch (value) {
+                case ISSUED -> 1;
+                case REVOKED -> 2;
+                case EXPIRED -> 3;
+            },
+            code -> switch (code) {
+                case 1 -> CredentialStatus.ISSUED;
+                case 2 -> CredentialStatus.REVOKED;
+                case 3 -> CredentialStatus.EXPIRED;
+                default -> throw unknownEnum("CredentialStatus", code);
+            });
+    private static final ValueSchema<RevocationReason> REVOCATION_REASON = enumSchema(TYPE_REVOCATION_REASON_ENUM,
+            value -> switch (value) {
+                case UNSPECIFIED -> 1;
+                case KEY_COMPROMISE -> 2;
+                case CA_COMPROMISE -> 3;
+                case AFFILIATION_CHANGED -> 4;
+                case SUPERSEDED -> 5;
+                case CESSATION_OF_OPERATION -> 6;
+                case CERTIFICATE_HOLD -> 7;
+                case REMOVE_FROM_CRL -> 8;
+                case PRIVILEGE_WITHDRAWN -> 9;
+                case AA_COMPROMISE -> 10;
+            },
+            code -> switch (code) {
+                case 1 -> RevocationReason.UNSPECIFIED;
+                case 2 -> RevocationReason.KEY_COMPROMISE;
+                case 3 -> RevocationReason.CA_COMPROMISE;
+                case 4 -> RevocationReason.AFFILIATION_CHANGED;
+                case 5 -> RevocationReason.SUPERSEDED;
+                case 6 -> RevocationReason.CESSATION_OF_OPERATION;
+                case 7 -> RevocationReason.CERTIFICATE_HOLD;
+                case 8 -> RevocationReason.REMOVE_FROM_CRL;
+                case 9 -> RevocationReason.PRIVILEGE_WITHDRAWN;
+                case 10 -> RevocationReason.AA_COMPROMISE;
+                default -> throw unknownEnum("RevocationReason", code);
+            });
+    private static final ValueSchema<StatusObjectType> STATUS_OBJECT_TYPE = enumSchema(TYPE_STATUS_OBJECT_TYPE_ENUM,
+            value -> switch (value) {
+                case CRL -> 1;
+                case DELTA_CRL -> 2;
+                case OCSP -> 3;
+                case REVOCATION_LIST -> 4;
+            },
+            code -> switch (code) {
+                case 1 -> StatusObjectType.CRL;
+                case 2 -> StatusObjectType.DELTA_CRL;
+                case 3 -> StatusObjectType.OCSP;
+                case 4 -> StatusObjectType.REVOCATION_LIST;
+                default -> throw unknownEnum("StatusObjectType", code);
+            });
+    private static final ValueSchema<PublicationTargetType> PUBLICATION_TARGET_TYPE = enumSchema(
+            TYPE_PUBLICATION_TARGET_TYPE_ENUM,
+            value -> switch (value) {
+                case FILESYSTEM -> 1;
+                case LDAP -> 2;
+                case HTTP -> 3;
+                case OBJECT_STORE -> 4;
+                case CUSTOM -> 5;
+            },
+            code -> switch (code) {
+                case 1 -> PublicationTargetType.FILESYSTEM;
+                case 2 -> PublicationTargetType.LDAP;
+                case 3 -> PublicationTargetType.HTTP;
+                case 4 -> PublicationTargetType.OBJECT_STORE;
+                case 5 -> PublicationTargetType.CUSTOM;
+                default -> throw unknownEnum("PublicationTargetType", code);
+            });
+    private static final ValueSchema<PublicationStatus> PUBLICATION_STATUS = enumSchema(TYPE_PUBLICATION_STATUS_ENUM,
+            value -> switch (value) {
+                case PUBLISHED -> 1;
+                case SKIPPED -> 2;
+                case FAILED -> 3;
+            },
+            code -> switch (code) {
+                case 1 -> PublicationStatus.PUBLISHED;
+                case 2 -> PublicationStatus.SKIPPED;
+                case 3 -> PublicationStatus.FAILED;
+                default -> throw unknownEnum("PublicationStatus", code);
+            });
+    private static final ValueSchema<OrchestrationDurabilityPolicy> DURABILITY_POLICY = enumSchema(
+            TYPE_DURABILITY_POLICY_ENUM,
+            value -> switch (value) {
+                case STRICT_ABORT_ON_RESTART -> 1;
+                case DURABLE_MIN_STATE -> 2;
+                case DURABLE_ENCRYPTED_STATE -> 3;
+            },
+            code -> switch (code) {
+                case 1 -> OrchestrationDurabilityPolicy.STRICT_ABORT_ON_RESTART;
+                case 2 -> OrchestrationDurabilityPolicy.DURABLE_MIN_STATE;
+                case 3 -> OrchestrationDurabilityPolicy.DURABLE_ENCRYPTED_STATE;
+                default -> throw unknownEnum("OrchestrationDurabilityPolicy", code);
+            });
+    private static final ValueSchema<SignWorkflowStore.State> SIGN_STATE = valueSchema(TYPE_SIGN_STATE_ENUM,
+            (writer, value) -> writer.writeUnsignedByte(value.persistentCode()),
+            reader -> {
+                int code = reader.readUnsignedByte();
+                try {
+                    return SignWorkflowStore.State.fromPersistentCode(code);
+                } catch (IllegalArgumentException ex) {
+                    throw new IOException("unknown SignWorkflowStore.State code " + code, ex);
+                }
+            });
+
+    private static final ValueSchema<PkiId> PKI_ID = valueSchema(TYPE_PKI_ID,
+            (writer, value) -> writer.writeValue(STRING, value.value()),
+            reader -> new PkiId(reader.readValue(STRING)));
+    private static final ValueSchema<KeyRef> KEY_REF = valueSchema(TYPE_KEY_REF,
+            (writer, value) -> writer.writeValue(STRING, value.value()),
+            reader -> new KeyRef(reader.readValue(STRING)));
+    private static final ValueSchema<SubjectRef> SUBJECT_REF = valueSchema(TYPE_SUBJECT_REF,
+            (writer, value) -> writer.writeValue(STRING, value.value()),
+            reader -> new SubjectRef(reader.readValue(STRING)));
+    private static final ValueSchema<IssuerRef> ISSUER_REF = valueSchema(TYPE_ISSUER_REF,
+            (writer, value) -> writer.writeValue(PKI_ID, value.caId()),
+            reader -> new IssuerRef(reader.readValue(PKI_ID)));
+    private static final ValueSchema<FormatId> FORMAT_ID = valueSchema(TYPE_FORMAT_ID,
+            (writer, value) -> writer.writeValue(STRING, value.value()),
+            reader -> new FormatId(reader.readValue(STRING)));
+    private static final ValueSchema<Validity> VALIDITY = valueSchema(TYPE_VALIDITY,
+            (writer, value) -> {
+                writer.writeValue(INSTANT, value.notBefore());
+                writer.writeValue(INSTANT, value.notAfter());
+            },
+            reader -> new Validity(reader.readValue(INSTANT), reader.readValue(INSTANT)));
+    private static final ValueSchema<EncodedObject> ENCODED_OBJECT = valueSchema(TYPE_ENCODED_OBJECT,
+            FsCodec::writeEncodedObject, FsCodec::readEncodedObject);
+    private static final ValueSchema<Principal> PRINCIPAL = valueSchema(TYPE_PRINCIPAL,
+            (writer, value) -> {
+                writer.writeValue(STRING, value.type());
+                writer.writeValue(STRING, value.name());
+            },
+            reader -> new Principal(reader.readValue(STRING), reader.readValue(STRING)));
+    private static final ValueSchema<AttributeId> ATTRIBUTE_ID = valueSchema(TYPE_ATTRIBUTE_ID,
+            (writer, value) -> writer.writeValue(STRING, value.value()),
+            reader -> new AttributeId(reader.readValue(STRING)));
+
+    private static final ValueSchema<AttributeValue> ATTRIBUTE_VALUE = valueSchema(TYPE_ATTRIBUTE_VALUE,
+            FsCodec::writeAttributeValue, FsCodec::readAttributeValue);
+    private static final ValueSchema<List<AttributeValue>> ATTRIBUTE_VALUES = listOf(ATTRIBUTE_VALUE);
+    private static final ValueSchema<AttributeSet> ATTRIBUTE_SET = valueSchema(TYPE_ATTRIBUTE_SET,
+            FsCodec::writeAttributeSet, FsCodec::readAttributeSet);
+
+    private static final ValueSchema<List<String>> STRINGS = listOf(STRING);
+    private static final ValueSchema<List<AttributeId>> ATTRIBUTE_IDS = listOf(ATTRIBUTE_ID);
+    private static final ValueSchema<PolicyTraceStep> POLICY_TRACE_STEP = valueSchema(TYPE_POLICY_TRACE_STEP,
+            (writer, value) -> {
+                writer.writeValue(STRING, value.ruleId());
+                writer.writeValue(STRING, value.outcome());
+                writer.writeValue(STRINGS, value.notes());
+            },
+            reader -> new PolicyTraceStep(reader.readValue(STRING), reader.readValue(STRING),
+                    reader.readValue(STRINGS)));
+    private static final ValueSchema<List<PolicyTraceStep>> POLICY_TRACE_STEPS = listOf(POLICY_TRACE_STEP);
+    private static final ValueSchema<PublicationTarget> PUBLICATION_TARGET = valueSchema(TYPE_PUBLICATION_TARGET,
+            (writer, value) -> {
+                writer.writeValue(PUBLICATION_TARGET_TYPE, value.type());
+                writer.writeValue(STRING, value.targetId());
+                writer.writeValue(ATTRIBUTE_SET, value.attributes());
+            },
+            reader -> new PublicationTarget(reader.readValue(PUBLICATION_TARGET_TYPE), reader.readValue(STRING),
+                    reader.readValue(ATTRIBUTE_SET)));
+
+    private static final ValueSchema<Optional<Validity>> OPTIONAL_VALIDITY = optionalOf(VALIDITY);
+    private static final ValueSchema<Optional<String>> OPTIONAL_STRING = optionalOf(STRING);
+    private static final ValueSchema<Optional<Instant>> OPTIONAL_INSTANT = optionalOf(INSTANT);
+    private static final ValueSchema<Optional<Duration>> OPTIONAL_DURATION = optionalOf(DURATION);
+    private static final ValueSchema<Optional<EncodedObject>> OPTIONAL_ENCODED_OBJECT = optionalOf(ENCODED_OBJECT);
+
+    private static final ValueSchema<Credential> CREDENTIAL_VALUE = valueSchema(TYPE_CREDENTIAL_RECORD,
+            FsCodec::writeCredential, FsCodec::readCredential);
+    private static final ValueSchema<List<Credential>> CREDENTIALS = listOf(CREDENTIAL_VALUE);
+
+    /* package */ static final Schema<CaRecord> CA_RECORD = topLevel(TOP_CA_RECORD, "CA_RECORD",
+            valueSchema(100, FsCodec::writeCaRecord, FsCodec::readCaRecord));
+    /* package */ static final Schema<Credential> CREDENTIAL = topLevel(TOP_CREDENTIAL, "CREDENTIAL",
+            CREDENTIAL_VALUE);
+    /* package */ static final Schema<ParsedCertificationRequest> PARSED_REQUEST = topLevel(TOP_PARSED_REQUEST,
+            "PARSED_REQUEST", valueSchema(101, FsCodec::writeParsedRequest, FsCodec::readParsedRequest));
+    /* package */ static final Schema<RevokedRecord> REVOCATION = topLevel(TOP_REVOCATION, "REVOCATION",
+            valueSchema(102, FsCodec::writeRevocation, FsCodec::readRevocation));
+    /* package */ static final Schema<StatusObject> STATUS_OBJECT = topLevel(TOP_STATUS_OBJECT, "STATUS_OBJECT",
+            valueSchema(103, FsCodec::writeStatusObject, FsCodec::readStatusObject));
+    /* package */ static final Schema<PublicationRecord> PUBLICATION = topLevel(TOP_PUBLICATION, "PUBLICATION",
+            valueSchema(104, FsCodec::writePublication, FsCodec::readPublication));
+    /* package */ static final Schema<CertificateProfile> CERTIFICATE_PROFILE = topLevel(TOP_CERTIFICATE_PROFILE,
+            "CERTIFICATE_PROFILE", valueSchema(105, FsCodec::writeCertificateProfile,
+                    FsCodec::readCertificateProfile));
+    /* package */ static final Schema<PolicyTrace> POLICY_TRACE = topLevel(TOP_POLICY_TRACE, "POLICY_TRACE",
+            valueSchema(106, FsCodec::writePolicyTrace, FsCodec::readPolicyTrace));
+    /* package */ static final Schema<WorkflowStateRecord> WORKFLOW_STATE = topLevel(TOP_WORKFLOW_STATE,
+            "WORKFLOW_STATE", valueSchema(107, FsCodec::writeWorkflowState, FsCodec::readWorkflowState));
+    /* package */ static final Schema<SignWorkflowStore.Record> SIGN_WORKFLOW_RECORD = topLevel(
+            TOP_SIGN_WORKFLOW_RECORD, "SIGN_WORKFLOW_RECORD",
+            valueSchema(108, FsCodec::writeSignWorkflowRecord, FsCodec::readSignWorkflowRecord));
+
+    private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(
+            Map.entry(TOP_CA_RECORD, CA_RECORD),
+            Map.entry(TOP_CREDENTIAL, CREDENTIAL),
+            Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
+            Map.entry(TOP_REVOCATION, REVOCATION),
+            Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
+            Map.entry(TOP_PUBLICATION, PUBLICATION),
+            Map.entry(TOP_CERTIFICATE_PROFILE, CERTIFICATE_PROFILE),
+            Map.entry(TOP_POLICY_TRACE, POLICY_TRACE),
+            Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE),
+            Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD));
 
     private FsCodec() {
         // utility
     }
 
-    /* default */ static <T> byte[] encode(final T value) {
+    /* package */ static <T> byte[] encode(final Schema<T> schema, final T value) {
+        Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(value, "value");
         try {
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            writeAnyCompact(bos, value);
-            return bos.toByteArray();
-        } catch (IOException e) {
-            throw new IllegalStateException("encoding failed: " + value.getClass().getName(), e);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            Writer writer = new Writer(output);
+            writer.writeInt(CODEC_MAGIC);
+            writer.writeUnsignedByte(CURRENT_CODEC_VERSION);
+            writer.writeUnsignedByte(schema.typeId);
+            schema.valueSchema.encoder.encode(writer, value);
+            return output.toByteArray();
+        } catch (IOException ex) {
+            throw new IllegalStateException("Encoding failed: schema=" + schema.name + " code=ENCODE_FAILED", ex);
         }
     }
 
-    /* default */ static <T> T decode(final byte[] data, final Class<T> expectedType) {
-        Objects.requireNonNull(data, "data");
-        Objects.requireNonNull(expectedType, "expectedType");
+    /* package */ static <T> T decode(final Schema<T> schema, final byte[] encoded) {
+        Objects.requireNonNull(schema, "schema");
+        Objects.requireNonNull(encoded, "encoded");
         try {
-            ByteArrayInputStream bis = new ByteArrayInputStream(data);
-            Object decoded = readAny(bis, expectedType);
-            if (bis.available() != 0) {
-                throw new IllegalStateException("trailing data after " + expectedType.getName());
-            }
-            return expectedType.cast(decoded);
-        } catch (IOException e) {
-            throw new IllegalStateException("decoding failed: " + expectedType.getName(), e);
+            return decodeCurrentPayload(schema, encoded);
+        } catch (IOException | IllegalArgumentException ex) {
+            throw new IllegalStateException(
+                    "Decoding failed: schema=" + schema.name + " code=INVALID_CURRENT_PAYLOAD", ex);
         }
     }
 
-    private static void writeAnyCompact(final OutputStream out, final Object value) throws IOException {
-        Objects.requireNonNull(out, "out");
-        Objects.requireNonNull(value, "value");
+    private static <T> T decodeCurrentPayload(Schema<T> schema, byte[] encoded) throws IOException {
+        ByteArrayInputStream input = new ByteArrayInputStream(encoded);
+        Reader reader = new Reader(input);
+        if (reader.readInt() != CODEC_MAGIC) {
+            throw new IOException("codec magic mismatch");
+        }
+        int version = reader.readUnsignedByte();
+        if (version != CURRENT_CODEC_VERSION) {
+            throw new IOException("unsupported codec version");
+        }
+        int typeId = reader.readUnsignedByte();
+        Schema<?> encodedSchema = TOP_LEVEL_SCHEMAS.get(typeId);
+        if (encodedSchema == null) {
+            throw new IOException("unknown top-level type");
+        }
+        if (encodedSchema.typeId != schema.typeId) {
+            throw new IOException("top-level type mismatch");
+        }
+        T decoded = schema.valueSchema.decoder.decode(reader);
+        if (input.available() != 0) {
+            throw new IOException("trailing payload data");
+        }
+        return decoded;
+    }
 
-        out.write(MAGIC_COMPACT);
+    private static void writeEncodedObject(Writer writer, EncodedObject value) throws IOException {
+        writer.writeValue(ENCODING, value.encoding());
+        byte[] bytes = value.bytes();
+        try {
+            writer.writeValue(BYTES, bytes);
+        } finally {
+            Arrays.fill(bytes, (byte) 0);
+        }
+    }
 
+    private static EncodedObject readEncodedObject(Reader reader) throws IOException {
+        Encoding encoding = reader.readValue(ENCODING);
+        byte[] bytes = reader.readValue(BYTES);
+        try {
+            return new EncodedObject(encoding, bytes);
+        } finally {
+            Arrays.fill(bytes, (byte) 0);
+        }
+    }
+
+    private static void writeAttributeValue(Writer writer, AttributeValue value) throws IOException {
         switch (value) {
-            case String s -> writeStringCompact(out, s);
-            case Integer i -> writeIntegerCompact(out, i);
-            case Long l -> writeLongCompact(out, l);
-            case Boolean b -> writeBooleanCompact(out, b);
-            case byte[] bytes -> writeBytesCompact(out, bytes);
-            case Instant instant -> writeInstantCompact(out, instant);
-            case Duration duration -> writeDurationCompact(out, duration);
-            case java.util.List<?> list -> writeListCompact(out, list);
-            case java.util.Set<?> set -> writeSetCompact(out, set);
-            case Optional<?> optional -> writeOptionalCompact(out, optional);
-            default -> writeComplexCompact(out, value);
+            case AttributeValue.StringValue stringValue -> {
+                writer.writeUnsignedByte(ATTRIBUTE_STRING);
+                writer.writeValue(STRING, stringValue.value());
+            }
+            case AttributeValue.BooleanValue booleanValue -> {
+                writer.writeUnsignedByte(ATTRIBUTE_BOOLEAN);
+                writer.writeValue(BOOLEAN, booleanValue.value());
+            }
+            case AttributeValue.IntegerValue integerValue -> {
+                writer.writeUnsignedByte(ATTRIBUTE_INTEGER);
+                writer.writeValue(LONG, integerValue.value());
+            }
+            case AttributeValue.InstantValue instantValue -> {
+                writer.writeUnsignedByte(ATTRIBUTE_INSTANT);
+                writer.writeValue(INSTANT, instantValue.value());
+            }
+            case AttributeValue.BytesValue bytesValue -> {
+                writer.writeUnsignedByte(ATTRIBUTE_BYTES);
+                byte[] copy = bytesValue.value().clone();
+                try {
+                    writer.writeValue(BYTES, copy);
+                } finally {
+                    Arrays.fill(copy, (byte) 0);
+                }
+            }
         }
     }
 
-    private static void writeStringCompact(final OutputStream out, final String value) throws IOException {
-        out.write(TAG_STRING);
-        Util.writeUTF8(out, value);
+    private static AttributeValue readAttributeValue(Reader reader) throws IOException {
+        return switch (reader.readUnsignedByte()) {
+            case ATTRIBUTE_STRING -> new AttributeValue.StringValue(reader.readValue(STRING));
+            case ATTRIBUTE_BOOLEAN -> new AttributeValue.BooleanValue(reader.readValue(BOOLEAN));
+            case ATTRIBUTE_INTEGER -> new AttributeValue.IntegerValue(reader.readValue(LONG));
+            case ATTRIBUTE_INSTANT -> new AttributeValue.InstantValue(reader.readValue(INSTANT));
+            case ATTRIBUTE_BYTES -> readAttributeBytes(reader);
+            default -> throw new IOException("unknown attribute value type");
+        };
     }
 
-    private static void writeIntegerCompact(final OutputStream out, final Integer value) throws IOException {
-        out.write(TAG_INT);
-        Util.writePack7I(out, value);
-    }
-
-    private static void writeLongCompact(final OutputStream out, final Long value) throws IOException {
-        out.write(TAG_LONG);
-        Util.writePack7L(out, value);
-    }
-
-    private static void writeBooleanCompact(final OutputStream out, final Boolean value) throws IOException {
-        out.write(TAG_BOOL);
-        out.write(value ? 1 : 0);
-    }
-
-    private static void writeBytesCompact(final OutputStream out, final byte[] value) throws IOException {
-        out.write(TAG_BYTES);
-        Util.write(out, value);
-    }
-
-    private static void writeInstantCompact(final OutputStream out, final Instant value) throws IOException {
-        out.write(TAG_INSTANT);
-        Util.writeLong(out, value.getEpochSecond());
-        Util.writePack7I(out, value.getNano());
-    }
-
-    private static void writeDurationCompact(final OutputStream out, final Duration value) throws IOException {
-        out.write(TAG_DURATION);
-        Util.writeLong(out, value.getSeconds());
-        Util.writePack7I(out, value.getNano());
-    }
-
-    private static void writeListCompact(final OutputStream out, final java.util.List<?> list) throws IOException {
-        out.write(TAG_LIST);
-        Util.writePack7I(out, list.size());
-        for (Object element : list) {
-            Objects.requireNonNull(element, "list element must not be null");
-            writeAnyCompact(out, element);
+    private static AttributeValue readAttributeBytes(Reader reader) throws IOException {
+        byte[] bytes = reader.readValue(BYTES);
+        try {
+            return new AttributeValue.BytesValue(bytes.clone());
+        } finally {
+            Arrays.fill(bytes, (byte) 0);
         }
     }
 
-    private static void writeSetCompact(final OutputStream out, final java.util.Set<?> set) throws IOException {
-        out.write(TAG_SET);
-
-        java.util.List<Object> ordered = new java.util.ArrayList<>(set.size());
-        ordered.addAll(set);
-        sortSetElementsDeterministically(ordered);
-
-        Util.writePack7I(out, ordered.size());
-        for (Object element : ordered) {
-            Objects.requireNonNull(element, "set element must not be null");
-            writeAnyCompact(out, element);
+    private static void writeAttributeSet(Writer writer, AttributeSet value) throws IOException {
+        List<AttributeId> ids = List.copyOf(value.ids());
+        writer.writeCount(ids.size());
+        for (AttributeId id : ids) {
+            writer.writeValue(ATTRIBUTE_ID, id);
+            writer.writeValue(ATTRIBUTE_VALUES, value.getAll(id));
         }
     }
 
-    private static void sortSetElementsDeterministically(final java.util.List<Object> ordered) {
-        ordered.sort((a, b) -> {
-            if (a == b) { // NOPMD
-                return 0;
+    private static AttributeSet readAttributeSet(Reader reader) throws IOException {
+        int count = reader.readCount();
+        List<SimpleAttributeSet.Entry> entries = new ArrayList<>(count);
+        for (int index = 0; index < count; index++) {
+            entries.add(new SimpleAttributeSet.Entry(reader.readValue(ATTRIBUTE_ID),
+                    reader.readValue(ATTRIBUTE_VALUES)));
+        }
+        return new SimpleAttributeSet(entries);
+    }
+
+    private static void writeCredential(Writer writer, Credential value) throws IOException {
+        writer.writeValue(PKI_ID, value.credentialId());
+        writer.writeValue(FORMAT_ID, value.formatId());
+        writer.writeValue(ISSUER_REF, value.issuerRef());
+        writer.writeValue(SUBJECT_REF, value.subjectRef());
+        writer.writeValue(VALIDITY, value.validity());
+        writer.writeValue(STRING, value.serialOrUniqueId());
+        writer.writeValue(PKI_ID, value.publicKeyId());
+        writer.writeValue(STRING, value.profileId());
+        writer.writeValue(CREDENTIAL_STATUS, value.status());
+        writer.writeValue(ENCODED_OBJECT, value.encoded());
+        writer.writeValue(ATTRIBUTE_SET, value.attributes());
+    }
+
+    private static Credential readCredential(Reader reader) throws IOException {
+        return new Credential(reader.readValue(PKI_ID), reader.readValue(FORMAT_ID), reader.readValue(ISSUER_REF),
+                reader.readValue(SUBJECT_REF), reader.readValue(VALIDITY), reader.readValue(STRING),
+                reader.readValue(PKI_ID), reader.readValue(STRING), reader.readValue(CREDENTIAL_STATUS),
+                reader.readValue(ENCODED_OBJECT), reader.readValue(ATTRIBUTE_SET));
+    }
+
+    private static void writeCaRecord(Writer writer, CaRecord value) throws IOException {
+        writer.writeValue(PKI_ID, value.caId());
+        writer.writeValue(CA_KIND, value.kind());
+        writer.writeValue(CA_STATE, value.state());
+        writer.writeValue(KEY_REF, value.issuerKeyRef());
+        writer.writeValue(SUBJECT_REF, value.subjectRef());
+        writer.writeValue(CREDENTIALS, value.caCredentials());
+    }
+
+    private static CaRecord readCaRecord(Reader reader) throws IOException {
+        return new CaRecord(reader.readValue(PKI_ID), reader.readValue(CA_KIND), reader.readValue(CA_STATE),
+                reader.readValue(KEY_REF), reader.readValue(SUBJECT_REF), reader.readValue(CREDENTIALS));
+    }
+
+    private static void writeParsedRequest(Writer writer, ParsedCertificationRequest value) throws IOException {
+        writer.writeValue(PKI_ID, value.requestId());
+        writer.writeValue(FORMAT_ID, value.formatId());
+        writer.writeValue(SUBJECT_REF, value.subjectRef());
+        writer.writeValue(ENCODED_OBJECT, value.publicKeyInfo());
+        writer.writeValue(OPTIONAL_VALIDITY, value.requestedValidity());
+        writer.writeValue(OPTIONAL_STRING, value.requestedProfileId());
+        writer.writeValue(ATTRIBUTE_SET, value.attributes());
+    }
+
+    private static ParsedCertificationRequest readParsedRequest(Reader reader) throws IOException {
+        return new ParsedCertificationRequest(reader.readValue(PKI_ID), reader.readValue(FORMAT_ID),
+                reader.readValue(SUBJECT_REF), reader.readValue(ENCODED_OBJECT), reader.readValue(OPTIONAL_VALIDITY),
+                reader.readValue(OPTIONAL_STRING), reader.readValue(ATTRIBUTE_SET));
+    }
+
+    private static void writeRevocation(Writer writer, RevokedRecord value) throws IOException {
+        writer.writeValue(PKI_ID, value.credentialId());
+        writer.writeValue(INSTANT, value.revocationTime());
+        writer.writeValue(REVOCATION_REASON, value.reason());
+        writer.writeValue(ATTRIBUTE_SET, value.attributes());
+    }
+
+    private static RevokedRecord readRevocation(Reader reader) throws IOException {
+        return new RevokedRecord(reader.readValue(PKI_ID), reader.readValue(INSTANT),
+                reader.readValue(REVOCATION_REASON), reader.readValue(ATTRIBUTE_SET));
+    }
+
+    private static void writeStatusObject(Writer writer, StatusObject value) throws IOException {
+        writer.writeValue(PKI_ID, value.statusObjectId());
+        writer.writeValue(FORMAT_ID, value.formatId());
+        writer.writeValue(PKI_ID, value.issuerCaId());
+        writer.writeValue(STATUS_OBJECT_TYPE, value.type());
+        writer.writeValue(INSTANT, value.thisUpdate());
+        writer.writeValue(OPTIONAL_INSTANT, value.nextUpdate());
+        writer.writeValue(ENCODED_OBJECT, value.encoded());
+        writer.writeValue(ATTRIBUTE_SET, value.attributes());
+    }
+
+    private static StatusObject readStatusObject(Reader reader) throws IOException {
+        return new StatusObject(reader.readValue(PKI_ID), reader.readValue(FORMAT_ID), reader.readValue(PKI_ID),
+                reader.readValue(STATUS_OBJECT_TYPE), reader.readValue(INSTANT), reader.readValue(OPTIONAL_INSTANT),
+                reader.readValue(ENCODED_OBJECT), reader.readValue(ATTRIBUTE_SET));
+    }
+
+    private static void writePublication(Writer writer, PublicationRecord value) throws IOException {
+        writer.writeValue(PKI_ID, value.publicationId());
+        writer.writeValue(INSTANT, value.time());
+        writer.writeValue(PUBLICATION_TARGET, value.target());
+        writer.writeValue(PKI_ID, value.objectId());
+        writer.writeValue(STRING, value.objectKind());
+        writer.writeValue(PUBLICATION_STATUS, value.status());
+    }
+
+    private static PublicationRecord readPublication(Reader reader) throws IOException {
+        return new PublicationRecord(reader.readValue(PKI_ID), reader.readValue(INSTANT),
+                reader.readValue(PUBLICATION_TARGET), reader.readValue(PKI_ID), reader.readValue(STRING),
+                reader.readValue(PUBLICATION_STATUS));
+    }
+
+    private static void writeCertificateProfile(Writer writer, CertificateProfile value) throws IOException {
+        writer.writeValue(STRING, value.profileId());
+        writer.writeValue(FORMAT_ID, value.formatId());
+        writer.writeValue(STRING, value.displayName());
+        writer.writeValue(ATTRIBUTE_IDS, value.requiredAttributes());
+        writer.writeValue(ATTRIBUTE_IDS, value.optionalAttributes());
+        writer.writeValue(OPTIONAL_DURATION, value.maxValidity());
+        writer.writeValue(BOOLEAN, value.active());
+    }
+
+    private static CertificateProfile readCertificateProfile(Reader reader) throws IOException {
+        return new CertificateProfile(reader.readValue(STRING), reader.readValue(FORMAT_ID), reader.readValue(STRING),
+                reader.readValue(ATTRIBUTE_IDS), reader.readValue(ATTRIBUTE_IDS), reader.readValue(OPTIONAL_DURATION),
+                reader.readValue(BOOLEAN));
+    }
+
+    private static void writePolicyTrace(Writer writer, PolicyTrace value) throws IOException {
+        writer.writeValue(PKI_ID, value.decisionId());
+        writer.writeValue(POLICY_TRACE_STEPS, value.steps());
+    }
+
+    private static PolicyTrace readPolicyTrace(Reader reader) throws IOException {
+        return new PolicyTrace(reader.readValue(PKI_ID), reader.readValue(POLICY_TRACE_STEPS));
+    }
+
+    private static void writeWorkflowState(Writer writer, WorkflowStateRecord value) throws IOException {
+        writer.writeValue(PKI_ID, value.opId());
+        writer.writeValue(STRING, value.type());
+        writer.writeValue(PRINCIPAL, value.owner());
+        writer.writeValue(DURABILITY_POLICY, value.durabilityPolicy());
+        writer.writeValue(INSTANT, value.createdAt());
+        writer.writeValue(INSTANT, value.updatedAt());
+        writer.writeValue(INSTANT, value.expiresAt());
+        writer.writeValue(ENCODING, value.payloadEncoding());
+        writer.writeValue(OPTIONAL_ENCODED_OBJECT, value.payload());
+    }
+
+    private static WorkflowStateRecord readWorkflowState(Reader reader) throws IOException {
+        return new WorkflowStateRecord(reader.readValue(PKI_ID), reader.readValue(STRING),
+                reader.readValue(PRINCIPAL), reader.readValue(DURABILITY_POLICY), reader.readValue(INSTANT),
+                reader.readValue(INSTANT), reader.readValue(INSTANT), reader.readValue(ENCODING),
+                reader.readValue(OPTIONAL_ENCODED_OBJECT));
+    }
+
+    private static void writeSignWorkflowRecord(Writer writer, SignWorkflowStore.Record value) throws IOException {
+        writer.writeValue(PKI_ID, value.submissionId());
+        writer.writeValue(STRING, value.namespace());
+        writer.writeValue(STRING, value.fingerprint());
+        writer.writeValue(PRINCIPAL, value.owner());
+        writer.writeValue(INSTANT, value.createdAt());
+        writer.writeValue(INSTANT, value.deadline());
+        writer.writeValue(ENCODED_OBJECT, value.request());
+        writer.writeValue(SIGN_STATE, value.state());
+        writer.writeValue(LONG, value.revision());
+        writer.writeValue(LONG, value.fence());
+        writer.writeValue(OPTIONAL_INSTANT, value.leaseUntil());
+        writer.writeValue(OPTIONAL_STRING, value.detailCode());
+        writer.writeValue(OPTIONAL_ENCODED_OBJECT, value.result());
+        writer.writeValue(OPTIONAL_INSTANT, value.providerUpdatedAt());
+    }
+
+    private static SignWorkflowStore.Record readSignWorkflowRecord(Reader reader) throws IOException {
+        return new SignWorkflowStore.Record(reader.readValue(PKI_ID), reader.readValue(STRING),
+                reader.readValue(STRING), reader.readValue(PRINCIPAL), reader.readValue(INSTANT),
+                reader.readValue(INSTANT), reader.readValue(ENCODED_OBJECT), reader.readValue(SIGN_STATE),
+                reader.readValue(LONG), reader.readValue(LONG), reader.readValue(OPTIONAL_INSTANT),
+                reader.readValue(OPTIONAL_STRING), reader.readValue(OPTIONAL_ENCODED_OBJECT),
+                reader.readValue(OPTIONAL_INSTANT));
+    }
+
+    private static <T> Schema<T> topLevel(int typeId, String name, ValueSchema<T> valueSchema) {
+        return new Schema<>(typeId, name, valueSchema);
+    }
+
+    private static <T> ValueSchema<T> valueSchema(int typeCode, Encoder<T> encoder, Decoder<T> decoder) {
+        return new ValueSchema<>(typeCode, encoder, decoder);
+    }
+
+    private static <E> ValueSchema<E> enumSchema(int typeCode, EnumEncoder<E> encoder, EnumDecoder<E> decoder) {
+        return valueSchema(typeCode, (writer, value) -> writer.writeUnsignedByte(encoder.code(value)),
+                reader -> decoder.value(reader.readUnsignedByte()));
+    }
+
+    private static <T> ValueSchema<List<T>> listOf(ValueSchema<T> elementSchema) {
+        return valueSchema(TYPE_LIST, (writer, values) -> {
+            writer.writeUnsignedByte(elementSchema.typeCode);
+            writer.writeCount(values.size());
+            for (T value : values) {
+                writer.writeValue(elementSchema, Objects.requireNonNull(value, "list element"));
             }
-            if (a == null) {
-                return -1;
+        }, reader -> {
+            reader.requireTypeCode(elementSchema.typeCode);
+            int count = reader.readCount();
+            List<T> values = new ArrayList<>(count);
+            for (int index = 0; index < count; index++) {
+                values.add(reader.readValue(elementSchema));
             }
-            if (b == null) {
-                return 1;
-            }
-            if (a instanceof Comparable<?> && a.getClass() == b.getClass()) {
-                @SuppressWarnings("unchecked")
-                Comparable<Object> comparable = (Comparable<Object>) a;
-                return comparable.compareTo(b);
-            }
-            return stableSortKey(a).compareTo(stableSortKey(b));
+            return List.copyOf(values);
         });
     }
 
-    private static void writeOptionalCompact(final OutputStream out, final Optional<?> optional)
-            throws IOException {
-        out.write(TAG_OPTIONAL);
-        if (optional.isPresent()) {
-            out.write(1);
-            Object element = optional.get();
-            Objects.requireNonNull(element, "optional element must not be null");
-            writeAnyCompact(out, element);
-            return;
-        }
-        out.write(0);
+    private static <T> ValueSchema<Optional<T>> optionalOf(ValueSchema<T> elementSchema) {
+        return valueSchema(TYPE_OPTIONAL, (writer, value) -> {
+            writer.writeUnsignedByte(elementSchema.typeCode);
+            if (value.isEmpty()) {
+                writer.writeUnsignedByte(MARKER_ABSENT);
+                return;
+            }
+            writer.writeUnsignedByte(MARKER_PRESENT);
+            writer.writeValue(elementSchema, value.orElseThrow());
+        }, reader -> {
+            reader.requireTypeCode(elementSchema.typeCode);
+            int marker = reader.readUnsignedByte();
+            if (marker == MARKER_ABSENT) {
+                return Optional.empty();
+            }
+            if (marker != MARKER_PRESENT) {
+                throw new IOException("invalid optional marker");
+            }
+            return Optional.of(reader.readValue(elementSchema));
+        });
     }
 
-    private static void writeComplexCompact(final OutputStream out, final Object value) throws IOException {
-        Class<?> type = value.getClass();
-        if (type.isEnum()) {
-            writeEnumCompact(out, type, value);
-            return;
-        }
-        if (type.isRecord()) {
-            writeRecordCompact(out, type, value);
-            return;
-        }
-        writeFallbackStringCompact(out, type, value);
+    private static IOException unknownEnum(String type, int code) {
+        return new IOException("unknown " + type + " code " + code);
     }
 
-    private static void writeEnumCompact(final OutputStream out, final Class<?> type, final Object value)
-            throws IOException {
-        out.write(TAG_ENUM);
-        Util.writeUTF8(out, type.getName());
-        Enum<?> enumValue = (Enum<?>) value;
-        int persistentCode = value instanceof SignWorkflowStore.State state
-                ? state.persistentCode()
-                : enumValue.ordinal();
-        Util.writePack7I(out, persistentCode);
-    }
+    /**
+     * Trusted compile-time description of one approved top-level payload.
+     *
+     * @param <T> payload value type
+     */
+    /* package */ static final class Schema<T> {
 
-    private static void writeRecordCompact(final OutputStream out, final Class<?> type, final Object value)
-            throws IOException {
-        out.write(TAG_RECORD);
-        Util.writeUTF8(out, type.getName());
+        private final int typeId;
+        private final String name;
+        private final ValueSchema<T> valueSchema;
 
-        RecordComponent[] components = type.getRecordComponents();
-        Util.writePack7I(out, components.length);
-
-        for (RecordComponent component : components) {
-            Object componentValue = invokeRecordAccessor(type, component, value);
-            Objects.requireNonNull(componentValue, "record component " + type.getName() + "." + component.getName());
-            writeAnyCompact(out, componentValue);
+        private Schema(int typeId, String name, ValueSchema<T> valueSchema) {
+            this.typeId = typeId;
+            this.name = name;
+            this.valueSchema = valueSchema;
         }
     }
 
-    private static Object invokeRecordAccessor(final Class<?> type, final RecordComponent component,
-            final Object value) {
-        try {
-            Method accessor = component.getAccessor();
-            return accessor.invoke(value);
-        } catch (IllegalAccessException | InvocationTargetException ex) {
-            throw new IllegalStateException("record encode failed: " + type.getName() + "." + component.getName(), ex);
+    /**
+     * Typed nested-value codec.
+     *
+     * @param <T> nested value type
+     */
+    private record ValueSchema<T>(int typeCode, Encoder<T> encoder, Decoder<T> decoder) {
+    }
+
+    /**
+     * Writes one value through its declared schema.
+     *
+     * @param <T> value type
+     */
+    @FunctionalInterface
+    private interface Encoder<T> {
+        /**
+         * Encodes a value.
+         *
+         * @param writer destination writer
+         * @param value value to encode
+         * @throws IOException if encoding fails
+         */
+        void encode(Writer writer, T value) throws IOException;
+    }
+
+    /**
+     * Reads one value through its declared schema.
+     *
+     * @param <T> value type
+     */
+    @FunctionalInterface
+    private interface Decoder<T> {
+        /**
+         * Decodes a value.
+         *
+         * @param reader source reader
+         * @return decoded value
+         * @throws IOException if decoding fails
+         */
+        T decode(Reader reader) throws IOException;
+    }
+
+    /**
+     * Maps an approved enum constant to a stable code.
+     *
+     * @param <T> enum type
+     */
+    @FunctionalInterface
+    private interface EnumEncoder<T> {
+        /**
+         * Returns the persistent code.
+         *
+         * @param value enum value
+         * @return stable persistent code
+         */
+        int code(T value);
+    }
+
+    /**
+     * Maps a stable code to one approved enum constant.
+     *
+     * @param <T> enum type
+     */
+    @FunctionalInterface
+    private interface EnumDecoder<T> {
+        /**
+         * Returns the enum value for a code.
+         *
+         * @param code persistent code
+         * @return decoded enum value
+         * @throws IOException if the code is unknown
+         */
+        T value(int code) throws IOException;
+    }
+
+    /**
+     * Minimal binary writer used only by declared schemas.
+     */
+    private static final class Writer {
+
+        private final OutputStream output;
+
+        private Writer(OutputStream output) {
+            this.output = output;
+        }
+
+        private <T> void writeValue(ValueSchema<T> schema, T value) throws IOException {
+            Objects.requireNonNull(value, "schema value");
+            writeUnsignedByte(schema.typeCode);
+            schema.encoder.encode(this, value);
+        }
+
+        private void writeString(String value) throws IOException {
+            Util.writeUTF8(output, value);
+        }
+
+        private void writeBoolean(Boolean value) throws IOException {
+            writeUnsignedByte(value ? 1 : 0);
+        }
+
+        private void writeLong(Long value) throws IOException {
+            Util.writeLong(output, value);
+        }
+
+        private void writeBytes(byte[] value) throws IOException {
+            Util.write(output, value);
+        }
+
+        private void writeInstant(Instant value) throws IOException {
+            Util.writeLong(output, value.getEpochSecond());
+            Util.writePack7I(output, value.getNano());
+        }
+
+        private void writeDuration(Duration value) throws IOException {
+            Util.writeLong(output, value.getSeconds());
+            Util.writePack7I(output, value.getNano());
+        }
+
+        private void writeCount(int count) throws IOException {
+            if (count < 0 || count > MAX_COLLECTION_ELEMENTS) {
+                throw new IOException("collection size out of range");
+            }
+            Util.writePack7I(output, count);
+        }
+
+        private void writeUnsignedByte(int value) throws IOException {
+            if (value < 0 || value > 0xFF) {
+                throw new IOException("byte value out of range");
+            }
+            output.write(value);
+        }
+
+        private void writeInt(int value) throws IOException {
+            output.write(value >>> 24);
+            output.write(value >>> 16);
+            output.write(value >>> 8);
+            output.write(value);
         }
     }
 
-    private static void writeFallbackStringCompact(final OutputStream out, final Class<?> type, final Object value)
-            throws IOException {
-        out.write(TAG_FALLBACK_STRING);
-        Util.writeUTF8(out, type.getName());
-        Util.writeUTF8(out, value.toString());
-    }
+    /**
+     * Minimal binary reader used only by declared schemas.
+     */
+    private static final class Reader {
 
-    private static String stableSortKey(final Object o) {
-        return o.getClass().getName() + ":" + o.toString();
-    }
+        private final InputStream input;
 
-    private static Object readAny(final InputStream in, final Class<?> expectedType) throws IOException {
-        Objects.requireNonNull(in, "in");
-        Objects.requireNonNull(expectedType, "expectedType");
-
-        int first = in.read();
-        if (first < 0) {
-            throw new IOException("unexpected EOF");
+        private Reader(InputStream input) {
+            this.input = input;
         }
 
-        if (first != MAGIC_COMPACT) {
-            throw new IllegalStateException(
-                    "file mismatch, MAGIC byte expected=" + MAGIC_COMPACT + " but found=" + first);
+        private <T> T readValue(ValueSchema<T> schema) throws IOException {
+            requireTypeCode(schema.typeCode);
+            return schema.decoder.decode(this);
         }
 
-        int tag = in.read();
-        if (tag < 0) {
-            throw new IOException("unexpected EOF");
+        private void requireTypeCode(int expected) throws IOException {
+            int actual = readUnsignedByte();
+            if (actual != expected) {
+                throw new IOException("nested type mismatch");
+            }
         }
 
-        Object value = readByTag(in, tag);
-
-        if (!isTypeCompatible(expectedType, value.getClass())) {
-            throw new IllegalStateException(
-                    "type mismatch, expected " + expectedType.getName() + " but decoded " + value.getClass().getName());
+        private String readString() throws IOException {
+            return Util.readUTF8(input, MAX_COMPONENT_BYTES);
         }
 
-        return value;
-    }
-
-    private static Object readByTag(final InputStream in, final int tag) throws IOException {
-        switch (tag) {
-            case TAG_STRING:
-                return readStringCompact(in);
-            case TAG_INT:
-                return readIntegerCompact(in);
-            case TAG_LONG:
-                return readLongCompact(in);
-            case TAG_BOOL:
-                return readBooleanCompact(in);
-            case TAG_BYTES:
-                return readBytesCompact(in);
-            case TAG_INSTANT:
-                return readInstantCompact(in);
-            case TAG_DURATION:
-                return readDurationCompact(in);
-            case TAG_ENUM:
-                return readEnumCompact(in);
-            case TAG_RECORD:
-                return readRecordCompact(in);
-            case TAG_FALLBACK_STRING:
-                return readFallbackStringCompact(in);
-            case TAG_LIST:
-                return readListCompact(in);
-            case TAG_SET:
-                return readSetCompact(in);
-            case TAG_OPTIONAL:
-                return readOptionalCompact(in);
-            default:
-                throw new IllegalStateException("unknown compact tag: " + tag);
-        }
-    }
-
-    private static String readStringCompact(final InputStream in) throws IOException {
-        return Util.readUTF8(in, MAX_COMPONENT_BYTES);
-    }
-
-    private static int readIntegerCompact(final InputStream in) throws IOException {
-        return Util.readPack7I(in);
-    }
-
-    private static long readLongCompact(final InputStream in) throws IOException {
-        return Util.readPack7L(in);
-    }
-
-    private static boolean readBooleanCompact(final InputStream in) throws IOException {
-        int value = in.read();
-        if (value < 0) {
-            throw new IOException("unexpected EOF");
-        }
-        return value != 0;
-    }
-
-    private static byte[] readBytesCompact(final InputStream in) throws IOException {
-        return Util.read(in, MAX_COMPONENT_BYTES);
-    }
-
-    private static Instant readInstantCompact(final InputStream in) throws IOException {
-        long seconds = Util.readLong(in);
-        int nanos = Util.readPack7I(in);
-        return Instant.ofEpochSecond(seconds, nanos);
-    }
-
-    private static Duration readDurationCompact(final InputStream in) throws IOException {
-        long seconds = Util.readLong(in);
-        int nanos = Util.readPack7I(in);
-        return Duration.ofSeconds(seconds, nanos);
-    }
-
-    private static Object readEnumCompact(final InputStream in) throws IOException {
-        String enumTypeName = Util.readUTF8(in, MAX_COMPONENT_BYTES);
-        Class<?> enumType = loadClass(enumTypeName);
-        if (!enumType.isEnum()) {
-            throw new IllegalStateException("encoded enum type is not an enum: " + enumTypeName);
+        private Boolean readBoolean() throws IOException {
+            int value = readUnsignedByte();
+            if (value == MARKER_ABSENT) {
+                return Boolean.FALSE;
+            }
+            if (value == MARKER_PRESENT) {
+                return Boolean.TRUE;
+            }
+            throw new IOException("invalid boolean value");
         }
 
-        int ordinal = Util.readPack7I(in);
-        if (SignWorkflowStore.State.class.equals(enumType)) {
+        private Long readLong() throws IOException {
+            return Util.readLong(input);
+        }
+
+        private byte[] readBytes() throws IOException {
+            return Util.read(input, MAX_COMPONENT_BYTES);
+        }
+
+        private Instant readInstant() throws IOException {
+            long seconds = Util.readLong(input);
+            int nanos = Util.readPack7I(input);
+            if (nanos < 0 || nanos > 999_999_999) {
+                throw new IOException("invalid instant nanoseconds");
+            }
             try {
-                return SignWorkflowStore.State.fromPersistentCode(ordinal);
-            } catch (IllegalArgumentException ex) {
-                throw new IllegalStateException("invalid signing workflow state code " + ordinal, ex);
+                return Instant.ofEpochSecond(seconds, nanos);
+            } catch (DateTimeException ex) {
+                throw new IOException("invalid instant", ex);
             }
         }
-        Object[] constants = enumType.getEnumConstants();
-        if (constants == null || ordinal < 0 || ordinal >= constants.length) {
-            throw new IllegalStateException("invalid enum ordinal " + ordinal + " for " + enumTypeName);
-        }
-        return constants[ordinal];
-    }
 
-    private static Object readRecordCompact(final InputStream in) throws IOException {
-        String recordTypeName = Util.readUTF8(in, MAX_COMPONENT_BYTES);
-        Class<?> recordType = loadClass(recordTypeName);
-        if (!recordType.isRecord()) {
-            throw new IllegalStateException("encoded record type is not a record: " + recordTypeName);
-        }
-
-        int componentCount = Util.readPack7I(in);
-        RecordComponent[] components = recordType.getRecordComponents();
-        if (components.length != componentCount) {
-            throw new IllegalStateException("record component count mismatch for " + recordTypeName + ", expected "
-                    + components.length + " but encoded " + componentCount);
-        }
-
-        Class<?>[] constructorTypes = new Class<?>[components.length];
-        Object[] constructorArgs = new Object[components.length];
-        for (int i = 0; i < components.length; i++) {
-            RecordComponent component = components[i];
-            constructorTypes[i] = component.getType();
-            constructorArgs[i] = readAny(in, constructorTypes[i]);
-        }
-
-        try {
-            return recordType.getDeclaredConstructor(constructorTypes).newInstance(constructorArgs);
-        } catch (ReflectiveOperationException ex) {
-            throw new IllegalStateException("record decode failed for " + recordTypeName, ex);
-        }
-    }
-
-    private static Object readFallbackStringCompact(final InputStream in) throws IOException {
-        String typeName = Util.readUTF8(in, MAX_COMPONENT_BYTES);
-        String value = Util.readUTF8(in, MAX_COMPONENT_BYTES);
-        Class<?> type = loadClass(typeName);
-
-        Method stringFactory = findStringFactory(type);
-        if (stringFactory != null) {
+        private Duration readDuration() throws IOException {
+            long seconds = Util.readLong(input);
+            int nanos = Util.readPack7I(input);
+            if (nanos < 0 || nanos > 999_999_999) {
+                throw new IOException("invalid duration nanoseconds");
+            }
             try {
-                return stringFactory.invoke(null, value);
-            } catch (ReflectiveOperationException ex) {
-                throw new IllegalStateException("from-string factory failed for " + type.getName(), ex);
+                return Duration.ofSeconds(seconds, nanos);
+            } catch (ArithmeticException ex) {
+                throw new IOException("invalid duration", ex);
             }
         }
 
-        try {
-            return type.getConstructor(String.class).newInstance(value);
-        } catch (ReflectiveOperationException ex) {
-            throw new IllegalStateException("unsupported value type without from-string factory: " + type.getName(),
-                    ex);
-        }
-    }
-
-    private static Object readListCompact(final InputStream in) throws IOException {
-        int size = Util.readPack7I(in);
-        java.util.List<Object> out = new java.util.ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            Object element = readAny(in, Object.class);
-            out.add(element);
-        }
-        return java.util.List.copyOf(out);
-    }
-
-    private static Object readSetCompact(final InputStream in) throws IOException {
-        int size = Util.readPack7I(in);
-        java.util.Set<Object> out = new java.util.LinkedHashSet<>(size);
-        for (int i = 0; i < size; i++) {
-            Object element = readAny(in, Object.class);
-            out.add(element);
-        }
-        return java.util.Set.copyOf(out);
-    }
-
-    private static Object readOptionalCompact(final InputStream in) throws IOException {
-        int present = in.read();
-        if (present < 0) {
-            throw new IOException("unexpected EOF");
-        }
-        if (present == 0) {
-            return Optional.empty();
-        }
-        Object element = readAny(in, Object.class);
-        return Optional.of(element);
-    }
-
-    private static boolean isTypeCompatible(final Class<?> expectedType, final Class<?> actualType) {
-        if (expectedType.isAssignableFrom(actualType)) {
-            return true;
-        }
-
-        Class<?> expectedWrapper = PRIMITIVE_TO_WRAPPER.get(expectedType);
-        if (expectedWrapper != null && expectedWrapper == actualType) {
-            return true;
-        }
-
-        Class<?> actualWrapper = PRIMITIVE_TO_WRAPPER.get(actualType);
-        return actualWrapper != null && actualWrapper == expectedType;
-    }
-
-    @SuppressWarnings("PMD.UseProperClassLoader")
-    private static Class<?> loadClass(final String typeName) {
-        Objects.requireNonNull(typeName, "typeName");
-
-        ClassLoader cl = Thread.currentThread().getContextClassLoader();
-        if (cl == null) {
-            cl = MethodHandles.lookup().lookupClass().getClassLoader();
-        }
-
-        try {
-            return Class.forName(typeName, false, cl);
-        } catch (ClassNotFoundException e) {
-            throw new IllegalStateException("unknown encoded type: " + typeName, e);
-        }
-    }
-
-    private static Method findStringFactory(final Class<?> type) {
-        try {
-            Method of = type.getMethod("of", String.class);
-            if ((of.getModifiers() & java.lang.reflect.Modifier.STATIC) != 0 && of.getReturnType() == type) {
-                return of;
+        private int readCount() throws IOException {
+            int count = Util.readPack7I(input);
+            if (count < 0 || count > MAX_COLLECTION_ELEMENTS) {
+                throw new IOException("collection size out of range");
             }
-        } catch (NoSuchMethodException ex) { // NOPMD
-            // ignore
+            return count;
         }
 
-        try {
-            Method valueOf = type.getMethod("valueOf", String.class);
-            if ((valueOf.getModifiers() & java.lang.reflect.Modifier.STATIC) != 0 && valueOf.getReturnType() == type) {
-                return valueOf;
+        private int readUnsignedByte() throws IOException {
+            int value = input.read();
+            if (value < 0) {
+                throw new EOFException("unexpected end of payload");
             }
-        } catch (NoSuchMethodException ex) { // NOPMD
-            // ignore
+            return value;
         }
 
-        return null;
+        private int readInt() throws IOException {
+            int first = readUnsignedByte();
+            int second = readUnsignedByte();
+            int third = readUnsignedByte();
+            int fourth = readUnsignedByte();
+            return first << 24 | second << 16 | third << 8 | fourth;
+        }
     }
 }

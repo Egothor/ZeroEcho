@@ -64,14 +64,26 @@ import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.ca.CaKind;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.policy.PolicyTrace;
+import zeroecho.pki.api.policy.PolicyTraceStep;
+import zeroecho.pki.api.publication.PublicationRecord;
+import zeroecho.pki.api.publication.PublicationStatus;
+import zeroecho.pki.api.publication.PublicationTarget;
+import zeroecho.pki.api.publication.PublicationTargetType;
+import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevokedRecord;
+import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.api.status.StatusObjectType;
+import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
+import zeroecho.pki.api.orch.WorkflowStateRecord;
 
 /**
  * Tests for {@link FilesystemPkiStore}.
@@ -95,6 +107,63 @@ public final class FilesystemPkiStoreTest {
 
     @TempDir
     Path tmp;
+
+    @Test
+    void everyNonSigningTopLevelSchemaRoundTripsThroughRealStore() throws Exception {
+        System.out.println("everyNonSigningTopLevelSchemaRoundTripsThroughRealStore");
+        Path root = tmp.resolve("store-all-schemas");
+        Instant now = Instant.parse("2026-01-02T03:04:05Z");
+        AttributeSet attributes = TestObjects.emptyAttributes();
+        CaRecord ca = TestObjects.minimalCaRecord("ca-all", CaState.ACTIVE);
+        Credential credential = TestObjects.minimalCredential("SERIAL-ALL", "profile-all");
+        ParsedCertificationRequest request = new ParsedCertificationRequest(new PkiId("request-all"),
+                new FormatId("fmt-x509"), new SubjectRef("CN=request-all"),
+                new EncodedObject(Encoding.DER, new byte[] { 4, 5, 6 }), Optional.empty(),
+                Optional.of("profile-all"), attributes);
+        RevokedRecord revocation = TestObjects.minimalRevocation(credential.credentialId().value(), now,
+                RevocationReason.KEY_COMPROMISE);
+        StatusObject status = new StatusObject(new PkiId("status-all"), new FormatId("fmt-x509"), ca.caId(),
+                StatusObjectType.CRL, now, Optional.of(now.plusSeconds(60L)),
+                new EncodedObject(Encoding.DER, new byte[] { 7, 8 }), attributes);
+        PublicationRecord publication = new PublicationRecord(new PkiId("publication-all"), now,
+                new PublicationTarget(PublicationTargetType.FILESYSTEM, "target-all", attributes),
+                credential.credentialId(), "CREDENTIAL", PublicationStatus.PUBLISHED);
+        CertificateProfile profile = TestObjects.minimalProfile("profile-all", true);
+        PolicyTrace trace = new PolicyTrace(new PkiId("decision-all"),
+                List.of(new PolicyTraceStep("rule-all", "ALLOW", List.of("approved"))));
+        WorkflowStateRecord workflow = new WorkflowStateRecord(new PkiId("workflow-all"), "ISSUANCE",
+                new Principal("TEST", "owner"), OrchestrationDurabilityPolicy.DURABLE_MIN_STATE, now, now,
+                now.plusSeconds(60L), Encoding.BINARY,
+                Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 9 })));
+
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            store.putCa(ca);
+            store.putCredential(credential);
+            store.putRequest(request);
+            store.putRevocation(revocation);
+            store.putStatusObject(status);
+            store.putPublicationRecord(publication);
+            store.putProfile(profile);
+            store.putPolicyTrace(trace);
+            store.putWorkflowState(workflow);
+
+            assertEquals(ca.caId(), store.getCa(ca.caId()).orElseThrow().caId());
+            assertEquals(credential.credentialId(),
+                    store.getCredential(credential.credentialId()).orElseThrow().credentialId());
+            assertEquals(request.requestId(), store.getRequest(request.requestId()).orElseThrow().requestId());
+            assertEquals(revocation.credentialId(),
+                    store.getRevocation(revocation.credentialId()).orElseThrow().credentialId());
+            assertEquals(status.statusObjectId(),
+                    store.getStatusObject(status.statusObjectId()).orElseThrow().statusObjectId());
+            assertEquals(publication.publicationId(), store.listPublicationRecords().get(0).publicationId());
+            assertEquals(profile, store.getProfile(profile.profileId()).orElseThrow());
+            assertEquals(trace, store.getPolicyTrace(trace.decisionId()).orElseThrow());
+            assertEquals(workflow.opId(), store.getWorkflowState(workflow.opId()).orElseThrow().opId());
+        }
+
+        System.out.println("...schemas round-tripped=9; signing schema covered separately");
+        System.out.println("...ok");
+    }
 
     @Test
     void writeOnceCredentialRejected() throws Exception {

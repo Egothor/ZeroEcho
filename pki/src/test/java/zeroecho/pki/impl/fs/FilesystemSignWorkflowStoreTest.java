@@ -38,7 +38,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -62,7 +61,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import zeroecho.core.io.Util;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
@@ -92,21 +90,17 @@ final class FilesystemSignWorkflowStoreTest {
         SignWorkflowStore.Record current = intent(id, createdAt,
                 new EncodedObject(Encoding.BINARY, new byte[] { 7 }), TEST_ALGORITHM);
         String fingerprint = current.fingerprint();
-        byte[] encoded = FsCodec.encode(current);
+        byte[] encoded = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, current);
 
-        SignWorkflowStore.Record decoded = FsCodec.decode(encoded, SignWorkflowStore.Record.class);
+        SignWorkflowStore.Record decoded = FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, encoded);
         assertEquals(current.submissionId(), decoded.submissionId());
         assertEquals(current.providerUpdatedAt(), decoded.providerUpdatedAt());
 
-        int componentCountOffset = recordComponentCountOffset(encoded);
-        byte[] missingComponent = encoded.clone();
-        missingComponent[componentCountOffset] = (byte) (SignWorkflowStore.Record.class.getRecordComponents().length
-                - 1);
+        byte[] missingComponent = Arrays.copyOf(encoded, encoded.length - 1);
         assertRedactedStructuralFailure(missingComponent, fingerprint);
 
-        byte[] extraComponent = encoded.clone();
-        extraComponent[componentCountOffset] = (byte) (SignWorkflowStore.Record.class.getRecordComponents().length
-                + 1);
+        byte[] extraComponent = Arrays.copyOf(encoded, encoded.length + 1);
+        extraComponent[extraComponent.length - 1] = 1;
         assertRedactedStructuralFailure(extraComponent, fingerprint);
 
         byte[] missingProviderUpdatedAt = Arrays.copyOf(encoded, encoded.length - 3);
@@ -131,11 +125,7 @@ final class FilesystemSignWorkflowStoreTest {
 
         Path recordPath = new FsPaths(root).signWorkflowPath(id);
         byte[] malformed = Files.readAllBytes(recordPath);
-        int envelopeBytes = Integer.BYTES * 2;
-        int componentCountOffset = envelopeBytes
-                + recordComponentCountOffset(Arrays.copyOfRange(malformed, envelopeBytes, malformed.length));
-        malformed[componentCountOffset] = (byte) (SignWorkflowStore.Record.class.getRecordComponents().length - 1);
-        Files.write(recordPath, malformed);
+        Files.write(recordPath, Arrays.copyOf(malformed, malformed.length - 1));
 
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock);
                 InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false)) {
@@ -224,7 +214,7 @@ final class FilesystemSignWorkflowStoreTest {
             assertFalse(reopened.getSignRecord(id).isPresent());
             assertThrows(IllegalArgumentException.class, () -> reopened.createSignIntent(intent));
         }
-        try (FilesystemPkiStore foreign = new FilesystemPkiStore(root.resolveSibling("foreign"), options, clock)) {
+        try (FilesystemPkiStore foreign = new FilesystemPkiStore(root.resolve("foreign"), options, clock)) {
             assertThrows(IllegalArgumentException.class, () -> foreign.createSignIntent(intent));
         }
     }
@@ -338,9 +328,6 @@ final class FilesystemSignWorkflowStoreTest {
                     Optional.empty())
                     .orElseThrow();
             assertEquals(30, SignWorkflowStore.State.CANCELLING.persistentCode());
-            assertEquals(SignWorkflowStore.State.CANCELLING,
-                    FsCodec.decode(FsCodec.encode(SignWorkflowStore.State.CANCELLING),
-                            SignWorkflowStore.State.class));
             assertThrows(IllegalArgumentException.class,
                     () -> SignWorkflowStore.State.fromPersistentCode(999));
         }
@@ -605,24 +592,16 @@ final class FilesystemSignWorkflowStoreTest {
             throws Exception {
         Path path = new FsPaths(root).signWorkflowPath(id);
         byte[] existing = Files.readAllBytes(path);
-        byte[] payload = FsCodec.encode(record);
+        byte[] payload = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record);
         ByteBuffer replacement = ByteBuffer.allocate(Integer.BYTES * 2 + payload.length);
         replacement.put(existing, 0, Integer.BYTES * 2);
         replacement.put(payload);
         Files.write(path, replacement.array());
     }
 
-    private static int recordComponentCountOffset(byte[] encoded) throws Exception {
-        ByteArrayInputStream input = new ByteArrayInputStream(encoded);
-        input.read();
-        input.read();
-        Util.readUTF8(input, 4096);
-        return encoded.length - input.available();
-    }
-
     private static void assertRedactedStructuralFailure(byte[] encoded, String sensitiveFingerprint) {
         IllegalStateException failure = assertThrows(IllegalStateException.class,
-                () -> FsCodec.decode(encoded, SignWorkflowStore.Record.class));
+                () -> FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, encoded));
         assertFalse(failure.toString().contains(sensitiveFingerprint));
     }
 
