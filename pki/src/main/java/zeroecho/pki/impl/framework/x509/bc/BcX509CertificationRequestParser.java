@@ -108,6 +108,8 @@ import zeroecho.pki.spi.framework.CertificationRequestParser;
  * This class is stateless and thread-safe.
  * </p>
  */
+// PMD cannot infer that retaining parser causes would violate the redaction contract.
+@SuppressWarnings("PMD.PreserveStackTrace")
 public final class BcX509CertificationRequestParser implements CertificationRequestParser {
     /**
      * Parses a PKCS#10 certification request into the normalized PKI request
@@ -153,31 +155,38 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
 
         EncodedObject enc = request.encoded();
         byte[] csrDer = toDer(enc);
-        PKCS10CertificationRequest csr;
+        byte[] spki = null;
         try {
-            csr = new PKCS10CertificationRequest(csrDer);
-        } catch (Exception ex) {
-            throw new PkiException("Invalid PKCS#10 certification request", ex);
+            PKCS10CertificationRequest csr;
+            try {
+                csr = new PKCS10CertificationRequest(csrDer);
+            } catch (Exception ex) {
+                throw new PkiException("Invalid PKCS#10 certification request: code=CSR_MALFORMED");
+            }
+
+            X500Name subject = csr.getSubject();
+            SubjectRef subjectRef = new SubjectRef(subject.toString());
+
+            try {
+                spki = csr.getSubjectPublicKeyInfo().getEncoded();
+            } catch (Exception ex) {
+                throw new PkiException("Failed to extract CSR SPKI: code=CSR_SPKI_INVALID");
+            }
+            EncodedObject publicKeyInfo = new EncodedObject(Encoding.DER, spki);
+
+            PkiId requestId = new PkiId("csr:" + sha256Hex(csrDer));
+
+            SimpleAttributeSet attrs = SimpleAttributeSet.builder()
+                    .put(BcX509Attributes.CSR_DER, new AttributeValue.BytesValue(csrDer.clone())).build();
+
+            return new ParsedCertificationRequest(requestId, request.formatId(), subjectRef, publicKeyInfo,
+                    Optional.empty(), Optional.empty(), attrs);
+        } finally {
+            java.util.Arrays.fill(csrDer, (byte) 0);
+            if (spki != null) {
+                java.util.Arrays.fill(spki, (byte) 0);
+            }
         }
-
-        X500Name subject = csr.getSubject();
-        SubjectRef subjectRef = new SubjectRef(subject.toString());
-
-        byte[] spki;
-        try {
-            spki = csr.getSubjectPublicKeyInfo().getEncoded();
-        } catch (Exception ex) {
-            throw new PkiException("Failed to extract CSR SPKI", ex);
-        }
-        EncodedObject publicKeyInfo = new EncodedObject(Encoding.DER, spki);
-
-        PkiId requestId = new PkiId("csr:" + sha256Hex(csrDer));
-
-        SimpleAttributeSet attrs = SimpleAttributeSet.builder()
-                .put(BcX509Attributes.CSR_DER, new AttributeValue.BytesValue(csrDer)).build();
-
-        return new ParsedCertificationRequest(requestId, request.formatId(), subjectRef, publicKeyInfo,
-                Optional.empty(), Optional.empty(), attrs);
     }
 
     /**
@@ -208,9 +217,18 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
 
         return switch (obj.encoding()) {
             case DER -> obj.bytes();
-            case PEM -> readPemContentOrThrow(obj.bytes());
+            case PEM -> pemToDer(obj);
             default -> throw new IllegalArgumentException("Unsupported CSR encoding: " + obj.encoding());
         };
+    }
+
+    private static byte[] pemToDer(EncodedObject obj) {
+        byte[] pemBytes = obj.bytes();
+        try {
+            return readPemContentOrThrow(pemBytes);
+        } finally {
+            java.util.Arrays.fill(pemBytes, (byte) 0);
+        }
     }
 
     /**
@@ -245,7 +263,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
             }
             return pemObject.getContent();
         } catch (java.io.IOException ex) {
-            throw new IllegalArgumentException("Invalid PEM", ex);
+            throw new IllegalArgumentException("Invalid PEM: code=CSR_PEM_INVALID");
         }
     }
 
@@ -262,9 +280,13 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] d = md.digest(in);
-            return HexFormat.of().formatHex(d);
+            try {
+                return HexFormat.of().formatHex(d);
+            } finally {
+                java.util.Arrays.fill(d, (byte) 0);
+            }
         } catch (Exception ex) {
-            throw new IllegalStateException("SHA-256 not available", ex);
+            throw new IllegalStateException("SHA-256 unavailable: code=DIGEST_UNAVAILABLE");
         }
     }
 }

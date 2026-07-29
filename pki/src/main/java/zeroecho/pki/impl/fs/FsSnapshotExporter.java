@@ -60,6 +60,11 @@ import java.util.logging.Logger;
  * to {@code current.bin} only when strict mode is disabled.</li>
  * <li>Write-once objects are copied as-is (they are immutable). This exporter
  * does not attempt to prune them by time unless an upstream index exists.</li>
+ * <li>Signing namespace, signing-time watermark, and authoritative
+ * {@code sign-workflows} records are current safety metadata copied at export
+ * time. They are intentionally not reconstructed at {@code at}: rolling them
+ * back could make a stable identifier reusable or discard a completed signing
+ * result.</li>
  * </ul>
  */
 final class FsSnapshotExporter {
@@ -82,6 +87,8 @@ final class FsSnapshotExporter {
             FsPaths dst = new FsPaths(targetRoot);
 
             Files.writeString(dst.versionFile(), "v1");
+            copyFile(sourceRoot.resolve("SIGNING_NAMESPACE"), targetRoot.resolve("SIGNING_NAMESPACE"));
+            copyFile(sourceRoot.resolve("SIGNING_TIME_WATERMARK"), targetRoot.resolve("SIGNING_TIME_WATERMARK"));
 
             // copy write-once trees as-is (best-effort, deterministic order)
             copyTreeIfExists(sourceRoot.resolve("credentials"), targetRoot.resolve("credentials"));
@@ -89,6 +96,7 @@ final class FsSnapshotExporter {
             copyTreeIfExists(sourceRoot.resolve("status"), targetRoot.resolve("status"));
             copyTreeIfExists(sourceRoot.resolve("policy"), targetRoot.resolve("policy"));
             copyTreeIfExists(sourceRoot.resolve("publications"), targetRoot.resolve("publications"));
+            copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
 
             // reconstruct mutable entities from history (CAS, PROFILES, REVOCATIONS)
             reconstructMutableTree(sourceRoot.resolve("cas"), targetRoot.resolve("cas"), at,
@@ -191,5 +199,12 @@ final class FsSnapshotExporter {
                 throw new IllegalStateException("copy failed: " + p, e);
             }
         });
+    }
+
+    private static void copyFile(final Path source, final Path target) throws IOException {
+        if (!Files.isRegularFile(source)) {
+            throw new IllegalStateException("Required snapshot metadata is missing: " + source.getFileName());
+        }
+        FsOperations.writeAtomic(target, Files.readAllBytes(source));
     }
 }

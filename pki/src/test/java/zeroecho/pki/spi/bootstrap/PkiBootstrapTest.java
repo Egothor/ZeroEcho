@@ -263,6 +263,8 @@ public final class PkiBootstrapTest {
         System.setProperty("zeroecho.pki.crypto.workflow", "zeroecho-lib");
         System.setProperty("zeroecho.pki.crypto.workflow.keyringPath",
                 this.tempDir.resolve("workflow").resolve("keyring.zek").toString());
+        System.setProperty("zeroecho.pki.crypto.workflow.operationRoot",
+                this.tempDir.resolve("workflow").resolve("operations").toString());
         System.setProperty("zeroecho.pki.crypto.workflow.keyRefPrefix", "test-prefix:");
         System.setProperty("zeroecho.pki.crypto.workflow.requireComponentSuffix", "false");
 

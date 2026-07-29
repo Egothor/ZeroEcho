@@ -90,11 +90,13 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
     private static final String K_DETAIL = "detailCode";
     private static final String K_KEYREF = "keyRef";
     private static final String K_ALG = "algorithmId";
+    private static final String K_DEADLINE = "deadline";
     private static final String K_APPROVED_AT = "approvedAt";
     private static final String K_DENIED_AT = "deniedAt";
 
     private final String id;
     private final Path root;
+    private final TestSignIdentityRegistry identities;
     private final Map<String, PrivateKey> keysByKeyRef;
     private final Duration approvalWindow;
     private final Duration signDelay;
@@ -114,6 +116,7 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
             Duration approvalWindow, Duration signDelay) {
         this.id = Objects.requireNonNull(id, "id");
         this.root = Objects.requireNonNull(root, "root");
+        this.identities = new TestSignIdentityRegistry(root);
         this.keysByKeyRef = Objects.requireNonNull(keysByKeyRef, "keysByKeyRef");
         this.approvalWindow = Objects.requireNonNull(approvalWindow, "approvalWindow");
         this.signDelay = Objects.requireNonNull(signDelay, "signDelay");
@@ -142,7 +145,10 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
         long n = seq.incrementAndGet();
         persistSeq(root, n);
 
-        PkiId opId = new PkiId("swf:test:" + Long.toUnsignedString(n));
+        PkiId opId = request.submissionId();
+        if (!identities.begin(request)) {
+            return opId;
+        }
         Path dir = opDir(opId);
 
         try {
@@ -151,8 +157,13 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
 
             java.util.Properties p = new java.util.Properties();
             Instant now = Instant.now();
+            Instant deadline = now.plus(approvalWindow);
+            if (request.deadline().isPresent() && request.deadline().get().isBefore(deadline)) {
+                deadline = request.deadline().get();
+            }
             p.setProperty(K_CREATED_AT, now.toString());
             p.setProperty(K_UPDATED_AT, now.toString());
+            p.setProperty(K_DEADLINE, deadline.toString());
             p.setProperty(K_STATE, State.WAITING_APPROVAL.name());
             p.setProperty(K_DETAIL, "WAITING_APPROVAL");
             p.setProperty(K_KEYREF, request.keyRef().value());
@@ -196,6 +207,14 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
             return;
         }
         Instant now = Instant.now();
+        if (deadlineReached(p, now)) {
+            p.setProperty(K_UPDATED_AT, now.toString());
+            p.setProperty(K_STATE, State.EXPIRED.name());
+            p.setProperty(K_DETAIL, "EXPIRED");
+            writePropsSafe(dir.resolve(FILE_META), p);
+            notifySink(operationId);
+            return;
+        }
         p.setProperty(K_APPROVED_AT, now.toString());
         p.setProperty(K_UPDATED_AT, now.toString());
         p.setProperty(K_STATE, State.RUNNING.name());
@@ -236,15 +255,13 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
             return new OperationStatus(State.FAILED, Instant.now(), Optional.of("UNKNOWN"), Optional.empty());
         }
 
-        Instant createdAt = Instant.parse(p.getProperty(K_CREATED_AT));
         Instant updatedAt = Instant.parse(p.getProperty(K_UPDATED_AT));
         State state = parseState(p.getProperty(K_STATE));
         String detail = p.getProperty(K_DETAIL, "");
 
         // Expire while waiting for approval
-        Instant approvalDeadline = createdAt.plus(approvalWindow);
         if (!isTerminalState(state) && (state == State.WAITING_APPROVAL || state == State.PENDING)
-                && Instant.now().isAfter(approvalDeadline)) {
+                && deadlineReached(p, Instant.now())) {
             state = State.EXPIRED;
             detail = "APPROVAL_EXPIRED";
             updatedAt = Instant.now();
@@ -261,6 +278,16 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
             if (!approvedAtRaw.isBlank()) {
                 Instant approvedAt = Instant.parse(approvedAtRaw);
                 if (Instant.now().isAfter(approvedAt.plus(signDelay))) {
+                    Instant startedAt = Instant.now();
+                    if (deadlineReached(p, startedAt)) {
+                        p.setProperty(K_STATE, State.EXPIRED.name());
+                        p.setProperty(K_DETAIL, "EXPIRED");
+                        p.setProperty(K_UPDATED_AT, startedAt.toString());
+                        writePropsSafe(dir.resolve(FILE_META), p);
+                        notifySink(operationId);
+                        return new OperationStatus(State.EXPIRED, startedAt, Optional.of("EXPIRED"),
+                                Optional.empty());
+                    }
                     try {
                         byte[] payload = Files.readAllBytes(dir.resolve(FILE_REQUEST));
                         String keyRef = p.getProperty(K_KEYREF);
@@ -270,10 +297,15 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
                             return fail(operationId, dir, p, "UNKNOWN_KEY");
                         }
                         byte[] sigBytes = sign(alg, pk, payload);
-                        Files.write(dir.resolve(FILE_SIGNATURE), sigBytes);
-                        state = State.SUCCEEDED;
-                        detail = "SIGNED";
                         updatedAt = Instant.now();
+                        if (deadlineReached(p, updatedAt)) {
+                            state = State.EXPIRED;
+                            detail = "EXPIRED";
+                        } else {
+                            Files.write(dir.resolve(FILE_SIGNATURE), sigBytes);
+                            state = State.SUCCEEDED;
+                            detail = "SIGNED";
+                        }
                         p.setProperty(K_STATE, state.name());
                         p.setProperty(K_DETAIL, detail);
                         p.setProperty(K_UPDATED_AT, updatedAt.toString());
@@ -297,11 +329,17 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
     }
 
     @Override
-    public boolean cancel(PkiId operationId, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
+        if (fencingToken <= 0L) {
+            throw new IllegalArgumentException("fencingToken must be positive");
+        }
         if (reason.isBlank()) {
             throw new IllegalArgumentException("reason must not be blank");
+        }
+        if (!identities.acceptFence(operationId, fencingToken)) {
+            return false;
         }
         Path dir = opDir(operationId);
         java.util.Properties p = readPropsSafe(dir.resolve(FILE_META));
@@ -412,6 +450,11 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
 
     private static boolean isTerminalState(State s) {
         return s == State.SUCCEEDED || s == State.FAILED || s == State.CANCELLED || s == State.EXPIRED;
+    }
+
+    private static boolean deadlineReached(java.util.Properties properties, Instant observedAt) {
+        String value = properties.getProperty(K_DEADLINE, "");
+        return !value.isBlank() && !observedAt.isBefore(Instant.parse(value));
     }
 
     private static long loadSeq(Path root) {

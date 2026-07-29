@@ -34,10 +34,18 @@
 package zeroecho.pki.spi.crypto;
 
 import java.io.Closeable;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -83,6 +91,8 @@ import zeroecho.pki.api.audit.AccessContext;
  * audit logs and API responses.</li>
  * </ul>
  */
+// PMD cannot infer that retaining digest/encoding causes would violate the redaction contract.
+@SuppressWarnings("PMD.PreserveStackTrace")
 public interface SignatureWorkflow extends Closeable {
 
     /**
@@ -93,6 +103,30 @@ public interface SignatureWorkflow extends Closeable {
     String id();
 
     /**
+     * Validates the authoritative signing domain selected by orchestration.
+     *
+     * <p>
+     * Providers must fail fast when their configured horizon or skew differs. The
+     * default contract accepts the standard {@code P90D}/{@code PT0S} domain and a
+     * namespace whose provider component is {@link #id()}.
+     * </p>
+     *
+     * @param namespace combined stable store and provider namespace
+     * @param horizon authoritative operation horizon
+     * @param permittedSkew authoritative future timestamp skew
+     */
+    default void validateSigningDomain(String namespace, java.time.Duration horizon,
+            java.time.Duration permittedSkew) {
+        Objects.requireNonNull(namespace, "namespace");
+        Objects.requireNonNull(horizon, "horizon");
+        Objects.requireNonNull(permittedSkew, "permittedSkew");
+        if (!namespace.endsWith("." + id()) || !java.time.Duration.ofDays(90).equals(horizon)
+                || !java.time.Duration.ZERO.equals(permittedSkew)) {
+            throw new IllegalArgumentException("Signature workflow signing domain mismatch");
+        }
+    }
+
+    /**
      * Submits a signing request.
      *
      * <p>
@@ -100,13 +134,37 @@ public interface SignatureWorkflow extends Closeable {
      * (encoded) on success.
      * </p>
      *
+     * <p>
+     * The provider must durably bind {@link SignRequest#submissionId()} to the
+     * constant-time verified {@link SignRequest#semanticFingerprint()} before
+     * invoking cryptography. The first accepted request may execute once. Any
+     * concurrent or later request with the same non-expired identifier and
+     * fingerprint attaches to the existing non-terminal or terminal outcome and
+     * must not invoke cryptography again. A different fingerprint is a conflict.
+     * The returned identifier must equal the submitted identifier.
+     * </p>
+     *
+     * <p>
+     * {@link SignRequest#fencingToken()} is monotonic. A stale token must not mutate
+     * state; a completion may commit only while its fingerprint, token, and running
+     * state remain current. Providers must check an optional request deadline
+     * before starting cryptography or approval execution and again before committing
+     * success. A completion at the deadline is late; it must become
+     * {@link State#EXPIRED} without exposing a result. Terminal states are immutable. At and after the
+     * configured horizon, submission is rejected and {@link #status(PkiId)} reports
+     * {@link State#EXPIRED}, including after payload/result purge and restart.
+     * Provider callbacks must run after operation state locks are released.
+     * </p>
+     *
      * <h4>Failure model (normative)</h4>
      * <ul>
      * <li>For validation and policy failures: do not throw; return operation id and
      * expose failure via {@link #status(PkiId)} with {@code FAILED} and stable
      * {@code detailCode}.</li>
-     * <li>May throw {@link IllegalArgumentException} only for programmer errors
-     * (e.g., {@code request == null}).</li>
+     * <li>Throws {@link IllegalStateException} for identifier/fingerprint conflicts
+     * or stale fencing tokens.</li>
+     * <li>May throw {@link IllegalArgumentException} for malformed, foreign, or
+     * expired identifiers and programmer errors.</li>
      * </ul>
      *
      * @param request request (never {@code null})
@@ -152,11 +210,18 @@ public interface SignatureWorkflow extends Closeable {
     /**
      * Best-effort cancellation.
      *
+     * <p>
+     * A {@code true} return value means only that the provider accepted the
+     * cancellation request. It does not prove that the operation is terminal.
+     * Callers must re-read {@link #status(PkiId)} and may retire state only after an
+     * immutable terminal status is observed.
+     * </p>
+     *
      * @param operationId operation id (never {@code null})
      * @param reason      non-sensitive reason (never blank)
      * @return true if cancellation was accepted; false if already terminal/unknown
      */
-    boolean cancel(PkiId operationId, String reason);
+    boolean cancel(PkiId operationId, long fencingToken, String reason);
 
     /**
      * Registers a notification sink for status changes.
@@ -192,6 +257,10 @@ public interface SignatureWorkflow extends Closeable {
      * {@link #submitSign(SignRequest)}.
      * </p>
      *
+     * @param submissionId stable caller-assigned submission identifier
+     * @param namespace provider/store namespace
+     * @param semanticFingerprint versioned request fingerprint excluding fence
+     * @param fencingToken current positive fencing token
      * @param accessContext              audit/governance context (never
      *                                   {@code null})
      * @param keyRef                     opaque reference to the private key (never
@@ -202,10 +271,16 @@ public interface SignatureWorkflow extends Closeable {
      * @param preferredSignatureEncoding preferred signature encoding (optional)
      * @param deadline                   optional absolute deadline
      */
-    record SignRequest(AccessContext accessContext, KeyRef keyRef, String algorithmId, EncodedObject payload,
+    record SignRequest(PkiId submissionId, String namespace, String semanticFingerprint, long fencingToken,
+            AccessContext accessContext, KeyRef keyRef, String algorithmId, EncodedObject payload,
             Optional<Encoding> preferredSignatureEncoding, Optional<Instant> deadline) {
 
+        private static final long MIN_FENCING_TOKEN = 1L;
+
         public SignRequest {
+            Objects.requireNonNull(submissionId, "submissionId");
+            Objects.requireNonNull(namespace, "namespace");
+            Objects.requireNonNull(semanticFingerprint, "semanticFingerprint");
             Objects.requireNonNull(accessContext, "accessContext");
             Objects.requireNonNull(keyRef, "keyRef");
             Objects.requireNonNull(algorithmId, "algorithmId");
@@ -214,6 +289,103 @@ public interface SignatureWorkflow extends Closeable {
             Objects.requireNonNull(deadline, "deadline");
             if (algorithmId.isBlank()) {
                 throw new IllegalArgumentException("algorithmId must not be blank");
+            }
+            if (fencingToken < MIN_FENCING_TOKEN) {
+                throw new IllegalArgumentException("fencingToken must be positive");
+            }
+            String expected = fingerprint(namespace, accessContext, keyRef, algorithmId, payload,
+                    preferredSignatureEncoding, deadline);
+            if (!constantTimeFingerprintEquals(expected, semanticFingerprint)) {
+                throw new IllegalArgumentException("semanticFingerprint does not match signing request");
+            }
+        }
+
+        /**
+         * Creates a request with its canonical versioned fingerprint.
+         */
+        public static SignRequest create(PkiId submissionId, String namespace, long fencingToken,
+                AccessContext accessContext, KeyRef keyRef, String algorithmId, EncodedObject payload,
+                Optional<Encoding> preferredSignatureEncoding, Optional<Instant> deadline) {
+            String fingerprint = fingerprint(namespace, accessContext, keyRef, algorithmId, payload,
+                    preferredSignatureEncoding, deadline);
+            return new SignRequest(submissionId, namespace, fingerprint, fencingToken, accessContext, keyRef,
+                    algorithmId, payload, preferredSignatureEncoding, deadline);
+        }
+
+        /**
+         * Computes the canonical {@code signfp:v1} semantic fingerprint in
+         * O(payload) time and O(payload) temporary memory from the defensive payload
+         * copy, with constant-size digest state.
+         */
+        public static String fingerprint(String namespace, AccessContext accessContext, KeyRef keyRef,
+                String algorithmId, EncodedObject payload, Optional<Encoding> preferredSignatureEncoding,
+                Optional<Instant> deadline) {
+            Objects.requireNonNull(namespace, "namespace");
+            Objects.requireNonNull(accessContext, "accessContext");
+            Objects.requireNonNull(keyRef, "keyRef");
+            Objects.requireNonNull(algorithmId, "algorithmId");
+            Objects.requireNonNull(payload, "payload");
+            Objects.requireNonNull(preferredSignatureEncoding, "preferredSignatureEncoding");
+            Objects.requireNonNull(deadline, "deadline");
+            try {
+                return fingerprintWithDigest(namespace, accessContext, keyRef, algorithmId, payload,
+                        preferredSignatureEncoding, deadline, MessageDigest.getInstance("SHA-256"), ignored -> {
+                        });
+            } catch (NoSuchAlgorithmException ex) {
+                throw new IllegalStateException("Unable to compute signing request fingerprint");
+            }
+        }
+
+        /* default */ static String fingerprintWithDigest(String namespace, AccessContext accessContext, KeyRef keyRef,
+                String algorithmId, EncodedObject payload, Optional<Encoding> preferredSignatureEncoding,
+                Optional<Instant> deadline, MessageDigest digest, Consumer<byte[]> cleanupObserver) {
+            Objects.requireNonNull(digest, "digest");
+            Objects.requireNonNull(cleanupObserver, "cleanupObserver");
+            byte[] payloadBytes = payload.bytes();
+            byte[] digestBytes = null;
+            try {
+                try (DataOutputStream output = new DataOutputStream(
+                        new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
+                    output.writeUTF("sign-request-v1");
+                    output.writeUTF(namespace);
+                    output.writeUTF(accessContext.principal().type());
+                    output.writeUTF(accessContext.principal().name());
+                    output.writeUTF(accessContext.purpose().value());
+                    output.writeUTF(accessContext.objectId().map(PkiId::value).orElse(""));
+                    output.writeUTF(accessContext.formatId().map(zeroecho.pki.api.FormatId::value).orElse(""));
+                    output.writeUTF(keyRef.value());
+                    output.writeUTF(algorithmId);
+                    output.writeUTF(payload.encoding().name());
+                    output.writeInt(payloadBytes.length);
+                    output.write(payloadBytes);
+                    output.writeUTF(preferredSignatureEncoding.map(Enum::name).orElse(""));
+                    output.writeUTF(deadline.map(Instant::toString).orElse(""));
+                }
+                digestBytes = digest.digest();
+                return "signfp:v1:" + HexFormat.of().formatHex(digestBytes);
+            } catch (IOException ex) {
+                throw new IllegalStateException("Unable to compute signing request fingerprint");
+            } finally {
+                clearOwned(payloadBytes, cleanupObserver);
+                clearOwned(digestBytes, cleanupObserver);
+            }
+        }
+
+        private static boolean constantTimeFingerprintEquals(String left, String right) {
+            byte[] leftBytes = left.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] rightBytes = right.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            try {
+                return MessageDigest.isEqual(leftBytes, rightBytes);
+            } finally {
+                java.util.Arrays.fill(leftBytes, (byte) 0);
+                java.util.Arrays.fill(rightBytes, (byte) 0);
+            }
+        }
+
+        private static void clearOwned(byte[] owned, Consumer<byte[]> cleanupObserver) {
+            if (owned != null) {
+                java.util.Arrays.fill(owned, (byte) 0);
+                cleanupObserver.accept(owned);
             }
         }
     }
@@ -287,6 +459,13 @@ public interface SignatureWorkflow extends Closeable {
      * {@code OperationStatus} must no longer change.
      * </p>
      *
+     * <p>
+     * For terminal states, {@link #updatedAt()} is the durable completion timestamp,
+     * not the time at which a caller happened to poll. Providers must preserve that
+     * value across restart. A successful status at or after its request deadline is
+     * invalid and must instead be exposed as {@link State#EXPIRED} without a result.
+     * </p>
+     *
      * @param state      current lifecycle state of the operation (never
      *                   {@code null})
      * @param updatedAt  timestamp of the last state transition (never
@@ -306,6 +485,10 @@ public interface SignatureWorkflow extends Closeable {
             Objects.requireNonNull(updatedAt, "updatedAt");
             Objects.requireNonNull(detailCode, "detailCode");
             Objects.requireNonNull(result, "result");
+            if (state == State.SUCCEEDED && result.isEmpty()
+                    || state != State.SUCCEEDED && result.isPresent()) {
+                throw new IllegalArgumentException("Operation result does not match status state");
+            }
         }
 
         /**
@@ -400,6 +583,9 @@ public interface SignatureWorkflow extends Closeable {
      * The callback must be treated as a best-effort notification mechanism and must
      * not be relied upon as the sole source of truth; callers should always be able
      * to query the authoritative state via {@link SignatureWorkflow#status(PkiId)}.
+     * Delivery may be coalesced or dropped under load. Providers must not require
+     * callback processing to finish an operation, and sink implementations should
+     * return promptly without waiting for operation-level coordination.
      * </p>
      */
     @FunctionalInterface

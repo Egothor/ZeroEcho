@@ -34,20 +34,45 @@
 package zeroecho.pki.impl.crypto.zeroecholib;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -71,6 +96,7 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 
 /**
@@ -90,8 +116,9 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
  * perspective, but it still conforms to the {@link SignatureWorkflow} contract
  * by returning an operation identifier and exposing the terminal outcome
  * through {@link #status(PkiId)}. Each submitted operation is executed
- * immediately in the caller thread, and the resulting terminal status is stored
- * in an internal in-memory registry.
+ * immediately in the caller thread. Signing requests and terminal outcomes are
+ * retained durably in the configured operation root for the configured operation
+ * horizon.
  * </p>
  *
  * <h2>Supported operations</h2>
@@ -104,12 +131,25 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
  * a key resolved from {@link VerifyRequest#publicKeyRef()} or against a caller-
  * supplied encoded public key from
  * {@link VerifyRequest#publicKeyEncoded()}.</li>
- * <li>{@link #status(PkiId)} returns the last known operation status from the
- * in-memory status registry, or a stable failed status for unknown operation
- * identifiers.</li>
+ * <li>{@link #status(PkiId)} returns the retained operation status, or a stable
+ * failed status for unknown operation identifiers.</li>
  * <li>{@link #register(NotificationSink)} installs an in-memory notification
  * sink that is called whenever an operation status changes.</li>
  * </ul>
+ *
+ * <h2>Signing lifecycle and recovery</h2>
+ * <p>
+ * A repeated signing submission with the same stable identifier and semantic
+ * fingerprint attaches to the retained operation and does not repeat
+ * cryptographic work. Conflicting fingerprints and stale fencing tokens fail
+ * closed. On restart, retained terminal operations remain queryable, while a
+ * retained {@link State#RUNNING} operation is durably converted to
+ * {@link State#FAILED} with detail {@code RECOVERY_INCOMPLETE}; cryptographic
+ * execution is never replayed implicitly. Signing records are purged after the
+ * configured horizon, after which their stable identifiers report
+ * {@link State#EXPIRED}. Only notification registrations are memory-only and
+ * must be re-established after restart.
+ * </p>
  *
  * <h2>Failure model</h2>
  * <p>
@@ -163,12 +203,19 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
  *
  * <h2>Persistence and lifecycle</h2>
  * <ul>
- * <li>Operation statuses and notification registrations are stored only in
- * memory and are lost when the provider is closed or the process restarts.</li>
+ * <li>Signing request identity, fencing token, request snapshot, status, and
+ * signature result are stored durably until the configured operation horizon.
+ * Exact submissions attach to these records after restart.</li>
+ * <li>A signing record found in {@link State#RUNNING} during restart is changed
+ * durably to {@link State#FAILED} with detail
+ * {@code RECOVERY_INCOMPLETE}; signing is not replayed.</li>
+ * <li>Verification statuses and notification registrations are memory-only and
+ * are lost when the provider is closed or the process restarts.</li>
  * <li>The underlying {@link KeyringStore} is loaded lazily on first use and
  * then cached in the provider instance.</li>
- * <li>{@link #close()} clears in-memory operation state and discards the cached
- * keyring reference.</li>
+ * <li>{@link #close()} clears memory-resident caches and registrations and
+ * releases the operation-root lock. It does not delete retained signing
+ * records.</li>
  * </ul>
  *
  * <h2>Security considerations</h2>
@@ -184,15 +231,16 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
  *
  * <h2>Thread-safety</h2>
  * <p>
- * The internal status and sink registries are backed by synchronized maps. This
- * provides basic shared-state safety for the current implementation, but
- * callbacks are invoked inline from the status update path and may therefore
- * affect latency or local failure behavior of the calling thread. This class
- * should be treated as safe for ordinary concurrent access, not as a high-
- * throughput lock-free implementation.
+ * Concurrent registries and lifecycle-bounded per-operation locks protect
+ * mutable state. Cryptographic work and notification callbacks run without an
+ * operation lock held, so unrelated operation identifiers can progress
+ * independently. Callbacks are invoked inline after durable status changes and
+ * may therefore affect caller latency, but callback failures are isolated.
  * </p>
  */
-public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { // NOPMD
+// The provider deliberately centralizes operation lifecycle and cleanup in one implementation.
+@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
+public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
 
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSignatureWorkflow.class.getName());
 
@@ -216,42 +264,141 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
 
     private static final OperationStatus UNKNOWN_OPERATION_STATUS = new OperationStatus(State.FAILED, Instant.EPOCH,
             Optional.of(DC_UNKNOWN_OPERATION), Optional.empty());
+    private static final int OPERATION_RECORD_VERSION = 3;
+    private static final long MIN_FENCING_TOKEN = 1L;
 
     private final String id;
-    private final java.nio.file.Path keyringPath;
+    private final Path keyringPath;
+    private final Path operationRoot;
+    private final Clock clock;
+    private final Duration operationHorizon;
     private final String keyRefPrefix;
     private final boolean requireComponentSuffix;
     private final ZeroEchoSession session;
 
-    private final Map<PkiId, OperationStatus> statuses;
-    private final Map<PkiId, NotificationSink> sinks;
+    private final ConcurrentMap<PkiId, OperationStatus> statuses;
+    private final ConcurrentMap<PkiId, String> fingerprints;
+    private final ConcurrentMap<PkiId, Long> fences;
+    private final ConcurrentMap<PkiId, SignRequest> requests;
+    private final ConcurrentMap<PkiId, NotificationSink> sinks;
+    private final ConcurrentMap<PkiId, SignLockEntry> operationLocks;
+    private final FileChannel ownershipChannel;
+    private final FileLock ownershipLock;
+    private final AtomicLong timeWatermark;
+    private final ReentrantLock timeWatermarkLock;
+    private final AtomicReference<String> boundNamespace;
+    private final ReentrantLock domainLock;
+    private final BiConsumer<String, byte[]> cleanupObserver;
 
     private volatile KeyringStore keyringOrNull; // NOPMD
 
-    /* default */ ZeroEchoLibSignatureWorkflow(String id, java.nio.file.Path keyringPath, String keyRefPrefix,
-            boolean requireComponentSuffix) {
+    /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
+            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix) {
+        this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
+                (category, cleared) -> {
+                });
+    }
+
+    /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
+            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
+            BiConsumer<String, byte[]> cleanupObserver) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("id must not be blank");
         }
         if (keyringPath == null) {
             throw new IllegalArgumentException("keyringPath must not be null");
         }
+        if (operationRoot == null) {
+            throw new IllegalArgumentException("operationRoot must not be null");
+        }
+        if (clock == null) {
+            throw new IllegalArgumentException("clock must not be null");
+        }
+        if (operationHorizon == null || operationHorizon.isZero() || operationHorizon.isNegative()) {
+            throw new IllegalArgumentException("operationHorizon must be positive");
+        }
         if (keyRefPrefix == null) {
             throw new IllegalArgumentException("keyRefPrefix must not be null");
         }
+        if (cleanupObserver == null) {
+            throw new IllegalArgumentException("cleanupObserver must not be null");
+        }
         this.id = id;
         this.keyringPath = keyringPath;
+        this.operationRoot = operationRoot.toAbsolutePath().normalize();
+        this.clock = clock;
+        this.operationHorizon = operationHorizon;
         this.keyRefPrefix = keyRefPrefix;
         this.requireComponentSuffix = requireComponentSuffix;
+        this.cleanupObserver = cleanupObserver;
         this.session = new ZeroEchoSession();
 
-        this.statuses = Collections.synchronizedMap(new HashMap<>());
-        this.sinks = Collections.synchronizedMap(new HashMap<>());
+        this.statuses = new ConcurrentHashMap<>();
+        this.fingerprints = new ConcurrentHashMap<>();
+        this.fences = new ConcurrentHashMap<>();
+        this.requests = new ConcurrentHashMap<>();
+        this.sinks = new ConcurrentHashMap<>();
+        this.operationLocks = new ConcurrentHashMap<>();
+        this.domainLock = new ReentrantLock();
+        this.timeWatermarkLock = new ReentrantLock();
+        try {
+            Files.createDirectories(this.operationRoot);
+            restrictPermissions(this.operationRoot, true);
+            Path owner = this.operationRoot.resolve("OWNER");
+            if (Files.exists(owner)) {
+                String storedOwner = Files.readString(owner);
+                if (!id.equals(storedOwner)) {
+                    throw new IllegalStateException("Signing operation root belongs to a different provider");
+                }
+            } else {
+                Files.writeString(owner, id, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            }
+            this.ownershipChannel = FileChannel.open(this.operationRoot.resolve(".lock"), StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE);
+            this.ownershipLock = this.ownershipChannel.tryLock();
+            if (this.ownershipLock == null) {
+                this.ownershipChannel.close();
+                throw new IllegalStateException("Signing operation root is already in use");
+            }
+            this.timeWatermark = new AtomicLong(loadTimeWatermark());
+            Path domain = this.operationRoot.resolve("DOMAIN");
+            this.boundNamespace = new AtomicReference<>(Files.exists(domain)
+                    ? Files.readString(domain, StandardCharsets.US_ASCII).trim() : null);
+            loadOperationRecords();
+            purgeExpiredOperations();
+        } catch (IOException ex) {
+            throw new IllegalStateException("Cannot initialize signing operation root", ex);
+        }
     }
 
     @Override
     public String id() {
         return this.id;
+    }
+
+    @Override
+    public void validateSigningDomain(String namespace, Duration horizon, Duration permittedSkew) {
+        if (namespace == null || !namespace.endsWith("." + id) || !operationHorizon.equals(horizon)
+                || !Duration.ZERO.equals(permittedSkew)) {
+            throw new IllegalArgumentException("ZeroEchoLib signing domain mismatch");
+        }
+        domainLock.lock();
+        try {
+            String current = boundNamespace.get();
+            if (current != null && !current.equals(namespace)) {
+                throw new IllegalArgumentException("ZeroEchoLib operation root belongs to a different signing domain");
+            }
+            if (current == null) {
+                try {
+                    writeSmallAtomic(operationRoot.resolve("DOMAIN"), namespace.getBytes(StandardCharsets.US_ASCII));
+                    boundNamespace.set(namespace);
+                } catch (IOException ex) {
+                    throw new IllegalStateException("Cannot persist ZeroEchoLib signing domain", ex);
+                }
+            }
+        } finally {
+            domainLock.unlock();
+        }
     }
 
     /**
@@ -309,9 +456,20 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
             throw new IllegalArgumentException("request must not be null");
         }
 
-        PkiId opId = newOperationId();
-        putStatus(opId, new OperationStatus(State.RUNNING, Instant.now(), Optional.of(DC_SUBMITTED), Optional.empty()));
+        PkiId opId = request.submissionId();
+        if (!request.namespace().endsWith("." + id)) {
+            throw new IllegalArgumentException("Signing request namespace mismatch");
+        }
+        validateSigningDomain(request.namespace(), operationHorizon, Duration.ZERO);
+        SigningSubmissionId parsed = SigningSubmissionId.parse(opId);
+        purgeExpiredOperations();
+        parsed.validate(request.namespace(), now(), operationHorizon, Duration.ZERO);
+        if (!beginSign(request)) {
+            return opId;
+        }
 
+        byte[] payloadBytes = null;
+        byte[] signatureBytes = null;
         try {
             KeyRefParts parts = parseKeyRefOrThrow(request.keyRef(), true);
 
@@ -332,45 +490,133 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
 
             enforceAlgorithmMatchOrThrow(request.algorithmId(), prv.algorithm());
 
-            byte[] signatureBytes = signStreaming(request.algorithmId(), prv.key(), pub.key(),
-                    request.payload().bytes());
+            if (deadlineReached(request.deadline(), now())) {
+                completeSign(request, expiredStatus());
+                return opId;
+            }
+            payloadBytes = request.payload().bytes();
+            signatureBytes = signStreaming(request.algorithmId(), prv.key(), pub.key(), payloadBytes);
 
             Encoding outEnc = request.preferredSignatureEncoding().orElse(Encoding.BINARY);
             EncodedObject signature = encodeSignatureOrThrow(outEnc, signatureBytes);
 
+            Instant completedAt = now();
+            if (deadlineReached(request.deadline(), completedAt)) {
+                completeSign(request, expiredStatus(completedAt));
+                return opId;
+            }
             OperationResult result = new OperationResult(Optional.of(signature), Optional.empty());
-            putStatus(opId,
-                    new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of(DC_SIGNED), Optional.of(result)));
+            completeSign(request, new OperationStatus(State.SUCCEEDED, completedAt, Optional.of(DC_SIGNED),
+                    Optional.of(result)));
             return opId;
 
         } catch (InvalidRequestException inv) { // NOPMD
-            putStatus(opId,
-                    new OperationStatus(State.FAILED, Instant.now(), Optional.of(inv.detailCode), Optional.empty()));
+            completeSign(request,
+                    new OperationStatus(State.FAILED, now(), Optional.of(inv.detailCode), Optional.empty()));
             return opId;
 
         } catch (IOException io) {
-            putStatus(opId, new OperationStatus(State.FAILED, Instant.now(), Optional.of(DC_KEYRING_IO_ERROR),
-                    Optional.empty()));
-            if (LOG.isLoggable(Level.FINE)) {
-                LOG.log(Level.FINE, "Sign failed due to IO (details suppressed)", io);
-            }
+            completeSign(request, new OperationStatus(State.FAILED, now(),
+                    Optional.of(DC_KEYRING_IO_ERROR), Optional.empty()));
+            logSafeFailure("SIGN", DC_KEYRING_IO_ERROR, io);
             return opId;
 
         } catch (GeneralSecurityException sec) {
-            putStatus(opId,
-                    new OperationStatus(State.FAILED, Instant.now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
-            if (LOG.isLoggable(Level.FINE)) {
-                LOG.log(Level.FINE, "Sign failed due to security exception (details suppressed)", sec);
-            }
+            completeSign(request, new OperationStatus(State.FAILED, now(),
+                    Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
+            logSafeFailure("SIGN", DC_CRYPTO_FAILURE, sec);
             return opId;
 
         } catch (RuntimeException ex) { // NOPMD
-            putStatus(opId,
-                    new OperationStatus(State.FAILED, Instant.now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
-            if (LOG.isLoggable(Level.FINE)) {
-                LOG.log(Level.FINE, "Sign failed due to runtime exception (details suppressed)", ex);
-            }
+            completeSign(request, new OperationStatus(State.FAILED, now(),
+                    Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
+            logSafeFailure("SIGN", DC_CRYPTO_FAILURE, ex);
             return opId;
+        } finally {
+            clearOwned("sign-payload", payloadBytes);
+            clearOwned("sign-result-copy", signatureBytes);
+        }
+    }
+
+    private boolean beginSign(SignRequest request) {
+        PkiId operationId = request.submissionId();
+        SignLockEntry entry = acquireOperationLock(operationId);
+        OperationStatus event = null;
+        try {
+            String existingFingerprint = fingerprints.get(operationId);
+            if (existingFingerprint != null) {
+                if (!constantTimeEquals(existingFingerprint, request.semanticFingerprint())) {
+                    throw new IllegalStateException("Signing submission ID conflicts with an existing request");
+                }
+                long existingFence = fences.getOrDefault(operationId, 0L);
+                if (request.fencingToken() < existingFence) {
+                    throw new IllegalStateException("Stale signing fencing token");
+                }
+                OperationStatus existing = statuses.get(operationId);
+                if (request.fencingToken() > existingFence && existing != null
+                        && existing.state() == State.RUNNING) {
+                    event = new OperationStatus(State.FAILED, now(), Optional.of("FENCE_SUPERSEDED"),
+                            Optional.empty());
+                    fences.put(operationId, request.fencingToken());
+                    statuses.put(operationId, event);
+                    persistOperationRecord(operationId, event);
+                }
+                return false;
+            }
+            fingerprints.put(operationId, request.semanticFingerprint());
+            fences.put(operationId, request.fencingToken());
+            requests.put(operationId, request);
+            event = new OperationStatus(State.RUNNING, now(), Optional.of(DC_SUBMITTED), Optional.empty());
+            statuses.put(operationId, event);
+            persistOperationRecord(operationId, event);
+            return true;
+        } finally {
+            releaseOperationLock(operationId, entry);
+            if (event != null) {
+                notifySinks(operationId, event);
+            }
+        }
+    }
+
+    private void completeSign(SignRequest request, OperationStatus terminal) {
+        PkiId operationId = request.submissionId();
+        SignLockEntry entry = acquireOperationLock(operationId);
+        boolean committed = false;
+        OperationStatus notification = terminal;
+        try {
+            OperationStatus current = statuses.get(operationId);
+            if (current != null && current.state() == State.RUNNING
+                    && fences.getOrDefault(operationId, 0L) == request.fencingToken()
+                    && constantTimeEquals(fingerprints.get(operationId), request.semanticFingerprint())) {
+                OperationStatus committedStatus = terminal;
+                if (terminal.state() == State.SUCCEEDED
+                        && deadlineReached(request.deadline(), terminal.updatedAt())) {
+                    committedStatus = expiredStatus(terminal.updatedAt());
+                }
+                statuses.put(operationId, committedStatus);
+                persistOperationRecord(operationId, committedStatus);
+                notification = committedStatus;
+                committed = true;
+            }
+        } finally {
+            releaseOperationLock(operationId, entry);
+        }
+        if (committed) {
+            notifySinks(operationId, notification);
+        }
+    }
+
+    private static boolean constantTimeEquals(String left, String right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        byte[] leftBytes = left.getBytes(StandardCharsets.US_ASCII);
+        byte[] rightBytes = right.getBytes(StandardCharsets.US_ASCII);
+        try {
+            return MessageDigest.isEqual(leftBytes, rightBytes);
+        } finally {
+            Arrays.fill(leftBytes, (byte) 0);
+            Arrays.fill(rightBytes, (byte) 0);
         }
     }
 
@@ -404,8 +650,10 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         }
 
         PkiId opId = newOperationId();
-        putStatus(opId, new OperationStatus(State.RUNNING, Instant.now(), Optional.of(DC_SUBMITTED), Optional.empty()));
+        putStatus(opId, new OperationStatus(State.RUNNING, now(), Optional.of(DC_SUBMITTED), Optional.empty()));
 
+        byte[] signatureBytes = null;
+        byte[] payloadBytes = null;
         try {
             if (request.algorithmId() == null || request.algorithmId().isBlank()) {
                 throw new InvalidRequestException(DC_INVALID_ALGORITHM_ID);
@@ -413,42 +661,49 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
 
             PublicKey pub = resolvePublicKeyOrThrow(request);
 
-            byte[] sigBytes = decodeSignatureOrThrow(request.signature());
-            boolean ok = verifyStreaming(request.algorithmId(), pub, request.payload().bytes(), sigBytes);
+            signatureBytes = decodeSignatureOrThrow(request.signature());
+            if (deadlineReached(request.deadline(), now())) {
+                putStatus(opId, expiredStatus());
+                return opId;
+            }
+            payloadBytes = request.payload().bytes();
+            boolean ok = verifyStreaming(request.algorithmId(), pub, payloadBytes, signatureBytes);
 
+            Instant completedAt = now();
+            if (deadlineReached(request.deadline(), completedAt)) {
+                putStatus(opId, expiredStatus(completedAt));
+                return opId;
+            }
             OperationResult result = new OperationResult(Optional.empty(), Optional.of(ok));
             String dc = ok ? DC_VERIFIED : DC_REJECTED;
-            putStatus(opId, new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of(dc), Optional.of(result)));
+            putStatus(opId, new OperationStatus(State.SUCCEEDED, completedAt, Optional.of(dc), Optional.of(result)));
             return opId;
 
         } catch (InvalidRequestException inv) { // NOPMD
             putStatus(opId,
-                    new OperationStatus(State.FAILED, Instant.now(), Optional.of(inv.detailCode), Optional.empty()));
+                    new OperationStatus(State.FAILED, now(), Optional.of(inv.detailCode), Optional.empty()));
             return opId;
 
         } catch (IOException io) {
-            putStatus(opId, new OperationStatus(State.FAILED, Instant.now(), Optional.of(DC_KEYRING_IO_ERROR),
+            putStatus(opId, new OperationStatus(State.FAILED, now(), Optional.of(DC_KEYRING_IO_ERROR),
                     Optional.empty()));
-            if (LOG.isLoggable(Level.FINE)) {
-                LOG.log(Level.FINE, "Verify failed due to IO (details suppressed)", io);
-            }
+            logSafeFailure("VERIFY", DC_KEYRING_IO_ERROR, io);
             return opId;
 
         } catch (GeneralSecurityException sec) {
             putStatus(opId,
-                    new OperationStatus(State.FAILED, Instant.now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
-            if (LOG.isLoggable(Level.FINE)) {
-                LOG.log(Level.FINE, "Verify failed due to security exception (details suppressed)", sec);
-            }
+                    new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
+            logSafeFailure("VERIFY", DC_CRYPTO_FAILURE, sec);
             return opId;
 
         } catch (RuntimeException ex) { // NOPMD
             putStatus(opId,
-                    new OperationStatus(State.FAILED, Instant.now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
-            if (LOG.isLoggable(Level.FINE)) {
-                LOG.log(Level.FINE, "Verify failed due to runtime exception (details suppressed)", ex);
-            }
+                    new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
+            logSafeFailure("VERIFY", DC_CRYPTO_FAILURE, ex);
             return opId;
+        } finally {
+            clearOwned("verify-payload", payloadBytes);
+            clearOwned("verify-signature", signatureBytes);
         }
     }
 
@@ -456,10 +711,12 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
      * Returns the current status of a previously submitted operation.
      *
      * <p>
-     * Because this implementation executes operations eagerly, returned statuses
-     * are typically already terminal by the time callers first query them. Unknown
-     * operation identifiers are mapped to a stable synthetic failed status with
-     * detail code {@link #DC_UNKNOWN_OPERATION}.
+     * Signing statuses are read from the retained in-memory view loaded from the
+     * durable operation root and remain available across restart until horizon
+     * purge. Verification statuses are memory-only. Unknown operation identifiers
+     * are mapped to a stable synthetic failed status with detail code
+     * {@link #DC_UNKNOWN_OPERATION}; purged signing identifiers in the bound
+     * namespace report {@link State#EXPIRED}.
      * </p>
      *
      * @param operationId workflow operation identifier; must not be {@code null}
@@ -471,8 +728,19 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         if (operationId == null) {
             throw new IllegalArgumentException("operationId must not be null");
         }
+        purgeExpiredOperations();
         OperationStatus st = this.statuses.get(operationId);
         if (st == null) {
+            try {
+                SigningSubmissionId parsed = SigningSubmissionId.parse(operationId);
+                String namespace = boundNamespace.get();
+                if (namespace != null && namespace.equals(parsed.namespace())
+                        && !now().isBefore(parsed.createdAt().plus(operationHorizon))) {
+                    return new OperationStatus(State.EXPIRED, now(), Optional.of("EXPIRED"), Optional.empty());
+                }
+            } catch (IllegalArgumentException ignored) { // unknown verify operation identifiers remain synthetic failed
+                // handled by the stable unknown status below
+            }
             return UNKNOWN_OPERATION_STATUS;
         }
         return st;
@@ -482,10 +750,9 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
      * Attempts to cancel a non-terminal operation.
      *
      * <p>
-     * In the current implementation operations are executed eagerly and usually
-     * reach a terminal state before cancellation is attempted. Cancellation
-     * therefore succeeds only when a matching non-terminal status is still present
-     * in the in-memory registry.
+     * Cancellation is serialized with completion for the same signing identifier,
+     * validates the fencing token, and durably records {@link State#CANCELLED}.
+     * It succeeds only while the retained operation is non-terminal.
      * </p>
      *
      * @param operationId workflow operation identifier; must not be {@code null}
@@ -497,19 +764,38 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
      *                                  {@code reason} is {@code null} or blank
      */
     @Override
-    public boolean cancel(PkiId operationId, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
         if (operationId == null) {
             throw new IllegalArgumentException("operationId must not be null");
         }
         if (reason == null || reason.isBlank()) {
             throw new IllegalArgumentException("reason must not be blank");
         }
-        OperationStatus st = this.statuses.get(operationId);
-        if (st == null || st.isTerminal()) {
-            return false;
+        if (fencingToken < MIN_FENCING_TOKEN) {
+            throw new IllegalArgumentException("fencingToken must be positive");
         }
-        putStatus(operationId,
-                new OperationStatus(State.CANCELLED, Instant.now(), Optional.of(DC_CANCELLED), Optional.empty()));
+        SignLockEntry entry = acquireOperationLock(operationId);
+        OperationStatus cancelled = null;
+        try {
+            OperationStatus st = this.statuses.get(operationId);
+            if (st == null || st.isTerminal()) {
+                return false;
+            }
+            long currentFence = this.fences.getOrDefault(operationId, 0L);
+            if (fencingToken < currentFence) {
+                return false;
+            }
+            this.fences.put(operationId, fencingToken);
+            cancelled = new OperationStatus(State.CANCELLED, now(), Optional.of(DC_CANCELLED),
+                    Optional.empty());
+            statuses.put(operationId, cancelled);
+            persistOperationRecord(operationId, cancelled);
+        } finally {
+            releaseOperationLock(operationId, entry);
+            if (cancelled != null) {
+                notifySinks(operationId, cancelled);
+            }
+        }
         return true;
     }
 
@@ -542,18 +828,28 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
     }
 
     /**
-     * Clears in-memory workflow state and releases the cached keyring reference.
+     * Clears memory-resident state and releases the operation-root ownership lock.
      *
      * <p>
-     * This method does not delete the underlying keyring file and does not attempt
-     * to persist or flush in-memory operation status.
+     * This method does not delete the underlying keyring file or durable signing
+     * operation records. A subsequent provider instance reloads retained signing
+     * operations and applies the documented restart recovery rules.
      * </p>
      */
     @Override
     public void close() {
         this.statuses.clear();
+        this.fingerprints.clear();
+        this.fences.clear();
+        this.requests.clear();
         this.sinks.clear();
         this.keyringOrNull = null;
+        try {
+            this.ownershipLock.release();
+            this.ownershipChannel.close();
+        } catch (IOException ex) {
+            throw new IllegalStateException("Cannot release signing operation root", ex);
+        }
     }
 
     private KeyringStore requireKeyringOrThrow() throws IOException {
@@ -625,12 +921,14 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
 
         if (request.publicKeyEncoded().isPresent()) {
             byte[] spki = decodePublicKeyOrThrow(request.publicKeyEncoded().get());
-            AlgorithmKeySpec spec = createPublicKeySpecOrThrow(request.algorithmId(), spki);
-            String keyAlg = keyAlgorithmId(request.algorithmId());
             try {
+                AlgorithmKeySpec spec = createPublicKeySpecOrThrow(request.algorithmId(), spki);
+                String keyAlg = keyAlgorithmId(request.algorithmId());
                 return importPublic(keyAlg, spec);
             } catch (GeneralSecurityException ex) {
                 throw new InvalidRequestException(DC_CRYPTO_FAILURE, ex);
+            } finally {
+                clearOwned("verify-public-key", spki);
             }
         }
 
@@ -644,14 +942,19 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         return session.keyBuilders().asymmetric().publicImporter(algorithmId, specType).importPublic(spec);
     }
 
-    private static byte[] decodePublicKeyOrThrow(EncodedObject publicKey) throws InvalidRequestException {
+    private byte[] decodePublicKeyOrThrow(EncodedObject publicKey) throws InvalidRequestException {
+        byte[] encoded = publicKey.bytes();
         if (publicKey.encoding() == Encoding.DER || publicKey.encoding() == Encoding.BINARY) {
-            return publicKey.bytes().clone();
+            return encoded;
         }
         if (publicKey.encoding() == Encoding.PEM) {
-            String text = new String(publicKey.bytes(), java.nio.charset.StandardCharsets.US_ASCII);
-            return pemUnwrap(text);
+            try {
+                return pemUnwrap(new String(encoded, StandardCharsets.US_ASCII));
+            } finally {
+                clearOwned("verify-public-key-encoding", encoded);
+            }
         }
+        clearOwned("verify-public-key-encoding", encoded);
         throw new InvalidRequestException(DC_UNSUPPORTED_PUBLICKEY_FORM);
     }
 
@@ -731,14 +1034,19 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
                 in.transferTo(OutputStream.nullOutputStream());
             }
 
-            byte[] sig = sigHolder[0];
-            if (sig == null || sig.length == 0) {
-                throw new GeneralSecurityException("Signature trailer missing.");
+            byte[] internalSignature = sigHolder[0];
+            try {
+                if (internalSignature == null || internalSignature.length == 0) {
+                    throw new GeneralSecurityException("Signature trailer missing.");
+                }
+                if (profile.isPresent()) {
+                    return profile.get().internalToExternalSignature(internalSignature);
+                }
+                sigHolder[0] = null;
+                return internalSignature;
+            } finally {
+                clearOwned("sign-internal-signature", sigHolder[0]);
             }
-            if (profile.isPresent()) {
-                return profile.get().internalToExternalSignature(sig);
-            }
-            return sig;
         }
     }
 
@@ -749,8 +1057,10 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
         String contextAlgorithmId = profile.map(SignatureInteropProfile::contextAlgorithmId).orElse(algorithmId);
         ContextSpec contextSpec = profile.map(SignatureInteropProfile::contextSpec).orElse(null);
         byte[] internalSignature = signature;
+        boolean convertedSignature = false;
         if (profile.isPresent()) {
             internalSignature = profile.get().externalToInternalSignature(signature);
+            convertedSignature = true;
         }
 
         try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub,
@@ -762,29 +1072,43 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
             return true;
         } catch (Exception mismatch) {
             return false;
+        } finally {
+            if (convertedSignature) {
+                clearOwned("verify-internal-signature", internalSignature);
+            }
         }
     }
 
-    private static EncodedObject encodeSignatureOrThrow(Encoding encoding, byte[] sigBytes)
+    private EncodedObject encodeSignatureOrThrow(Encoding encoding, byte[] sigBytes)
             throws InvalidRequestException {
         if (encoding == Encoding.BINARY || encoding == Encoding.DER) {
             return new EncodedObject(encoding, sigBytes);
         }
         if (encoding == Encoding.PEM) {
             String pem = pemWrap("ZEROECHO SIGNATURE", sigBytes);
-            return new EncodedObject(Encoding.PEM, pem.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] encoded = pem.getBytes(StandardCharsets.US_ASCII);
+            try {
+                return new EncodedObject(Encoding.PEM, encoded);
+            } finally {
+                clearOwned("sign-encoded-result", encoded);
+            }
         }
         throw new InvalidRequestException(DC_UNSUPPORTED_SIGNATURE_ENCODING);
     }
 
-    private static byte[] decodeSignatureOrThrow(EncodedObject signature) throws InvalidRequestException {
+    private byte[] decodeSignatureOrThrow(EncodedObject signature) throws InvalidRequestException {
+        byte[] encoded = signature.bytes();
         if (signature.encoding() == Encoding.BINARY || signature.encoding() == Encoding.DER) {
-            return signature.bytes().clone();
+            return encoded;
         }
         if (signature.encoding() == Encoding.PEM) {
-            String text = new String(signature.bytes(), java.nio.charset.StandardCharsets.US_ASCII);
-            return pemUnwrap(text);
+            try {
+                return pemUnwrap(new String(encoded, StandardCharsets.US_ASCII));
+            } finally {
+                clearOwned("verify-signature-encoding", encoded);
+            }
         }
+        clearOwned("verify-signature-encoding", encoded);
         throw new InvalidRequestException(DC_UNSUPPORTED_SIGNATURE_ENCODING);
     }
 
@@ -810,18 +1134,468 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow { /
 
     private void putStatus(PkiId id, OperationStatus st) {
         this.statuses.put(id, st);
+        if (this.fingerprints.containsKey(id)) {
+            persistOperationRecord(id, st);
+        }
+        notifySinks(id, st);
+    }
+
+    private void notifySinks(PkiId id, OperationStatus st) {
         for (NotificationSink sink : this.sinks.values()) {
             try {
                 sink.onStatusChanged(id, st);
             } catch (Throwable ignore) { // NOPMD
                 // sink must not break provider
-                LOG.log(Level.FINE, "cannot put status, ignoring", ignore);
+                logSafeFailure("CALLBACK", "NOTIFICATION_FAILED", ignore);
             }
         }
     }
 
+    private static void logSafeFailure(String operation, String code, Throwable failure) {
+        if (LOG.isLoggable(Level.FINE)) {
+            LOG.log(Level.FINE, "{0} failed: code={1}, exception={2}",
+                    new Object[] { operation, code, failure.getClass().getName() });
+        }
+    }
+
+    private void clearOwned(String category, byte[] owned) {
+        if (owned != null) {
+            Arrays.fill(owned, (byte) 0);
+            cleanupObserver.accept(category, owned);
+        }
+    }
+
+    private SignLockEntry acquireOperationLock(PkiId operationId) {
+        SignLockEntry entry = operationLocks.compute(operationId, (ignored, current) -> {
+            SignLockEntry selected = current == null ? new SignLockEntry() : current;
+            selected.references.incrementAndGet();
+            return selected;
+        });
+        entry.lock.lock();
+        return entry;
+    }
+
+    private void releaseOperationLock(PkiId operationId, SignLockEntry entry) {
+        entry.lock.unlock();
+        operationLocks.computeIfPresent(operationId, (ignored, current) -> {
+            if (!current.equals(entry)) {
+                return current;
+            }
+            return current.references.decrementAndGet() == 0 ? null : current;
+        });
+    }
+
+    /**
+     * Reference-counted lock entry removed after the last operation user exits.
+     */
+    private static final class SignLockEntry {
+        private final ReentrantLock lock = new ReentrantLock();
+        private final AtomicInteger references = new AtomicInteger();
+    }
+
+    private long loadTimeWatermark() throws IOException {
+        Path path = operationRoot.resolve("TIME_WATERMARK");
+        long observed = clock.instant().toEpochMilli();
+        if (!Files.exists(path)) {
+            writeSmallAtomic(path, Long.toString(observed).getBytes(StandardCharsets.US_ASCII));
+            return observed;
+        }
+        try {
+            return Math.max(observed, Long.parseLong(Files.readString(path, StandardCharsets.US_ASCII).trim()));
+        } catch (NumberFormatException ex) {
+            throw new IllegalStateException("Invalid provider time watermark", ex);
+        }
+    }
+
+    private Instant now() {
+        timeWatermarkLock.lock();
+        try {
+            long monotonic = Math.max(timeWatermark.get(), clock.instant().toEpochMilli());
+            try {
+                writeSmallAtomic(operationRoot.resolve("TIME_WATERMARK"),
+                        Long.toString(monotonic).getBytes(StandardCharsets.US_ASCII));
+            } catch (IOException ex) {
+                throw new IllegalStateException("Cannot persist provider time watermark", ex);
+            }
+            timeWatermark.set(monotonic);
+            return Instant.ofEpochMilli(monotonic);
+        } finally {
+            timeWatermarkLock.unlock();
+        }
+    }
+
+    private static boolean deadlineReached(Optional<Instant> deadline, Instant observedAt) {
+        return deadline.isPresent() && !observedAt.isBefore(deadline.get());
+    }
+
+    private OperationStatus expiredStatus() {
+        return expiredStatus(now());
+    }
+
+    private static OperationStatus expiredStatus(Instant completedAt) {
+        return new OperationStatus(State.EXPIRED, completedAt, Optional.of("EXPIRED"), Optional.empty());
+    }
+
+    private void purgeExpiredOperations() {
+        Instant current = now();
+        for (Map.Entry<PkiId, SignRequest> mapEntry : requests.entrySet()) {
+            PkiId operationId = mapEntry.getKey();
+            if (!current.isBefore(SigningSubmissionId.parse(operationId).createdAt().plus(operationHorizon))) {
+                SignLockEntry lock = acquireOperationLock(operationId);
+                try {
+                    if (requests.containsKey(operationId) && !current.isBefore(
+                            SigningSubmissionId.parse(operationId).createdAt().plus(operationHorizon))) {
+                        requests.remove(operationId);
+                        fingerprints.remove(operationId);
+                        fences.remove(operationId);
+                        statuses.remove(operationId);
+                        Files.deleteIfExists(operationRecordPath(operationId));
+                    }
+                } catch (IOException ex) {
+                    throw new IllegalStateException("Cannot purge expired provider signing operation", ex);
+                } finally {
+                    releaseOperationLock(operationId, lock);
+                }
+            }
+        }
+    }
+
+    private static void writeSmallAtomic(Path target, byte[] data) throws IOException {
+        Files.createDirectories(target.getParent());
+        Path temporary = Files.createTempFile(target.getParent(), "." + target.getFileName(), ".tmp");
+        try {
+            try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                ByteBuffer bytes = ByteBuffer.wrap(data);
+                while (bytes.hasRemaining()) {
+                    channel.write(bytes);
+                }
+                channel.force(true);
+            }
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException ex) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+            restrictPermissions(target, false);
+            try (FileChannel directory = FileChannel.open(target.getParent(), StandardOpenOption.READ)) {
+                directory.force(true);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private static void restrictPermissions(Path path, boolean directory) throws IOException {
+        try {
+            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(
+                    directory ? "rwx------" : "rw-------"));
+        } catch (UnsupportedOperationException ex) {
+            // Non-POSIX platforms rely on their native access-control mechanism.
+            if (LOG.isLoggable(Level.FINEST)) {
+                LOG.log(Level.FINEST, "Filesystem permission adjustment unavailable: code={0}, exception={1}",
+                        new Object[] { "POSIX_UNAVAILABLE", ex.getClass().getName() });
+            }
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    private void loadOperationRecords() throws IOException {
+        Path records = this.operationRoot.resolve("records");
+        if (!Files.isDirectory(records)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> paths = Files.list(records)) {
+            for (Path path : paths.filter(Files::isRegularFile).toList()) {
+                try (DataInputStream input = new DataInputStream(Files.newInputStream(path))) {
+                    if (input.readInt() != OPERATION_RECORD_VERSION) {
+                        throw new IllegalStateException("Unsupported signing operation record version");
+                    }
+                    PkiId operationId = new PkiId(input.readUTF());
+                    SigningSubmissionId parsedId = SigningSubmissionId.parse(operationId);
+                    String fingerprint = input.readUTF();
+                    long fence = input.readLong();
+                    SignRequest request = readSignRequest(input);
+                    if (!operationId.equals(request.submissionId())
+                            || !constantTimeEquals(fingerprint, request.semanticFingerprint())
+                            || !parsedId.namespace().equals(request.namespace())
+                            || !operationRecordPath(operationId).equals(path)) {
+                        throw new IllegalStateException("Signing operation record identity mismatch");
+                    }
+                    State state = stateFromCode(input.readInt());
+                    Instant updatedAt = Instant.ofEpochSecond(input.readLong(), input.readInt());
+                    Optional<String> detail = input.readBoolean() ? Optional.of(input.readUTF()) : Optional.empty();
+                    Optional<OperationResult> result = readOperationResult(input);
+                    if (input.available() != 0) {
+                        throw new IllegalStateException("Trailing data in signing operation record");
+                    }
+                    if (state == State.SUCCEEDED != result.isPresent()) {
+                        throw new IllegalStateException("Signing operation record result/state mismatch");
+                    }
+                    OperationStatus loaded = new OperationStatus(state, updatedAt, detail, result);
+                    boolean repaired = false;
+                    if (state == State.SUCCEEDED
+                            && (updatedAt.isBefore(parsedId.createdAt())
+                                    || deadlineReached(request.deadline(), updatedAt))) {
+                        loaded = expiredStatus(updatedAt);
+                        repaired = true;
+                    }
+                    if (state == State.RUNNING) {
+                        loaded = new OperationStatus(State.FAILED, now(), Optional.of("RECOVERY_INCOMPLETE"),
+                                Optional.empty());
+                        repaired = true;
+                    }
+                    this.fingerprints.put(operationId, fingerprint);
+                    this.fences.put(operationId, fence);
+                    this.requests.put(operationId, request);
+                    this.statuses.put(operationId, loaded);
+                    if (repaired) {
+                        persistOperationRecord(operationId, loaded);
+                    }
+                }
+            }
+        }
+    }
+
+    private void persistOperationRecord(PkiId operationId, OperationStatus status) {
+        WipeableByteArrayOutputStream bytes = new WipeableByteArrayOutputStream();
+        byte[] encodedRecord = null;
+        try {
+            try (DataOutputStream output = new DataOutputStream(bytes)) {
+                output.writeInt(OPERATION_RECORD_VERSION);
+                output.writeUTF(operationId.value());
+                output.writeUTF(this.fingerprints.get(operationId));
+                output.writeLong(this.fences.getOrDefault(operationId, 0L));
+                writeSignRequest(output, requests.get(operationId));
+                output.writeInt(stateCode(status.state()));
+                output.writeLong(status.updatedAt().getEpochSecond());
+                output.writeInt(status.updatedAt().getNano());
+                output.writeBoolean(status.detailCode().isPresent());
+                if (status.detailCode().isPresent()) {
+                    output.writeUTF(status.detailCode().orElseThrow());
+                }
+                writeOperationResult(output, status.result());
+            }
+            encodedRecord = bytes.toByteArray();
+            Path records = this.operationRoot.resolve("records");
+            Files.createDirectories(records);
+            restrictPermissions(records, true);
+            Path target = operationRecordPath(operationId);
+            Path temporary = Files.createTempFile(records, ".operation-", ".tmp");
+            try {
+                try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                    channel.write(ByteBuffer.wrap(encodedRecord));
+                    channel.force(true);
+                }
+                try {
+                    Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException ex) {
+                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+                restrictPermissions(target, false);
+                try (FileChannel directory = FileChannel.open(records, StandardOpenOption.READ)) {
+                    directory.force(true);
+                }
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+        } catch (IOException ex) {
+            throw new IllegalStateException("Cannot persist signing operation status", ex);
+        } finally {
+            clearOwned("persisted-operation-copy", encodedRecord);
+            bytes.wipe();
+        }
+    }
+
+    private Path operationRecordPath(PkiId operationId) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(operationId.value().getBytes(StandardCharsets.UTF_8));
+            return this.operationRoot.resolve("records").resolve(HexFormat.of().formatHex(digest) + ".bin");
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
+    }
+
+    private void writeSignRequest(DataOutputStream output, SignRequest request) throws IOException {
+        if (request == null) {
+            throw new IllegalStateException("Missing signing request snapshot");
+        }
+        output.writeUTF(request.submissionId().value());
+        output.writeUTF(request.namespace());
+        output.writeUTF(request.accessContext().principal().type());
+        output.writeUTF(request.accessContext().principal().name());
+        output.writeUTF(request.accessContext().purpose().value());
+        output.writeBoolean(request.accessContext().objectId().isPresent());
+        if (request.accessContext().objectId().isPresent()) {
+            output.writeUTF(request.accessContext().objectId().orElseThrow().value());
+        }
+        output.writeBoolean(request.accessContext().formatId().isPresent());
+        if (request.accessContext().formatId().isPresent()) {
+            output.writeUTF(request.accessContext().formatId().orElseThrow().value());
+        }
+        output.writeUTF(request.keyRef().value());
+        output.writeUTF(request.algorithmId());
+        output.writeInt(encodingCode(request.payload().encoding()));
+        byte[] payload = request.payload().bytes();
+        try {
+            output.writeInt(payload.length);
+            output.write(payload);
+        } finally {
+            clearOwned("persisted-request-payload", payload);
+        }
+        output.writeBoolean(request.preferredSignatureEncoding().isPresent());
+        if (request.preferredSignatureEncoding().isPresent()) {
+            output.writeInt(encodingCode(request.preferredSignatureEncoding().orElseThrow()));
+        }
+        output.writeBoolean(request.deadline().isPresent());
+        if (request.deadline().isPresent()) {
+            Instant deadline = request.deadline().orElseThrow();
+            output.writeLong(deadline.getEpochSecond());
+            output.writeInt(deadline.getNano());
+        }
+    }
+
+    private SignRequest readSignRequest(DataInputStream input) throws IOException {
+        PkiId submissionId = new PkiId(input.readUTF());
+        String namespace = input.readUTF();
+        zeroecho.pki.api.audit.Principal principal = new zeroecho.pki.api.audit.Principal(input.readUTF(),
+                input.readUTF());
+        zeroecho.pki.api.audit.Purpose purpose = new zeroecho.pki.api.audit.Purpose(input.readUTF());
+        Optional<PkiId> objectId = input.readBoolean() ? Optional.of(new PkiId(input.readUTF())) : Optional.empty();
+        Optional<zeroecho.pki.api.FormatId> formatId = input.readBoolean()
+                ? Optional.of(new zeroecho.pki.api.FormatId(input.readUTF()))
+                : Optional.empty();
+        zeroecho.pki.api.audit.AccessContext access = new zeroecho.pki.api.audit.AccessContext(principal, purpose,
+                objectId, formatId);
+        KeyRef keyRef = new KeyRef(input.readUTF());
+        String algorithmId = input.readUTF();
+        Encoding payloadEncoding = encodingFromCode(input.readInt());
+        int payloadLength = input.readInt();
+        if (payloadLength < 1 || payloadLength > 16 * 1024 * 1024) {
+            throw new IllegalStateException("Invalid persisted signing payload length");
+        }
+        byte[] payload = input.readNBytes(payloadLength);
+        if (payload.length != payloadLength) {
+            throw new IllegalStateException("Truncated persisted signing payload");
+        }
+        try {
+            Optional<Encoding> preferred = input.readBoolean()
+                    ? Optional.of(encodingFromCode(input.readInt()))
+                    : Optional.empty();
+            Optional<Instant> deadline = input.readBoolean()
+                    ? Optional.of(Instant.ofEpochSecond(input.readLong(), input.readInt()))
+                    : Optional.empty();
+            return SignRequest.create(submissionId, namespace, 1L, access, keyRef, algorithmId,
+                    new EncodedObject(payloadEncoding, payload), preferred, deadline);
+        } finally {
+            clearOwned("loaded-request-payload", payload);
+        }
+    }
+
+    private static Encoding encodingFromCode(int code) {
+        return switch (code) {
+            case 10 -> Encoding.DER;
+            case 20 -> Encoding.PEM;
+            case 30 -> Encoding.BINARY;
+            default -> throw new IllegalStateException("Invalid persisted encoding code");
+        };
+    }
+
+    private static int encodingCode(Encoding encoding) {
+        return switch (encoding) {
+            case DER -> 10;
+            case PEM -> 20;
+            case BINARY -> 30;
+        };
+    }
+
+    private static int stateCode(State state) {
+        return switch (state) {
+            case PENDING -> 10;
+            case WAITING_APPROVAL -> 20;
+            case RUNNING -> 30;
+            case SUCCEEDED -> 40;
+            case FAILED -> 50;
+            case CANCELLED -> 60;
+            case EXPIRED -> 70;
+        };
+    }
+
+    private static State stateFromCode(int code) {
+        return switch (code) {
+            case 10 -> State.PENDING;
+            case 20 -> State.WAITING_APPROVAL;
+            case 30 -> State.RUNNING;
+            case 40 -> State.SUCCEEDED;
+            case 50 -> State.FAILED;
+            case 60 -> State.CANCELLED;
+            case 70 -> State.EXPIRED;
+            default -> throw new IllegalStateException("Invalid persisted signing state code");
+        };
+    }
+
+    private void writeOperationResult(DataOutputStream output, Optional<OperationResult> result)
+            throws IOException {
+        output.writeBoolean(result.isPresent());
+        if (result.isEmpty()) {
+            return;
+        }
+        OperationResult value = result.orElseThrow();
+        output.writeBoolean(value.signature().isPresent());
+        if (value.signature().isPresent()) {
+            EncodedObject signature = value.signature().orElseThrow();
+            output.writeInt(encodingCode(signature.encoding()));
+            byte[] signatureBytes = signature.bytes();
+            try {
+                output.writeInt(signatureBytes.length);
+                output.write(signatureBytes);
+            } finally {
+                clearOwned("persisted-signature-result", signatureBytes);
+            }
+        }
+        output.writeBoolean(value.verified().isPresent());
+        if (value.verified().isPresent()) {
+            output.writeBoolean(value.verified().orElseThrow());
+        }
+    }
+
+    private Optional<OperationResult> readOperationResult(DataInputStream input) throws IOException {
+        if (!input.readBoolean()) {
+            return Optional.empty();
+        }
+        Optional<EncodedObject> signature = Optional.empty();
+        if (input.readBoolean()) {
+            Encoding encoding = encodingFromCode(input.readInt());
+            int length = input.readInt();
+            if (length < 0 || length > 16 * 1024 * 1024) {
+                throw new IllegalStateException("Invalid persisted signature length");
+            }
+            byte[] signatureBytes = input.readNBytes(length);
+            try {
+                if (signatureBytes.length != length) {
+                    throw new IllegalStateException("Truncated persisted signature");
+                }
+                signature = Optional.of(new EncodedObject(encoding, signatureBytes));
+            } finally {
+                clearOwned("loaded-signature-result", signatureBytes);
+            }
+        }
+        Optional<Boolean> verification = input.readBoolean() ? Optional.of(input.readBoolean()) : Optional.empty();
+        return Optional.of(new OperationResult(signature, verification));
+    }
+
     private static PkiId newOperationId() {
         return new PkiId(UUID.randomUUID().toString());
+    }
+
+    /**
+     * Output stream whose retained serialized signing material can be overwritten.
+     */
+    private final class WipeableByteArrayOutputStream extends ByteArrayOutputStream {
+        private void wipe() {
+            clearOwned("persisted-operation-buffer", buf);
+            reset();
+        }
     }
 
     /**

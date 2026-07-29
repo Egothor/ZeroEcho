@@ -34,6 +34,8 @@
 package zeroecho.pki.impl.crypto.zeroecholib;
 
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -52,6 +54,10 @@ import zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
  * <ul>
  * <li>{@code keyringPath} (required): filesystem path to the KeyringStore
  * file</li>
+ * <li>{@code operationRoot} (required): exclusively owned durable signing
+ * operation directory</li>
+ * <li>{@code operationHorizon} (optional ISO-8601 duration, default
+ * {@code P90D})</li>
  * <li>{@code keyRefPrefix} (optional, default {@code "zeroecho-lib:"})</li>
  * <li>{@code requireComponentSuffix} (optional, default {@code true})</li>
  * </ul>
@@ -66,6 +72,8 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSignatureWorkflowProvider.class.getName());
 
     private static final String KEY_KEYRING_PATH = "keyringPath";
+    private static final String KEY_OPERATION_ROOT = "operationRoot";
+    private static final String KEY_OPERATION_HORIZON = "operationHorizon";
     private static final String KEY_KEYREF_PREFIX = "keyRefPrefix";
     private static final String KEY_REQUIRE_SUFFIX = "requireComponentSuffix";
 
@@ -76,7 +84,8 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
 
     @Override
     public Set<String> supportedKeys() {
-        return Set.of(KEY_KEYRING_PATH, KEY_KEYREF_PREFIX, KEY_REQUIRE_SUFFIX);
+        return Set.of(KEY_KEYRING_PATH, KEY_OPERATION_ROOT, KEY_OPERATION_HORIZON, KEY_KEYREF_PREFIX,
+                KEY_REQUIRE_SUFFIX);
     }
 
     /**
@@ -91,6 +100,13 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
         SignatureWorkflowProvider.super.validateConfig(config);
         String keyringPath = config.require(KEY_KEYRING_PATH);
         Path.of(keyringPath);
+        Path.of(config.require(KEY_OPERATION_ROOT));
+        config.get(KEY_OPERATION_HORIZON).ifPresent(value -> {
+            Duration horizon = Duration.parse(value);
+            if (horizon.isZero() || horizon.isNegative()) {
+                throw new IllegalArgumentException("Configuration key '" + KEY_OPERATION_HORIZON + "' must be positive.");
+            }
+        });
         config.get(KEY_KEYREF_PREFIX).ifPresent(value -> {
             if (value.isBlank()) {
                 throw new IllegalArgumentException("Configuration key '" + KEY_KEYREF_PREFIX + "' must not be blank.");
@@ -113,9 +129,12 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
     public SignatureWorkflow allocate(final ProviderConfig config) {
         validateConfig(config);
         String keyringPath = config.require(KEY_KEYRING_PATH);
+        Path operationRoot = Path.of(config.require(KEY_OPERATION_ROOT));
+        Duration operationHorizon = config.get(KEY_OPERATION_HORIZON).map(Duration::parse).orElse(Duration.ofDays(90));
         String prefix = config.get(KEY_KEYREF_PREFIX).orElse("zeroecho-lib:");
         boolean requireSuffix = config.get(KEY_REQUIRE_SUFFIX).map(Boolean::parseBoolean).orElse(Boolean.TRUE);
 
-        return new ZeroEchoLibSignatureWorkflow(id(), Path.of(keyringPath), prefix, requireSuffix);
+        return new ZeroEchoLibSignatureWorkflow(id(), Path.of(keyringPath), operationRoot, Clock.systemUTC(),
+                operationHorizon, prefix, requireSuffix);
     }
 }

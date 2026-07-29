@@ -38,7 +38,6 @@ import java.util.Objects;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.spi.framework.CertificationRequestParser;
 import zeroecho.pki.spi.framework.CredentialFramework;
-import zeroecho.pki.spi.framework.CredentialIssuerBackend;
 import zeroecho.pki.spi.framework.FrameworkAttributeMapper;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 import zeroecho.pki.spi.framework.StatusObjectGenerator;
@@ -50,28 +49,18 @@ import zeroecho.pki.spi.framework.StatusObjectGenerator;
  * This class groups the X.509-specific framework components used by the PKI
  * runtime under the common {@link CredentialFramework} contract. It provides
  * the X.509 format identifier, CSR parsing, proof-of-possession verification,
- * issuance backend access, status-object generation, and framework-specific
- * attribute mapping.
+ * status-object generation, and framework-specific attribute mapping. It does
+ * not expose credential-minting backends.
  * </p>
  *
  * <p>
- * The framework supports two wiring modes:
- * </p>
- * <ul>
- * <li>a default partially wired mode created by
- * {@link #BcX509CredentialFramework()}, which provides CSR parsing,
- * proof-of-possession verification, and attribute mapping but deliberately
- * exposes unsupported placeholders for issuance and status-object
- * generation,</li>
- * <li>a fully wired mode created by one of the {@code wired(...)} methods, in
- * which the caller supplies the concrete issuance and status-object generation
- * components.</li>
- * </ul>
+ * The default constructor provides parsing, proof verification, and attribute
+ * mapping with an unsupported status generator. A {@code wired(...)} method can
+ * supply status generation without exposing the privileged issuer backend.
  *
  * <p>
  * This split allows the runtime to use X.509 request parsing and proof-of-
- * possession verification independently from certificate issuance and status-
- * object publication wiring.
+ * possession verification independently from certificate issuance.
  * </p>
  *
  * <h2>Immutability and lifecycle</h2>
@@ -79,16 +68,15 @@ import zeroecho.pki.spi.framework.StatusObjectGenerator;
  * Instances of this class are immutable. The {@code wired(...)} methods do not
  * mutate the current instance; instead they create and return a new framework
  * instance sharing the existing parser and attribute-mapper components while
- * replacing the requested backend components.
+ * replacing the status generator.
  * </p>
  *
  * <h2>Security considerations</h2>
  * <ul>
  * <li>This class is an orchestration and component-aggregation object; it does
  * not itself process private key material.</li>
- * <li>The security properties of issuance and status-object generation depend
- * on the concrete backends supplied through the {@code wired(...)}
- * methods.</li>
+ * <li>Credential issuance remains owned by proof-gated core services rather than
+ * this framework facade.</li>
  * <li>The default instance intentionally fails fast for issuance and
  * status-object generation so that partially wired deployments do not silently
  * degrade into incomplete behavior.</li>
@@ -114,7 +102,6 @@ public final class BcX509CredentialFramework implements CredentialFramework {
 
     private final CertificationRequestParser requestParser;
     private final ProofOfPossessionVerifier popVerifier;
-    private final CredentialIssuerBackend issuer;
     private final StatusObjectGenerator status;
     private final FrameworkAttributeMapper attributeMapper;
 
@@ -131,17 +118,15 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      * </ul>
      *
      * <p>
-     * Certificate issuance and status-object generation are intentionally left
-     * unsupported in this default configuration and must be supplied explicitly by
-     * calling one of the
-     * {@link #wired(BcX509CredentialIssuerBackend, BcX509StatusObjectGenerator)}
-     * methods.
+     * Status-object generation is intentionally left unsupported in this default
+     * configuration and may be supplied explicitly through
+     * {@link #wired(BcX509StatusObjectGenerator)}. Credential issuance is not exposed by the
+     * framework facade.
      * </p>
      */
     public BcX509CredentialFramework() {
         this(new BcX509CertificationRequestParser(), new BcX509ProofOfPossessionVerifier(),
-                new UnsupportedIssuerBackend(), new UnsupportedStatusObjectGenerator(),
-                new BcX509FrameworkAttributeMapper());
+                new UnsupportedStatusObjectGenerator(), new BcX509FrameworkAttributeMapper());
     }
 
     /**
@@ -149,53 +134,43 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      *
      * <p>
      * This constructor is private because external callers are expected to use the
-     * public default constructor and then derive a fully wired instance through the
-     * provided {@code wired(...)} methods. This preserves a simple public
-     * construction model while keeping the full component graph explicit inside the
-     * implementation.
+     * public default constructor and then derive a status-wired instance through
+     * the provided {@code wired(...)} methods.
      * </p>
      *
      * @param requestParser   certification request parser; must not be {@code null}
      * @param popVerifier     proof-of-possession verifier; must not be {@code null}
-     * @param issuer          credential issuance backend; must not be {@code null}
      * @param status          status-object generator; must not be {@code null}
      * @param attributeMapper framework-specific attribute mapper; must not be
      *                        {@code null}
      * @throws NullPointerException if any component argument is {@code null}
      */
     private BcX509CredentialFramework(CertificationRequestParser requestParser, ProofOfPossessionVerifier popVerifier,
-            CredentialIssuerBackend issuer, StatusObjectGenerator status, FrameworkAttributeMapper attributeMapper) {
+            StatusObjectGenerator status, FrameworkAttributeMapper attributeMapper) {
         this.requestParser = Objects.requireNonNull(requestParser, "requestParser");
         this.popVerifier = Objects.requireNonNull(popVerifier, "popVerifier");
-        this.issuer = Objects.requireNonNull(issuer, "issuer");
         this.status = Objects.requireNonNull(status, "status");
         this.attributeMapper = Objects.requireNonNull(attributeMapper, "attributeMapper");
     }
 
     /**
      * Creates a fully wired X.509 framework instance using the current parser,
-     * proof-of-possession verifier, and attribute mapper together with the supplied
-     * issuance and status-object generation backends.
+     * proof-of-possession verifier and attribute mapper together with the supplied
+     * status-object generator.
      *
      * <p>
      * The current instance is not modified. A new immutable framework instance is
      * returned.
      * </p>
      *
-     * @param issuerBackend         concrete X.509 issuance backend; must not be
-     *                              {@code null}
      * @param statusObjectGenerator concrete X.509 status-object generator; must not
      *                              be {@code null}
      * @return new fully wired framework instance
-     * @throws NullPointerException if {@code issuerBackend} or
-     *                              {@code statusObjectGenerator} is {@code null}
+     * @throws NullPointerException if {@code statusObjectGenerator} is {@code null}
      */
-    public BcX509CredentialFramework wired(BcX509CredentialIssuerBackend issuerBackend,
-            BcX509StatusObjectGenerator statusObjectGenerator) {
-        Objects.requireNonNull(issuerBackend, "issuerBackend");
+    public BcX509CredentialFramework wired(BcX509StatusObjectGenerator statusObjectGenerator) {
         Objects.requireNonNull(statusObjectGenerator, "statusObjectGenerator");
-        return new BcX509CredentialFramework(requestParser, popVerifier, issuerBackend, statusObjectGenerator,
-                attributeMapper);
+        return new BcX509CredentialFramework(requestParser, popVerifier, statusObjectGenerator, attributeMapper);
     }
 
     /**
@@ -213,8 +188,6 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      * returned.
      * </p>
      *
-     * @param issuerBackend             concrete X.509 issuance backend; must not be
-     *                                  {@code null}
      * @param statusObjectGenerator     concrete X.509 status-object generator; must
      *                                  not be {@code null}
      * @param proofOfPossessionVerifier explicit proof-of-possession verifier to use
@@ -224,13 +197,12 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      *         possession verifier
      * @throws NullPointerException if any argument is {@code null}
      */
-    public BcX509CredentialFramework wired(BcX509CredentialIssuerBackend issuerBackend,
-            BcX509StatusObjectGenerator statusObjectGenerator, ProofOfPossessionVerifier proofOfPossessionVerifier) {
-        Objects.requireNonNull(issuerBackend, "issuerBackend");
+    public BcX509CredentialFramework wired(BcX509StatusObjectGenerator statusObjectGenerator,
+            ProofOfPossessionVerifier proofOfPossessionVerifier) {
         Objects.requireNonNull(statusObjectGenerator, "statusObjectGenerator");
         Objects.requireNonNull(proofOfPossessionVerifier, "proofOfPossessionVerifier");
-        return new BcX509CredentialFramework(requestParser, proofOfPossessionVerifier, issuerBackend,
-                statusObjectGenerator, attributeMapper);
+        return new BcX509CredentialFramework(requestParser, proofOfPossessionVerifier, statusObjectGenerator,
+                attributeMapper);
     }
 
     /**
@@ -264,21 +236,6 @@ public final class BcX509CredentialFramework implements CredentialFramework {
     }
 
     /**
-     * Returns the credential issuance backend used by this framework instance.
-     *
-     * <p>
-     * For a default partially wired instance, this may be an internal placeholder
-     * backend that fails explicitly with {@link UnsupportedOperationException}.
-     * </p>
-     *
-     * @return credential issuance backend, never {@code null}
-     */
-    @Override
-    public CredentialIssuerBackend issuerBackend() {
-        return issuer;
-    }
-
-    /**
      * Returns the status-object generator used by this framework instance.
      *
      * <p>
@@ -302,46 +259,6 @@ public final class BcX509CredentialFramework implements CredentialFramework {
     @Override
     public FrameworkAttributeMapper attributeMapper() {
         return attributeMapper;
-    }
-
-    /**
-     * Placeholder issuance backend used by partially wired framework instances.
-     *
-     * <p>
-     * This backend exists to make unsupported wiring explicit. Any attempt to use
-     * issuance operations before a real X.509 issuance backend has been supplied is
-     * rejected immediately.
-     * </p>
-     */
-    private static final class UnsupportedIssuerBackend implements CredentialIssuerBackend {
-
-        /**
-         * Always rejects end-entity issuance because no concrete X.509 issuance backend
-         * has been wired.
-         *
-         * @param command ignored command parameter
-         * @return never returns normally
-         * @throws UnsupportedOperationException always
-         */
-        @Override
-        public zeroecho.pki.api.credential.CredentialBundle issueEndEntity(
-                zeroecho.pki.api.issuance.IssueEndEntityCommand command) {
-            throw new UnsupportedOperationException("X.509 issuance backend not wired");
-        }
-
-        /**
-         * Always rejects intermediate certificate issuance because no concrete X.509
-         * issuance backend has been wired.
-         *
-         * @param command ignored command parameter
-         * @return never returns normally
-         * @throws UnsupportedOperationException always
-         */
-        @Override
-        public zeroecho.pki.api.credential.Credential issueIntermediateCertificate(
-                zeroecho.pki.api.ca.IntermediateCertIssueCommand command) {
-            throw new UnsupportedOperationException("X.509 issuance backend not wired");
-        }
     }
 
     /**

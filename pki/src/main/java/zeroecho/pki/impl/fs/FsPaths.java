@@ -79,6 +79,14 @@ final class FsPaths {
         return this.root.resolve(VERSION_FILE);
     }
 
+    /* default */ Path signingNamespaceFile() {
+        return this.root.resolve("SIGNING_NAMESPACE");
+    }
+
+    /* default */ Path signingTimeWatermarkFile() {
+        return this.root.resolve("SIGNING_TIME_WATERMARK");
+    }
+
     /* default */ Path lockFile() {
         return this.root.resolve(LOCK_DIR).resolve(STORE_LOCK);
     }
@@ -133,6 +141,16 @@ final class FsPaths {
     /* default */ Path requestPath(final PkiId requestId) {
         Objects.requireNonNull(requestId, "requestId");
         return this.root.resolve("requests").resolve(BY_ID).resolve(FsUtil.safeId(requestId) + ".bin");
+    }
+
+    /* default */ Path signWorkflowPath(final PkiId submissionId) {
+        Objects.requireNonNull(submissionId, "submissionId");
+        return this.root.resolve("sign-workflows").resolve(BY_ID)
+                .resolve(FsUtil.safeId(submissionId)).resolve(CURRENT_FILE);
+    }
+
+    /* default */ Path signWorkflowRoot() {
+        return this.root.resolve("sign-workflows").resolve(BY_ID);
     }
 
     // -------------------------------------------------------------------------

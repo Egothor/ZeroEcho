@@ -70,7 +70,7 @@ import zeroecho.pki.api.status.StatusObject;
  * {@link IllegalStateException} when an operation cannot be completed safely.
  * </p>
  */
-public interface PkiStore {
+public interface PkiStore extends SignWorkflowStore {
 
     /**
      * Persists or updates a Certificate Authority (CA) record.

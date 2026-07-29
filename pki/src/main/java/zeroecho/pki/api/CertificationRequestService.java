@@ -81,6 +81,14 @@ public interface CertificationRequestService {
      * Verifies proof-of-possession (PoP) for the private key corresponding to the
      * requested public key.
      *
+     * <p>
+     * This operation is diagnostic and may be used by request-processing workflows
+     * before issuance. A successful result does not grant issuance authority:
+     * {@link IssuanceService#issueEndEntity} independently reparses the original
+     * request payload and requires proof of possession immediately before invoking
+     * a privileged issuer backend.
+     * </p>
+     *
      * @param parsed parsed request
      * @param policy verification policy
      * @return PoP verification result

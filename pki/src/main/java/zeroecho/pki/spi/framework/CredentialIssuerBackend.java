@@ -33,10 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.spi.framework;
 
-import zeroecho.pki.api.ca.IntermediateCertIssueCommand;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
-import zeroecho.pki.api.issuance.IssueEndEntityCommand;
+import zeroecho.pki.impl.core.ManagedCaIssuance;
+import zeroecho.pki.impl.core.VerifiedIssuanceCandidate;
 
 /**
  * SPI contract for framework-specific credential issuance backends.
@@ -59,17 +59,19 @@ import zeroecho.pki.api.issuance.IssueEndEntityCommand;
  *
  * <h2>Architectural role</h2>
  * <ul>
- * <li>{@link CredentialFramework} selects the concrete backend appropriate for
- * a credential format.</li>
- * <li>PKI core services prepare validated issuance commands and call this
+ * <li>PKI runtime wiring injects the concrete backend into authoritative core
+ * services without publishing it through {@link CredentialFramework}.</li>
+ * <li>PKI core services prepare opaque proof-gated issuance authorities and call this
  * backend to obtain framework-specific credentials.</li>
+ * <li>The backend is a privileged post-gate component whose method signatures
+ * cannot accept raw issuance commands.</li>
  * <li>This backend performs format-specific credential assembly, not CA policy
  * orchestration, lifecycle control, or long-term persistence.</li>
  * </ul>
  *
  * <h2>Implementation expectations</h2>
  * <ul>
- * <li>Implementations should validate that the supplied command contains the
+ * <li>Implementations should validate that the supplied authority contains the
  * framework-specific material required for issuance.</li>
  * <li>Implementations should fail explicitly when mandatory issuer material,
  * subject material, or framework-specific overrides are missing or
@@ -103,21 +105,27 @@ public interface CredentialIssuerBackend {
      *
      * <p>
      * This operation produces a credential for a non-CA subject, typically from a
-     * validated certification request or equivalent subject input carried by the
-     * {@link IssueEndEntityCommand}. The returned {@link CredentialBundle} may
+     * cryptographically verified certification request carried by the opaque
+     * {@link VerifiedIssuanceCandidate}. The returned {@link CredentialBundle} may
      * contain the issued leaf credential together with any additional runtime
      * bundle material defined by the concrete framework, such as chain elements or
      * accompanying metadata.
      * </p>
      *
      * <p>
-     * The command is expected to carry all framework-specific issuance inputs
+     * The parameter type has no public constructor or factory. Only the core
+     * issuance gate can create it after mandatory proof-of-possession verification.
+     * </p>
+     *
+     * <p>
+     * The candidate carries all framework-specific issuance inputs
      * required by the concrete implementation, including any issuer wiring
      * attributes, profile identifiers, validity overrides, and subject request
      * material. The exact interpretation of those fields is framework-specific.
      * </p>
      *
-     * @param command end-entity issuance command; must not be {@code null}
+     * @param candidate gate-produced verified issuance candidate; must not be
+     *                  {@code null}
      * @return issued credential bundle, never {@code null}
      * @throws IllegalArgumentException if {@code command} is {@code null} or
      *                                  structurally invalid for the concrete
@@ -126,7 +134,7 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    CredentialBundle issueEndEntity(IssueEndEntityCommand command);
+    CredentialBundle issueEndEntity(VerifiedIssuanceCandidate candidate);
 
     /**
      * Issues a CA credential for an existing CA subject entity.
@@ -139,12 +147,13 @@ public interface CredentialIssuerBackend {
      * </p>
      *
      * <p>
-     * The supplied {@link IntermediateCertIssueCommand} is expected to contain the
-     * issuer CA reference, subject CA reference, profile selection, and any
-     * framework-specific attributes needed to construct the CA credential.
+     * The supplied {@link ManagedCaIssuance} can be constructed only after the core
+     * CA proof gate has completed a managed-key possession challenge and bound the
+     * exact public key, subject, operation, and authoritative attributes.
      * </p>
      *
-     * @param command CA credential issuance command; must not be {@code null}
+     * @param issuance gate-produced managed CA issuance authority; must not be
+     *                 {@code null}
      * @return issued CA credential, never {@code null}
      * @throws IllegalArgumentException if {@code command} is {@code null} or
      *                                  structurally invalid for the concrete
@@ -153,5 +162,5 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    Credential issueIntermediateCertificate(IntermediateCertIssueCommand command);
+    Credential issueIntermediateCertificate(ManagedCaIssuance issuance);
 }

@@ -46,8 +46,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import zeroecho.core.io.Util;
+import zeroecho.pki.spi.store.SignWorkflowStore;
 
 /**
  * Compact binary codec for filesystem persistence.
@@ -82,7 +84,7 @@ import zeroecho.core.io.Util;
 @SuppressWarnings("PMD.CyclomaticComplexity")
 final class FsCodec {
 
-    private static final int MAX_STRING_BYTES = 256 * 1024;
+    /* package */ static final int MAX_COMPONENT_BYTES = 256 * 1024;
 
     private static final Map<Class<?>, Class<?>> PRIMITIVE_TO_WRAPPER = Map.of(boolean.class, Boolean.class, byte.class,
             Byte.class, short.class, Short.class, int.class, Integer.class, long.class, Long.class, char.class,
@@ -135,6 +137,9 @@ final class FsCodec {
         try {
             ByteArrayInputStream bis = new ByteArrayInputStream(data);
             Object decoded = readAny(bis, expectedType);
+            if (bis.available() != 0) {
+                throw new IllegalStateException("trailing data after " + expectedType.getName());
+            }
             return expectedType.cast(decoded);
         } catch (IOException e) {
             throw new IllegalStateException("decoding failed: " + expectedType.getName(), e);
@@ -157,7 +162,7 @@ final class FsCodec {
             case Duration duration -> writeDurationCompact(out, duration);
             case java.util.List<?> list -> writeListCompact(out, list);
             case java.util.Set<?> set -> writeSetCompact(out, set);
-            case java.util.Optional<?> optional -> writeOptionalCompact(out, optional);
+            case Optional<?> optional -> writeOptionalCompact(out, optional);
             default -> writeComplexCompact(out, value);
         }
     }
@@ -242,7 +247,7 @@ final class FsCodec {
         });
     }
 
-    private static void writeOptionalCompact(final OutputStream out, final java.util.Optional<?> optional)
+    private static void writeOptionalCompact(final OutputStream out, final Optional<?> optional)
             throws IOException {
         out.write(TAG_OPTIONAL);
         if (optional.isPresent()) {
@@ -273,7 +278,10 @@ final class FsCodec {
         out.write(TAG_ENUM);
         Util.writeUTF8(out, type.getName());
         Enum<?> enumValue = (Enum<?>) value;
-        Util.writePack7I(out, enumValue.ordinal());
+        int persistentCode = value instanceof SignWorkflowStore.State state
+                ? state.persistentCode()
+                : enumValue.ordinal();
+        Util.writePack7I(out, persistentCode);
     }
 
     private static void writeRecordCompact(final OutputStream out, final Class<?> type, final Object value)
@@ -375,7 +383,7 @@ final class FsCodec {
     }
 
     private static String readStringCompact(final InputStream in) throws IOException {
-        return Util.readUTF8(in, MAX_STRING_BYTES);
+        return Util.readUTF8(in, MAX_COMPONENT_BYTES);
     }
 
     private static int readIntegerCompact(final InputStream in) throws IOException {
@@ -395,7 +403,7 @@ final class FsCodec {
     }
 
     private static byte[] readBytesCompact(final InputStream in) throws IOException {
-        return Util.read(in, MAX_STRING_BYTES);
+        return Util.read(in, MAX_COMPONENT_BYTES);
     }
 
     private static Instant readInstantCompact(final InputStream in) throws IOException {
@@ -411,13 +419,20 @@ final class FsCodec {
     }
 
     private static Object readEnumCompact(final InputStream in) throws IOException {
-        String enumTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
+        String enumTypeName = Util.readUTF8(in, MAX_COMPONENT_BYTES);
         Class<?> enumType = loadClass(enumTypeName);
         if (!enumType.isEnum()) {
             throw new IllegalStateException("encoded enum type is not an enum: " + enumTypeName);
         }
 
         int ordinal = Util.readPack7I(in);
+        if (SignWorkflowStore.State.class.equals(enumType)) {
+            try {
+                return SignWorkflowStore.State.fromPersistentCode(ordinal);
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalStateException("invalid signing workflow state code " + ordinal, ex);
+            }
+        }
         Object[] constants = enumType.getEnumConstants();
         if (constants == null || ordinal < 0 || ordinal >= constants.length) {
             throw new IllegalStateException("invalid enum ordinal " + ordinal + " for " + enumTypeName);
@@ -426,7 +441,7 @@ final class FsCodec {
     }
 
     private static Object readRecordCompact(final InputStream in) throws IOException {
-        String recordTypeName = Util.readUTF8(in, MAX_STRING_BYTES);
+        String recordTypeName = Util.readUTF8(in, MAX_COMPONENT_BYTES);
         Class<?> recordType = loadClass(recordTypeName);
         if (!recordType.isRecord()) {
             throw new IllegalStateException("encoded record type is not a record: " + recordTypeName);
@@ -455,8 +470,8 @@ final class FsCodec {
     }
 
     private static Object readFallbackStringCompact(final InputStream in) throws IOException {
-        String typeName = Util.readUTF8(in, MAX_STRING_BYTES);
-        String value = Util.readUTF8(in, MAX_STRING_BYTES);
+        String typeName = Util.readUTF8(in, MAX_COMPONENT_BYTES);
+        String value = Util.readUTF8(in, MAX_COMPONENT_BYTES);
         Class<?> type = loadClass(typeName);
 
         Method stringFactory = findStringFactory(type);
@@ -502,10 +517,10 @@ final class FsCodec {
             throw new IOException("unexpected EOF");
         }
         if (present == 0) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         Object element = readAny(in, Object.class);
-        return java.util.Optional.of(element);
+        return Optional.of(element);
     }
 
     private static boolean isTypeCompatible(final Class<?> expectedType, final Class<?> actualType) {

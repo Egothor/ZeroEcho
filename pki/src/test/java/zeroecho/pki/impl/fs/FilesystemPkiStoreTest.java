@@ -342,13 +342,15 @@ public final class FilesystemPkiStoreTest {
     private static FsPkiStoreOptions nonStrictSnapshotOptions() {
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
         return new FsPkiStoreOptions(defaults.caHistoryPolicy(), defaults.profileHistoryPolicy(),
-                defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), false);
+                defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), false,
+                defaults.signingOperationHorizon(), defaults.signingIdPermittedSkew());
     }
 
     private static FsPkiStoreOptions strictSnapshotOptions() {
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
         return new FsPkiStoreOptions(defaults.caHistoryPolicy(), defaults.profileHistoryPolicy(),
-                defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), true);
+                defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), true,
+                defaults.signingOperationHorizon(), defaults.signingIdPermittedSkew());
     }
 
     private static void sleepMillis(long ms) throws InterruptedException {

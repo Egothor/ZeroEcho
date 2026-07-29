@@ -89,6 +89,7 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     private static final String DECISION_DENY = "DENY";
 
     private final Path root;
+    private final TestSignIdentityRegistry identities;
     private final Duration approvalWindow;
     private final Duration signingDelay;
     private final Map<String, PrivateKey> keysByRef;
@@ -105,6 +106,7 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     public DurableOperatorApprovalSignatureWorkflow(Path root, Duration approvalWindow, Duration signingDelay,
             Map<String, PrivateKey> keysByRef) {
         this.root = Objects.requireNonNull(root, "root");
+        this.identities = new TestSignIdentityRegistry(root);
         this.approvalWindow = Objects.requireNonNull(approvalWindow, "approvalWindow");
         this.signingDelay = Objects.requireNonNull(signingDelay, "signingDelay");
         this.keysByRef = Objects.requireNonNull(keysByRef, "keysByRef");
@@ -137,9 +139,15 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     public PkiId submitSign(SignRequest request) {
         Objects.requireNonNull(request, "request");
 
-        PkiId opId = new PkiId("sig-" + UUID.randomUUID());
+        PkiId opId = request.submissionId();
+        if (!identities.begin(request)) {
+            return opId;
+        }
         Instant now = Instant.now();
         Instant deadline = now.plus(approvalWindow);
+        if (request.deadline().isPresent() && request.deadline().get().isBefore(deadline)) {
+            deadline = request.deadline().get();
+        }
 
         persistRequest(opId, request);
         persistDeadline(opId, deadline);
@@ -165,8 +173,9 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     public void approve(PkiId operationId) {
         Objects.requireNonNull(operationId, "operationId");
         persistDecision(operationId, DECISION_APPROVE);
-        OperationStatus st = new OperationStatus(State.PENDING, Instant.now(), Optional.of("APPROVED"),
-                Optional.empty());
+        Instant now = Instant.now();
+        OperationStatus st = deadlineReached(loadDeadline(operationId), now)
+                ? expired(now) : new OperationStatus(State.PENDING, now, Optional.of("APPROVED"), Optional.empty());
         persistStatus(operationId, st);
         notifySink(operationId, st);
     }
@@ -196,9 +205,9 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
         if (st.state() == State.WAITING_APPROVAL) {
             // expire if past deadline
             Instant deadline = loadDeadline(operationId).orElse(Instant.EPOCH);
-            if (Instant.now().isAfter(deadline)) {
-                OperationStatus expired = new OperationStatus(State.EXPIRED, Instant.now(),
-                        Optional.of("APPROVAL_EXPIRED"), Optional.empty());
+            Instant now = Instant.now();
+            if (deadlineReached(Optional.of(deadline), now)) {
+                OperationStatus expired = expired(now);
                 persistStatus(operationId, expired);
                 notifySink(operationId, expired);
                 return expired;
@@ -225,7 +234,14 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
         }
 
         if (st.state() == State.PENDING) {
-            OperationStatus running = new OperationStatus(State.RUNNING, Instant.now(), Optional.of("SIGNING"),
+            Instant startedAt = Instant.now();
+            if (deadlineReached(loadDeadline(operationId), startedAt)) {
+                OperationStatus expired = expired(startedAt);
+                persistStatus(operationId, expired);
+                notifySink(operationId, expired);
+                return expired;
+            }
+            OperationStatus running = new OperationStatus(State.RUNNING, startedAt, Optional.of("SIGNING"),
                     Optional.empty());
             persistStatus(operationId, running);
             notifySink(operationId, running);
@@ -240,11 +256,17 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     }
 
     @Override
-    public boolean cancel(PkiId operationId, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
+        if (fencingToken <= 0L) {
+            throw new IllegalArgumentException("fencingToken must be positive");
+        }
         if (reason.isBlank()) {
             throw new IllegalArgumentException("reason must not be blank");
+        }
+        if (!identities.acceptFence(operationId, fencingToken)) {
+            return false;
         }
 
         OperationStatus st = loadStatus(operationId);
@@ -279,6 +301,10 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
 
     private OperationStatus performSign(PkiId opId) {
         PersistedSignRequest req = loadRequest(opId);
+        Instant startedAt = Instant.now();
+        if (deadlineReached(loadDeadline(opId), startedAt)) {
+            return expired(startedAt);
+        }
 
         PrivateKey key = keysByRef.get(req.keyRef);
         if (key == null) {
@@ -303,11 +329,15 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
             sig.update(req.payload);
             byte[] signature = sig.sign();
 
+            Instant completedAt = Instant.now();
+            if (deadlineReached(loadDeadline(opId), completedAt)) {
+                return expired(completedAt);
+            }
             persistSignature(opId, signature);
 
             EncodedObject enc = new EncodedObject(Encoding.BINARY, signature);
             OperationResult res = new OperationResult(Optional.of(enc), Optional.empty());
-            return new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"), Optional.of(res));
+            return new OperationStatus(State.SUCCEEDED, completedAt, Optional.of("SIGNED"), Optional.of(res));
         } catch (Exception ex) {
             return new OperationStatus(State.FAILED, Instant.now(), Optional.of("SIGN_ERROR"), Optional.empty());
         }
@@ -373,6 +403,14 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
         } catch (IOException ex) {
             return Optional.empty();
         }
+    }
+
+    private static boolean deadlineReached(Optional<Instant> deadline, Instant observedAt) {
+        return deadline.isPresent() && !observedAt.isBefore(deadline.get());
+    }
+
+    private static OperationStatus expired(Instant observedAt) {
+        return new OperationStatus(State.EXPIRED, observedAt, Optional.of("EXPIRED"), Optional.empty());
     }
 
     private void persistDecision(PkiId opId, String decision) {

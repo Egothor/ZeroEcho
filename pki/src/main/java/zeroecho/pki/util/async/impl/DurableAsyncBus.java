@@ -90,8 +90,8 @@ import zeroecho.pki.util.async.codec.ResultCodec;
  * <li>{@link #update(Object, AsyncStatus, Optional)} persists a status
  * transition, optionally persists a result, dispatches an event, and applies
  * terminal-state cleanup rules.</li>
- * <li>{@link #consumeResult(Object)} returns a successful result once and then
- * deletes the operation from the in-memory state.</li>
+ * <li>{@link #consumeResult(Object)} returns a successful result once and
+ * durably tombstones the operation.</li>
  * </ul>
  *
  * <h2>Durability semantics</h2>
@@ -100,6 +100,8 @@ import zeroecho.pki.util.async.codec.ResultCodec;
  * <li>Status transitions are persisted as internal {@code T1} records.</li>
  * <li>Results are persisted as internal {@code R1} records only when
  * {@link ResultCodec#persistsResults()} returns {@code true}.</li>
+ * <li>Consumption and explicit retirement are persisted as internal {@code D1}
+ * tombstones.</li>
  * <li>The log format is internal to this implementation and versioned by the
  * leading record token.</li>
  * <li>Corrupted lines encountered during replay are ignored with a warning, and
@@ -146,6 +148,8 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
     private static final String REC_SNAPSHOT = "S1";
     private static final String REC_STATUS = "T1";
     private static final String REC_RESULT = "R1";
+    private static final String REC_DELETE = "D1";
+    private static final String ARG_OP_ID = "opId";
 
     private final IdCodec<OpId> opIdCodec;
     private final IdCodec<Owner> ownerCodec;
@@ -285,7 +289,7 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
     public AsyncOperationSnapshot<OpId, Owner, EndpointId> submit(OpId opId, String type, Owner owner,
             EndpointId endpointId, Instant createdAt, Duration ttl) {
 
-        Objects.requireNonNull(opId, "opId");
+        Objects.requireNonNull(opId, ARG_OP_ID);
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(endpointId, "endpointId");
@@ -354,7 +358,7 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
      */
     @Override
     public void update(OpId opId, AsyncStatus status, Optional<Result> result) {
-        Objects.requireNonNull(opId, "opId");
+        Objects.requireNonNull(opId, ARG_OP_ID);
         Objects.requireNonNull(status, "status");
         Objects.requireNonNull(result, "result");
 
@@ -381,10 +385,11 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         dispatchEvent(opId, snap, status, result);
 
         if (status.isTerminal()) {
-            // keep terminal status for diagnostics and deterministic polling; only
-            // successful operations retain their result for later consumption
-            if (status.state() != AsyncState.SUCCEEDED) { // NOPMD
-                dropActiveOperation(opId);
+            // All terminal operations leave the active set. Only successful
+            // operations retain their result for later consumption.
+            active.remove(opId);
+            if (status.state() != AsyncState.SUCCEEDED) {
+                results.remove(opId);
             }
         }
     }
@@ -399,7 +404,7 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
      */
     @Override
     public Optional<AsyncStatus> status(OpId opId) {
-        Objects.requireNonNull(opId, "opId");
+        Objects.requireNonNull(opId, ARG_OP_ID);
         return Optional.ofNullable(lastStatus.get(opId));
     }
 
@@ -419,7 +424,7 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
      */
     @Override
     public Optional<AsyncOperationSnapshot<OpId, Owner, EndpointId>> snapshot(OpId opId) {
-        Objects.requireNonNull(opId, "opId");
+        Objects.requireNonNull(opId, ARG_OP_ID);
         return Optional.ofNullable(active.get(opId));
     }
 
@@ -427,9 +432,9 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
      * Returns and removes a previously stored successful result.
      *
      * <p>
-     * Result consumption is destructive. After a successful consume, the in-memory
-     * operation state is deleted completely through
-     * {@link #deleteOperation(Object)} to keep storage bounded.
+     * Result consumption is destructive. Before returning the result, this method
+     * appends a deletion tombstone and removes the complete in-memory operation
+     * state. Consequently, replay cannot make a consumed result visible again.
      * </p>
      *
      * @param opId operation identifier; must not be {@code null}
@@ -438,14 +443,14 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
      */
     @Override
     public Optional<Result> consumeResult(OpId opId) {
-        Objects.requireNonNull(opId, "opId");
+        Objects.requireNonNull(opId, ARG_OP_ID);
 
-        Result r = results.remove(opId);
+        Result r = results.get(opId);
         if (r == null) {
             return Optional.empty();
         }
 
-        // on successful consumption, forget operation entirely (bounded storage)
+        store.appendLine(encodeDeleteLine(opId));
         deleteOperation(opId);
 
         if (LOG.isLoggable(Level.INFO)) {
@@ -453,6 +458,25 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         }
 
         return Optional.of(r);
+    }
+
+    /**
+     * Durably retires all bus state for an operation.
+     *
+     * <p>
+     * Retirement appends a tombstone before deleting in-memory state. Replay
+     * applies records in order, so snapshots, statuses, and results preceding the
+     * tombstone cannot resurrect after restart. A later explicit submission using
+     * the same identifier remains visible because its records follow the tombstone.
+     * </p>
+     *
+     * @param opId operation identifier; must not be {@code null}
+     * @throws NullPointerException if {@code opId} is {@code null}
+     */
+    public void retire(OpId opId) {
+        Objects.requireNonNull(opId, ARG_OP_ID);
+        store.appendLine(encodeDeleteLine(opId));
+        deleteOperation(opId);
     }
 
     /**
@@ -502,7 +526,7 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
             } catch (RuntimeException ex) { // NOPMD
                 // endpoint misbehaved; do not fail sweep
                 if (LOG.isLoggable(Level.WARNING)) {
-                    LOG.log(Level.WARNING, "Async endpoint status() failed; opId=" + safeOpId(opId), ex);
+                    logSafeFailure("ENDPOINT_STATUS_FAILED", opId, ex);
                 }
                 continue;
             }
@@ -523,7 +547,7 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
                     res = endpoint.result(opId);
                 } catch (RuntimeException ex) { // NOPMD
                     if (LOG.isLoggable(Level.WARNING)) {
-                        LOG.log(Level.WARNING, "Async endpoint result() failed; opId=" + safeOpId(opId), ex);
+                        logSafeFailure("ENDPOINT_RESULT_FAILED", opId, ex);
                     }
                 }
             }
@@ -616,7 +640,7 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
                 h.onEvent(event);
             } catch (RuntimeException ex) { // NOPMD
                 if (LOG.isLoggable(Level.WARNING)) {
-                    LOG.log(Level.WARNING, "Async handler failed; opId=" + safeOpId(opId), ex);
+                    logSafeFailure("HANDLER_FAILED", opId, ex);
                 }
             }
         }
@@ -652,10 +676,13 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
                 } else if (line.startsWith(REC_RESULT + "|")) {
                     applyResultLine(line);
                     applied++;
+                } else if (line.startsWith(REC_DELETE + "|")) {
+                    applyDeleteLine(line);
+                    applied++;
                 }
             } catch (RuntimeException ex) { // NOPMD
                 // corrupted line: ignore safely without logging contents
-                LOG.log(Level.WARNING, "Corrupted async store line encountered; skipping.", ex);
+                logRecordRejected(ex);
             }
         }
 
@@ -705,6 +732,12 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
 
         AsyncStatus st = new AsyncStatus(state, updatedAt, dc, details);
         lastStatus.put(opId, st);
+        if (st.isTerminal()) {
+            active.remove(opId);
+            if (state != AsyncState.SUCCEEDED) {
+                results.remove(opId);
+            }
+        }
     }
 
     /**
@@ -722,7 +755,20 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
         // R1|opId|resultToken
         OpId opId = opIdCodec.decode(parts[1]);
         Result r = resultCodec.decode(parts[2]);
-        results.put(opId, r);
+        AsyncStatus status = lastStatus.get(opId);
+        if (active.containsKey(opId) || status != null && status.state() == AsyncState.SUCCEEDED) {
+            results.put(opId, r);
+        }
+    }
+
+    /**
+     * Applies one persisted deletion tombstone.
+     *
+     * @param line deletion record line in internal {@code D1} format
+     */
+    private void applyDeleteLine(String line) {
+        String[] parts = split(line, 2);
+        deleteOperation(opIdCodec.decode(parts[1]));
     }
 
     /**
@@ -760,6 +806,10 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
      */
     private String encodeResultLine(OpId opId, Result r) {
         return REC_RESULT + "|" + opIdCodec.encode(opId) + "|" + resultCodec.encode(r);
+    }
+
+    private String encodeDeleteLine(OpId opId) {
+        return REC_DELETE + "|" + opIdCodec.encode(opId);
     }
 
     /**
@@ -878,6 +928,20 @@ public final class DurableAsyncBus<OpId, Owner, EndpointId, Result> // NOPMD
             return s;
         } catch (RuntimeException ex) { // NOPMD
             return "<opId>";
+        }
+    }
+
+    private void logSafeFailure(String code, OpId opId, Throwable failure) {
+        if (LOG.isLoggable(Level.WARNING)) {
+            LOG.log(Level.WARNING, "Async operation failed: code={0}, opId={1}, exception={2}",
+                    new Object[] { code, safeOpId(opId), failure.getClass().getName() });
+        }
+    }
+
+    private static void logRecordRejected(RuntimeException failure) {
+        if (LOG.isLoggable(Level.WARNING)) {
+            LOG.log(Level.WARNING, "Async store record rejected: code={0}, exception={1}",
+                    new Object[] { "ASYNC_RECORD_INVALID", failure.getClass().getName() });
         }
     }
 

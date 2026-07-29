@@ -107,6 +107,23 @@ public class DurableAsyncBusTest {
         assertTrue(bus.snapshot(opId).isEmpty());
         assertTrue(bus.status(opId).isEmpty());
 
+        DurableAsyncBus<PkiId, Principal, String, String> replayed =
+                new DurableAsyncBus<PkiId, Principal, String, String>(PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL,
+                        PkiCodecs.STRING, new ResultCodec<String>() {
+                            @Override
+                            public String encode(String result) {
+                                return result;
+                            }
+
+                            @Override
+                            public String decode(String token) {
+                                return token;
+                            }
+                        }, new AppendOnlyLineStore(log));
+        assertTrue(replayed.snapshot(opId).isEmpty());
+        assertTrue(replayed.status(opId).isEmpty());
+        assertTrue(replayed.consumeResult(opId).isEmpty());
+
         System.out.println("...ok");
     }
 
@@ -152,6 +169,12 @@ public class DurableAsyncBusTest {
         assertEquals(AsyncState.FAILED, st.get().state());
         assertTrue(bus.snapshot(opId).isEmpty());
 
+        DurableAsyncBus<PkiId, Principal, String, String> replayed =
+                new DurableAsyncBus<PkiId, Principal, String, String>(PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL,
+                        PkiCodecs.STRING, ResultCodec.none(), new AppendOnlyLineStore(log));
+        assertTrue(replayed.snapshot(opId).isEmpty());
+        assertEquals(AsyncState.FAILED, replayed.status(opId).orElseThrow().state());
+
         System.out.println("failedStatus_remainsVisibleUntilExplicitPurge...ok");
     }
 
@@ -192,5 +215,71 @@ public class DurableAsyncBusTest {
         assertEquals("CRL", snap.get().type());
 
         System.out.println("...ok");
+    }
+
+    @Test
+    public void terminalAndRetiredOperations_doNotReactivateOnReplay() {
+        Principal owner = new Principal("SERVICE", "issuer");
+        Path successLog = tempDir.resolve("async-succeeded.log");
+        PkiId successId = new PkiId("op-succeeded");
+        ResultCodec<String> persistedStrings = new ResultCodec<String>() {
+            @Override
+            public String encode(String result) {
+                return result;
+            }
+
+            @Override
+            public String decode(String token) {
+                return token;
+            }
+        };
+        DurableAsyncBus<PkiId, Principal, String, String> successful =
+                new DurableAsyncBus<PkiId, Principal, String, String>(PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL,
+                        PkiCodecs.STRING, persistedStrings, new AppendOnlyLineStore(successLog));
+        successful.submit(successId, "SIGN", owner, "endpoint-1", Instant.parse("2025-01-01T00:00:00Z"),
+                Duration.ofHours(1));
+        successful.update(successId, new AsyncStatus(AsyncState.SUCCEEDED,
+                Instant.parse("2025-01-01T00:00:10Z"), Optional.of("DONE"), java.util.Map.of()),
+                Optional.of("signature"));
+
+        DurableAsyncBus<PkiId, Principal, String, String> replayedSuccessful =
+                new DurableAsyncBus<PkiId, Principal, String, String>(PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL,
+                        PkiCodecs.STRING, persistedStrings, new AppendOnlyLineStore(successLog));
+        assertTrue(replayedSuccessful.snapshot(successId).isEmpty());
+        assertEquals(AsyncState.SUCCEEDED, replayedSuccessful.status(successId).orElseThrow().state());
+        assertEquals("signature", replayedSuccessful.consumeResult(successId).orElseThrow());
+
+        for (AsyncState state : new AsyncState[] { AsyncState.CANCELLED, AsyncState.EXPIRED }) {
+            Path log = tempDir.resolve("async-" + state.name() + ".log");
+            PkiId opId = new PkiId("op-" + state.name());
+            DurableAsyncBus<PkiId, Principal, String, String> bus =
+                    new DurableAsyncBus<PkiId, Principal, String, String>(PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL,
+                            PkiCodecs.STRING, ResultCodec.none(), new AppendOnlyLineStore(log));
+            bus.submit(opId, "SIGN", owner, "endpoint-1", Instant.parse("2025-01-01T00:00:00Z"),
+                    Duration.ofHours(1));
+            bus.update(opId, new AsyncStatus(state, Instant.parse("2025-01-01T00:00:10Z"),
+                    Optional.of(state.name()), java.util.Map.of()), Optional.empty());
+
+            DurableAsyncBus<PkiId, Principal, String, String> replayed =
+                    new DurableAsyncBus<PkiId, Principal, String, String>(PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL,
+                            PkiCodecs.STRING, ResultCodec.none(), new AppendOnlyLineStore(log));
+            assertTrue(replayed.snapshot(opId).isEmpty());
+            assertEquals(state, replayed.status(opId).orElseThrow().state());
+        }
+
+        Path retiredLog = tempDir.resolve("async-retired.log");
+        PkiId retiredId = new PkiId("op-retired");
+        DurableAsyncBus<PkiId, Principal, String, String> retired =
+                new DurableAsyncBus<PkiId, Principal, String, String>(PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL,
+                        PkiCodecs.STRING, ResultCodec.none(), new AppendOnlyLineStore(retiredLog));
+        retired.submit(retiredId, "SIGN", owner, "endpoint-1", Instant.parse("2025-01-01T00:00:00Z"),
+                Duration.ofHours(1));
+        retired.retire(retiredId);
+
+        DurableAsyncBus<PkiId, Principal, String, String> replayedRetired =
+                new DurableAsyncBus<PkiId, Principal, String, String>(PkiCodecs.PKI_ID, PkiCodecs.PRINCIPAL,
+                        PkiCodecs.STRING, ResultCodec.none(), new AppendOnlyLineStore(retiredLog));
+        assertTrue(replayedRetired.snapshot(retiredId).isEmpty());
+        assertTrue(replayedRetired.status(retiredId).isEmpty());
     }
 }

@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core.async;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -57,6 +58,7 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.testkit.DurableOperatorApprovalSignatureWorkflow;
 import zeroecho.pki.util.async.AsyncState;
 import zeroecho.pki.util.async.AsyncStatus;
@@ -65,6 +67,29 @@ public final class PkiSigningBusOperatorApprovalTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    public void operatorApprovalAtExpiredRequestDeadlineCannotStartSigning() throws Exception {
+        KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+        KeyRef keyRef = new KeyRef("kref:test:expired-approval");
+        try (DurableOperatorApprovalSignatureWorkflow signer = new DurableOperatorApprovalSignatureWorkflow(
+                tempDir.resolve("expired-approval"), Duration.ofSeconds(10), Duration.ZERO,
+                Map.of(keyRef.value(), pair.getPrivate()))) {
+            AccessContext access = new AccessContext(new Principal("USER", "late"), new Purpose("ISSUANCE"),
+                    Optional.empty(), Optional.empty());
+            SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(
+                    new PkiId("late-approval"), "test", 1L, access, keyRef, "SHA256withRSA",
+                    new EncodedObject(Encoding.BINARY, new byte[] { 1 }), Optional.of(Encoding.BINARY),
+                    Optional.of(Instant.EPOCH));
+
+            PkiId operationId = signer.submitSign(request);
+            signer.approve(operationId);
+
+            SignatureWorkflow.OperationStatus status = signer.status(operationId);
+            assertEquals(SignatureWorkflow.State.EXPIRED, status.state());
+            assertTrue(status.result().isEmpty());
+        }
+    }
 
     @Test
     public void operatorApprove_completesSignature() throws Exception {

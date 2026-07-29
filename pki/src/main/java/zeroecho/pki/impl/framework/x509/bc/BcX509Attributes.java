@@ -148,6 +148,17 @@ public final class BcX509Attributes {
      */
     public static final AttributeId SUBJECT_SPKI_DER = new AttributeId("urn:zeroecho:pki:x509:subject:spki");
 
+    /**
+     * Attribute identifier for the authoritative X.509 subject distinguished name.
+     *
+     * <p>
+     * The associated value is a {@code StringValue}. Core CA orchestration
+     * overwrites this reserved value from its authoritative subject record before
+     * invoking the privileged issuer backend.
+     * </p>
+     */
+    public static final AttributeId SUBJECT_DN = new AttributeId("urn:zeroecho:pki:x509:subject:dn");
+
     private BcX509Attributes() {
         // utility
     }

@@ -67,5 +67,16 @@ public record EncodedObject(Encoding encoding, byte[] bytes) {
         if (bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("bytes must not be null/empty");
         }
+        bytes = bytes.clone();
+    }
+
+    /**
+     * Returns a defensive copy of the encoded payload.
+     *
+     * @return newly allocated payload copy
+     */
+    @Override
+    public byte[] bytes() {
+        return bytes.clone();
     }
 }

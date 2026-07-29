@@ -40,8 +40,9 @@ import zeroecho.pki.api.FormatId;
  *
  * <p>
  * A framework implementation provides request parsing, proof-of-possession
- * verification (if applicable), credential issuance backend, and status object
- * generation for a particular {@link FormatId}.
+ * verification and status object generation for a particular {@link FormatId}.
+ * Credential minting is intentionally not exposed by this framework facade; core
+ * issuance services own that privileged implementation boundary.
  * </p>
  */
 public interface CredentialFramework {
@@ -66,13 +67,6 @@ public interface CredentialFramework {
      * @return PoP verifier
      */
     ProofOfPossessionVerifier proofOfPossessionVerifier();
-
-    /**
-     * Returns the issuer backend for this framework.
-     *
-     * @return issuer backend
-     */
-    CredentialIssuerBackend issuerBackend();
 
     /**
      * Returns the status object generator for this framework.

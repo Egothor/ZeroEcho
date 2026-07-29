@@ -38,6 +38,7 @@ import java.util.Optional;
 import org.bouncycastle.operator.ContentVerifierProvider;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 
 import zeroecho.pki.api.attr.AttributeValue;
@@ -93,6 +94,9 @@ import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
  * authorization checks, or profile compliance checks.</li>
  * <li>The presence of a valid PKCS#10 self-signature does not by itself imply
  * that the requester is entitled to receive the requested certificate.</li>
+ * <li>This verifier accepts signature algorithms supported by its Bouncy Castle
+ * provider, including RSASSA-PSS. Deployments requiring a narrower or stronger
+ * algorithm policy must enforce it in the issuance policy layer.</li>
  * <li>The CSR payload carried under {@link BcX509Attributes#CSR_DER} may be
  * operationally sensitive and must not be logged unsafely.</li>
  * </ul>
@@ -103,6 +107,8 @@ import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
  * </p>
  */
 public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionVerifier {
+
+    private static final BouncyCastleProvider BC_PROVIDER = new BouncyCastleProvider();
 
     /**
      * Verifies proof of possession for a parsed PKCS#10 certification request.
@@ -177,7 +183,8 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
             } catch (Exception ex) {
                 return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("Invalid CSR"));
             }
-            ContentVerifierProvider cvp = new JcaContentVerifierProviderBuilder().build(csr.getSubjectPublicKeyInfo());
+            ContentVerifierProvider cvp = new JcaContentVerifierProviderBuilder().setProvider(BC_PROVIDER)
+                    .build(csr.getSubjectPublicKeyInfo());
             boolean ok = csr.isSignatureValid(cvp);
             if (ok) {
                 return new ProofOfPossessionResult(ProofOfPossessionStatus.VERIFIED, Optional.empty());

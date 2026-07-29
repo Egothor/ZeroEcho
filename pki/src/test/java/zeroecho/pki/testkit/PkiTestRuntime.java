@@ -36,10 +36,12 @@ package zeroecho.pki.testkit;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.security.KeyPair;
+import java.security.PublicKey;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import zeroecho.pki.api.CaService;
 import zeroecho.pki.api.CertificationRequestService;
@@ -56,6 +58,7 @@ import zeroecho.pki.impl.core.DefaultRevocationService;
 import zeroecho.pki.impl.core.DefaultStatusObjectService;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
+import zeroecho.pki.impl.audit.InMemoryAuditSink;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialIssuerBackend;
 import zeroecho.pki.impl.framework.x509.bc.BcX509StatusObjectGenerator;
@@ -63,6 +66,8 @@ import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.framework.CredentialFramework;
+import zeroecho.pki.spi.framework.CredentialIssuerBackend;
+import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 import zeroecho.pki.spi.store.PkiStore;
 
 /**
@@ -79,8 +84,10 @@ public final class PkiTestRuntime implements AutoCloseable {
     private final FilesystemPkiStore store;
     private final PkiSigningBus signingBus;
     private final SignatureWorkflow signatureWorkflow;
+    private final InMemoryAuditSink auditSink;
 
     private final CredentialFramework framework;
+    private final CredentialIssuerBackend issuerBackend;
 
     private final CaService caService;
     private final CertificationRequestService certificationRequestService;
@@ -88,23 +95,29 @@ public final class PkiTestRuntime implements AutoCloseable {
     private final RevocationService revocationService;
     private final StatusObjectService statusObjectService;
 
-    private final Map<String, KeyPair> keyPairsByKeyRef;
+    private final Map<String, PublicKey> publicKeysByKeyRef;
+    private Runnable publicKeyResolveHook;
 
     private PkiTestRuntime(FilesystemPkiStore store, PkiSigningBus signingBus, SignatureWorkflow signatureWorkflow,
-            CredentialFramework framework, Map<String, KeyPair> keyPairsByKeyRef) {
+            CredentialFramework framework, CredentialIssuerBackend issuerBackend,
+            Map<String, PublicKey> publicKeysByKeyRef, Duration signingTtl) {
         this.store = store;
         this.signingBus = signingBus;
         this.signatureWorkflow = signatureWorkflow;
+        this.auditSink = new InMemoryAuditSink();
         this.framework = framework;
-        this.keyPairsByKeyRef = keyPairsByKeyRef;
+        this.issuerBackend = issuerBackend;
+        this.publicKeysByKeyRef = publicKeysByKeyRef;
+        this.publicKeyResolveHook = () -> {
+        };
 
         this.certificationRequestService = new DefaultCertificationRequestService(store, framework);
-        this.issuanceService = new DefaultIssuanceService(store, framework);
+        this.issuanceService = new DefaultIssuanceService(store, framework, issuerBackend, auditSink);
         this.revocationService = new DefaultRevocationService(store);
         this.statusObjectService = new DefaultStatusObjectService(store, framework);
 
-        this.caService = new DefaultCaService(store, framework, this::resolvePublicKeyInfo, signingBus, "SHA256withRSA",
-                Duration.ofSeconds(2));
+        this.caService = new DefaultCaService(store, framework, issuerBackend, this::resolvePublicKeyInfo, signingBus,
+                auditSink, "SHA256withRSA", signingTtl);
     }
 
     /**
@@ -116,9 +129,36 @@ public final class PkiTestRuntime implements AutoCloseable {
      * @return runtime
      */
     public static PkiTestRuntime create(Path rootDir, Path busFile, Map<KeyRef, KeyPair> keyPairs) {
+        Map<KeyRef, PublicKey> publicKeys = new HashMap<>();
+        for (Map.Entry<KeyRef, KeyPair> entry : keyPairs.entrySet()) {
+            publicKeys.put(entry.getKey(), entry.getValue().getPublic());
+        }
+        return create(rootDir, busFile, keyPairs, publicKeys, Optional.empty());
+    }
+
+    /**
+     * Creates a test runtime with independently controlled signing keys, resolved
+     * public keys, and proof verifier.
+     *
+     * @param rootDir       working root for the filesystem store
+     * @param busFile       durable bus line store file path
+     * @param signingKeys   signing workflow key pairs indexed by key reference
+     * @param resolvedKeys  public keys returned by managed-key resolution
+     * @param proofVerifier proof verifier used by the credential framework
+     * @return runtime
+     */
+    public static PkiTestRuntime create(Path rootDir, Path busFile, Map<KeyRef, KeyPair> signingKeys,
+            Map<KeyRef, PublicKey> resolvedKeys, ProofOfPossessionVerifier proofVerifier) {
+        return create(rootDir, busFile, signingKeys, resolvedKeys, Optional.of(proofVerifier));
+    }
+
+    private static PkiTestRuntime create(Path rootDir, Path busFile, Map<KeyRef, KeyPair> keyPairs,
+            Map<KeyRef, PublicKey> resolvedKeys, Optional<ProofOfPossessionVerifier> proofVerifier) {
         Objects.requireNonNull(rootDir, "rootDir");
         Objects.requireNonNull(busFile, "busFile");
         Objects.requireNonNull(keyPairs, "keyPairs");
+        Objects.requireNonNull(resolvedKeys, "resolvedKeys");
+        Objects.requireNonNull(proofVerifier, "proofVerifier");
 
         FsPkiStoreOptions opts = FsPkiStoreOptions.defaults();
 
@@ -129,6 +169,10 @@ public final class PkiTestRuntime implements AutoCloseable {
         for (Map.Entry<KeyRef, KeyPair> e : keyPairs.entrySet()) {
             byRef.put(e.getKey().value(), e.getValue());
         }
+        Map<String, PublicKey> publicByRef = new HashMap<>();
+        for (Map.Entry<KeyRef, PublicKey> entry : resolvedKeys.entrySet()) {
+            publicByRef.put(entry.getKey().value(), entry.getValue());
+        }
 
         SignatureWorkflow signer = new InMemorySignatureWorkflow(byRef);
         PkiSigningBus signingBus = new PkiSigningBus(store, signer, busFile);
@@ -137,17 +181,43 @@ public final class PkiTestRuntime implements AutoCloseable {
                 Duration.ofSeconds(2));
         BcX509StatusObjectGenerator statusGen = new BcX509StatusObjectGenerator(signingBus, "SHA256withRSA",
                 Duration.ofSeconds(2));
-        CredentialFramework framework = new BcX509CredentialFramework().wired(issuerBackend, statusGen);
+        BcX509CredentialFramework baseFramework = new BcX509CredentialFramework();
+        CredentialFramework framework = proofVerifier
+                .map(verifier -> baseFramework.wired(statusGen, verifier))
+                .orElseGet(() -> baseFramework.wired(statusGen));
 
-        return new PkiTestRuntime(store, signingBus, signer, framework, byRef);
+        return new PkiTestRuntime(store, signingBus, signer, framework, issuerBackend, publicByRef,
+                Duration.ofSeconds(2));
+    }
+
+    public static PkiTestRuntime createWithPendingSigner(Path rootDir, Path busFile, Map<KeyRef, KeyPair> keyPairs,
+            Duration signingTtl) {
+        Objects.requireNonNull(signingTtl, "signingTtl");
+        FsPkiStoreOptions opts = FsPkiStoreOptions.defaults();
+        FilesystemPkiStore store = new FilesystemPkiStore(rootDir.resolve("store"), opts);
+        Map<String, KeyPair> byRef = new HashMap<>();
+        Map<String, PublicKey> publicByRef = new HashMap<>();
+        for (Map.Entry<KeyRef, KeyPair> entry : keyPairs.entrySet()) {
+            byRef.put(entry.getKey().value(), entry.getValue());
+            publicByRef.put(entry.getKey().value(), entry.getValue().getPublic());
+        }
+        SignatureWorkflow signer = new InMemorySignatureWorkflow(byRef, false);
+        PkiSigningBus signingBus = new PkiSigningBus(store, signer, busFile);
+        BcX509CredentialIssuerBackend issuerBackend = new BcX509CredentialIssuerBackend(signingBus,
+                "SHA256withRSA", signingTtl);
+        BcX509StatusObjectGenerator statusGen = new BcX509StatusObjectGenerator(signingBus, "SHA256withRSA",
+                signingTtl);
+        CredentialFramework framework = new BcX509CredentialFramework().wired(statusGen);
+        return new PkiTestRuntime(store, signingBus, signer, framework, issuerBackend, publicByRef, signingTtl);
     }
 
     private EncodedObject resolvePublicKeyInfo(KeyRef keyRef) {
-        KeyPair kp = keyPairsByKeyRef.get(keyRef.value());
-        if (kp == null) {
+        publicKeyResolveHook.run();
+        PublicKey publicKey = publicKeysByKeyRef.get(keyRef.value());
+        if (publicKey == null) {
             throw new IllegalArgumentException("Unknown keyRef");
         }
-        return new EncodedObject(Encoding.DER, kp.getPublic().getEncoded());
+        return new EncodedObject(Encoding.DER, publicKey.getEncoded());
     }
 
     public PkiStore store() {
@@ -162,12 +232,63 @@ public final class PkiTestRuntime implements AutoCloseable {
         return signatureWorkflow;
     }
 
+    public int submittedSignCount() {
+        return ((InMemorySignatureWorkflow) signatureWorkflow).submittedSignCount();
+    }
+
+    public void replaceManagedKey(KeyRef keyRef, KeyPair keyPair) {
+        publicKeysByKeyRef.put(keyRef.value(), keyPair.getPublic());
+        ((InMemorySignatureWorkflow) signatureWorkflow).putKeyPair(keyRef, keyPair);
+    }
+
+    /**
+     * Replaces only the public key returned by the managed-key resolver.
+     *
+     * @param keyRef managed key reference
+     * @param publicKey replacement resolved public key
+     */
+    public void replaceResolvedKey(KeyRef keyRef, PublicKey publicKey) {
+        publicKeysByKeyRef.put(keyRef.value(), Objects.requireNonNull(publicKey, "publicKey"));
+    }
+
+    public void onPublicKeyResolve(Runnable hook) {
+        this.publicKeyResolveHook = Objects.requireNonNull(hook, "hook");
+    }
+
+    public boolean hasRunningSignatureOperations() {
+        return ((InMemorySignatureWorkflow) signatureWorkflow).hasRunningOperations();
+    }
+
+    /**
+     * Returns the deterministic audit sink shared by the test runtime services.
+     *
+     * @return in-memory audit sink
+     */
+    public InMemoryAuditSink auditSink() {
+        return auditSink;
+    }
+
     public CredentialFramework framework() {
         return framework;
     }
 
+    public CredentialIssuerBackend issuerBackend() {
+        return issuerBackend;
+    }
+
     public CaService caService() {
         return caService;
+    }
+
+    public CaService caService(CredentialFramework credentialFramework) {
+        return new DefaultCaService(store, Objects.requireNonNull(credentialFramework, "credentialFramework"),
+                issuerBackend, this::resolvePublicKeyInfo, signingBus, auditSink, "SHA256withRSA",
+                Duration.ofSeconds(2));
+    }
+
+    public CaService caService(CredentialIssuerBackend backend) {
+        return new DefaultCaService(store, framework, Objects.requireNonNull(backend, "backend"),
+                this::resolvePublicKeyInfo, signingBus, auditSink, "SHA256withRSA", Duration.ofSeconds(2));
     }
 
     public CertificationRequestService certificationRequestService() {
@@ -186,6 +307,11 @@ public final class PkiTestRuntime implements AutoCloseable {
         return statusObjectService;
     }
 
+    /**
+     * Returns a new empty attribute set suitable for test commands.
+     *
+     * @return empty attributes
+     */
     public SimpleAttributeSet emptyAttributes() {
         return new SimpleAttributeSet();
     }

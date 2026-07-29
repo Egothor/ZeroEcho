@@ -73,12 +73,14 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
     private static final String FILE_SIGNATURE = "signature";
 
     private final Path root;
+    private final TestSignIdentityRegistry identities;
     private final Duration signingDelay;
     private final Map<String, PrivateKey> keysByRef;
     private final Map<PkiId, NotificationSink> sinks;
 
     public DurableDelayedSignatureWorkflow(Path root, Duration signingDelay, Map<String, PrivateKey> keysByRef) {
         this.root = Objects.requireNonNull(root, "root");
+        this.identities = new TestSignIdentityRegistry(root);
         this.signingDelay = Objects.requireNonNull(signingDelay, "signingDelay");
         this.keysByRef = Objects.requireNonNull(keysByRef, "keysByRef");
         this.sinks = new ConcurrentHashMap<PkiId, NotificationSink>();
@@ -102,7 +104,10 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
     public PkiId submitSign(SignRequest request) {
         Objects.requireNonNull(request, "request");
 
-        PkiId opId = new PkiId("sig-" + UUID.randomUUID());
+        PkiId opId = request.submissionId();
+        if (!identities.begin(request)) {
+            return opId;
+        }
         Instant now = Instant.now();
 
         persistRequest(opId, request);
@@ -133,7 +138,15 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
         }
 
         if (st.state() == State.PENDING) {
-            OperationStatus running = new OperationStatus(State.RUNNING, Instant.now(), Optional.of("SIGNING"),
+            PersistedSignRequest request = loadRequest(operationId);
+            Instant startedAt = Instant.now();
+            if (deadlineReached(request.deadline, startedAt)) {
+                OperationStatus expired = expired(startedAt);
+                persistStatus(operationId, expired);
+                notifySink(operationId, expired);
+                return expired;
+            }
+            OperationStatus running = new OperationStatus(State.RUNNING, startedAt, Optional.of("SIGNING"),
                     Optional.empty());
             persistStatus(operationId, running);
             notifySink(operationId, running);
@@ -148,12 +161,10 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
             // Best-effort: complete if signature file exists.
             Optional<EncodedObject> sig = loadSignature(operationId);
             if (sig.isPresent()) {
-                OperationResult res = new OperationResult(Optional.of(sig.get()), Optional.empty());
-                OperationStatus done = new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"),
-                        Optional.of(res));
-                persistStatus(operationId, done);
-                notifySink(operationId, done);
-                return done;
+                OperationStatus expired = expired(Instant.now());
+                persistStatus(operationId, expired);
+                notifySink(operationId, expired);
+                return expired;
             }
         }
 
@@ -161,11 +172,17 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
     }
 
     @Override
-    public boolean cancel(PkiId operationId, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
+        if (fencingToken <= 0L) {
+            throw new IllegalArgumentException("fencingToken must be positive");
+        }
         if (reason.isBlank()) {
             throw new IllegalArgumentException("reason must not be blank");
+        }
+        if (!identities.acceptFence(operationId, fencingToken)) {
+            return false;
         }
         OperationStatus st = status(operationId);
         if (st.isTerminal()) {
@@ -203,6 +220,10 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
 
     private OperationStatus performSign(PkiId opId) {
         PersistedSignRequest req = loadRequest(opId);
+        Instant startedAt = Instant.now();
+        if (deadlineReached(req.deadline, startedAt)) {
+            return expired(startedAt);
+        }
         PrivateKey key = keysByRef.get(req.keyRef);
         if (key == null) {
             return new OperationStatus(State.FAILED, Instant.now(), Optional.of("UNKNOWN_KEY"), Optional.empty());
@@ -226,11 +247,15 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
             sig.update(req.payload);
             byte[] signature = sig.sign();
 
+            Instant completedAt = Instant.now();
+            if (deadlineReached(req.deadline, completedAt)) {
+                return expired(completedAt);
+            }
             persistSignature(opId, signature);
 
             EncodedObject enc = new EncodedObject(Encoding.BINARY, signature);
             OperationResult res = new OperationResult(Optional.of(enc), Optional.empty());
-            return new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"), Optional.of(res));
+            return new OperationStatus(State.SUCCEEDED, completedAt, Optional.of("SIGNED"), Optional.of(res));
         } catch (Exception ex) {
             return new OperationStatus(State.FAILED, Instant.now(), Optional.of("SIGN_ERROR"), Optional.empty());
         }
@@ -255,7 +280,8 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
         try {
             Files.createDirectories(dir);
             String line = req.keyRef().value() + "\n" + req.algorithmId() + "\n"
-                    + Base64.getEncoder().encodeToString(req.payload().bytes());
+                    + Base64.getEncoder().encodeToString(req.payload().bytes()) + "\n"
+                    + req.deadline().map(Instant::toString).orElse("");
             Files.writeString(dir.resolve(FILE_REQUEST), line, StandardCharsets.UTF_8);
         } catch (IOException ex) {
             throw new IllegalStateException("Cannot persist request", ex);
@@ -266,13 +292,15 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
         Path f = opDir(opId).resolve(FILE_REQUEST);
         try {
             String s = Files.readString(f, StandardCharsets.UTF_8);
-            String[] parts = s.split("\n", 3);
+            String[] parts = s.split("\n", 4);
             String keyRef = parts[0];
             String alg = parts[1];
             byte[] payload = Base64.getDecoder().decode(parts[2]);
-            return new PersistedSignRequest(keyRef, alg, payload);
+            Optional<Instant> deadline = parts.length == 4 && !parts[3].isBlank()
+                    ? Optional.of(Instant.parse(parts[3])) : Optional.empty();
+            return new PersistedSignRequest(keyRef, alg, payload, deadline);
         } catch (IOException ex) {
-            return new PersistedSignRequest("", "", new byte[0]);
+            return new PersistedSignRequest("", "", new byte[0], Optional.empty());
         }
     }
 
@@ -339,11 +367,21 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
         private final String keyRef;
         private final String algorithmId;
         private final byte[] payload;
+        private final Optional<Instant> deadline;
 
-        private PersistedSignRequest(String keyRef, String algorithmId, byte[] payload) {
+        private PersistedSignRequest(String keyRef, String algorithmId, byte[] payload, Optional<Instant> deadline) {
             this.keyRef = keyRef;
             this.algorithmId = algorithmId;
             this.payload = payload;
+            this.deadline = deadline;
         }
+    }
+
+    private static boolean deadlineReached(Optional<Instant> deadline, Instant observedAt) {
+        return deadline.isPresent() && !observedAt.isBefore(deadline.get());
+    }
+
+    private static OperationStatus expired(Instant observedAt) {
+        return new OperationStatus(State.EXPIRED, observedAt, Optional.of("EXPIRED"), Optional.empty());
     }
 }

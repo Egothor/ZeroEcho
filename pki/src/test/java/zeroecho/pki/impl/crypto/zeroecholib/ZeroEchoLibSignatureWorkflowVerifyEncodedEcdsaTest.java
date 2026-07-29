@@ -40,6 +40,8 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
 import java.security.spec.ECGenParameterSpec;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -72,7 +74,8 @@ public final class ZeroEchoLibSignatureWorkflowVerifyEncodedEcdsaTest {
         KeyringStore ks = new KeyringStore(new zeroecho.sdk.ZeroEchoSession());
         ks.save(keyring);
 
-        try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("wf", keyring, "zeroecho-lib:", true)) {
+        try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("wf", keyring,
+                tempDir.resolve("operations"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true)) {
             KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
             kpg.initialize(new ECGenParameterSpec("secp256r1"));
             KeyPair kp = kpg.generateKeyPair();

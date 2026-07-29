@@ -40,9 +40,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 
@@ -53,11 +57,25 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
 
     private final Map<String, KeyPair> keys;
     private final Map<PkiId, OperationStatus> status;
+    private final boolean completeImmediately;
+    private final ConcurrentMap<PkiId, String> fingerprints;
+    private final ConcurrentMap<PkiId, Long> fences;
+    private final ConcurrentMap<PkiId, Object> operationLocks;
     private long counter;
+    private final AtomicInteger submittedSignCount;
 
     public InMemorySignatureWorkflow(Map<String, KeyPair> keys) {
+        this(keys, true);
+    }
+
+    public InMemorySignatureWorkflow(Map<String, KeyPair> keys, boolean completeImmediately) {
         this.keys = new HashMap<>(Objects.requireNonNull(keys, "keys"));
         this.status = new HashMap<>();
+        this.completeImmediately = completeImmediately;
+        this.fingerprints = new ConcurrentHashMap<>();
+        this.fences = new ConcurrentHashMap<>();
+        this.operationLocks = new ConcurrentHashMap<>();
+        this.submittedSignCount = new AtomicInteger();
         this.counter = 1L;
     }
 
@@ -69,14 +87,39 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
     @Override
     public PkiId submitSign(SignRequest request) {
         Objects.requireNonNull(request, "request");
-        PkiId opId = new PkiId("sig:" + (counter++));
+        PkiId opId = request.submissionId();
+        Object lock = operationLocks.computeIfAbsent(opId, ignored -> new Object());
+        synchronized (lock) { // test provider operation-local state only; no external call inside
+            String fingerprint = fingerprints.get(opId);
+            if (fingerprint != null) {
+                if (!fingerprint.equals(request.semanticFingerprint())) {
+                    throw new IllegalStateException("conflicting signing request");
+                }
+                if (request.fencingToken() < fences.get(opId)) {
+                    throw new IllegalStateException("stale signing fence");
+                }
+                return opId;
+            }
+            fingerprints.put(opId, request.semanticFingerprint());
+            fences.put(opId, request.fencingToken());
+            status.put(opId, new OperationStatus(State.RUNNING, Instant.now(), Optional.of("PENDING"),
+                    Optional.empty()));
+            submittedSignCount.incrementAndGet();
+        }
+        if (!completeImmediately) {
+            return opId;
+        }
 
         try {
+            if (deadlineReached(request, Instant.now())) {
+                complete(request, expired(Instant.now()));
+                return opId;
+            }
             KeyPair kp = keys.get(request.keyRef().value());
             if (kp == null) {
                 OperationStatus st = new OperationStatus(State.FAILED, Instant.now(), Optional.of("UNKNOWN_KEY"),
                         Optional.empty());
-                status.put(opId, st);
+                complete(request, st);
                 return opId;
             }
 
@@ -85,18 +128,44 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
             sig.update(request.payload().bytes());
             byte[] s = sig.sign();
 
+            Instant completedAt = Instant.now();
+            if (deadlineReached(request, completedAt)) {
+                complete(request, expired(completedAt));
+                return opId;
+            }
             OperationResult res = new OperationResult(Optional.of(new EncodedObject(Encoding.BINARY, s)),
                     Optional.empty());
-            OperationStatus st = new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"),
+            OperationStatus st = new OperationStatus(State.SUCCEEDED, completedAt, Optional.of("SIGNED"),
                     Optional.of(res));
-            status.put(opId, st);
+            complete(request, st);
             return opId;
         } catch (Exception ex) {
             OperationStatus st = new OperationStatus(State.FAILED, Instant.now(), Optional.of("SIGN_FAILED"),
                     Optional.empty());
-            status.put(opId, st);
+            complete(request, st);
             return opId;
         }
+    }
+
+    private void complete(SignRequest request, OperationStatus terminal) {
+        Object lock = operationLocks.get(request.submissionId());
+        synchronized (lock) {
+            if (status.get(request.submissionId()).state() == State.RUNNING
+                    && fences.get(request.submissionId()) == request.fencingToken()) {
+                if (terminal.state() == State.SUCCEEDED && deadlineReached(request, terminal.updatedAt())) {
+                    terminal = expired(terminal.updatedAt());
+                }
+                status.put(request.submissionId(), terminal);
+            }
+        }
+    }
+
+    private static boolean deadlineReached(SignRequest request, Instant observedAt) {
+        return request.deadline().isPresent() && !observedAt.isBefore(request.deadline().get());
+    }
+
+    private static OperationStatus expired(Instant observedAt) {
+        return new OperationStatus(State.EXPIRED, observedAt, Optional.of("EXPIRED"), Optional.empty());
     }
 
     @Override
@@ -120,10 +189,23 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
     }
 
     @Override
-    public boolean cancel(PkiId operationId, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
-        return false;
+        if (fencingToken <= 0L) {
+            throw new IllegalArgumentException("fencingToken must be positive");
+        }
+        Object lock = operationLocks.computeIfAbsent(operationId, ignored -> new Object());
+        synchronized (lock) {
+            OperationStatus existing = status.get(operationId);
+            if (existing == null || existing.isTerminal() || fencingToken < fences.get(operationId)) {
+                return false;
+            }
+            fences.put(operationId, fencingToken);
+            status.put(operationId, new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"),
+                    Optional.empty()));
+            return true;
+        }
     }
 
     @Override
@@ -137,6 +219,18 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
     @Override
     public Set<String> supportedAlgorithms() {
         return Set.of("SHA256withRSA");
+    }
+
+    public int submittedSignCount() {
+        return submittedSignCount.get();
+    }
+
+    public void putKeyPair(KeyRef keyRef, KeyPair keyPair) {
+        keys.put(Objects.requireNonNull(keyRef, "keyRef").value(), Objects.requireNonNull(keyPair, "keyPair"));
+    }
+
+    public boolean hasRunningOperations() {
+        return status.values().stream().anyMatch(operation -> !operation.isTerminal());
     }
 
     @Override

@@ -43,6 +43,12 @@ import java.util.Optional;
  * framework-specific verification modes via optional hints.
  * </p>
  *
+ * <p>
+ * Setting {@code requireProofOfPossession} to {@code false} is suitable only for
+ * diagnostic or policy-evaluation workflows. It cannot authorize credential
+ * issuance; the issuance boundary always applies its own mandatory proof policy.
+ * </p>
+ *
  * @param requireProofOfPossession whether proof-of-possession is required
  * @param compatibilityProfileId   optional compatibility profile hint for
  *                                 parsers/verifiers

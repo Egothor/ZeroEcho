@@ -34,11 +34,17 @@
 package zeroecho.pki.impl.core.async;
 
 import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -49,10 +55,11 @@ import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
+import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.store.PkiStore;
-import zeroecho.pki.util.async.AsyncBus;
+import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.util.async.AsyncEndpoint;
 import zeroecho.pki.util.async.AsyncState;
 import zeroecho.pki.util.async.AsyncStatus;
@@ -75,6 +82,10 @@ import zeroecho.pki.util.async.impl.DurableAsyncBus;
  * poll by storing signer operation id into continuation state.
  * </p>
  */
+// The collaborators counted here form one durable signing lifecycle; splitting
+// them would obscure the coordinator/reservation boundary that protects it.
+@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity",
+        "PMD.PreserveStackTrace" })
 public final class PkiSigningBus implements AutoCloseable {
 
     private static final Logger LOG = Logger.getLogger(PkiSigningBus.class.getName());
@@ -85,6 +96,8 @@ public final class PkiSigningBus implements AutoCloseable {
     public static final String TYPE_SIGN = "PKI.SIGN";
 
     private static final String ENDPOINT_SIGNER = "signer";
+    private static final Duration CLAIM_LEASE = Duration.ofSeconds(30);
+    private static final long INITIAL_FENCE = 0L;
 
     /**
      * System property controlling the maximum number of characters appended after
@@ -98,9 +111,15 @@ public final class PkiSigningBus implements AutoCloseable {
     public static final int DEFAULT_DISPLAY_SUFFIX_MAX_LEN = 64;
 
     private final PkiStore store;
-    private final AsyncBus<PkiId, Principal, String, EncodedObject> bus;
+    private final DurableAsyncBus<PkiId, Principal, String, EncodedObject> bus;
+    private final SignatureWorkflow signer;
+    private final SecureRandom random;
+    private final String namespace;
+    private final OperationCoordinator coordinator;
+    private final ExternalActionCoordinator externalActions;
+    private final SignatureWorkflowEndpoint endpoint;
+    private final SignatureWorkflow.Registration signerRegistration;
 
-    private final int displaySuffixMaxLen;
     private final OrchestrationDurabilityPolicy durabilityPolicy;
 
     /**
@@ -155,18 +174,38 @@ public final class PkiSigningBus implements AutoCloseable {
         Objects.requireNonNull(durabilityPolicy, "durabilityPolicy");
 
         this.store = store;
-        this.displaySuffixMaxLen = resolveDisplaySuffixMaxLen(Optional.of(displaySuffixMaxLen));
+        this.signer = signer;
+        this.random = new SecureRandom();
+        this.namespace = store.signingNamespace() + "." + signer.id();
+        signer.validateSigningDomain(this.namespace, store.signingHorizon(), store.signingPermittedSkew());
+        this.coordinator = new OperationCoordinator();
+        this.externalActions = new ExternalActionCoordinator();
+        resolveDisplaySuffixMaxLen(Optional.of(displaySuffixMaxLen));
         this.durabilityPolicy = durabilityPolicy;
 
         AppendOnlyLineStore ls = new AppendOnlyLineStore(durableLineStorePath);
         this.bus = new DurableAsyncBus<>(new PkiAsyncCodecs.PkiIdCodec(), new PkiAsyncCodecs.PrincipalCodec(),
                 new PkiAsyncCodecs.StringIdCodec(), new PkiAsyncCodecs.EncodedObjectResultCodec(true), ls);
 
-        SignatureWorkflowEndpoint endpoint = new SignatureWorkflowEndpoint(store, signer);
+        for (WorkflowStateRecord state : store.listWorkflowStates()) {
+            if (TYPE_SIGN.equals(state.type()) && state.payload().isPresent()) {
+                try {
+                    SignContinuation.decode(state.payload().orElseThrow());
+                } catch (RuntimeException ex) { // NOPMD - malformed persisted state must fail closed
+                    throw new PkiException("Invalid persisted sign continuation: code=CONTINUATION_INVALID");
+                }
+            }
+        }
+        this.endpoint = new SignatureWorkflowEndpoint(store, signer, coordinator, externalActions);
         this.bus.registerEndpoint(ENDPOINT_SIGNER, endpoint);
-
-        // IMPORTANT: no auto-dispatch here; execution is driven by sweep() polling
-        // endpoint.status().
+        this.signerRegistration = signer.register(endpoint::onProviderStatusChanged);
+        for (SignWorkflowStore.Record record : store.listSignRecords()) {
+            if (record.state() == SignWorkflowStore.State.INTENT
+                    || record.state() == SignWorkflowStore.State.DISPATCHED
+                    || record.state() == SignWorkflowStore.State.CANCELLING) {
+                project(record);
+            }
+        }
     }
 
     /**
@@ -186,8 +225,16 @@ public final class PkiSigningBus implements AutoCloseable {
     public PkiId canonicalizeOperationId(PkiId clientOpId, Principal owner) {
         Objects.requireNonNull(clientOpId, "clientOpId");
         Objects.requireNonNull(owner, "owner");
-        return OperationIdCodec.toDisplay(OperationIdCodec.toCanonicalBase(clientOpId, owner), owner,
-                displaySuffixMaxLen);
+        return newSubmissionId();
+    }
+
+    /**
+     * Creates a stable provider-namespaced signing submission identifier.
+     *
+     * @return new stable identifier
+     */
+    public PkiId newSubmissionId() {
+        return SigningSubmissionId.create(namespace, store.signingNow(), random).id();
     }
 
     /**
@@ -219,57 +266,78 @@ public final class PkiSigningBus implements AutoCloseable {
             throw new IllegalArgumentException("ttl must be positive");
         }
 
-        PkiId baseOpId = normalizeBaseOperationId(opId);
-
-        Optional<WorkflowStateRecord> existing = store.getWorkflowState(baseOpId);
-        if (existing.isPresent()) {
-            WorkflowStateRecord wsExisting = existing.get();
-            if (!TYPE_SIGN.equals(wsExisting.type())) {
-                throw new PkiException("OperationId already exists for different type");
-            }
-            if (!owner.equals(wsExisting.owner())) {
-                throw new PkiException("OperationId already exists for different owner");
-            }
-
-            // Idempotent re-submit / re-attach: do not overwrite store.
-            try {
-                Instant nowExisting = Instant.now();
-                this.bus.submit(baseOpId, TYPE_SIGN, owner, ENDPOINT_SIGNER, nowExisting, ttl);
-            } catch (RuntimeException ex) { // NOPMD
-                if (LOG.isLoggable(Level.FINE)) {
-                    LOG.log(Level.FINE, "Re-submit ignored (bus likely already contains the op)", ex);
-                }
-            }
-            return;
-        }
-
         if (workflowPayload.isEmpty()) {
             throw new IllegalArgumentException("workflowPayload must be present for new sign operation");
         }
-
-        Instant now = Instant.now();
-        Encoding payloadEncoding = workflowPayload.get().encoding();
-
-        WorkflowStateRecord ws = new WorkflowStateRecord(baseOpId, TYPE_SIGN, owner, durabilityPolicy, now, now,
-                now.plus(ttl), payloadEncoding, workflowPayload);
-
-        store.putWorkflowState(ws);
-
-        this.bus.submit(baseOpId, TYPE_SIGN, owner, ENDPOINT_SIGNER, now, ttl);
+        PkiId baseOpId = normalizeBaseOperationId(opId);
+        SignWorkflowStore.Record authoritative;
+        try (OperationCoordinator.Lease ignored = coordinator.acquire(baseOpId)) {
+            SigningSubmissionId parsed = SigningSubmissionId.parse(baseOpId);
+            Instant deadline = parsed.createdAt().plus(ttl);
+            SignContinuation continuation = SignContinuation.decode(workflowPayload.get());
+            if (!owner.equals(continuation.accessContext.principal()) || !keyRef.equals(continuation.keyRef)
+                    || !algorithmId.equals(continuation.algorithmId)
+                    || payload.encoding() != continuation.payload.encoding()
+                    || !java.util.Arrays.equals(payload.bytes(), continuation.payload.bytes())) {
+                throw new IllegalArgumentException("Sign continuation does not match the submitted request");
+            }
+            String fingerprint = continuation.semanticFingerprint(namespace, deadline);
+            EncodedObject persistedRequest = continuation.withSignerOpId(baseOpId).encode();
+            SignWorkflowStore.Record intent = new SignWorkflowStore.Record(baseOpId, namespace, fingerprint, owner,
+                    parsed.createdAt(), deadline, persistedRequest, SignWorkflowStore.State.INTENT, 0L, 0L,
+                    Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty());
+            SignWorkflowStore.CreateResult created = store.createSignIntent(intent);
+            if (created == SignWorkflowStore.CreateResult.CONFLICT) {
+                throw new PkiException("Signing submission identifier conflicts with a different request");
+            }
+            authoritative = store.getSignRecord(baseOpId).orElseThrow();
+        }
+        project(authoritative);
     }
 
     /**
      * Returns current status if known.
      */
     public Optional<AsyncStatus> status(PkiId opId) {
-        return bus.status(normalizeBaseOperationId(opId));
+        PkiId normalized = normalizeBaseOperationId(opId);
+        try (OperationCoordinator.Lease ignored = coordinator.acquire(normalized)) {
+            Optional<SignWorkflowStore.Record> retained = store.getSignRecord(normalized);
+            if (retained.isEmpty()) {
+                try {
+                    SigningSubmissionId parsed = SigningSubmissionId.parse(normalized);
+                    parsed.validate(namespace, store.signingNow(), store.signingHorizon(),
+                            store.signingPermittedSkew());
+                } catch (IllegalArgumentException expiredOrForeign) {
+                    try {
+                        SigningSubmissionId parsed = SigningSubmissionId.parse(normalized);
+                        if (namespace.equals(parsed.namespace())
+                                && !store.signingNow().isBefore(parsed.createdAt().plus(store.signingHorizon()))) {
+                            return Optional.of(new AsyncStatus(AsyncState.EXPIRED, store.signingNow(),
+                                    Optional.of("EXPIRED"), Map.of()));
+                        }
+                    } catch (IllegalArgumentException malformed) {
+                        return Optional.empty();
+                    }
+                }
+            }
+        }
+        return endpoint.status(normalized);
     }
 
     /**
      * Consumes result if present.
      */
     public Optional<EncodedObject> consumeResult(PkiId opId) {
-        return bus.consumeResult(normalizeBaseOperationId(opId));
+        PkiId normalized = normalizeBaseOperationId(opId);
+        endpoint.reconcileProviderStatus(normalized);
+        try (OperationCoordinator.Lease ignored = coordinator.acquire(normalized)) {
+            return store.getSignRecord(normalized)
+                    .filter(record -> record.state() == SignWorkflowStore.State.SUCCEEDED
+                            || record.state() == SignWorkflowStore.State.RETIRED && record.result().isPresent())
+                    .filter(PkiSigningBus::hasTrustworthyOnTimeCompletion)
+                    .flatMap(SignWorkflowStore.Record::result)
+                    .map(result -> new EncodedObject(result.encoding(), result.bytes()));
+        }
     }
 
     /**
@@ -277,13 +345,248 @@ public final class PkiSigningBus implements AutoCloseable {
      */
     public void sweep(Instant now) {
         bus.sweep(now);
+        reconcileExpiredOperations();
+        store.purgeExpiredSignRecords();
     }
 
     /**
      * Deletes workflow continuation state once finished.
      */
     public void deleteWorkflowState(PkiId opId) {
-        store.deleteWorkflowState(normalizeBaseOperationId(opId));
+        PkiId normalized = normalizeBaseOperationId(opId);
+        try (OperationCoordinator.Lease ignored = coordinator.acquire(normalized)) {
+            store.deleteWorkflowState(normalized);
+        }
+    }
+
+    /**
+     * Best-effort retirement of a sign operation and all locally owned state.
+     *
+     * <p>
+     * The operation is first reconciled with the provider. If it remains active,
+     * the store durably enters non-terminal
+     * {@link SignWorkflowStore.State#CANCELLING} before the provider is called.
+     * Regardless of whether cancellation is accepted, the provider is read again.
+     * A still-running operation remains durably {@code CANCELLING} for a later
+     * retry. Only an observed immutable provider terminal state is changed to
+     * {@code RETIRED}, and an on-time successful result is preserved.
+     * </p>
+     *
+     * @param opId  operation identifier; must not be {@code null}
+     * @param reason non-sensitive cancellation reason; must not be blank
+     * @throws NullPointerException if {@code opId} is {@code null}
+     * @throws IllegalArgumentException if {@code reason} is {@code null} or blank
+     * @throws PkiException if locally owned cleanup fails
+     */
+    public void retireSignOperation(PkiId opId, String reason) {
+        PkiId baseOpId = normalizeBaseOperationId(opId);
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("reason must not be null/blank");
+        }
+        endpoint.reconcileProviderStatus(baseOpId);
+        SignWorkflowStore.Record state;
+        try (OperationCoordinator.Lease ignored = coordinator.acquire(baseOpId)) {
+            Optional<SignWorkflowStore.Record> optional = store.getSignRecord(baseOpId);
+            if (optional.isEmpty()) {
+                return;
+            }
+            state = optional.get();
+        }
+        if (!isTerminalSignState(state.state())) {
+            state = cancelForRetirement(baseOpId, state, reason);
+            if (!isTerminalSignState(state.state())) {
+                return;
+            }
+        }
+        try (OperationCoordinator.Lease ignored = coordinator.acquire(baseOpId)) {
+            state = store.getSignRecord(baseOpId).orElse(state);
+            if (!isTerminalSignState(state.state())) {
+                return;
+            }
+            state = confirmRetirement(baseOpId, state);
+            store.deleteWorkflowState(baseOpId);
+        }
+        AsyncState advisoryState = state.result().isPresent() ? AsyncState.SUCCEEDED : AsyncState.CANCELLED;
+        bus.update(baseOpId, new AsyncStatus(advisoryState, store.signingNow(), Optional.of("RETIRED"),
+                Map.of("reason", "local-retirement")), state.result());
+        bus.retire(baseOpId);
+    }
+
+    private void reconcileExpiredOperations() {
+        Instant current = store.signingNow();
+        for (SignWorkflowStore.Record candidate : store.listSignRecords()) {
+            boolean deadlineExpired = !candidate.deadline().isAfter(current);
+            boolean horizonExpired = !candidate.createdAt().plus(store.signingHorizon()).isAfter(current);
+            if (!deadlineExpired && !horizonExpired) {
+                continue;
+            }
+            if (candidate.state() == SignWorkflowStore.State.RETIRED && !horizonExpired) {
+                continue;
+            }
+            PkiId operationId = candidate.submissionId();
+            retireSignOperation(operationId, deadlineExpired ? "deadline-expired" : "retention-expired");
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private SignWorkflowStore.Record cancelForRetirement(PkiId operationId, SignWorkflowStore.Record state,
+            String reason) {
+        SignWorkflowStore.Record cancelling;
+        Optional<ExternalActionCoordinator.Reservation> reserved = Optional.empty();
+        try (OperationCoordinator.Lease ignored = coordinator.acquire(operationId)) {
+            SignWorkflowStore.Record current = store.getSignRecord(operationId).orElse(state);
+            cancelling = persistCancelling(operationId, current);
+            if (cancelling.state() != SignWorkflowStore.State.CANCELLING) {
+                return cancelling;
+            }
+            if (cancelling.fence() == 0) {
+                return cancelUnsubmitted(operationId, cancelling);
+            }
+            if (cancelling.detailCode().filter("CANCEL_SUBMITTED"::equals).isEmpty()) {
+                reserved = externalActions.tryReserve(operationId, ExternalAction.CANCEL);
+            }
+        }
+        if (cancelling.detailCode().filter("CANCEL_SUBMITTED"::equals).isPresent()) {
+            endpoint.reconcileProviderStatus(operationId);
+            return store.getSignRecord(operationId).orElse(cancelling);
+        }
+        if (reserved.isEmpty()) {
+            return cancelling;
+        }
+        try (ExternalActionCoordinator.Reservation ignored = reserved.get()) {
+            signer.cancel(operationId, cancelling.fence(), reason);
+        } catch (RuntimeException ex) {
+            endpoint.reconcileProviderStatus(operationId);
+            SignWorkflowStore.Record current = store.getSignRecord(operationId).orElse(cancelling);
+            if (current.state() != SignWorkflowStore.State.CANCELLING) {
+                return current;
+            }
+            throw new PkiException("Provider cancellation failed: code=PROVIDER_CANCEL_FAILED");
+        }
+        markCancellationSubmitted(operationId, cancelling);
+        return reconcileCancellationOutcome(operationId);
+    }
+
+    private void markCancellationSubmitted(PkiId operationId, SignWorkflowStore.Record expected) {
+        try (OperationCoordinator.Lease ignored = coordinator.acquire(operationId)) {
+            Optional<SignWorkflowStore.Record> currentOptional = store.getSignRecord(operationId);
+            if (currentOptional.isEmpty()) {
+                return;
+            }
+            SignWorkflowStore.Record current = currentOptional.get();
+            if (current.state() == SignWorkflowStore.State.CANCELLING
+                    && current.revision() == expected.revision() && current.fence() == expected.fence()) {
+                store.transitionSign(operationId, current.revision(), current.fence(),
+                        SignWorkflowStore.State.CANCELLING, Optional.of("CANCEL_SUBMITTED"), Optional.empty(),
+                        Optional.empty());
+            }
+        }
+    }
+
+    private SignWorkflowStore.Record persistCancelling(PkiId operationId, SignWorkflowStore.Record initial) {
+        SignWorkflowStore.Record state = initial;
+        for (int attempt = 0; attempt < 4; attempt++) {
+            if (state.state() == SignWorkflowStore.State.CANCELLING || isTerminalSignState(state.state())) {
+                return state;
+            }
+            if (state.state() != SignWorkflowStore.State.INTENT
+                    && state.state() != SignWorkflowStore.State.DISPATCHED) {
+                throw new PkiException("Signing operation cannot enter CANCELLING from " + state.state());
+            }
+            Optional<SignWorkflowStore.Record> transitioned = store.transitionSign(operationId, state.revision(),
+                    state.fence(), SignWorkflowStore.State.CANCELLING, Optional.of("CANCEL_REQUESTED"),
+                    Optional.empty(), Optional.empty());
+            if (transitioned.isPresent()) {
+                return transitioned.get();
+            }
+            state = requireSignRecordDuringCancellation(operationId);
+        }
+        throw new PkiException("Unable to persist authoritative CANCELLING state");
+    }
+
+    private SignWorkflowStore.Record cancelUnsubmitted(PkiId operationId,
+            SignWorkflowStore.Record cancellationRequest) {
+        SignWorkflowStore.Record state = cancellationRequest;
+        for (int attempt = 0; attempt < 4; attempt++) {
+            if (state.state() != SignWorkflowStore.State.CANCELLING) {
+                return state;
+            }
+            if (state.fence() != cancellationRequest.fence()) {
+                return state;
+            }
+            Optional<SignWorkflowStore.Record> cancelled = store.transitionSign(operationId, state.revision(),
+                    state.fence(), SignWorkflowStore.State.CANCELLED, Optional.of("CANCELLED"), Optional.empty(),
+                    Optional.empty());
+            if (cancelled.isPresent()) {
+                return cancelled.get();
+            }
+            state = requireSignRecordDuringCancellation(operationId);
+        }
+        throw new PkiException("Unable to confirm authoritative signing cancellation");
+    }
+
+    private SignWorkflowStore.Record reconcileCancellationOutcome(PkiId operationId) {
+        SignWorkflowStore.Record state = requireSignRecordDuringCancellation(operationId);
+        for (int attempt = 0; attempt < 4; attempt++) {
+            endpoint.reconcileProviderStatus(operationId);
+            state = requireSignRecordDuringCancellation(operationId);
+            if (state.state() != SignWorkflowStore.State.CANCELLING) {
+                return state;
+            }
+        }
+        return state;
+    }
+
+    private SignWorkflowStore.Record requireSignRecordDuringCancellation(PkiId operationId) {
+        return store.getSignRecord(operationId)
+                .orElseThrow(() -> new PkiException(
+                        "Authoritative signing record disappeared during cancellation"));
+    }
+
+    private static boolean isTerminalSignState(SignWorkflowStore.State state) {
+        return state == SignWorkflowStore.State.RETIRED || state == SignWorkflowStore.State.SUCCEEDED
+                || state == SignWorkflowStore.State.FAILED || state == SignWorkflowStore.State.CANCELLED
+                || state == SignWorkflowStore.State.EXPIRED;
+    }
+
+    private static boolean hasTrustworthyOnTimeCompletion(SignWorkflowStore.Record record) {
+        return record.providerUpdatedAt().isPresent()
+                && record.providerUpdatedAt().get().isBefore(record.deadline());
+    }
+
+    private SignWorkflowStore.Record confirmRetirement(PkiId operationId, SignWorkflowStore.Record initial) {
+        SignWorkflowStore.Record state = initial;
+        for (int attempt = 0; attempt < 4 && state.state() != SignWorkflowStore.State.RETIRED; attempt++) {
+            Optional<SignWorkflowStore.Record> retired = store.retireSign(operationId, state.revision(), state.fence());
+            if (retired.isPresent()) {
+                state = retired.get();
+                break;
+            }
+            Optional<SignWorkflowStore.Record> refreshed = store.getSignRecord(operationId);
+            if (refreshed.isEmpty()) {
+                throw new PkiException("Authoritative signing record disappeared during retirement");
+            }
+            state = refreshed.get();
+        }
+        if (state.state() != SignWorkflowStore.State.RETIRED) {
+            throw new PkiException("Unable to confirm authoritative signing retirement");
+        }
+        return state;
+    }
+
+    private void project(SignWorkflowStore.Record record) {
+        try {
+            store.putWorkflowState(new WorkflowStateRecord(record.submissionId(), TYPE_SIGN, record.owner(),
+                    durabilityPolicy, record.createdAt(), store.signingNow(), record.deadline(),
+                    record.request().encoding(), Optional.of(record.request())));
+            Duration ttl = Duration.between(record.createdAt(), record.deadline());
+            bus.submit(record.submissionId(), TYPE_SIGN, record.owner(), ENDPOINT_SIGNER, record.createdAt(), ttl);
+        } catch (RuntimeException ex) { // NOPMD - projection is advisory
+            if (LOG.isLoggable(Level.FINE)) {
+                LOG.log(Level.FINE, "Advisory projection failed: code={0}, exception={1}",
+                        new Object[] { "PROJECTION_REFRESH_FAILED", ex.getClass().getName() });
+            }
+        }
     }
 
     private static PkiId normalizeBaseOperationId(PkiId opId) {
@@ -328,8 +631,123 @@ public final class PkiSigningBus implements AutoCloseable {
 
     @Override
     public void close() {
-        // No-op: this class does not own store/signer. DurableAsyncBus does not require
-        // explicit close.
+        signerRegistration.close();
+        endpoint.closeAdvisories();
+    }
+
+    /**
+     * Lifecycle-bounded per-operation critical-section coordinator.
+     *
+     * <p>
+     * The lock protects only short local and durable-state decisions. Provider,
+     * callback, listener, and advisory projection code must run after the lease is
+     * closed. Different operation identifiers never share an entry.
+     * </p>
+     */
+    private static final class OperationCoordinator {
+        private final ConcurrentMap<PkiId, Entry> entries = new ConcurrentHashMap<>();
+
+        private Lease acquire(PkiId operationId) {
+            Entry entry = entries.compute(operationId, (ignored, current) -> {
+                Entry selected = current == null ? new Entry() : current;
+                selected.references.incrementAndGet();
+                return selected;
+            });
+            entry.enter();
+            return new Lease(operationId, entry);
+        }
+
+        /**
+         * Thread-confined ownership handle.
+         */
+        private final class Lease implements AutoCloseable {
+            private final PkiId operationId;
+            private final Entry entry;
+            private boolean closed;
+
+            private Lease(PkiId operationId, Entry entry) {
+                this.operationId = operationId;
+                this.entry = entry;
+            }
+
+            @Override
+            public void close() {
+                if (closed) {
+                    return;
+                }
+                closed = true;
+                entry.exit();
+                entries.computeIfPresent(operationId, (ignored, current) -> {
+                    if (!current.equals(entry)) {
+                        return current;
+                    }
+                    return current.references.decrementAndGet() == 0 ? null : current;
+                });
+            }
+        }
+
+        /**
+         * Reentrant owner state for one operation identifier.
+         */
+        private static final class Entry {
+            private final ReentrantLock lock = new ReentrantLock();
+            private final AtomicInteger references = new AtomicInteger();
+
+            private void enter() {
+                lock.lock();
+            }
+
+            private void exit() {
+                lock.unlock();
+            }
+        }
+    }
+
+    /**
+     * External provider actions subject to per-operation single-flight control.
+     */
+    private enum ExternalAction {
+        /** Provider submission. */
+        SUBMIT,
+        /** Provider status retrieval. */
+        STATUS,
+        /** Provider cancellation. */
+        CANCEL
+    }
+
+    /**
+     * Lifecycle-bounded, non-blocking single-flight reservations for provider calls.
+     */
+    private static final class ExternalActionCoordinator {
+        private final ConcurrentMap<PkiId, ExternalAction> actions = new ConcurrentHashMap<>();
+
+        private Optional<Reservation> tryReserve(PkiId operationId, ExternalAction action) {
+            return actions.putIfAbsent(operationId, action) == null
+                    ? Optional.of(new Reservation(operationId, action))
+                    : Optional.empty();
+        }
+
+        /**
+         * Reservation that releases one external action on close.
+         */
+        private final class Reservation implements AutoCloseable {
+            private final PkiId operationId;
+            private final ExternalAction action;
+            private boolean closed;
+
+            private Reservation(PkiId operationId, ExternalAction action) {
+                this.operationId = operationId;
+                this.action = action;
+            }
+
+            @Override
+            public void close() {
+                if (!closed) {
+                    closed = true;
+                    actions.remove(operationId, action);
+                }
+            }
+        }
     }
 
     /**
@@ -377,25 +795,32 @@ public final class PkiSigningBus implements AutoCloseable {
      * state is internally inconsistent.</li>
      * <li>Downstream signer failure is reported through the mapped async status
      * returned by {@link #status(PkiId)}.</li>
+     * <li>If downstream submission succeeds but continuation persistence fails,
+     * the downstream handle is cancelled, the stale continuation is deleted, and
+     * the endpoint reports a terminal local failure.</li>
      * </ul>
      *
      * <h2>Thread-safety</h2>
      * <p>
-     * This endpoint is effectively stateless apart from its collaborators.
-     * Concurrent behavior therefore depends primarily on the thread-safety and
-     * consistency guarantees of the configured {@link PkiStore} and
-     * {@link SignatureWorkflow}.
+     * Per-operation coordinator leases protect only short durable-state decisions.
+     * An action-tagged reservation prevents concurrent provider calls for the same
+     * identifier while every provider invocation runs without a coordinator lease.
+     * Unrelated identifiers therefore overlap, and synchronous provider callbacks
+     * can re-enter status reconciliation without deadlock. Callbacks coalesce
+     * identifiers into a bounded advisory set; polling remains authoritative.
      * </p>
      */
     private static final class SignatureWorkflowEndpoint implements AsyncEndpoint<PkiId, EncodedObject> {
 
-        private static final String DC_SUBMITTED = "SUBMITTED";
-        private static final String DC_RUNNING = "RUNNING";
-        private static final String DC_SIGNED = "SIGNED";
-        private static final String DC_FAILED = "FAILED";
+        private static final int MAX_PENDING_ADVISORIES = 1024;
 
         private final PkiStore store;
         private final SignatureWorkflow signer;
+        private final OperationCoordinator coordinator;
+        private final ExternalActionCoordinator externalActions;
+        private final ConcurrentMap<PkiId, Boolean> pendingAdvisories;
+        private final AtomicInteger pendingAdvisoryCount;
+        private final AtomicBoolean closed;
 
         /**
          * Creates the endpoint instance.
@@ -405,9 +830,15 @@ public final class PkiSigningBus implements AutoCloseable {
          * @param signer downstream signature workflow used to execute the actual sign
          *               operation and to query its status; must not be {@code null}
          */
-        private SignatureWorkflowEndpoint(PkiStore store, SignatureWorkflow signer) {
+        private SignatureWorkflowEndpoint(PkiStore store, SignatureWorkflow signer,
+                OperationCoordinator coordinator, ExternalActionCoordinator externalActions) {
             this.store = store;
             this.signer = signer;
+            this.coordinator = coordinator;
+            this.externalActions = externalActions;
+            this.pendingAdvisories = new ConcurrentHashMap<>();
+            this.pendingAdvisoryCount = new AtomicInteger();
+            this.closed = new AtomicBoolean();
         }
 
         /**
@@ -444,31 +875,109 @@ public final class PkiSigningBus implements AutoCloseable {
          */
         public void execute(PkiId opId) {
             Objects.requireNonNull(opId, "opId");
-
-            Optional<WorkflowStateRecord> wsOpt = store.getWorkflowState(opId);
-            if (wsOpt.isEmpty()) {
+            Optional<SubmissionCall> prepared = prepareSubmission(opId);
+            if (prepared.isEmpty()) {
                 return;
             }
-
-            WorkflowStateRecord ws = wsOpt.get();
-            Optional<EncodedObject> payloadOpt = ws.payload();
-            if (payloadOpt.isEmpty()) {
-                throw new PkiException("Missing workflow payload for sign operation");
+            SubmissionCall call = prepared.get();
+            PkiId returned;
+            try (ExternalActionCoordinator.Reservation ignored = call.reservation()) {
+                returned = signer.submitSign(call.request());
+            } catch (RuntimeException ambiguousFailure) { // NOPMD - provider acceptance is unknown
+                return;
             }
+            recordSubmissionAcceptance(call, returned);
+            reconcileProviderStatus(opId);
+        }
 
-            SignContinuation cont = SignContinuation.decode(payloadOpt.get());
+        // On success the reservation ownership moves into SubmissionCall and spans
+        // the provider call; try-with-resources here would release single-flight early.
+        @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
+        private Optional<SubmissionCall> prepareSubmission(PkiId opId) {
+            try (OperationCoordinator.Lease ignored = coordinator.acquire(opId)) {
+                Optional<SignWorkflowStore.Record> currentOptional = store.getSignRecord(opId);
+                if (currentOptional.isEmpty() || currentOptional.get().state() != SignWorkflowStore.State.INTENT) {
+                    return Optional.empty();
+                }
+                SignWorkflowStore.Record current = currentOptional.get();
+                if (!current.deadline().isAfter(store.signingNow())) {
+                    if (current.fence() == INITIAL_FENCE) {
+                        store.transitionSign(opId, current.revision(), current.fence(),
+                                SignWorkflowStore.State.EXPIRED, Optional.of("EXPIRED"), Optional.empty(),
+                                Optional.empty());
+                    }
+                    return Optional.empty();
+                }
+                Optional<ExternalActionCoordinator.Reservation> reserved = externalActions.tryReserve(opId,
+                        ExternalAction.SUBMIT);
+                if (reserved.isEmpty()) {
+                    return Optional.empty();
+                }
+                Optional<SignWorkflowStore.Record> claimedOptional = store.tryClaimSign(opId, current.revision(),
+                        CLAIM_LEASE);
+                if (claimedOptional.isEmpty()) {
+                    reserved.get().close();
+                    return Optional.empty();
+                }
+                SignWorkflowStore.Record claimed = claimedOptional.get();
+                ExternalActionCoordinator.Reservation reservation = reserved.get();
+                boolean reservationTransferred = false;
+                try {
+                    SignContinuation continuation = SignContinuation.decode(claimed.request());
+                    SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(opId,
+                            claimed.namespace(), claimed.fence(), continuation.accessContext, continuation.keyRef,
+                            continuation.algorithmId, continuation.payload,
+                            Optional.of(continuation.preferredSignatureEncoding), Optional.of(claimed.deadline()));
+                    if (!constantTimeAsciiEquals(claimed.fingerprint(), request.semanticFingerprint())) {
+                        store.transitionSign(opId, claimed.revision(), claimed.fence(),
+                                SignWorkflowStore.State.FAILED, Optional.of("REQUEST_INTEGRITY_FAILURE"),
+                                Optional.empty(), Optional.empty());
+                        return Optional.empty();
+                    }
+                    SubmissionCall call = new SubmissionCall(claimed, request, reservation);
+                    reservationTransferred = true;
+                    return Optional.of(call);
+                } finally {
+                    if (!reservationTransferred) {
+                        reservation.close();
+                    }
+                }
+            }
+        }
 
-            SignatureWorkflow.SignRequest req = new SignatureWorkflow.SignRequest(cont.accessContext, cont.keyRef,
-                    cont.algorithmId, cont.payload, Optional.of(cont.preferredSignatureEncoding),
-                    Optional.of(ws.expiresAt()));
+        private static boolean constantTimeAsciiEquals(String left, String right) {
+            byte[] leftBytes = left.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] rightBytes = right.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            try {
+                return java.security.MessageDigest.isEqual(leftBytes, rightBytes);
+            } finally {
+                java.util.Arrays.fill(leftBytes, (byte) 0);
+                java.util.Arrays.fill(rightBytes, (byte) 0);
+            }
+        }
 
-            PkiId signerOpId = signer.submitSign(req);
+        private void recordSubmissionAcceptance(SubmissionCall call, PkiId returned) {
+            try (OperationCoordinator.Lease ignored = coordinator.acquire(call.record().submissionId())) {
+                Optional<SignWorkflowStore.Record> afterCall = store.getSignRecord(call.record().submissionId());
+                if (afterCall.isEmpty() || afterCall.get().revision() != call.record().revision()
+                        || afterCall.get().fence() != call.record().fence()
+                        || afterCall.get().state() != SignWorkflowStore.State.INTENT) {
+                    return;
+                }
+                if (!call.record().submissionId().equals(returned)) {
+                    store.transitionSign(call.record().submissionId(), call.record().revision(),
+                            call.record().fence(), SignWorkflowStore.State.FAILED,
+                            Optional.of("PROVIDER_ID_MISMATCH"), Optional.empty(), Optional.empty());
+                    return;
+                }
+                store.transitionSign(call.record().submissionId(), call.record().revision(), call.record().fence(),
+                        SignWorkflowStore.State.DISPATCHED, Optional.of("DISPATCHED"), Optional.empty(),
+                        Optional.empty());
+            }
+        }
 
-            SignContinuation withSigner = cont.withSignerOpId(signerOpId);
-            WorkflowStateRecord updated = new WorkflowStateRecord(ws.opId(), ws.type(), ws.owner(),
-                    ws.durabilityPolicy(), ws.createdAt(), Instant.now(), ws.expiresAt(), ws.payloadEncoding(),
-                    Optional.of(withSigner.encode()));
-            store.putWorkflowState(updated);
+        private record SubmissionCall(SignWorkflowStore.Record record, SignatureWorkflow.SignRequest request,
+                ExternalActionCoordinator.Reservation reservation) {
         }
 
         /**
@@ -515,45 +1024,146 @@ public final class PkiSigningBus implements AutoCloseable {
         @Override
         public Optional<AsyncStatus> status(PkiId opId) {
             Objects.requireNonNull(opId, "opId");
-            Optional<WorkflowStateRecord> wsOpt = store.getWorkflowState(opId);
-            if (wsOpt.isEmpty()) {
-                return Optional.empty();
+            removeAdvisory(opId);
+            SignWorkflowStore.Record record;
+            Instant now;
+            try (OperationCoordinator.Lease ignored = coordinator.acquire(opId)) {
+                Optional<SignWorkflowStore.Record> recordOptional = store.getSignRecord(opId);
+                if (recordOptional.isEmpty()) {
+                    return Optional.empty();
+                }
+                record = recordOptional.get();
+                now = store.signingNow();
+                if (!record.deadline().isAfter(now) && record.state() == SignWorkflowStore.State.INTENT
+                        && record.fence() == INITIAL_FENCE) {
+                    store.transitionSign(opId, record.revision(), record.fence(), SignWorkflowStore.State.EXPIRED,
+                            Optional.of("EXPIRED"), Optional.empty(), Optional.empty());
+                    record = store.getSignRecord(opId).orElse(record);
+                }
             }
-
-            WorkflowStateRecord ws = wsOpt.get();
-            Optional<EncodedObject> payloadOpt = ws.payload();
-            if (payloadOpt.isEmpty()) {
-                return Optional.of(new AsyncStatus(AsyncState.FAILED, Instant.now(), Optional.of(DC_FAILED),
-                        Map.of("reason", "missing-payload")));
-            }
-
-            SignContinuation cont = SignContinuation.decode(payloadOpt.get());
-            if (cont.signerOpId.isEmpty()) {
-                // First poll drives submit to signer (this is the "async boundary").
+            if (record.state() == SignWorkflowStore.State.INTENT && record.deadline().isAfter(now)) {
                 execute(opId);
-                return Optional
-                        .of(new AsyncStatus(AsyncState.RUNNING, Instant.now(), Optional.of(DC_SUBMITTED), Map.of()));
             }
-
-            SignatureWorkflow.OperationStatus st = signer.status(cont.signerOpId.get());
-            if (st == null) {
-                return Optional.of(new AsyncStatus(AsyncState.RUNNING, Instant.now(), Optional.of(DC_RUNNING),
-                        Map.of("reason", "no-status")));
+            record = store.getSignRecord(opId).orElse(record);
+            if (record.state() == SignWorkflowStore.State.DISPATCHED
+                    || record.state() == SignWorkflowStore.State.CANCELLING) {
+                reconcileProviderStatus(opId);
+                record = store.getSignRecord(opId).orElse(record);
             }
-
-            if (!st.isTerminal()) {
-                return Optional
-                        .of(new AsyncStatus(AsyncState.RUNNING, st.updatedAt(), Optional.of(DC_RUNNING), Map.of()));
+            if (!record.deadline().isAfter(now)
+                    && (record.state() == SignWorkflowStore.State.DISPATCHED
+                            || record.state() == SignWorkflowStore.State.CANCELLING)) {
+                return Optional.of(new AsyncStatus(AsyncState.EXPIRED, now, Optional.of("EXPIRED"), Map.of()));
             }
+            return Optional.of(mapStoreStatus(record));
+        }
 
-            if (st.state() == SignatureWorkflow.State.SUCCEEDED && st.result().isPresent()
-                    && st.result().get().signature().isPresent()) {
-                return Optional
-                        .of(new AsyncStatus(AsyncState.SUCCEEDED, st.updatedAt(), Optional.of(DC_SIGNED), Map.of()));
+        private void onProviderStatusChanged(PkiId operationId, SignatureWorkflow.OperationStatus advisory) {
+            Objects.requireNonNull(operationId, "operationId");
+            Objects.requireNonNull(advisory, "advisory");
+            if (closed.get() || pendingAdvisories.containsKey(operationId)) {
+                return;
             }
+            int current;
+            do {
+                current = pendingAdvisoryCount.get();
+                if (current >= MAX_PENDING_ADVISORIES) {
+                    return;
+                }
+            } while (!pendingAdvisoryCount.compareAndSet(current, current + 1));
+            if (closed.get()) {
+                pendingAdvisoryCount.decrementAndGet();
+                return;
+            }
+            if (pendingAdvisories.putIfAbsent(operationId, Boolean.TRUE) != null) {
+                pendingAdvisoryCount.decrementAndGet();
+                return;
+            }
+            if (closed.get()) {
+                removeAdvisory(operationId);
+            }
+        }
 
-            return Optional.of(new AsyncStatus(AsyncState.FAILED, st.updatedAt(), Optional.of(DC_FAILED),
-                    Map.of("detailCode", st.detailCode().orElse(""))));
+        // Provider implementations are an untrusted boundary and may throw any runtime failure.
+        @SuppressWarnings("PMD.AvoidCatchingGenericException")
+        private void reconcileProviderStatus(PkiId operationId) {
+            removeAdvisory(operationId);
+            Optional<StatusCall> prepared = prepareStatusCall(operationId);
+            if (prepared.isEmpty()) {
+                return;
+            }
+            StatusCall call = prepared.get();
+            try (ExternalActionCoordinator.Reservation ignored = call.reservation()) {
+                try {
+                    SignatureWorkflow.OperationStatus providerStatus = signer.status(operationId);
+                    applyProviderStatus(call, providerStatus);
+                } catch (RuntimeException providerFailure) {
+                    throw new PkiException("Provider status failed: code=PROVIDER_STATUS_FAILED");
+                }
+            }
+        }
+
+        private Optional<StatusCall> prepareStatusCall(PkiId operationId) {
+            try (OperationCoordinator.Lease ignored = coordinator.acquire(operationId)) {
+                Optional<SignWorkflowStore.Record> beforeCall = store.getSignRecord(operationId);
+                if (beforeCall.isEmpty() || beforeCall.get().state() != SignWorkflowStore.State.DISPATCHED
+                        && beforeCall.get().state() != SignWorkflowStore.State.CANCELLING) {
+                    return Optional.empty();
+                }
+                Optional<ExternalActionCoordinator.Reservation> reserved = externalActions.tryReserve(operationId,
+                        ExternalAction.STATUS);
+                return reserved.map(reservation -> new StatusCall(beforeCall.get(), reservation));
+            }
+        }
+
+        private void applyProviderStatus(StatusCall call, SignatureWorkflow.OperationStatus providerStatus) {
+            if (!providerStatus.isTerminal()) {
+                return;
+            }
+            try (OperationCoordinator.Lease ignored = coordinator.acquire(call.record().submissionId())) {
+                Optional<SignWorkflowStore.Record> currentOptional = store.getSignRecord(call.record().submissionId());
+                if (currentOptional.isEmpty()
+                        || currentOptional.get().state() != SignWorkflowStore.State.DISPATCHED
+                                && currentOptional.get().state() != SignWorkflowStore.State.CANCELLING
+                        || currentOptional.get().fence() != call.record().fence()) {
+                    return;
+                }
+                SignWorkflowStore.Record current = currentOptional.get();
+                Optional<EncodedObject> result = providerStatus.result()
+                        .flatMap(SignatureWorkflow.OperationResult::signature);
+                SignWorkflowStore.State target = mapProviderState(providerStatus.state());
+                Optional<String> detail = sanitizeProviderDetail(providerStatus.detailCode());
+                if (target == SignWorkflowStore.State.SUCCEEDED && result.isEmpty()) {
+                    target = SignWorkflowStore.State.FAILED;
+                    detail = Optional.of("PROVIDER_RESULT_MISSING");
+                }
+                if (target == SignWorkflowStore.State.SUCCEEDED
+                        && !providerStatus.updatedAt().isBefore(current.deadline())) {
+                    target = SignWorkflowStore.State.EXPIRED;
+                    detail = Optional.of("LATE_PROVIDER_SUCCESS");
+                    result = Optional.empty();
+                }
+                store.transitionSign(call.record().submissionId(),
+                        current.revision(), current.fence(), target, detail, result,
+                        Optional.of(providerStatus.updatedAt()));
+            }
+        }
+
+        private record StatusCall(SignWorkflowStore.Record record,
+                ExternalActionCoordinator.Reservation reservation) {
+        }
+
+        private void removeAdvisory(PkiId operationId) {
+            if (pendingAdvisories.remove(operationId) != null) {
+                pendingAdvisoryCount.decrementAndGet();
+            }
+        }
+
+        private void closeAdvisories() {
+            closed.set(true);
+            for (PkiId operationId : pendingAdvisories.keySet()) {
+                removeAdvisory(operationId);
+            }
         }
 
         /**
@@ -589,24 +1199,46 @@ public final class PkiSigningBus implements AutoCloseable {
         @Override
         public Optional<EncodedObject> result(PkiId opId) {
             Objects.requireNonNull(opId, "opId");
+            reconcileProviderStatus(opId);
+            try (OperationCoordinator.Lease ignored = coordinator.acquire(opId)) {
+                return store.getSignRecord(opId)
+                        .filter(record -> record.state() == SignWorkflowStore.State.SUCCEEDED
+                                || record.state() == SignWorkflowStore.State.RETIRED
+                                        && record.result().isPresent())
+                        .flatMap(SignWorkflowStore.Record::result);
+            }
+        }
 
-            Optional<WorkflowStateRecord> wsOpt = store.getWorkflowState(opId);
-            if (wsOpt.isEmpty()) {
+        private static SignWorkflowStore.State mapProviderState(SignatureWorkflow.State state) {
+            return switch (state) {
+                case SUCCEEDED -> SignWorkflowStore.State.SUCCEEDED;
+                case CANCELLED -> SignWorkflowStore.State.CANCELLED;
+                case EXPIRED -> SignWorkflowStore.State.EXPIRED;
+                default -> SignWorkflowStore.State.FAILED;
+            };
+        }
+
+        private static Optional<String> sanitizeProviderDetail(Optional<String> detail) {
+            if (detail.isEmpty()) {
                 return Optional.empty();
             }
-            Optional<EncodedObject> payloadOpt = wsOpt.get().payload();
-            if (payloadOpt.isEmpty()) {
-                return Optional.empty();
+            String value = detail.orElseThrow();
+            if (value.length() > 64 || !value.matches("[A-Z0-9_]+")) {
+                return Optional.of("PROVIDER_DETAIL_INVALID");
             }
-            SignContinuation cont = SignContinuation.decode(payloadOpt.get());
-            if (cont.signerOpId.isEmpty()) {
-                return Optional.empty();
-            }
-            SignatureWorkflow.OperationStatus st = signer.status(cont.signerOpId.get());
-            if (st == null || st.state() != SignatureWorkflow.State.SUCCEEDED || st.result().isEmpty()) {
-                return Optional.empty();
-            }
-            return st.result().get().signature();
+            return detail;
+        }
+
+        private static AsyncStatus mapStoreStatus(SignWorkflowStore.Record record) {
+            AsyncState state = switch (record.state()) {
+                case INTENT, DISPATCHED, CANCELLING -> AsyncState.RUNNING;
+                case SUCCEEDED -> AsyncState.SUCCEEDED;
+                case CANCELLED -> AsyncState.CANCELLED;
+                case EXPIRED -> AsyncState.EXPIRED;
+                case RETIRED -> record.result().isPresent() ? AsyncState.SUCCEEDED : AsyncState.CANCELLED;
+                case FAILED -> AsyncState.FAILED;
+            };
+            return new AsyncStatus(state, record.createdAt(), record.detailCode(), Map.of());
         }
     }
 
@@ -662,7 +1294,7 @@ public final class PkiSigningBus implements AutoCloseable {
      */
     public static final class SignContinuation {
 
-        private static final byte VERSION = 1;
+        private static final byte VERSION = 2;
 
         private final zeroecho.pki.api.audit.AccessContext accessContext;
         private final String algorithmId;
@@ -742,6 +1374,43 @@ public final class PkiSigningBus implements AutoCloseable {
         }
 
         /**
+         * Computes the canonical semantic fingerprint for this persisted request.
+         *
+         * <p>
+         * The calculation delegates to the same versioned algorithm used by
+         * {@link SignatureWorkflow.SignRequest}. It does not include the mutable
+         * fencing token.
+         * </p>
+         *
+         * @param namespace authoritative provider/store namespace; must not be
+         *                  {@code null}
+         * @param deadline authoritative signing deadline; must not be {@code null}
+         * @return canonical versioned semantic fingerprint
+         * @throws NullPointerException if either argument is {@code null}
+         */
+        public String semanticFingerprint(String namespace, Instant deadline) {
+            Objects.requireNonNull(deadline, "deadline");
+            return SignatureWorkflow.SignRequest.fingerprint(namespace, accessContext, keyRef, algorithmId, payload,
+                    Optional.of(preferredSignatureEncoding), Optional.of(deadline));
+        }
+
+        /**
+         * Tests whether this continuation is bound to the durable operation identity.
+         *
+         * @param submissionId authoritative submission identifier; must not be
+         *                     {@code null}
+         * @param owner authoritative request owner; must not be {@code null}
+         * @return {@code true} only when the stored provider operation identifier and
+         *         access principal exactly match the supplied identity
+         * @throws NullPointerException if either argument is {@code null}
+         */
+        public boolean isBoundTo(PkiId submissionId, Principal owner) {
+            Objects.requireNonNull(submissionId, "submissionId");
+            Objects.requireNonNull(owner, "owner");
+            return owner.equals(accessContext.principal()) && signerOpId.filter(submissionId::equals).isPresent();
+        }
+
+        /**
          * Encodes this continuation into a versioned binary payload suitable for
          * persistence inside a {@link WorkflowStateRecord}.
          *
@@ -767,26 +1436,45 @@ public final class PkiSigningBus implements AutoCloseable {
          * @return binary encoded continuation payload
          */
         public EncodedObject encode() {
-            byte[] algBytes = algorithmId.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            byte[] keyBytes = keyRef.value().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            byte[] opBytes = signerOpId.map(x -> x.value().getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                    .orElse(new byte[0]);
-
-            java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocate(1 + 2 + algBytes.length + 1 + 4
-                    + payload.bytes().length + 2 + keyBytes.length + 1 + 1 + 2 + opBytes.length);
-            bb.put(VERSION);
-            bb.putShort((short) algBytes.length);
-            bb.put(algBytes);
-            bb.put((byte) payload.encoding().ordinal());
-            bb.putInt(payload.bytes().length);
-            bb.put(payload.bytes());
-            bb.putShort((short) keyBytes.length);
-            bb.put(keyBytes);
-            bb.put((byte) preferredSignatureEncoding.ordinal());
-            bb.put((byte) (signerOpId.isPresent() ? 1 : 0));
-            bb.putShort((short) opBytes.length);
-            bb.put(opBytes);
-            return new EncodedObject(Encoding.BINARY, bb.array());
+            WipeableByteArrayOutputStream bytes = new WipeableByteArrayOutputStream();
+            byte[] payloadBytes = payload.bytes();
+            byte[] encoded = null;
+            try {
+                try (java.io.DataOutputStream output = new java.io.DataOutputStream(bytes)) {
+                    output.writeByte(VERSION);
+                    output.writeUTF(accessContext.principal().type());
+                    output.writeUTF(accessContext.principal().name());
+                    output.writeUTF(accessContext.purpose().value());
+                    output.writeBoolean(accessContext.objectId().isPresent());
+                    if (accessContext.objectId().isPresent()) {
+                        output.writeUTF(accessContext.objectId().get().value());
+                    }
+                    output.writeBoolean(accessContext.formatId().isPresent());
+                    if (accessContext.formatId().isPresent()) {
+                        output.writeUTF(accessContext.formatId().get().value());
+                    }
+                    output.writeUTF(algorithmId);
+                    output.writeUTF(keyRef.value());
+                    output.writeByte(payload.encoding().ordinal());
+                    output.writeInt(payloadBytes.length);
+                    output.write(payloadBytes);
+                    output.writeByte(preferredSignatureEncoding.ordinal());
+                    output.writeBoolean(signerOpId.isPresent());
+                    if (signerOpId.isPresent()) {
+                        output.writeUTF(signerOpId.get().value());
+                    }
+                }
+                encoded = bytes.toByteArray();
+                return new EncodedObject(Encoding.BINARY, encoded);
+            } catch (java.io.IOException ex) {
+                throw new PkiException("Failed to encode sign continuation: code=CONTINUATION_ENCODE_FAILED");
+            } finally {
+                java.util.Arrays.fill(payloadBytes, (byte) 0);
+                if (encoded != null) {
+                    java.util.Arrays.fill(encoded, (byte) 0);
+                }
+                bytes.wipe();
+            }
         }
 
         /**
@@ -823,43 +1511,57 @@ public final class PkiSigningBus implements AutoCloseable {
             if (obj.encoding() != Encoding.BINARY) {
                 throw new IllegalArgumentException("Expected BINARY continuation payload");
             }
-            java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(obj.bytes());
-            byte v = bb.get();
-            if (v != VERSION) {
-                throw new IllegalArgumentException("Unsupported continuation version");
+            byte[] encoded = obj.bytes();
+            byte[] payloadBytes = null;
+            try (java.io.DataInputStream input = new java.io.DataInputStream(
+                    new java.io.ByteArrayInputStream(encoded))) {
+                int version = input.readUnsignedByte();
+                if (version != VERSION) {
+                    throw new PkiException("Unsupported sign continuation version");
+                }
+                Principal principal = new Principal(input.readUTF(), input.readUTF());
+                zeroecho.pki.api.audit.Purpose purpose = new zeroecho.pki.api.audit.Purpose(input.readUTF());
+                Optional<PkiId> objectId = input.readBoolean() ? Optional.of(new PkiId(input.readUTF()))
+                        : Optional.empty();
+                Optional<zeroecho.pki.api.FormatId> formatId = input.readBoolean()
+                        ? Optional.of(new zeroecho.pki.api.FormatId(input.readUTF()))
+                        : Optional.empty();
+                String algId = input.readUTF();
+                KeyRef key = new KeyRef(input.readUTF());
+                Encoding payloadEncoding = Encoding.values()[input.readUnsignedByte()];
+                int payloadLength = input.readInt();
+                if (payloadLength <= 0 || payloadLength > 16 * 1024 * 1024) {
+                    throw new PkiException("Invalid sign continuation payload length");
+                }
+                payloadBytes = input.readNBytes(payloadLength);
+                if (payloadBytes.length != payloadLength) {
+                    throw new PkiException("Truncated sign continuation payload");
+                }
+                Encoding preferred = Encoding.values()[input.readUnsignedByte()];
+                Optional<PkiId> signerId = input.readBoolean() ? Optional.of(new PkiId(input.readUTF()))
+                        : Optional.empty();
+                zeroecho.pki.api.audit.AccessContext access = new zeroecho.pki.api.audit.AccessContext(principal,
+                        purpose, objectId, formatId);
+                return new SignContinuation(access, algId, new EncodedObject(payloadEncoding, payloadBytes), key,
+                        preferred, signerId);
+            } catch (java.io.IOException | IndexOutOfBoundsException ex) {
+                throw new PkiException("Malformed sign continuation: code=CONTINUATION_MALFORMED");
+            } finally {
+                java.util.Arrays.fill(encoded, (byte) 0);
+                if (payloadBytes != null) {
+                    java.util.Arrays.fill(payloadBytes, (byte) 0);
+                }
             }
-            int algLen = Short.toUnsignedInt(bb.getShort());
-            byte[] algBytes = new byte[algLen];
-            bb.get(algBytes);
-            String algId = new String(algBytes, java.nio.charset.StandardCharsets.UTF_8);
+        }
 
-            Encoding payloadEnc = Encoding.values()[Byte.toUnsignedInt(bb.get())];
-            int payloadLen = bb.getInt();
-            byte[] payloadBytes = new byte[payloadLen];
-            bb.get(payloadBytes);
-
-            int keyLen = Short.toUnsignedInt(bb.getShort());
-            byte[] keyBytes = new byte[keyLen];
-            bb.get(keyBytes);
-            KeyRef keyRef = new KeyRef(new String(keyBytes, java.nio.charset.StandardCharsets.UTF_8));
-
-            Encoding prefEnc = Encoding.values()[Byte.toUnsignedInt(bb.get())];
-            boolean hasOp = bb.get() != 0;
-            int opLen = Short.toUnsignedInt(bb.getShort());
-            byte[] opBytes = new byte[opLen];
-            bb.get(opBytes);
-
-            Optional<PkiId> signerOpId = Optional.empty();
-            if (hasOp) {
-                signerOpId = Optional.of(new PkiId(new String(opBytes, java.nio.charset.StandardCharsets.UTF_8)));
+        /**
+         * Output stream whose retained continuation bytes can be overwritten.
+         */
+        private static final class WipeableByteArrayOutputStream extends java.io.ByteArrayOutputStream {
+            private void wipe() {
+                java.util.Arrays.fill(buf, (byte) 0);
+                reset();
             }
-
-            Principal sys = new Principal("SYSTEM", "pki");
-            zeroecho.pki.api.audit.Purpose purpose = new zeroecho.pki.api.audit.Purpose("SIGN");
-            zeroecho.pki.api.audit.AccessContext ac = new zeroecho.pki.api.audit.AccessContext(sys, purpose,
-                    Optional.empty(), Optional.empty());
-            return new SignContinuation(ac, algId, new EncodedObject(payloadEnc, payloadBytes), keyRef, prefEnc,
-                    signerOpId);
         }
     }
 }

@@ -55,6 +55,14 @@ public interface IssuanceService {
     /**
      * Issues a new end-entity credential.
      *
+     * <p>
+     * Implementations must treat a supplied normalized request as untrusted
+     * workflow state. Issuance reparses the original structural request, requires
+     * proof of possession, and binds the exact request identity, subject, and
+     * public key before privileged backend signing. Frameworks without verifiable
+     * structural request evidence are not authorized by this operation.
+     * </p>
+     *
      * @param command issuance command
      * @return credential bundle (credential plus supporting artifacts)
      * @throws IllegalArgumentException if {@code command} is invalid

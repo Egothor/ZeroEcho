@@ -131,14 +131,13 @@ public final class PkiSigningBusResilienceTest {
             // requester "goes away" here (close)
         }
 
-        // "Requester restart": new instance attaches by knowing (owner, clientOpId) ->
-        // same canonical opId.
+        // "Requester restart": the caller retains the stable submission identifier.
         try (FilesystemPkiStore store2 = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer2 = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(0), Map.of(keyRef.value(), kp.getPrivate()));
                 PkiSigningBus bus2 = new PkiSigningBus(store2, signer2, busFile)) {
 
-            PkiId opId2 = bus2.canonicalizeOperationId(clientOpId, owner);
+            PkiId opId2 = opId;
             System.out.println("...opIdReattach=" + opId2.value());
             assertTrue(opId2.value().equals(opId.value()));
 

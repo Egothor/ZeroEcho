@@ -61,11 +61,11 @@ import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
-import zeroecho.pki.api.ca.IntermediateCertIssueCommand;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
 import zeroecho.pki.api.credential.CredentialStatus;
-import zeroecho.pki.api.issuance.IssueEndEntityCommand;
+import zeroecho.pki.impl.core.ManagedCaIssuance;
+import zeroecho.pki.impl.core.VerifiedIssuanceCandidate;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
@@ -88,17 +88,15 @@ import zeroecho.pki.spi.framework.CredentialIssuerBackend;
  * <ul>
  * <li>{@link BcX509Attributes#ISSUER_CERT_DER},</li>
  * <li>{@link BcX509Attributes#ISSUER_KEYREF},</li>
- * <li>optionally {@link BcX509Attributes#SERIAL},</li>
- * <li>optionally {@link BcX509Attributes#SUBJECT_SPKI_DER} for intermediate
- * issuance.</li>
+ * <li>optionally {@link BcX509Attributes#SERIAL}.</li>
  * </ul>
  *
  * <p>
  * End-entity issuance primarily derives the subject distinguished name and
- * subject public key information from the parsed certification request
- * contained in {@link IssueEndEntityCommand}. Intermediate CA issuance relies
- * more heavily on framework attributes for subject wiring because it operates
- * on an existing CA subject entity rather than a CSR-centric flow.
+ * subject public key information from the proof-gated
+ * {@link VerifiedIssuanceCandidate}. Intermediate CA issuance relies on its
+ * proof-gated managed-CA input and framework attributes because it operates on
+ * an existing CA subject entity rather than a CSR-centric flow.
  * </p>
  *
  * <h2>Signing model</h2>
@@ -124,9 +122,9 @@ import zeroecho.pki.spi.framework.CredentialIssuerBackend;
  * supplied {@link PkiSigningBus} is safe for the intended runtime model.
  * </p>
  */
+// PMD cannot infer that retaining backend causes would violate the redaction contract.
+@SuppressWarnings("PMD.PreserveStackTrace")
 public final class BcX509CredentialIssuerBackend implements CredentialIssuerBackend {
-
-    private static final AttributeId SUBJECT_DN = new AttributeId("urn:zeroecho:pki:x509:subject:dn");
 
     private final PkiSigningBus signingBus;
     private final String signatureAlgorithmId;
@@ -165,13 +163,15 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      *
      * <p>
      * The method derives issuer wiring from the supplied overrides, uses the parsed
-     * request to obtain the subject distinguished name and public key, constructs a
+     * verified candidate to obtain the subject distinguished name and public key,
+     * constructs a
      * leaf certificate with basic end-entity extensions, delegates signing through
      * {@link PkiSigningBus}, and returns the resulting leaf credential bundled with
      * the issuer certificate.
      * </p>
      *
-     * @param command end-entity issuance command; must not be {@code null}
+     * @param candidate gate-produced verified issuance candidate; must not be
+     *                  {@code null}
      * @return issued X.509 credential bundle containing the leaf certificate and
      *         the issuer certificate as accompanying bundle material
      * @throws IllegalArgumentException if {@code command} is {@code null}
@@ -180,24 +180,25 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      *                                  fails, or certificate encoding fails
      */
     @Override
-    public CredentialBundle issueEndEntity(IssueEndEntityCommand command) {
-        if (command == null) {
-            throw new IllegalArgumentException("command must not be null");
+    public CredentialBundle issueEndEntity(VerifiedIssuanceCandidate candidate) {
+        if (candidate == null) {
+            throw new IllegalArgumentException("candidate must not be null");
         }
 
-        IssuanceContext ctx = IssuanceContext.from(command.overrides());
+        IssuanceContext ctx = IssuanceContext.from(candidate.overrides());
         X509CertificateHolder issuer = ctx.issuerCertHolder;
+        zeroecho.pki.api.request.ParsedCertificationRequest request = candidate.request();
 
         Instant now = Instant.now();
-        Validity validity = command.validityOverride().orElseGet(
-                () -> command.request().requestedValidity().orElse(new Validity(now, now.plus(Duration.ofDays(365)))));
+        Validity validity = candidate.validityOverride().orElseGet(
+                () -> request.requestedValidity().orElse(new Validity(now, now.plus(Duration.ofDays(365)))));
 
         BigInteger serial = ctx.serial
-                .orElse(BigInteger.valueOf(Math.abs(command.request().requestId().value().hashCode()) + 1L));
+                .orElse(BigInteger.valueOf(Math.abs(request.requestId().value().hashCode()) + 1L));
 
         X500Name issuerDn = issuer.getSubject();
-        X500Name subjectDn = new X500Name(command.request().subjectRef().value());
-        SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(command.request().publicKeyInfo().bytes());
+        X500Name subjectDn = new X500Name(request.subjectRef().value());
+        SubjectPublicKeyInfo spki = parseSubjectPublicKeyInfo(candidate.exactPublicKey());
 
         X509v3CertificateBuilder builder = new X509v3CertificateBuilder(issuerDn, serial,
                 Date.from(validity.notBefore()), Date.from(validity.notAfter()), subjectDn, spki);
@@ -206,7 +207,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
             builder.addExtension(Extension.keyUsage, true,
                     new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
         } catch (Exception ex) {
-            throw new PkiException("Failed to build X.509 extensions", ex);
+            throw new PkiException("X.509 extension construction failed: code=EXTENSION_BUILD_FAILED");
         }
 
         ContentSigner signer = new PkiBusContentSigner(signingBus, ctx.issuerKeyRef, signatureAlgorithmId, signingTtl);
@@ -214,27 +215,31 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         try {
             leaf = builder.build(signer);
         } catch (Exception ex) {
-            throw new PkiException("Certificate signing failed", ex);
+            throw new PkiException("Certificate signing failed: code=CERTIFICATE_SIGN_FAILED");
         }
 
         byte[] certDer;
         try {
             certDer = leaf.getEncoded();
         } catch (Exception ex) {
-            throw new PkiException("Certificate encoding failed", ex);
+            throw new PkiException("Certificate encoding failed: code=CERTIFICATE_ENCODE_FAILED");
         }
 
         PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
-        PkiId publicKeyId = new PkiId("spki:" + sha256Hex(command.request().publicKeyInfo().bytes()));
+        PkiId publicKeyId = new PkiId("spki:" + fingerprintEncoded(candidate.exactPublicKey()));
 
-        AttributeSet attributes = mergeAttributes(command.request().attributes(), command.overrides());
+        AttributeSet attributes = mergeAttributes(request.attributes(), candidate.overrides());
 
-        Credential credential = new Credential(credId, BcX509CredentialFramework.FORMAT_ID,
-                new IssuerRef(command.issuerCaId()), command.request().subjectRef(), validity, serial.toString(),
-                publicKeyId, command.profileId(), CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, certDer),
-                attributes);
-
-        return new CredentialBundle(credential, java.util.List.of(ctx.issuerCertEncoded));
+        try {
+            Credential credential = new Credential(credId, BcX509CredentialFramework.FORMAT_ID,
+                    new IssuerRef(candidate.issuerCaId()), request.subjectRef(), validity, serial.toString(),
+                    publicKeyId, candidate.profileId(), CredentialStatus.ISSUED,
+                    new EncodedObject(Encoding.DER, certDer),
+                    attributes);
+            return new CredentialBundle(credential, java.util.List.of(ctx.issuerCertEncoded));
+        } finally {
+            java.util.Arrays.fill(certDer, (byte) 0);
+        }
     }
 
     /**
@@ -247,8 +252,8 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      * credential.
      * </p>
      *
-     * @param command intermediate CA certificate issuance command; must not be
-     *                {@code null}
+     * @param issuance gate-produced managed CA issuance authority; must not be
+     *                 {@code null}
      * @return issued intermediate CA credential
      * @throws IllegalArgumentException if {@code command} is {@code null} or uses
      *                                  an unsupported format identifier
@@ -258,34 +263,40 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      *                                  encoding fails
      */
     @Override
-    public Credential issueIntermediateCertificate(IntermediateCertIssueCommand command) {
-        if (command == null) {
-            throw new IllegalArgumentException("command must not be null");
+    public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
+        if (issuance == null) {
+            throw new IllegalArgumentException("issuance must not be null");
         }
-        if (!BcX509CredentialFramework.FORMAT_ID.equals(command.formatId())) {
+        if (!BcX509CredentialFramework.FORMAT_ID.equals(issuance.formatId())) {
             throw new IllegalArgumentException("Unsupported formatId");
         }
 
-        IssuanceContext ctx = IssuanceContext.from(command.attributes());
+        IssuanceContext ctx = IssuanceContext.from(issuance.attributes());
         X509CertificateHolder issuer = ctx.issuerCertHolder;
-        byte[] subjectSpki = ctx.subjectSpkiDer.orElseThrow(() -> new PkiException("Missing subject SPKI"));
-        SubjectRef subjectRef = ctx.subjectRef.orElseThrow(() -> new PkiException("Missing subjectRef"));
+        byte[] subjectSpki = issuance.exactPublicKey().bytes();
+        SubjectPublicKeyInfo spki;
+        PkiId publicKeyId;
+        try {
+            spki = SubjectPublicKeyInfo.getInstance(subjectSpki);
+            publicKeyId = new PkiId("spki:" + sha256Hex(subjectSpki));
+        } finally {
+            java.util.Arrays.fill(subjectSpki, (byte) 0);
+        }
+        SubjectRef subjectRef = issuance.subjectRef();
 
         Instant now = Instant.now();
-        Validity validity = command.requestedValidity().orElse(new Validity(now, now.plus(Duration.ofDays(3650))));
+        Validity validity = issuance.requestedValidity().orElse(new Validity(now, now.plus(Duration.ofDays(3650))));
         BigInteger serial = ctx.serial.orElse(BigInteger.valueOf(Math.abs(System.nanoTime())));
 
         X500Name issuerDn = issuer.getSubject();
         X500Name subjectDn = new X500Name(subjectRef.value());
-        SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(subjectSpki);
-
         X509v3CertificateBuilder builder = new X509v3CertificateBuilder(issuerDn, serial,
                 Date.from(validity.notBefore()), Date.from(validity.notAfter()), subjectDn, spki);
         try {
             builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(0));
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
         } catch (Exception ex) {
-            throw new PkiException("Failed to build X.509 extensions", ex);
+            throw new PkiException("X.509 extension construction failed: code=EXTENSION_BUILD_FAILED");
         }
 
         ContentSigner signer = new PkiBusContentSigner(signingBus, ctx.issuerKeyRef, signatureAlgorithmId, signingTtl);
@@ -293,22 +304,25 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         try {
             certificate = builder.build(signer);
         } catch (Exception ex) {
-            throw new PkiException("Certificate signing failed", ex);
+            throw new PkiException("Certificate signing failed: code=CERTIFICATE_SIGN_FAILED");
         }
 
         byte[] certDer;
         try {
             certDer = certificate.getEncoded();
         } catch (Exception ex) {
-            throw new PkiException("Certificate encoding failed", ex);
+            throw new PkiException("Certificate encoding failed: code=CERTIFICATE_ENCODE_FAILED");
         }
 
         PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
-        PkiId publicKeyId = new PkiId("spki:" + sha256Hex(subjectSpki));
 
-        return new Credential(credId, command.formatId(), new IssuerRef(command.issuerCaId()), subjectRef, validity,
-                serial.toString(), publicKeyId, command.profileId(), CredentialStatus.ISSUED,
-                new EncodedObject(Encoding.DER, certDer), command.attributes());
+        try {
+            return new Credential(credId, issuance.formatId(), new IssuerRef(issuance.issuerCaId()), subjectRef,
+                    validity, serial.toString(), publicKeyId, issuance.profileId(), CredentialStatus.ISSUED,
+                    new EncodedObject(Encoding.DER, certDer), issuance.attributes());
+        } finally {
+            java.util.Arrays.fill(certDer, (byte) 0);
+        }
     }
 
     /**
@@ -328,8 +342,6 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         private final EncodedObject issuerCertEncoded;
         private final KeyRef issuerKeyRef;
         private final Optional<BigInteger> serial;
-        private final Optional<byte[]> subjectSpkiDer;
-        private final Optional<SubjectRef> subjectRef;
 
         /**
          * Creates the issuance context.
@@ -341,20 +353,13 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
          * @param issuerKeyRef      issuer signing key reference; must not be
          *                          {@code null}
          * @param serial            optional serial override; must not be {@code null}
-         * @param subjectSpkiDer    optional subject SPKI override; must not be
-         *                          {@code null}
-         * @param subjectRef        optional subject distinguished name override; must
-         *                          not be {@code null}
          */
         private IssuanceContext(X509CertificateHolder issuerCertHolder, EncodedObject issuerCertEncoded,
-                KeyRef issuerKeyRef, Optional<BigInteger> serial, Optional<byte[]> subjectSpkiDer,
-                Optional<SubjectRef> subjectRef) {
+                KeyRef issuerKeyRef, Optional<BigInteger> serial) {
             this.issuerCertHolder = issuerCertHolder;
             this.issuerCertEncoded = issuerCertEncoded;
             this.issuerKeyRef = issuerKeyRef;
             this.serial = serial;
-            this.subjectSpkiDer = subjectSpkiDer;
-            this.subjectRef = subjectRef;
         }
 
         /**
@@ -376,10 +381,6 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
          * <ul>
          * <li>{@link BcX509Attributes#SERIAL} as
          * {@link AttributeValue.IntegerValue}</li>
-         * <li>{@link BcX509Attributes#SUBJECT_SPKI_DER} as
-         * {@link AttributeValue.BytesValue}</li>
-         * <li>{@code urn:zeroecho:pki:x509:subject:dn} as
-         * {@link AttributeValue.StringValue}</li>
          * </ul>
          *
          * @param attrs source attribute set; must not be {@code null}
@@ -401,15 +402,11 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
 
             Optional<BigInteger> serial = optionalInteger(attrs, BcX509Attributes.SERIAL, "Serial must be IntegerValue")
                     .map(BigInteger::valueOf);
-            Optional<byte[]> subjectSpkiDer = optionalBytes(attrs, BcX509Attributes.SUBJECT_SPKI_DER,
-                    "Subject SPKI must be BytesValue");
-            Optional<SubjectRef> subjectRef = optionalString(attrs, SUBJECT_DN, "Subject DN must be StringValue")
-                    .map(SubjectRef::new);
 
             X509CertificateHolder issuerHolder = parseIssuerCertificateOrThrow(issuerCertDer);
             EncodedObject issuerEncoded = new EncodedObject(Encoding.DER, issuerCertDer);
 
-            return new IssuanceContext(issuerHolder, issuerEncoded, issuerKeyRef, serial, subjectSpkiDer, subjectRef);
+            return new IssuanceContext(issuerHolder, issuerEncoded, issuerKeyRef, serial);
         }
 
         /**
@@ -477,50 +474,6 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         }
 
         /**
-         * Resolves an optional bytes-valued attribute.
-         *
-         * @param attrs       source attributes; must not be {@code null}
-         * @param id          attribute identifier; must not be {@code null}
-         * @param typeMessage exception message used when the attribute has an
-         *                    unexpected type
-         * @return optional bytes value
-         * @throws PkiException if the attribute is present but has an unexpected value
-         *                      type
-         */
-        private static Optional<byte[]> optionalBytes(AttributeSet attrs, AttributeId id, String typeMessage) {
-            Optional<AttributeValue> value = attrs.get(id);
-            if (value.isEmpty()) {
-                return Optional.empty();
-            }
-            if (!(value.get() instanceof AttributeValue.BytesValue)) {
-                throw new PkiException(typeMessage);
-            }
-            return Optional.of(((AttributeValue.BytesValue) value.get()).value());
-        }
-
-        /**
-         * Resolves an optional string-valued attribute.
-         *
-         * @param attrs       source attributes; must not be {@code null}
-         * @param id          attribute identifier; must not be {@code null}
-         * @param typeMessage exception message used when the attribute has an
-         *                    unexpected type
-         * @return optional string value
-         * @throws PkiException if the attribute is present but has an unexpected value
-         *                      type
-         */
-        private static Optional<String> optionalString(AttributeSet attrs, AttributeId id, String typeMessage) {
-            Optional<AttributeValue> value = attrs.get(id);
-            if (value.isEmpty()) {
-                return Optional.empty();
-            }
-            if (!(value.get() instanceof AttributeValue.StringValue)) {
-                throw new PkiException(typeMessage);
-            }
-            return Optional.of(((AttributeValue.StringValue) value.get()).value());
-        }
-
-        /**
          * Parses the issuer certificate DER into an X.509 certificate holder.
          *
          * @param issuerCertDer DER-encoded issuer certificate; must not be {@code null}
@@ -531,7 +484,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
             try {
                 return new X509CertificateHolder(issuerCertDer);
             } catch (Exception ex) {
-                throw new PkiException("Invalid issuer certificate DER", ex);
+                throw new PkiException("Invalid issuer certificate: code=ISSUER_CERTIFICATE_INVALID");
             }
         }
     }
@@ -568,9 +521,32 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
     private static String sha256Hex(byte[] in) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(md.digest(in));
+            byte[] digest = md.digest(in);
+            try {
+                return HexFormat.of().formatHex(digest);
+            } finally {
+                java.util.Arrays.fill(digest, (byte) 0);
+            }
         } catch (Exception ex) {
-            throw new IllegalStateException("SHA-256 not available", ex);
+            throw new IllegalStateException("SHA-256 unavailable: code=DIGEST_UNAVAILABLE");
+        }
+    }
+
+    private static SubjectPublicKeyInfo parseSubjectPublicKeyInfo(EncodedObject encoded) {
+        byte[] bytes = encoded.bytes();
+        try {
+            return SubjectPublicKeyInfo.getInstance(bytes);
+        } finally {
+            java.util.Arrays.fill(bytes, (byte) 0);
+        }
+    }
+
+    private static String fingerprintEncoded(EncodedObject encoded) {
+        byte[] bytes = encoded.bytes();
+        try {
+            return sha256Hex(bytes);
+        } finally {
+            java.util.Arrays.fill(bytes, (byte) 0);
         }
     }
 }

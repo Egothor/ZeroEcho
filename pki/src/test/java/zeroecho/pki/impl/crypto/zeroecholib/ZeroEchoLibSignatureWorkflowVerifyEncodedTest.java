@@ -39,6 +39,8 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -67,7 +69,8 @@ public final class ZeroEchoLibSignatureWorkflowVerifyEncodedTest {
         KeyringStore ks = new KeyringStore(new zeroecho.sdk.ZeroEchoSession());
         ks.save(keyring);
 
-        try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("wf", keyring, "zeroecho-lib:", true)) {
+        try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("wf", keyring,
+                tempDir.resolve("operations"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true)) {
 
             KeyPair kp = KeyPairGenerator.getInstance("RSA").generateKeyPair();
             byte[] payload = "pqc-ready".getBytes(java.nio.charset.StandardCharsets.UTF_8);

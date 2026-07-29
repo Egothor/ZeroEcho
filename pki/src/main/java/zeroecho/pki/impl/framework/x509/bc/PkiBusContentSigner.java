@@ -37,6 +37,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Optional;
 
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
@@ -86,9 +87,9 @@ import zeroecho.pki.util.async.AsyncState;
  * <li>The signer polls the bus by repeatedly calling
  * {@link PkiSigningBus#sweep(Instant)} and {@link PkiSigningBus#status(PkiId)}
  * until the workflow succeeds, fails, or times out.</li>
- * <li>On successful completion or explicit failure, persisted workflow state is
- * deleted through {@link PkiSigningBus#deleteWorkflowState(PkiId)} before the
- * method returns or throws.</li>
+ * <li>Every submitted operation is retired through
+ * {@link PkiSigningBus#retireSignOperation(PkiId, String)} before the method
+ * returns or throws.</li>
  * </ul>
  *
  * <h2>Security considerations</h2>
@@ -108,6 +109,8 @@ import zeroecho.pki.util.async.AsyncState;
  * intended for one certificate or CRL signing flow.
  * </p>
  */
+// PMD cannot infer that retaining provider causes would violate the redaction contract.
+@SuppressWarnings("PMD.PreserveStackTrace")
 public final class PkiBusContentSigner implements ContentSigner {
 
     private final PkiSigningBus bus;
@@ -115,7 +118,7 @@ public final class PkiBusContentSigner implements ContentSigner {
     private final String algorithmId;
     private final Duration ttl;
 
-    private final ByteArrayOutputStream baos;
+    private final WipeableByteArrayOutputStream baos;
 
     /**
      * Creates a signer that routes signature generation through the PKI signing
@@ -149,7 +152,7 @@ public final class PkiBusContentSigner implements ContentSigner {
         this.keyRef = keyRef;
         this.algorithmId = algorithmId;
         this.ttl = ttl;
-        this.baos = new ByteArrayOutputStream();
+        this.baos = new WipeableByteArrayOutputStream();
     }
 
     /**
@@ -203,8 +206,10 @@ public final class PkiBusContentSigner implements ContentSigner {
      * <p>
      * On successful completion, the signature bytes contained in the workflow
      * result are returned. If the workflow reports success but no result is
-     * available, the method fails explicitly. On terminal success or failure, the
-     * persisted workflow state is deleted before the method returns or throws.
+     * available, the method fails explicitly. Every operation for which submission
+     * is attempted is retired before the method returns or throws. Cleanup failures
+     * are suppressed on the primary signing failure and otherwise become the
+     * returned failure.
      * </p>
      *
      * <p>
@@ -219,38 +224,105 @@ public final class PkiBusContentSigner implements ContentSigner {
      *                      complete within the configured TTL
      */
     @Override
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public byte[] getSignature() {
         byte[] tbs = baos.toByteArray();
-        EncodedObject payload = new EncodedObject(Encoding.BINARY, tbs);
+        byte[] consumedResult = null;
+        PkiId opId = null;
+        boolean retirementRequired = false;
+        Throwable primaryFailure = null;
+        try {
+            EncodedObject payload = new EncodedObject(Encoding.BINARY, tbs);
+            Principal owner = new Principal("SYSTEM", "pki");
+            opId = bus.newSubmissionId();
 
-        Principal owner = new Principal("SYSTEM", "pki");
-        PkiId clientOpId = new PkiId("sign:" + Integer.toUnsignedString(System.identityHashCode(this)) + ":"
-                + Long.toUnsignedString(System.nanoTime()));
-        PkiId opId = bus.canonicalizeOperationId(clientOpId, owner);
+            AccessContext ac = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(),
+                    Optional.empty());
+            SignContinuation cont = new SignContinuation(ac, algorithmId, payload, keyRef, Encoding.BINARY,
+                    Optional.empty());
 
-        AccessContext ac = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(), Optional.empty());
-        SignContinuation cont = new SignContinuation(ac, algorithmId, payload, keyRef, Encoding.BINARY,
-                Optional.empty());
+            retirementRequired = true;
+            bus.submitSign(opId, owner, keyRef, algorithmId, payload, ttl, Optional.of(cont.encode()));
+            consumedResult = awaitSignature(opId);
+            return consumedResult.clone();
+        } catch (RuntimeException failure) {
+            PkiException sanitized = new PkiException("Signing workflow failed: code=SIGNING_WORKFLOW_FAILED");
+            primaryFailure = sanitized;
+            throw sanitized;
+        } catch (Error failure) {
+            primaryFailure = failure;
+            throw failure;
+        } finally {
+            try {
+                if (retirementRequired) {
+                    retirePreservingFailure(opId, primaryFailure);
+                }
+            } finally {
+                Arrays.fill(tbs, (byte) 0);
+                baos.wipe();
+                if (consumedResult != null) {
+                    Arrays.fill(consumedResult, (byte) 0);
+                }
+            }
+        }
+    }
 
-        bus.submitSign(opId, owner, keyRef, algorithmId, payload, ttl, Optional.of(cont.encode()));
-
+    private byte[] awaitSignature(PkiId opId) {
         Instant deadline = Instant.now().plus(ttl);
         while (Instant.now().isBefore(deadline)) {
             bus.sweep(Instant.now());
-            Optional<zeroecho.pki.util.async.AsyncStatus> st = bus.status(opId);
-            if (st.isPresent() && st.get().state() == AsyncState.SUCCEEDED) {
-                Optional<EncodedObject> res = bus.consumeResult(opId);
-                bus.deleteWorkflowState(opId);
-                if (res.isEmpty()) {
+            Optional<zeroecho.pki.util.async.AsyncStatus> status = bus.status(opId);
+            if (status.isPresent() && status.get().state() == AsyncState.SUCCEEDED) {
+                Optional<EncodedObject> result = bus.consumeResult(opId);
+                if (result.isEmpty()) {
                     throw new PkiException("Missing signature result");
                 }
-                return res.get().bytes();
+                return result.get().bytes();
             }
-            if (st.isPresent() && st.get().state() == AsyncState.FAILED) {
-                bus.deleteWorkflowState(opId);
-                throw new PkiException("Signing failed");
+            if (status.isPresent() && isTerminalFailure(status.get().state())) {
+                throw new PkiException("Signing failed: " + status.get().state());
             }
+            boundedWait(deadline);
         }
         throw new PkiException("Signing did not complete before TTL");
+    }
+
+    private static boolean isTerminalFailure(AsyncState state) {
+        return state == AsyncState.FAILED || state == AsyncState.CANCELLED || state == AsyncState.EXPIRED;
+    }
+
+    @SuppressWarnings("PMD.DoNotUseThreads")
+    private static void boundedWait(Instant deadline) {
+        long remainingMillis = Duration.between(Instant.now(), deadline).toMillis();
+        long waitMillis = Math.min(10L, Math.max(1L, remainingMillis));
+        try {
+            Thread.sleep(waitMillis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new PkiException("Interrupted while awaiting signing", ex);
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private void retirePreservingFailure(PkiId opId, Throwable primaryFailure) {
+        try {
+            bus.retireSignOperation(opId, primaryFailure == null ? "completed" : "failed-or-expired");
+        } catch (RuntimeException cleanupFailure) {
+            if (primaryFailure == null) {
+                throw new PkiException("Signing cleanup failed: code=SIGNING_CLEANUP_FAILED");
+            }
+        }
+    }
+
+    /**
+     * Byte-array output stream whose retained backing storage can be overwritten
+     * after one signing attempt.
+     */
+    private static final class WipeableByteArrayOutputStream extends ByteArrayOutputStream {
+
+        private void wipe() {
+            Arrays.fill(buf, (byte) 0);
+            reset();
+        }
     }
 }

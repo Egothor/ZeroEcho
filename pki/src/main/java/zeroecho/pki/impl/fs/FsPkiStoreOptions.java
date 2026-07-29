@@ -60,9 +60,13 @@ import java.util.Optional;
  * @param workflowHistoryPolicy   history policy for workflow continuation state
  * @param strictSnapshotExport    whether snapshot export is strict
  *                                (fail-closed)
+ * @param signingOperationHorizon maximum stable signing identifier and record
+ *                                retention horizon
+ * @param signingIdPermittedSkew  permitted future signing identifier clock skew
  */
 public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
-        FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport) {
+        FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
+        Duration signingOperationHorizon, Duration signingIdPermittedSkew) {
 
     /**
      * Canonical constructor with validation.
@@ -74,6 +78,14 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         Objects.requireNonNull(profileHistoryPolicy, "profileHistoryPolicy");
         Objects.requireNonNull(revocationHistoryPolicy, "revocationHistoryPolicy");
         Objects.requireNonNull(workflowHistoryPolicy, "workflowHistoryPolicy");
+        Objects.requireNonNull(signingOperationHorizon, "signingOperationHorizon");
+        Objects.requireNonNull(signingIdPermittedSkew, "signingIdPermittedSkew");
+        if (signingOperationHorizon.isZero() || signingOperationHorizon.isNegative()) {
+            throw new IllegalArgumentException("signingOperationHorizon must be positive");
+        }
+        if (signingIdPermittedSkew.isNegative()) {
+            throw new IllegalArgumentException("signingIdPermittedSkew must not be negative");
+        }
     }
 
     /**
@@ -89,6 +101,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      */
     public static FsPkiStoreOptions defaults() {
         FsHistoryPolicy ninetyDays = FsHistoryPolicy.onWrite(Optional.of(Duration.ofDays(90)));
-        return new FsPkiStoreOptions(ninetyDays, ninetyDays, ninetyDays, ninetyDays, true);
+        return new FsPkiStoreOptions(ninetyDays, ninetyDays, ninetyDays, ninetyDays, true, Duration.ofDays(90),
+                Duration.ZERO);
     }
 }

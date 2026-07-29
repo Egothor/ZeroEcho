@@ -87,7 +87,8 @@ public final class WorkflowProofOfPossessionVerifierTest {
         ParsedCertificationRequest parsed = new BcX509CertificationRequestParser().parse(req);
 
         ZeroEchoLibSignatureWorkflowProvider provider = new ZeroEchoLibSignatureWorkflowProvider();
-        ProviderConfig cfg = new ProviderConfig(provider.id(), Map.of("keyringPath", keyringPath.toString()));
+        ProviderConfig cfg = new ProviderConfig(provider.id(), Map.of("keyringPath", keyringPath.toString(),
+                "operationRoot", tempDir.resolve("signing-operations").toString()));
         SignatureWorkflow wf = provider.allocate(cfg);
 
         WorkflowProofOfPossessionVerifier verifier = new WorkflowProofOfPossessionVerifier(wf);
