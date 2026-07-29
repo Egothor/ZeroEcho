@@ -196,11 +196,10 @@ public class GuardTest {
         final int tagBits = 128;
         final String aadAes = "010203";
         final String aadCha = "D00DFEED";
-        final String chNonce = "00112233445566778899AABB";
 
         System.out.println(method);
         System.out.println("...params: sizeAes=" + sizeAes + " sizeCha=" + sizeCha + " tagBits=" + tagBits + " aadAes="
-                + aadAes + " aadCha=" + aadCha + " chNonce=" + chNonce);
+                + aadAes + " aadCha=" + aadCha);
 
         // Prepare keyring with RSA pair
         Path ring = tmp.resolve("ring-rsa.txt");
@@ -237,13 +236,13 @@ public class GuardTest {
             Path dec = tmp.resolve("rsa-pt-ch.bin.dec");
 
             String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--keyring", ring.toString(),
-                    "--to-alias", rsa.pub, "--alg", "chacha-aead", "--aad-hex", aadCha, "--nonce-hex", chNonce };
+                    "--to-alias", rsa.pub, "--alg", "chacha-aead", "--aad-hex", aadCha };
             System.out.println("...ChaCha encrypt: " + Arrays.toString(encArgs));
             int e = Guard.main(encArgs, new Options());
             assertEquals(0, e, "... ChaCha encrypt rc");
 
             String[] decArgs = { "--decrypt", enc.toString(), "--output", dec.toString(), "--keyring", ring.toString(),
-                    "--priv-alias", rsa.prv, "--alg", "chacha-aead", "--aad-hex", aadCha, "--nonce-hex", chNonce };
+                    "--priv-alias", rsa.prv, "--alg", "chacha-aead", "--aad-hex", aadCha };
             System.out.println("...ChaCha decrypt: " + Arrays.toString(decArgs));
             int d = Guard.main(decArgs, new Options());
             assertEquals(0, d, "... ChaCha decrypt rc");

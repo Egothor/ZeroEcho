@@ -154,7 +154,7 @@ public final class Guard {
         final Option OPT_TAG_BITS = Option.builder().longOpt("tag-bits").hasArg().argName("96..128")
                 .desc("AES-GCM tag length in bits (default 128)").get();
         final Option OPT_NONCE_HEX = Option.builder().longOpt("nonce-hex").hasArg().argName("hex")
-                .desc("ChaCha nonce (12-byte hex)").get();
+                .desc("ChaCha decryption nonce (12-byte hex; rejected for encryption)").get();
         final Option OPT_INIT_CTR = Option.builder().longOpt("init-ctr").hasArg().argName("int")
                 .desc("ChaCha stream initial counter (default 1)").get();
         final Option OPT_CTR = Option.builder().longOpt("ctr").hasArg().argName("int")
@@ -303,7 +303,7 @@ public final class Guard {
                     chacha.withHeader();
                 }
                 if (chachaNonce != null) {
-                    chacha.withNonce(chachaNonce);
+                    chacha.withDecryptionNonce(chachaNonce);
                 }
                 if (ctrOverride != null || initCtr != null) {
                     // providing counters together with AAD would be conflicting; builder enforces
@@ -323,7 +323,7 @@ public final class Guard {
                     chacha.withHeader();
                 }
                 if (chachaNonce != null) {
-                    chacha.withNonce(chachaNonce);
+                    chacha.withDecryptionNonce(chachaNonce);
                 }
                 if (initCtr != null) {
                     chacha.initialCounter(initCtr);

@@ -61,8 +61,6 @@ import zeroecho.sdk.hybrid.kex.HybridKexExporter;
  * </p>
  * <ul>
  * <li>{@code label + "/key"} for the secret key</li>
- * <li>{@code label + "/iv"} for AES IV</li>
- * <li>{@code label + "/nonce"} for ChaCha nonce</li>
  * <li>{@code label + "/aad"} for AEAD AAD (optional, if derived)</li>
  * </ul>
  *
@@ -190,7 +188,7 @@ public final class HybridDerived {
     }
 
     /**
-     * Derives an AES key and applies it (and optional IV/AAD) to the provided AES
+     * Derives an AES key and applies it with optional AAD to the provided AES
      * builder.
      *
      * <p>
@@ -200,15 +198,12 @@ public final class HybridDerived {
      *
      * @param aes        AES builder to configure (must not be null)
      * @param keyBits    AES key size in bits (128/192/256)
-     * @param ivLenBytes if &gt; 0, derive IV of this length and inject it via
-     *                   {@code withIv(...)}; if 0, do not set IV (header/ctx may
-     *                   generate it)
      * @return the provided builder instance
      * @throws NullPointerException     if aes is null
      * @throws IllegalArgumentException if keyBits is invalid
      * @since 1.0
      */
-    public AesDataContentBuilder applyToAesGcm(AesDataContentBuilder aes, int keyBits, int ivLenBytes) {
+    public AesDataContentBuilder applyToAesGcm(AesDataContentBuilder aes, int keyBits) {
         Objects.requireNonNull(aes, "aes");
         validateBase();
 
@@ -221,11 +216,6 @@ public final class HybridDerived {
             Arrays.fill(keyRaw, (byte) 0);
         }
 
-        if (ivLenBytes > 0) {
-            byte[] iv = exportBytes(label + "/iv", ivLenBytes);
-            aes.withIv(iv);
-        }
-
         byte[] aad = resolveAad();
         if (aad != null) {
             aes.withAad(aad);
@@ -235,7 +225,7 @@ public final class HybridDerived {
     }
 
     /**
-     * Derives a ChaCha key and applies it (and optional nonce/AAD) to the provided
+     * Derives a ChaCha key and applies it with optional AAD to the provided
      * ChaCha builder.
      *
      * <p>
@@ -245,15 +235,12 @@ public final class HybridDerived {
      *
      * @param chacha        ChaCha builder to configure (must not be null)
      * @param keyBits       key size in bits (typically 256)
-     * @param nonceLenBytes if &gt; 0, derive nonce of this length and inject it via
-     *                      {@code withNonce(...)}; if 0, do not set nonce
-     *                      (header/ctx may generate it)
      * @return the provided builder instance
      * @throws NullPointerException     if chacha is null
      * @throws IllegalArgumentException if keyBits is invalid
      * @since 1.0
      */
-    public ChaChaDataContentBuilder applyToChaChaAead(ChaChaDataContentBuilder chacha, int keyBits, int nonceLenBytes) {
+    public ChaChaDataContentBuilder applyToChaChaAead(ChaChaDataContentBuilder chacha, int keyBits) {
         Objects.requireNonNull(chacha, "chacha");
         validateBase();
 
@@ -264,11 +251,6 @@ public final class HybridDerived {
             chacha.withKey(key);
         } finally {
             Arrays.fill(keyRaw, (byte) 0);
-        }
-
-        if (nonceLenBytes > 0) {
-            byte[] nonce = exportBytes(label + "/nonce", nonceLenBytes);
-            chacha.withNonce(nonce);
         }
 
         byte[] aad = resolveAad();

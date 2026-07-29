@@ -94,11 +94,11 @@ import zeroecho.sdk.content.api.PlainContent;
  * try (InputStream s = dec.getStream()) { s.transferTo(Files.newOutputStream(ptPath)); }
  * }</pre>
  *
- * <h2>Runtime parameters</h2> Optional IV and AAD can be provided via
- * {@link #withIv(byte[])} and {@link #withAad(byte[])}. If a Conflux context is
- * present (set via {@link #context(conflux.CtxInterface)} or implied by a
- * header), a fresh IV is generated on encrypt when absent and stored back into
- * the context. For GCM, AAD defaults to empty.
+ * <h2>Runtime parameters</h2> Optional AAD can be provided via
+ * {@link #withAad(byte[])}. Encryption always generates its IV internally.
+ * Headerless decryption may receive an out-of-band IV through
+ * {@link #withDecryptionIv(byte[])}; that configuration is rejected when
+ * building an encrypting pipeline. For GCM, AAD defaults to empty.
  *
  * <h2>Thread‑safety</h2> The builder is not thread‑safe. Built
  * {@code DataContent} instances are independent.
@@ -114,7 +114,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
 
     private final AesSpec.Builder _spec = AesSpec.builder();
 
-    private byte[] iv; // optional
+    private byte[] decryptionIv; // optional
     private byte[] aad; // optional
 
     private SymmetricHeaderCodec headerCodec; // optional; carried by AesSpec
@@ -264,15 +264,14 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
     }
 
     /**
-     * Supplies an explicit IV/nonce. If omitted during ENCRYPT and a context is
-     * present, a fresh IV is generated and stored in the context.
+     * Supplies an out-of-band IV for decryption without an encoded header.
      *
      * @param iv the IV (12 bytes for GCM, 16 bytes for CBC/CTR)
      * @return this builder
-     * @throws IllegalArgumentException if the length does not match the mode
+     * @throws NullPointerException if {@code iv} is {@code null}
      */
-    public AesDataContentBuilder withIv(byte[] iv) {
-        this.iv = iv;
+    public AesDataContentBuilder withDecryptionIv(byte[] iv) {
+        this.decryptionIv = Objects.requireNonNull(iv, "iv must not be null").clone();
         return this;
     }
 
@@ -330,7 +329,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
      * <li>Resolves the key from {@link #withKey(SecretKey)} or the selected
      * generate/import spec.</li>
      * <li>Finalizes {@link AesSpec} (injecting the header if configured).</li>
-     * <li>Propagates IV/AAD into the context if supplied.</li>
+     * <li>Propagates a decryption IV and AAD into the context when supplied.</li>
      * </ul>
      *
      * @param encrypt {@code true} for encryption; {@code false} for decryption
@@ -340,6 +339,9 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
      */
     @Override
     public DataContent build(boolean encrypt) {
+        if (encrypt && decryptionIv != null) {
+            throw new IllegalStateException("A caller-supplied IV is valid only for AES decryption");
+        }
         final SecretKey key = resolveKey();
 
         // finalize AesSpec from builder + header
@@ -358,11 +360,11 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
             }
             ctx.put(ConfluxKeys.aad(ALGORITHM_ID), aad);
         }
-        if (iv != null && iv.length > 0) {
+        if (decryptionIv != null && decryptionIv.length > 0) {
             if (ctx == null) {
                 ctx = Ctx.INSTANCE.getContext("aes-ctx-" + System.nanoTime());
             }
-            ctx.put(ConfluxKeys.iv(ALGORITHM_ID), iv);
+            ctx.put(ConfluxKeys.iv(ALGORITHM_ID), decryptionIv.clone());
         }
 
         return encrypt ? new EncryptContent(key, aesSpec, ctx) : new DecryptContent(key, aesSpec, ctx);
@@ -526,8 +528,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
                 if (!(enc instanceof ContextAware)) {
                     throw new IllegalStateException("AES context is not ContextAware; cannot pass conflux Ctx");
                 }
-                ((ContextAware) enc).setContext(ctx); // ctx may be null → header disabled; IV generated only if ctx
-                                                      // present
+                ((ContextAware) enc).setContext(ctx);
                 return enc.attach(upstream.getStream());
             }
         }

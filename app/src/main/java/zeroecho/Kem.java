@@ -181,7 +181,7 @@ public final class Kem { // NOPMD
 
     /** AES IV: --aes-iv &lt;hex&gt; */
     public static final Option OPT_AES_IV = Option.builder().longOpt("aes-iv").hasArg().argName("hex")
-            .desc("AES IV/nonce (hex)").get();
+            .desc("AES decryption IV/nonce (hex; rejected for encryption)").get();
 
     /** AES tag bits: --aes-tag-bits &lt;int&gt; */
     public static final Option OPT_AES_TAG_BITS = Option.builder().longOpt("aes-tag-bits").hasArg().argName("int")
@@ -189,7 +189,7 @@ public final class Kem { // NOPMD
 
     /** ChaCha nonce: --chacha-nonce &lt;hex&gt; */
     public static final Option OPT_CHACHA_NONCE = Option.builder().longOpt("chacha-nonce").hasArg().argName("hex")
-            .desc("ChaCha nonce (hex, usually 12 bytes)").get();
+            .desc("ChaCha decryption nonce (hex, usually 12 bytes; rejected for encryption)").get();
 
     /** ChaCha counter value: --chacha-counter &lt;int&gt; */
     public static final Option OPT_CHACHA_COUNTER = Option.builder().longOpt("chacha-counter").hasArg().argName("int")
@@ -283,7 +283,7 @@ public final class Kem { // NOPMD
             }
             byte[] iv = parseHexOpt(cmd, OPT_AES_IV);
             if (iv != null) {
-                aes = aes.withIv(iv);
+                aes = aes.withDecryptionIv(iv);
             }
             if (aad != null && aad.length > 0) {
                 aes = aes.withAad(aad);
@@ -299,7 +299,7 @@ public final class Kem { // NOPMD
             ChaChaDataContentBuilder cc = ChaChaDataContentBuilder.builder(session);
             byte[] nonce = parseHexOpt(cmd, OPT_CHACHA_NONCE);
             if (nonce != null) {
-                cc = cc.withNonce(nonce);
+                cc = cc.withDecryptionNonce(nonce);
             }
             // counter is an integer, not bytes; use typed parsed option
             Integer counter = parsedIntOpt(cmd, OPT_CHACHA_COUNTER);

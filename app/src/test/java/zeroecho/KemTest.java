@@ -142,11 +142,10 @@ public class KemTest {
         final int gcmTagBits = 128;
         final String aadAes = "A1B2C3";
         final String aadChaCha = "DEADBEEF";
-        final String nonceChaCha = "00112233445566778899AABB";
 
         System.out.println(method);
         System.out.println("...params: aesSize=" + aesSize + " chachaSize=" + chachaSize + " gcmTagBits=" + gcmTagBits
-                + " aesAAD=" + aadAes + " chachaAAD=" + aadChaCha + " chachaNonce=" + nonceChaCha);
+                + " aesAAD=" + aadAes + " chachaAAD=" + aadChaCha);
 
         // Discover KEM ids via the CLI (ensures we use exactly the ids users will see).
         List<String> kemIds = listKemsViaCli();
@@ -209,14 +208,14 @@ public class KemTest {
                     System.out.println("...[" + kemId + "] ChaCha encrypt");
                     int e = Kem.main(new String[] { "--encrypt", plain.toString(), "--output", enc.toString(),
                             "--keyring", ring.toString(), "--pub", aliases.pub, "--kem", kemId, "--chacha",
-                            "--chacha-nonce", nonceChaCha, "--aad", aadChaCha, "--header" }, new Options());
+                            "--aad", aadChaCha, "--header" }, new Options());
                     if (e != 0) {
                         throw new IllegalStateException("ChaCha encrypt rc=" + e);
                     }
                     System.out.println("...[" + kemId + "] ChaCha decrypt");
                     int d = Kem.main(new String[] { "--decrypt", enc.toString(), "--output", dec.toString(),
                             "--keyring", ring.toString(), "--priv", aliases.prv, "--kem", kemId, "--chacha",
-                            "--chacha-nonce", nonceChaCha, "--aad", aadChaCha, "--header" }, new Options());
+                            "--aad", aadChaCha, "--header" }, new Options());
                     if (d != 0) {
                         throw new IllegalStateException("ChaCha decrypt rc=" + d);
                     }

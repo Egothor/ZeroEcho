@@ -35,11 +35,13 @@ package zeroecho.core.alg.chacha;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.SequenceInputStream;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -52,6 +54,7 @@ import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.err.ProviderFailureException;
 import zeroecho.core.io.CipherTransformInputStreamBuilder;
 import zeroecho.core.spi.ContextAware;
+import zeroecho.sdk.util.RandomSupport;
 
 /**
  * <h2>Abstract streaming cipher context for ChaCha algorithms</h2>
@@ -109,6 +112,7 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
     protected final S spec;
     /** Secure random source for nonce generation. */
     protected final SecureRandom rnd;
+    private final AtomicReference<OperationState> operationState = new AtomicReference<>(OperationState.NEW);
     /** Optional per-operation context for exchanging headers, IVs, etc. */
     protected CtxInterface ctx; // optional
 
@@ -127,7 +131,7 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
         this.key = key;
         this.encrypt = encrypt;
         this.spec = spec;
-        this.rnd = (rnd != null ? rnd : new SecureRandom());
+        this.rnd = (rnd != null ? rnd : RandomSupport.getRandom());
     }
 
     /** {@inheritDoc} */
@@ -188,6 +192,9 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
      */
     @Override
     public InputStream attach(InputStream upstream) throws IOException {
+        java.util.Objects.requireNonNull(upstream, "upstream must not be null");
+        claimEncryption();
+        boolean attached = false;
         try {
             final SymmetricHeaderCodec header = spec.header();
             final boolean hasCtxHeader = ctx != null && header != null;
@@ -198,7 +205,7 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
             }
 
             final Cipher cipher = Cipher.getInstance(jceName());
-            final byte[] nonce = ensureNonce(); // generate or require from ctx
+            final byte[] nonce = ensureNonce();
             initCipher(cipher, nonce);
 
             InputStream out = // new Stream(in, cipher, jceName()); // same stream pattern as AES
@@ -210,9 +217,14 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
                 header.writeHeader(hdr, algorithm, ctx);
                 out = new SequenceInputStream(new ByteArrayInputStream(hdr.toByteArray()), out);
             }
-            return out;
+            attached = true;
+            return encrypt ? new LifecycleInputStream(out) : out;
         } catch (GeneralSecurityException e) {
             throw new ProviderFailureException(jceName() + " attach/init failed", e);
+        } finally {
+            if (!attached) {
+                failEncryption();
+            }
         }
     }
 
@@ -231,8 +243,8 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
      * Ensures a nonce is available in the context.
      *
      * <ul>
-     * <li>For encryption, generates a new nonce if absent and stores it in
-     * context.</li>
+     * <li>For encryption, always generates a new nonce after the context has
+     * been atomically claimed and stores a copy in the context.</li>
      * <li>For decryption, validates presence and correct length.</li>
      * </ul>
      *
@@ -241,22 +253,101 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
      */
     private byte[] ensureNonce() throws IOException {
         final String id = algorithm.id();
-        byte[] nonce = (ctx == null) ? null : ctx.get(ConfluxKeys.iv(id));
+        byte[] nonce;
         if (encrypt) {
-            if (nonce == null) {
-                nonce = new byte[NONCE_LEN];
-                rnd.nextBytes(nonce);
-                if (ctx != null) { // NOPMD
-                    ctx.put(ConfluxKeys.iv(id), nonce);
-                }
-            } else if (nonce.length != NONCE_LEN) {
-                throw new IOException("Nonce length mismatch: expected 12 bytes, got " + nonce.length);
+            nonce = new byte[NONCE_LEN];
+            rnd.nextBytes(nonce);
+            if (ctx != null) {
+                ctx.put(ConfluxKeys.iv(id), nonce.clone());
             }
         } else {
+            nonce = (ctx == null) ? null : ctx.get(ConfluxKeys.iv(id));
             if (nonce == null || nonce.length != NONCE_LEN) {
                 throw new IOException("Nonce missing/invalid for " + jceName() + " decryption");
             }
         }
         return nonce;
+    }
+
+    private void claimEncryption() throws IOException {
+        if (encrypt && !operationState.compareAndSet(OperationState.NEW, OperationState.ENCRYPTING)) {
+            throw new IOException(jceName() + " encryption context is single-use");
+        }
+    }
+
+    private void failEncryption() {
+        if (encrypt) {
+            operationState.set(OperationState.FAILED);
+        }
+    }
+
+    /** Single-use encryption lifecycle states. */
+    private enum OperationState {
+        NEW,
+        ENCRYPTING,
+        COMPLETED,
+        FAILED
+    }
+
+    /** Marks the owning encryption context terminal as its stream is consumed. */
+    private final class LifecycleInputStream extends FilterInputStream {
+        private boolean endOfInput;
+
+        private LifecycleInputStream(InputStream delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public int read() throws IOException {
+            boolean successful = false;
+            try {
+                int value = super.read();
+                successful = true;
+                completeAtEnd(value < 0);
+                return value;
+            } finally {
+                if (!successful) {
+                    failEncryption();
+                }
+            }
+        }
+
+        @Override
+        public int read(byte[] bytes, int offset, int length) throws IOException {
+            boolean successful = false;
+            try {
+                int count = super.read(bytes, offset, length);
+                successful = true;
+                completeAtEnd(count < 0);
+                return count;
+            } finally {
+                if (!successful) {
+                    failEncryption();
+                }
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            boolean successful = false;
+            try {
+                super.close();
+                successful = true;
+                if (!endOfInput) {
+                    failEncryption();
+                }
+            } finally {
+                if (!successful) {
+                    failEncryption();
+                }
+            }
+        }
+
+        private void completeAtEnd(boolean ended) {
+            if (ended) {
+                endOfInput = true;
+                operationState.compareAndSet(OperationState.ENCRYPTING, OperationState.COMPLETED);
+            }
+        }
     }
 }

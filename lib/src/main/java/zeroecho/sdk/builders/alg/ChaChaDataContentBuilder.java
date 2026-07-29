@@ -95,9 +95,9 @@ import zeroecho.sdk.content.api.PlainContent;
  * is supplied via {@link #withHeaderCodec(SymmetricHeaderCodec)}, a context is
  * required; if none was provided, a temporary one is created internally. A
  * default header codec is chosen based on the variant when no custom codec is
- * set. The nonce is typically 12 bytes; if absent during encryption and a
- * context is available, an implementation-specific nonce may be generated and
- * stored in the context.
+ * set. Encryption generates a 12-byte nonce internally after claiming its
+ * single-use context. Headerless decryption may receive a nonce through the
+ * decryption-only configuration method.
  *
  * <h2>Usage examples</h2> <pre>{@code
  * // 1) ChaCha20 stream encryption with generated key and header
@@ -106,10 +106,10 @@ import zeroecho.sdk.content.api.PlainContent;
  *     .withHeader()
  *     .build(true);
  *
- * // 2) ChaCha20-Poly1305 decryption with supplied key, nonce, and AAD
+ * // 2) Headerless ChaCha20-Poly1305 decryption with supplied key, nonce, and AAD
  * DataContent dec = ChaChaDataContentBuilder.builder()
  *     .withKey(secretKey)
- *     .withNonce(nonce12)                  // 12 bytes
+ *     .withDecryptionNonce(nonce12)        // 12 bytes
  *     .withAad("meta".getBytes(StandardCharsets.UTF_8))
  *     .build(false);
  *
@@ -150,7 +150,7 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
     private ChaChaKeyImportSpec importSpec;
 
     private CtxInterface ctx;
-    private byte[] nonce;
+    private byte[] decryptionNonce;
 
     private int initialCounter = 1;
     private boolean initialCounterSet; // = false;
@@ -300,19 +300,20 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
     }
 
     /**
-     * Sets an optional nonce value.
+     * Sets an out-of-band nonce for headerless decryption.
      *
      * <p>
-     * For ChaCha20 and ChaCha20-Poly1305 this is typically 12 bytes. If absent
-     * during encryption and a context is in use, an implementation-specific nonce
-     * may be generated and placed into the context.
+     * For ChaCha20 and ChaCha20-Poly1305 this must be 12 bytes. The value is
+     * rejected when building an encrypting pipeline because encryption always
+     * generates its nonce internally.
      * </p>
      *
-     * @param nonce the nonce bytes; may be null
+     * @param nonce the nonce bytes; must not be null
      * @return {@code this} builder for chaining
+     * @throws NullPointerException if {@code nonce} is {@code null}
      */
-    public ChaChaDataContentBuilder withNonce(byte[] nonce) {
-        this.nonce = nonce;
+    public ChaChaDataContentBuilder withDecryptionNonce(byte[] nonce) {
+        this.decryptionNonce = Objects.requireNonNull(nonce, "nonce must not be null").clone();
         return this;
     }
 
@@ -415,8 +416,8 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
      *
      * <p>
      * If a header is requested and no context is provided, a temporary context is
-     * created. When encrypting with a context, if no nonce is supplied, the
-     * implementation may generate one and store it into the context.
+     * created. Encryption generates its nonce internally; a configured decryption
+     * nonce is rejected for encrypting pipelines.
      * </p>
      *
      * <pre>{@code
@@ -435,20 +436,23 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
      */
     @Override
     public DataContent build(boolean encrypt) { // NOPMD
+        if (encrypt && decryptionNonce != null) {
+            throw new IllegalStateException("A caller-supplied nonce is valid only for ChaCha decryption");
+        }
         final Variant v = inferVariant();
         final String algId = v == Variant.AEAD ? "CHACHA20-POLY1305" : "CHACHA20";
 
         final SecretKey key = resolveKey(algId);
 
         // header → ensure ctx exists
-        if ((headerRequested || headerCodec != null) && ctx == null) {
+        if ((headerRequested || headerCodec != null || decryptionNonce != null) && ctx == null) {
             ctx = Ctx.INSTANCE
                     .getContext("chacha-" + (v == Variant.AEAD ? "aead" : "stream") + "-" + System.nanoTime());
         }
         // fill ctx with runtime params
         if (ctx != null) {
-            if (nonce != null && nonce.length > 0) {
-                ctx.put(ConfluxKeys.iv(algId), nonce);
+            if (decryptionNonce != null && decryptionNonce.length > 0) {
+                ctx.put(ConfluxKeys.iv(algId), decryptionNonce.clone());
             }
             if (v == Variant.AEAD) {
                 if (aad != null) { // NOPMD

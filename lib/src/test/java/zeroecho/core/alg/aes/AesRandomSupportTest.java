@@ -6,18 +6,28 @@ package zeroecho.core.alg.aes;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -31,6 +41,7 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spec.VoidSpec;
 import zeroecho.core.spi.ContextAware;
+import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.util.RandomSupport;
 
 class AesRandomSupportTest {
@@ -89,7 +100,113 @@ class AesRandomSupportTest {
         assertArrayEquals(repeated((byte) 1, 12), firstIv);
         assertArrayEquals(repeated((byte) 2, 12), secondIv);
         assertNotSame(firstIv, secondIv);
-        System.out.println("...randomCalls=" + random.calls);
+        System.out.println("...randomCalls=" + random.calls());
+        System.out.println("ok");
+    }
+
+    @Test
+    void encryptionIgnoresPreseededIvAndContextIsSingleUse() throws Exception {
+        System.out.print("AesRandomSupport/encryptionIgnoresPreseededIvAndContextIsSingleUse...");
+        CountingSecureRandom random = new CountingSecureRandom();
+        CtxInterface session = Ctx.INSTANCE.getContext("aes-preseeded");
+        session.put(ConfluxKeys.iv("AES"), repeated((byte) 9, 12));
+        AesCipherContext context = new AesCipherContext(new AesAlgorithm(), KEY, true, AesSpec.gcm128(null), random);
+        ((ContextAware) context).setContext(session);
+
+        try (InputStream stream = context.attach(new ByteArrayInputStream(new byte[0]))) {
+            stream.readAllBytes();
+        }
+        IOException failure = assertThrows(IOException.class,
+                () -> context.attach(new ByteArrayInputStream(new byte[0])));
+
+        assertArrayEquals(repeated((byte) 1, 12), session.get(ConfluxKeys.iv("AES")));
+        assertEquals(1, random.calls());
+        assertEquals("AES encryption context is single-use", failure.getMessage());
+        System.out.println("...randomCalls=" + random.calls());
+        System.out.println("ok");
+    }
+
+    @Test
+    void streamFailureConsumesEncryptionContext() throws Exception {
+        System.out.print("AesRandomSupport/streamFailureConsumesEncryptionContext...");
+        CountingSecureRandom random = new CountingSecureRandom();
+        AesCipherContext context = new AesCipherContext(new AesAlgorithm(), KEY, true, AesSpec.gcm128(null), random);
+        ((ContextAware) context).setContext(Ctx.INSTANCE.getContext("aes-stream-failure"));
+
+        InputStream failing = new InputStream() {
+            @Override
+            public int read() throws IOException {
+                throw new IOException("controlled input failure");
+            }
+        };
+        try (InputStream stream = context.attach(failing)) {
+            assertThrows(IOException.class, stream::readAllBytes);
+        }
+        IOException reuse = assertThrows(IOException.class,
+                () -> context.attach(new ByteArrayInputStream(new byte[0])));
+
+        assertEquals("AES encryption context is single-use", reuse.getMessage());
+        assertEquals(1, random.calls());
+        System.out.println("...terminalAfterFailure=true");
+        System.out.println("ok");
+    }
+
+    @Test
+    void concurrentEncryptionClaimHasExactlyOneWinner() throws Exception {
+        System.out.print("AesRandomSupport/concurrentEncryptionClaimHasExactlyOneWinner...");
+        CountingSecureRandom random = new CountingSecureRandom();
+        AesCipherContext context = new AesCipherContext(new AesAlgorithm(), KEY, true, AesSpec.gcm128(null), random);
+        ((ContextAware) context).setContext(Ctx.INSTANCE.getContext("aes-concurrent-claim"));
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Callable<Boolean> attempt = () -> {
+                ready.countDown();
+                start.await();
+                try (InputStream stream = context.attach(new ByteArrayInputStream(new byte[0]))) {
+                    stream.readAllBytes();
+                    return true;
+                } catch (IOException expected) {
+                    return false;
+                }
+            };
+            Future<Boolean> first = executor.submit(attempt);
+            Future<Boolean> second = executor.submit(attempt);
+            ready.await();
+            start.countDown();
+
+            assertTrue(first.get() ^ second.get());
+            assertEquals(1, random.calls());
+
+            CountingSecureRandom independentRandom = new CountingSecureRandom();
+            AesCipherContext left = encryptingContext(independentRandom, "aes-independent-left");
+            AesCipherContext right = encryptingContext(independentRandom, "aes-independent-right");
+            Future<byte[]> leftResult = executor.submit(() -> encryptEmpty(left));
+            Future<byte[]> rightResult = executor.submit(() -> encryptEmpty(right));
+            leftResult.get();
+            rightResult.get();
+            assertEquals(2, independentRandom.calls());
+        } finally {
+            executor.close();
+        }
+        System.out.println("...winnerCount=1");
+        System.out.println("...independentRandomCalls=2");
+        System.out.println("ok");
+    }
+
+    @Test
+    void publicBuilderExposesOnlyDecryptionIvConfiguration() throws Exception {
+        System.out.print("AesRandomSupport/publicBuilderExposesOnlyDecryptionIvConfiguration...");
+        List<String> methodNames = Arrays.stream(AesDataContentBuilder.class.getMethods()).map(Method::getName).toList();
+
+        assertFalse(methodNames.contains("withIv"));
+        assertTrue(methodNames.contains("withDecryptionIv"));
+        AesDataContentBuilder builder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
+                .withDecryptionIv(repeated((byte) 1, 12));
+        IllegalStateException failure = assertThrows(IllegalStateException.class, () -> builder.build(true));
+        assertEquals("A caller-supplied IV is valid only for AES decryption", failure.getMessage());
+        System.out.println("...encryptionIvSetter=false");
         System.out.println("ok");
     }
 
@@ -130,6 +247,18 @@ class AesRandomSupportTest {
         }
     }
 
+    private static AesCipherContext encryptingContext(SecureRandom random, String contextName) {
+        AesCipherContext context = new AesCipherContext(new AesAlgorithm(), KEY, true, AesSpec.gcm128(null), random);
+        ((ContextAware) context).setContext(Ctx.INSTANCE.getContext(contextName));
+        return context;
+    }
+
+    private static byte[] encryptEmpty(AesCipherContext context) throws IOException {
+        try (InputStream stream = context.attach(new ByteArrayInputStream(new byte[0]))) {
+            return stream.readAllBytes();
+        }
+    }
+
     private static byte[] repeated(byte value, int length) {
         byte[] result = new byte[length];
         java.util.Arrays.fill(result, value);
@@ -138,12 +267,16 @@ class AesRandomSupportTest {
 
     private static final class CountingSecureRandom extends SecureRandom {
         private static final long serialVersionUID = 1L;
-        private int calls;
+        private final AtomicInteger calls = new AtomicInteger();
 
         @Override
         public void nextBytes(byte[] bytes) {
-            calls++;
-            java.util.Arrays.fill(bytes, (byte) calls);
+            int current = calls.incrementAndGet();
+            java.util.Arrays.fill(bytes, (byte) current);
+        }
+
+        private int calls() {
+            return calls.get();
         }
     }
 }

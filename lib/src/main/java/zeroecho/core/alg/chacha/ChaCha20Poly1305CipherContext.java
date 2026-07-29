@@ -67,10 +67,10 @@ import zeroecho.core.CryptoAlgorithm;
  * ChaCha20Poly1305Spec spec = ChaCha20Poly1305Spec.builder().header(null).build();
  *
  * // Encrypt
- * EncryptionContext enc = new ChaCha20Poly1305CipherContext(alg, key, true, spec, new SecureRandom());
+ * EncryptionContext enc = new ChaCha20Poly1305CipherContext(alg, key, true, spec, null);
  *
  * // Decrypt
- * EncryptionContext dec = new ChaCha20Poly1305CipherContext(alg, key, false, spec, new SecureRandom());
+ * EncryptionContext dec = new ChaCha20Poly1305CipherContext(alg, key, false, spec, null);
  * }</pre>
  *
  * @since 1.0

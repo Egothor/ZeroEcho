@@ -34,10 +34,12 @@
 package zeroecho.core.alg.aes;
 
 import java.io.IOException;
+import java.io.FilterInputStream;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -54,7 +56,6 @@ import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.err.ProviderFailureException;
 import zeroecho.core.io.CipherTransformInputStreamBuilder;
 import zeroecho.core.spi.ContextAware;
-import zeroecho.core.util.Strings;
 import zeroecho.sdk.util.RandomSupport;
 
 /**
@@ -62,9 +63,9 @@ import zeroecho.sdk.util.RandomSupport;
  *
  * <p>
  * IV and optional AAD are exchanged via a {@link conflux.CtxInterface} set with
- * {@link #setContext(conflux.CtxInterface)}. On ENCRYPT, a fresh IV is
- * generated if absent and stored back; on DECRYPT, IV must be present (from
- * context or header).
+ * {@link #setContext(conflux.CtxInterface)}. Encryption always generates a fresh
+ * IV after atomically claiming the context; a caller-provided IV is never used
+ * for encryption. Decryption requires the IV from the context or encoded header.
  * </p>
  *
  * <p>
@@ -86,6 +87,7 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
     private final boolean encrypt;
     private final AesSpec spec;
     private final SecureRandom rnd;
+    private final AtomicReference<OperationState> operationState = new AtomicReference<>(OperationState.NEW);
 
     private volatile CtxInterface ctx; // NOPMD
 
@@ -172,6 +174,8 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
     @Override
     public InputStream attach(InputStream upstream) throws IOException {
         Objects.requireNonNull(upstream, "upstream must not be null");
+        claimEncryption();
+        boolean attached = false;
         try {
             // If both spec.header() and ctx are present, let this context read/write the
             // header.
@@ -186,8 +190,7 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
             }
 
             Cipher cipher = Cipher.getInstance(jcaTransform(spec));
-            initCipher(cipher); // consumes IV/AAD from ctx if present; generates IV on ENCRYPT and may store it
-                                // back; sets tagBits for GCM
+            initCipher(cipher);
 
             InputStream out = // new Stream(in, cipher, spec);
                     CipherTransformInputStreamBuilder.builder().withCipher(cipher).withUpstream(in)
@@ -200,9 +203,14 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
                 header.writeHeader(hdr, algorithm, ctx);
                 out = new java.io.SequenceInputStream(new java.io.ByteArrayInputStream(hdr.toByteArray()), out);
             }
-            return out;
+            attached = true;
+            return encrypt ? new LifecycleInputStream(out) : out;
         } catch (GeneralSecurityException e) {
             throw new ProviderFailureException("AES attach/init failed", e);
+        } finally {
+            if (!attached) {
+                failEncryption();
+            }
         }
     }
 
@@ -221,21 +229,18 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
         };
     }
 
-    private void initCipher(Cipher cipher) throws GeneralSecurityException, IOException { // NOPMD
+    private void initCipher(Cipher cipher) throws GeneralSecurityException, IOException {
         final String id = algorithm.id();
-        byte[] iv = getCtxBytes(ConfluxKeys.iv(id));
+        byte[] iv;
 
         final int ivLen = (spec.mode() == AesSpec.Mode.GCM) ? GCM_DEFAULT_IV_BYTES : AES_BLOCK;
 
         if (encrypt) {
-            if (iv == null) {
-                iv = new byte[ivLen];
-                rnd.nextBytes(iv);
-                putCtxBytes(ConfluxKeys.iv(id), iv);
-            } else if (iv.length != ivLen) {
-                throw new IOException("IV length mismatch: expected " + ivLen + " bytes, got " + iv.length);
-            }
+            iv = new byte[ivLen];
+            rnd.nextBytes(iv);
+            putCtxBytes(ConfluxKeys.iv(id), iv.clone());
         } else {
+            iv = getCtxBytes(ConfluxKeys.iv(id));
             if (iv == null) {
                 throw new IOException("IV not found in context for AES " + spec.mode() + " decryption");
             }
@@ -267,10 +272,7 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
                 }
                 cipher.updateAAD(aad);
 
-                if (LOG.isLoggable(Level.FINE)) {
-                    LOG.log(Level.FINE, "GCM setup: tagBits={0} iv={1} aad={2}",
-                            new Object[] { tagBits, Strings.toShortHexString(iv), Strings.toShortHexString(aad) });
-                }
+                LOG.log(Level.FINE, "GCM setup complete: tagBits={0}", tagBits);
 
                 break;
             }
@@ -292,6 +294,88 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
     private void putCtxBytes(conflux.Key<byte[]> key, byte[] value) {
         if (ctx != null && key != null) {
             ctx.put(key, value);
+        }
+    }
+
+    private void claimEncryption() throws IOException {
+        if (encrypt && !operationState.compareAndSet(OperationState.NEW, OperationState.ENCRYPTING)) {
+            throw new IOException("AES encryption context is single-use");
+        }
+    }
+
+    private void failEncryption() {
+        if (encrypt) {
+            operationState.set(OperationState.FAILED);
+        }
+    }
+
+    /** Single-use encryption lifecycle states. */
+    private enum OperationState {
+        NEW,
+        ENCRYPTING,
+        COMPLETED,
+        FAILED
+    }
+
+    /** Marks the owning encryption context terminal as its stream is consumed. */
+    private final class LifecycleInputStream extends FilterInputStream {
+        private boolean endOfInput;
+
+        private LifecycleInputStream(InputStream delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public int read() throws IOException {
+            boolean successful = false;
+            try {
+                int value = super.read();
+                successful = true;
+                completeAtEnd(value < 0);
+                return value;
+            } finally {
+                if (!successful) {
+                    failEncryption();
+                }
+            }
+        }
+
+        @Override
+        public int read(byte[] bytes, int offset, int length) throws IOException {
+            boolean successful = false;
+            try {
+                int count = super.read(bytes, offset, length);
+                successful = true;
+                completeAtEnd(count < 0);
+                return count;
+            } finally {
+                if (!successful) {
+                    failEncryption();
+                }
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            boolean successful = false;
+            try {
+                super.close();
+                successful = true;
+                if (!endOfInput) {
+                    failEncryption();
+                }
+            } finally {
+                if (!successful) {
+                    failEncryption();
+                }
+            }
+        }
+
+        private void completeAtEnd(boolean ended) {
+            if (ended) {
+                endOfInput = true;
+                operationState.compareAndSet(OperationState.ENCRYPTING, OperationState.COMPLETED);
+            }
         }
     }
 }

@@ -204,12 +204,12 @@ class HybridDerivedAesDemoTest {
                             .transcript(transcript.toByteArray())
                             // ...Inject explicit AAD.
                             .aad(aad)
-                            // ...Apply derived key(256b) and IV(12B) to AES-GCM with header.
+                            // ...Apply the derived key to AES-GCM; encryption creates the IV.
                             .applyToAesGcm(AesDataContentBuilder.builder(session)
                                     // ...Store IV in header for decrypt side.
                                     .withHeader()
                                     // ...Use AES-GCM with 128-bit authentication tag.
-                                    .modeGcm(128), 256, 12))
+                                    .modeGcm(128), 256))
                     // ...Finalize pipeline.
                     .build();
 
@@ -223,7 +223,7 @@ class HybridDerivedAesDemoTest {
             DataContent dec = DataContentChainBuilder.decrypt()
                     // ...Input: ciphertext bytes.
                     .add(PlainBytesBuilder.builder().bytes(ciphertext))
-                    // ...AEAD: apply the same label/transcript/AAD to get identical key/IV.
+                    // ...AEAD: apply the same label/transcript/AAD to get the identical key.
                     .add(HybridDerived.from(exporter)
                             // ...Same purpose label as encryption.
                             .label("app/enc/aes-gcm")
@@ -231,12 +231,12 @@ class HybridDerivedAesDemoTest {
                             .transcript(transcript.toByteArray())
                             // ...Same explicit AAD as encryption.
                             .aad(aad)
-                            // ...Apply derived key and IV to AES-GCM with header.
+                            // ...Apply the derived key; decryption reads the IV from the header.
                             .applyToAesGcm(AesDataContentBuilder.builder(session)
                                     // ...Parse IV from header.
                                     .withHeader()
                                     // ...Use AES-GCM with 128-bit authentication tag.
-                                    .modeGcm(128), 256, 12))
+                                    .modeGcm(128), 256))
                     // ...Finalize pipeline.
                     .build();
 
@@ -365,7 +365,7 @@ class HybridDerivedAesDemoTest {
             // ...Use AES-GCM with 128-bit authentication tag.
             aesEnc.modeGcm(128);
 
-            // ...Inject derived key/IV/AAD into AES builder.
+            // ...Inject the derived key and AAD into the AES builder.
             HybridDerived.from(exporter)
                     // ...Purpose separation label for AEAD.
                     .label("app/enc/aes-gcm")
@@ -373,8 +373,8 @@ class HybridDerivedAesDemoTest {
                     .transcript(transcript.toByteArray())
                     // ...Inject explicit AAD.
                     .aad(aad)
-                    // ...Apply derived key(256b) and IV(12B).
-                    .applyToAesGcm(aesEnc, 256, 12);
+                    // ...Apply the derived 256-bit key; encryption creates the IV.
+                    .applyToAesGcm(aesEnc, 256);
 
             // ...Build encryption pipeline.
             DataContent enc = DataContentChainBuilder.encrypt()
@@ -398,7 +398,7 @@ class HybridDerivedAesDemoTest {
             // ...Use AES-GCM with 128-bit authentication tag.
             aesDec.modeGcm(128);
 
-            // ...Inject the same derived key/IV/AAD into decryption builder.
+            // ...Inject the same derived key and AAD into the decryption builder.
             HybridDerived.from(exporter)
                     // ...Same purpose label.
                     .label("app/enc/aes-gcm")
@@ -406,8 +406,8 @@ class HybridDerivedAesDemoTest {
                     .transcript(transcript.toByteArray())
                     // ...Same explicit AAD.
                     .aad(aad)
-                    // ...Apply the same derived key and IV.
-                    .applyToAesGcm(aesDec, 256, 12);
+                    // ...Apply the same derived key; the IV is read from the header.
+                    .applyToAesGcm(aesDec, 256);
 
             // ...Build decryption pipeline.
             DataContent dec = DataContentChainBuilder.decrypt()
@@ -512,12 +512,12 @@ class HybridDerivedAesDemoTest {
                         .transcript(transcript.toByteArray())
                         // ...Inject explicit AAD.
                         .aad(aad)
-                        // ...Apply derived key(256b) and IV(12B) to AES-GCM with header.
+                        // ...Apply the derived key to AES-GCM; encryption creates the IV.
                         .applyToAesGcm(AesDataContentBuilder.builder(session)
                                 // ...Store IV in header for decrypt side.
                                 .withHeader()
                                 // ...Use AES-GCM with 128-bit authentication tag.
-                                .modeGcm(128), 256, 12))
+                                .modeGcm(128), 256))
                 // ...Finalize pipeline.
                 .build();
 
@@ -572,7 +572,7 @@ class HybridDerivedAesDemoTest {
             DataContent dec = DataContentChainBuilder.decrypt()
                     // ...Input: ciphertext bytes.
                     .add(PlainBytesBuilder.builder().bytes(ciphertext))
-                    // ...AEAD: apply the same label/transcript/AAD to get identical key/IV.
+                    // ...AEAD: apply the same label/transcript/AAD to get the identical key.
                     .add(HybridDerived.from(exporterDec)
                             // ...Same purpose label as encryption.
                             .label("app/local/aes-gcm")
@@ -580,12 +580,12 @@ class HybridDerivedAesDemoTest {
                             .transcript(transcript.toByteArray())
                             // ...Same explicit AAD.
                             .aad(aad)
-                            // ...Apply derived key and IV to AES-GCM with header.
+                            // ...Apply the derived key; decryption reads the IV from the header.
                             .applyToAesGcm(AesDataContentBuilder.builder(session)
                                     // ...Parse IV from header.
                                     .withHeader()
                                     // ...Use AES-GCM with 128-bit authentication tag.
-                                    .modeGcm(128), 256, 12))
+                                    .modeGcm(128), 256))
                     // ...Finalize pipeline.
                     .build();
 

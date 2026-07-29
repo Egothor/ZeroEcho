@@ -78,23 +78,22 @@
  * <h2>Runtime parameters and context exchange</h2>
  * <p>
  * Streaming contexts exchange ephemeral parameters through a Conflux session
- * context using namespaced keys. For ChaCha20 and ChaCha20-Poly1305, a 12-byte
- * nonce is required for each operation. On encryption, if the session context
- * does not provide a nonce, the context generates a fresh value and stores it
- * back into the session; on decryption the nonce must already be present and
- * have the correct length. ChaCha20 also uses an initial counter sourced from
- * {@link ChaChaSpec} and optionally overridden by the session context. When a
- * header codec is configured and a session context is set, encryption prepends
- * a minimal header and decryption reads it first to hydrate the session before
- * initializing the cipher.
+ * context using namespaced keys. Each ChaCha20 and ChaCha20-Poly1305 encryption
+ * context is single-use: after an atomic claim it generates a fresh 12-byte
+ * nonce and stores it back into the session. On decryption the nonce must
+ * already be present and have the correct length. ChaCha20 also uses an initial
+ * counter sourced from {@link ChaChaSpec} and optionally overridden by the
+ * session context. When a header codec is configured and a session context is
+ * set, encryption prepends a minimal header and decryption reads it first to
+ * hydrate the session before initializing the cipher.
  * </p>
  *
  * <h2>Safety and validation</h2>
  * <ul>
- * <li><b>Nonce uniqueness:</b> Applications must ensure nonces are unique per
- * key. The contexts will generate nonces for encryption, but cross-process
- * uniqueness is the caller's responsibility. Decryption fails if a nonce is
- * missing or has an unexpected size.</li>
+ * <li><b>Nonce lifecycle:</b> Each encryption context is single-use and
+ * generates its nonce internally after an atomic operation claim. Decryption
+ * consumes the encoded or out-of-band nonce and fails if it is missing or has
+ * an unexpected size.</li>
  *
  * <li><b>Counter policy (ChaCha20):</b> The default initial counter is 1. A
  * context may override the spec value through the session key dedicated to

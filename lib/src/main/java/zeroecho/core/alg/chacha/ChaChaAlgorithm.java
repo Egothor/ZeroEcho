@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.core.alg.chacha;
 
+import zeroecho.sdk.util.RandomSupport;
 /**
  * <h2>ChaCha20 (stream) algorithm</h2>
  *
@@ -82,12 +83,12 @@ public final class ChaChaAlgorithm extends AbstractChaChaAlgorithm {
         // ENCRYPT
         capability(zeroecho.core.AlgorithmFamily.SYMMETRIC, zeroecho.core.KeyUsage.ENCRYPT,
                 zeroecho.core.context.EncryptionContext.class, javax.crypto.SecretKey.class, ChaChaSpec.class,
-                (k, s) -> new ChaChaCipherContext(this, k, true, s, new java.security.SecureRandom()),
+                (k, s) -> new ChaChaCipherContext(this, k, true, s, RandomSupport.getRandom()),
                 () -> ChaChaSpec.builder().initialCounter(1).header(null).build());
         // DECRYPT
         capability(zeroecho.core.AlgorithmFamily.SYMMETRIC, zeroecho.core.KeyUsage.DECRYPT,
                 zeroecho.core.context.EncryptionContext.class, javax.crypto.SecretKey.class, ChaChaSpec.class,
-                (k, s) -> new ChaChaCipherContext(this, k, false, s, new java.security.SecureRandom()),
+                (k, s) -> new ChaChaCipherContext(this, k, false, s, RandomSupport.getRandom()),
                 () -> ChaChaSpec.builder().initialCounter(1).header(null).build());
 
         // VoidSpec defaults (mirrors AES)
@@ -95,14 +96,14 @@ public final class ChaChaAlgorithm extends AbstractChaChaAlgorithm {
                 zeroecho.core.context.EncryptionContext.class, javax.crypto.SecretKey.class,
                 zeroecho.core.spec.VoidSpec.class,
                 (k, v) -> new ChaChaCipherContext(this, k, true,
-                        ChaChaSpec.builder().initialCounter(1).header(null).build(), new java.security.SecureRandom()),
+                        ChaChaSpec.builder().initialCounter(1).header(null).build(), RandomSupport.getRandom()),
                 () -> zeroecho.core.spec.VoidSpec.INSTANCE);
 
         capability(zeroecho.core.AlgorithmFamily.SYMMETRIC, zeroecho.core.KeyUsage.DECRYPT,
                 zeroecho.core.context.EncryptionContext.class, javax.crypto.SecretKey.class,
                 zeroecho.core.spec.VoidSpec.class,
                 (k, v) -> new ChaChaCipherContext(this, k, false,
-                        ChaChaSpec.builder().initialCounter(1).header(null).build(), new java.security.SecureRandom()),
+                        ChaChaSpec.builder().initialCounter(1).header(null).build(), RandomSupport.getRandom()),
                 () -> zeroecho.core.spec.VoidSpec.INSTANCE);
     }
 }

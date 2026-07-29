@@ -128,7 +128,6 @@ public class AesGcmCrossCheckTest {
 
         // --- test vectors ---
         byte[] msg = rand(SIZE);
-        byte[] iv = rand(12); // 12-byte IV for GCM
         byte[] aad = "test-aad-123".getBytes();
 
         // --- key (either via your builder or direct JCA; both fine) ---
@@ -139,10 +138,8 @@ public class AesGcmCrossCheckTest {
         // kg.init(256);
         // SecretKey key = kg.generateKey();
 
-        // --- per-test context; store IV/AAD under the names AesCipherContext expects
-        // ---
+        // --- per-test context; encryption generates IV and stores it here ---
         CtxInterface session = Ctx.INSTANCE.getContext("aes-gcm-xchk-" + System.nanoTime());
-        session.put(ConfluxKeys.iv("AES"), iv);
         session.put(ConfluxKeys.aad("AES"), aad);
 
         AesSpec spec = AesSpec.gcm128(null);
@@ -152,6 +149,7 @@ public class AesGcmCrossCheckTest {
         ((ContextAware) enc).setContext(session);
         byte[] ct_stream = readAll(enc.attach(new ByteArrayInputStream(msg)));
         enc.close();
+        byte[] iv = session.get(ConfluxKeys.iv("AES"));
 
         // === JCA ENCRYPT (reference) ===
         byte[] ct_jca = jcaGcmEncrypt(key, iv, TAG_BITS, aad, msg);

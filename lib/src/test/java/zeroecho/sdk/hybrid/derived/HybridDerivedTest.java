@@ -79,7 +79,7 @@ public class HybridDerivedTest {
         AesDataContentBuilder encAes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader().modeGcm(128);
 
         AesDataContentBuilder returnedEnc = HybridDerived.from(exporter).label("app/enc/aes").transcript(transcript)
-                .aad(aad).applyToAesGcm(encAes, 256, 12);
+                .aad(aad).applyToAesGcm(encAes, 256);
 
         System.out.println("...returnedEncSame=" + (returnedEnc == encAes));
         assertSame(encAes, returnedEnc);
@@ -90,8 +90,8 @@ public class HybridDerivedTest {
 
         AesDataContentBuilder decAes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader().modeGcm(128);
 
-        HybridDerived.from(exporter).label("app/enc/aes").transcript(transcript).aad(aad).applyToAesGcm(decAes, 256,
-                12);
+        HybridDerived.from(exporter).label("app/enc/aes").transcript(transcript).aad(aad)
+                .applyToAesGcm(decAes, 256);
 
         byte[] out = runDecrypt(decAes, ciphertext);
         System.out.println("...outPrefix=" + shortHex(out, 32));
@@ -111,8 +111,8 @@ public class HybridDerivedTest {
 
         AesDataContentBuilder encAes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader().modeGcm(128);
 
-        HybridDerived.from(exporter).label("app/enc/aes").transcript(transcript).aad(aad).applyToAesGcm(encAes, 256,
-                12);
+        HybridDerived.from(exporter).label("app/enc/aes").transcript(transcript).aad(aad)
+                .applyToAesGcm(encAes, 256);
 
         byte[] ciphertext = runEncrypt(encAes, msg);
         System.out.println("...ciphertextLen=" + ciphertext.length);
@@ -121,7 +121,7 @@ public class HybridDerivedTest {
 
         // ...label mismatch -> wrong key/iv/aad -> decryption must fail
         HybridDerived.from(exporter).label("app/enc/aes_WRONG").transcript(transcript).aad(aad)
-                .applyToAesGcm(decAesWrong, 256, 12);
+                .applyToAesGcm(decAesWrong, 256);
 
         assertThrows(Exception.class, () -> runDecrypt(decAesWrong, ciphertext));
 
@@ -140,7 +140,7 @@ public class HybridDerivedTest {
         ChaChaDataContentBuilder encChaCha = ChaChaDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader();
 
         ChaChaDataContentBuilder returnedEnc = HybridDerived.from(exporter).label("app/enc/chacha")
-                .transcript(transcript).aad(aad).applyToChaChaAead(encChaCha, 256, 12);
+                .transcript(transcript).aad(aad).applyToChaChaAead(encChaCha, 256);
 
         System.out.println("...returnedEncSame=" + (returnedEnc == encChaCha));
         assertSame(encChaCha, returnedEnc);
@@ -152,7 +152,7 @@ public class HybridDerivedTest {
         ChaChaDataContentBuilder decChaCha = ChaChaDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withHeader();
 
         HybridDerived.from(exporter).label("app/enc/chacha").transcript(transcript).aad(aad)
-                .applyToChaChaAead(decChaCha, 256, 12);
+                .applyToChaChaAead(decChaCha, 256);
 
         byte[] out = runDecrypt(decChaCha, ciphertext);
         System.out.println("...outPrefix=" + shortHex(out, 32));

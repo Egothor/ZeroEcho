@@ -34,6 +34,7 @@
 package zeroecho.core.alg.chacha;
 
 import zeroecho.core.SymmetricHeaderCodec;
+import zeroecho.sdk.util.RandomSupport;
 
 /**
  * <h2>ChaCha20-Poly1305 (AEAD) algorithm</h2>
@@ -101,12 +102,12 @@ public final class ChaCha20Poly1305Algorithm extends AbstractChaChaAlgorithm {
         super("CHACHA20-POLY1305", "ChaCha20-Poly1305 (AEAD)");
         capability(zeroecho.core.AlgorithmFamily.SYMMETRIC, zeroecho.core.KeyUsage.ENCRYPT,
                 zeroecho.core.context.EncryptionContext.class, javax.crypto.SecretKey.class, ChaCha20Poly1305Spec.class,
-                (k, s) -> new ChaCha20Poly1305CipherContext(this, k, true, s, new java.security.SecureRandom()),
+                (k, s) -> new ChaCha20Poly1305CipherContext(this, k, true, s, RandomSupport.getRandom()),
                 () -> ChaCha20Poly1305Spec.builder().header(null).build());
 
         capability(zeroecho.core.AlgorithmFamily.SYMMETRIC, zeroecho.core.KeyUsage.DECRYPT,
                 zeroecho.core.context.EncryptionContext.class, javax.crypto.SecretKey.class, ChaCha20Poly1305Spec.class,
-                (k, s) -> new ChaCha20Poly1305CipherContext(this, k, false, s, new java.security.SecureRandom()),
+                (k, s) -> new ChaCha20Poly1305CipherContext(this, k, false, s, RandomSupport.getRandom()),
                 () -> ChaCha20Poly1305Spec.builder().header(null).build());
 
         // VoidSpec defaults like AES-GCM
@@ -114,14 +115,14 @@ public final class ChaCha20Poly1305Algorithm extends AbstractChaChaAlgorithm {
                 zeroecho.core.context.EncryptionContext.class, javax.crypto.SecretKey.class,
                 zeroecho.core.spec.VoidSpec.class,
                 (k, v) -> new ChaCha20Poly1305CipherContext(this, k, true,
-                        ChaCha20Poly1305Spec.builder().header(null).build(), new java.security.SecureRandom()),
+                        ChaCha20Poly1305Spec.builder().header(null).build(), RandomSupport.getRandom()),
                 () -> zeroecho.core.spec.VoidSpec.INSTANCE);
 
         capability(zeroecho.core.AlgorithmFamily.SYMMETRIC, zeroecho.core.KeyUsage.DECRYPT,
                 zeroecho.core.context.EncryptionContext.class, javax.crypto.SecretKey.class,
                 zeroecho.core.spec.VoidSpec.class,
                 (k, v) -> new ChaCha20Poly1305CipherContext(this, k, false,
-                        ChaCha20Poly1305Spec.builder().header(null).build(), new java.security.SecureRandom()),
+                        ChaCha20Poly1305Spec.builder().header(null).build(), RandomSupport.getRandom()),
                 () -> zeroecho.core.spec.VoidSpec.INSTANCE);
     }
 }
