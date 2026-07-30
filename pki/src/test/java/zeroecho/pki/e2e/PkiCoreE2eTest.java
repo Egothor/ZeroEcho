@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.e2e;
 
+import java.math.BigInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -101,7 +102,7 @@ import zeroecho.pki.api.status.StatusObjectGenerateCommand;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.core.ManagedCaIssuance;
-import zeroecho.pki.impl.core.VerifiedIssuanceCandidate;
+import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
@@ -160,8 +161,7 @@ public final class PkiCoreE2eTest {
                     new CertificationRequest(runtime.framework().formatId(),
                             new EncodedObject(Encoding.DER, makeCsr(leafKey, "CN=Matrix Leaf").getEncoded())));
 
-            issuance.issueEndEntity(new IssueEndEntityCommand(rootCaId, leafRequest, "default", Optional.empty(),
-                    emptyAttributes()));
+            issuance.issueEndEntity(new IssueEndEntityCommand(rootCaId, leafRequest, "default", Optional.empty()));
             assertEquals(List.of(unusable.credentialId(), usable.credentialId()), List.copyOf(resolved));
             resolved.clear();
 
@@ -215,7 +215,7 @@ public final class PkiCoreE2eTest {
             ParsedCertificationRequest parsed = runtime.certificationRequestService().parse(request);
             PkiException endEntityFailure = assertThrows(PkiException.class,
                     () -> runtime.issuanceService().issueEndEntity(new IssueEndEntityCommand(rootCaId, parsed,
-                            "default", Optional.empty(), emptyAttributes())));
+                            "default", Optional.empty())));
             assertTrue(endEntityFailure.getMessage().contains("ISSUER_CREDENTIAL_UNAVAILABLE"));
 
             assertThrows(PkiException.class,
@@ -282,9 +282,7 @@ public final class PkiCoreE2eTest {
             reqSvc.store(parsed, RequestStorePolicy.STORE_ALWAYS);
 
             CredentialBundle bundle = issSvc.issueEndEntity(new IssueEndEntityCommand(rootCaId, parsed, "default",
-                    Optional.of(new Validity(Instant.now().minus(Duration.ofMinutes(1)),
-                            Instant.now().plus(Duration.ofDays(365)))),
-                    emptyAttributes()));
+                    Optional.empty()));
 
             assertNotNull(bundle);
             System.out.println("...issuedCredentialId=" + bundle.credential().credentialId().value());
@@ -342,7 +340,7 @@ public final class PkiCoreE2eTest {
 
             assertThrows(PkiException.class,
                     () -> issuance.issueEndEntity(new IssueEndEntityCommand(rootCaId, leafRequest, "default",
-                            Optional.empty(), emptyAttributes())));
+                            Optional.empty())));
             assertThrows(PkiException.class,
                     () -> caService.createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(),
                             rootCaId, new SubjectRef("CN=Rejected Next"), "default",
@@ -399,7 +397,8 @@ public final class PkiCoreE2eTest {
 
     private static Credential copyWithId(Credential source, PkiId id) {
         return new Credential(id, source.formatId(), source.issuerRef(), source.subjectRef(), source.validity(),
-                source.serialOrUniqueId(), source.publicKeyId(), source.profileId(), source.status(), source.encoded(),
+                source.serialOrUniqueId(), source.publicKeyId(), source.profileBinding(), source.status(),
+                source.encoded(),
                 source.attributes());
     }
 
@@ -415,9 +414,9 @@ public final class PkiCoreE2eTest {
         }
 
         @Override
-        public CredentialBundle issueEndEntity(VerifiedIssuanceCandidate candidate) {
+        public CredentialBundle issueEndEntity(ValidatedCertificateRequest candidate, EncodedObject issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
             endEntityCalls.incrementAndGet();
-            return delegate.issueEndEntity(candidate);
+            return delegate.issueEndEntity(candidate, issuerCertificate, issuerKeyRef, serial);
         }
 
         @Override

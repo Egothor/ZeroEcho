@@ -61,6 +61,7 @@ import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
@@ -175,7 +176,8 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         Credential credential = new Credential(new PkiId("credential:audit"), new FormatId(sentinel),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=Audit"),
                 new Validity(NOW.minusSeconds(60), NOW.plusSeconds(60)), "audit", new PkiId("key:audit"),
-                "default", CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, new byte[] { 1 }),
+                new CaProfileBinding("default"), CredentialStatus.ISSUED,
+                new EncodedObject(Encoding.DER, new byte[] { 1 }),
                 new SimpleAttributeSet());
         AtomicReference<AuditEvent> recorded = new AtomicReference<>();
 
@@ -236,7 +238,8 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
     private static Credential credential(String suffix, CredentialStatus status, Instant notBefore, Instant notAfter) {
         return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
-                new Validity(notBefore, notAfter), suffix, new PkiId("key:" + suffix), "default", status,
+                new Validity(notBefore, notAfter), suffix, new PkiId("key:" + suffix),
+                new CaProfileBinding("default"), status,
                 new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }), new SimpleAttributeSet());
     }
 

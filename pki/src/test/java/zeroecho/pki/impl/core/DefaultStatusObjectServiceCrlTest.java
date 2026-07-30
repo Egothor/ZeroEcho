@@ -6,6 +6,7 @@ package zeroecho.pki.impl.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -16,7 +17,6 @@ import java.math.BigInteger;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
@@ -51,12 +51,12 @@ import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
-import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.ca.CaCreateCommand;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
@@ -369,9 +369,10 @@ final class DefaultStatusObjectServiceCrlTest {
     }
 
     private static Credential copy(Credential template, String suffix, FormatId formatId, EncodedObject encoded) {
+        CaProfileBinding binding = assertInstanceOf(CaProfileBinding.class, template.profileBinding());
         return new Credential(new PkiId("credential:" + suffix), formatId, template.issuerRef(),
                 template.subjectRef(), template.validity(), template.serialOrUniqueId(),
-                template.publicKeyId(), template.profileId(), CredentialStatus.ISSUED, encoded,
+                template.publicKeyId(), new CaProfileBinding(binding.profileId()), CredentialStatus.ISSUED, encoded,
                 template.attributes());
     }
 
@@ -395,9 +396,7 @@ final class DefaultStatusObjectServiceCrlTest {
                 new VerificationPolicy(true, Optional.empty()));
         IssuanceService issuance = runtime.issuanceService();
         return issuance.issueEndEntity(new IssueEndEntityCommand(caId, parsed, "default",
-                Optional.of(new Validity(EVALUATION_TIME.minus(Duration.ofDays(1)),
-                        EVALUATION_TIME.plus(Duration.ofDays(365)))),
-                emptyAttributes())).credential();
+                Optional.empty())).credential();
     }
 
     private static PKCS10CertificationRequest certificationRequest(KeyPair pair, String commonName)

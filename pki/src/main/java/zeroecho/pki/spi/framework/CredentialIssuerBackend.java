@@ -33,10 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.spi.framework;
 
+import java.math.BigInteger;
+
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
 import zeroecho.pki.impl.core.ManagedCaIssuance;
-import zeroecho.pki.impl.core.VerifiedIssuanceCandidate;
+import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 
 /**
  * SPI contract for framework-specific credential issuance backends.
@@ -105,8 +109,8 @@ public interface CredentialIssuerBackend {
      *
      * <p>
      * This operation produces a credential for a non-CA subject, typically from a
-     * cryptographically verified certification request carried by the opaque
-     * {@link VerifiedIssuanceCandidate}. The returned {@link CredentialBundle} may
+     * cryptographically verified and profile-authorized request carried by the opaque
+     * {@link ValidatedCertificateRequest}. The returned {@link CredentialBundle} may
      * contain the issued leaf credential together with any additional runtime
      * bundle material defined by the concrete framework, such as chain elements or
      * accompanying metadata.
@@ -118,14 +122,15 @@ public interface CredentialIssuerBackend {
      * </p>
      *
      * <p>
-     * The candidate carries all framework-specific issuance inputs
-     * required by the concrete implementation, including any issuer wiring
-     * attributes, profile identifiers, validity overrides, and subject request
-     * material. The exact interpretation of those fields is framework-specific.
+     * No generic requester attributes or raw CSR extension bytes cross this
+     * boundary. Issuer material and the positive serial are supplied independently
+     * by the trusted core issuance service.
      * </p>
      *
-     * @param candidate gate-produced verified issuance candidate; must not be
-     *                  {@code null}
+     * @param request gate-produced validated request; must not be {@code null}
+     * @param issuerCertificate trusted encoded issuer certificate
+     * @param issuerKeyRef trusted issuer signing-key reference
+     * @param serial trusted positive issuer-controlled serial
      * @return issued credential bundle, never {@code null}
      * @throws IllegalArgumentException if {@code command} is {@code null} or
      *                                  structurally invalid for the concrete
@@ -134,7 +139,8 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    CredentialBundle issueEndEntity(VerifiedIssuanceCandidate candidate);
+    CredentialBundle issueEndEntity(ValidatedCertificateRequest request, EncodedObject issuerCertificate,
+            KeyRef issuerKeyRef, BigInteger serial);
 
     /**
      * Issues a CA credential for an existing CA subject entity.

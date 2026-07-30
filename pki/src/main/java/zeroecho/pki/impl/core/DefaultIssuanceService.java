@@ -33,7 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.math.BigInteger;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
@@ -41,7 +43,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 
@@ -49,10 +50,9 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuanceService;
-import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
@@ -71,12 +71,14 @@ import zeroecho.pki.api.issuance.ReissueCommand;
 import zeroecho.pki.api.issuance.RenewCommand;
 import zeroecho.pki.api.issuance.ReplaceCommand;
 import zeroecho.pki.api.issuance.VerificationPolicy;
+import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
-import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
+import zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
@@ -95,20 +97,20 @@ import zeroecho.pki.spi.store.PkiStore;
  * </p>
  *
  * <p>
- * The implementation intentionally enforces only a limited set of issuance-side
- * invariants:
+ * The implementation enforces these issuance-side invariants:
  * </p>
  * <ul>
  * <li>the issuer CA must exist,</li>
  * <li>the issuer CA must be in {@link CaState#ACTIVE} state,</li>
  * <li>the issuer CA must expose an effectively usable credential for the active
  * framework {@link FormatId},</li>
- * <li>issuer material required by the current X.509 runtime wiring must be
- * present in issuance overrides before the backend is invoked,</li>
- * <li>the backend result is defensively snapshotted and its X.509 subject key,
- * subject, issuer, signature, identifiers, status, profile, serial, and validity
- * metadata must match the verified request and selected issuer before
- * persistence.</li>
+ * <li>the signed CSR is reparsed into bounded typed subject and SAN values and
+ * validated against one exact active deny-by-default profile,</li>
+ * <li>only a gate-produced {@link ValidatedCertificateRequest} crosses the
+ * issuer-backend boundary,</li>
+ * <li>the backend result is reparsed and its subject, SAN, public key, issuer,
+ * serial, validity, BasicConstraints, KU, EKU, extension criticality, complete
+ * extension set, and signature must match before persistence.</li>
  * </ul>
  *
  * <p>
@@ -121,8 +123,8 @@ import zeroecho.pki.spi.store.PkiStore;
  * <h2>Security considerations</h2>
  * <ul>
  * <li>This service does not access private key material directly.</li>
- * <li>Issuer key usage is represented only through {@link KeyRef} indirection
- * in backend overrides.</li>
+ * <li>Issuer key usage is represented only through an opaque key reference
+ * supplied by the trusted issuer selection boundary.</li>
  * <li>The correctness of issuance semantics depends on the configured
  * {@link CredentialFramework} matching the requested runtime format and on the
  * backend honoring the supplied issuer material.</li>
@@ -153,6 +155,8 @@ public final class DefaultIssuanceService implements IssuanceService {
     private final CredentialIssuerBackend issuerBackend;
     private final AuditSink auditSink;
     private final EffectiveCredentialStatusResolver statusResolver;
+    private final ProfileService profileService;
+    private final Clock clock;
 
     /**
      * Creates the issuance service bound to the supplied persistence and framework
@@ -172,12 +176,14 @@ public final class DefaultIssuanceService implements IssuanceService {
      */
     public DefaultIssuanceService(PkiStore store, CredentialFramework framework,
             CredentialIssuerBackend issuerBackend, AuditSink auditSink,
-            EffectiveCredentialStatusResolver statusResolver) {
+            EffectiveCredentialStatusResolver statusResolver, ProfileService profileService, Clock clock) {
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
         this.issuerBackend = Objects.requireNonNull(issuerBackend, "issuerBackend");
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
         this.statusResolver = Objects.requireNonNull(statusResolver, "statusResolver");
+        this.profileService = Objects.requireNonNull(profileService, "profileService");
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     /**
@@ -221,29 +227,42 @@ public final class DefaultIssuanceService implements IssuanceService {
             throw new PkiException("Issuer CA has no credentials");
         }
 
+        VerifiedIssuanceCandidate candidate = verifyIssuanceCandidate(command);
+        ActiveCertificateProfile active;
+        try {
+            active = profileService.requireActiveProfile(command.profileId());
+        } catch (PkiException failure) {
+            throw rejection(candidate.request(), "PROFILE_NOT_ACTIVE");
+        }
+        CertificateProfile profile = active.profile();
+        if (!command.profileId().equals(active.reference().profileId())) {
+            throw rejection(candidate.request(), "PROFILE_ID_MISMATCH");
+        }
+        if (!framework.formatId().equals(profile.formatId())
+                || !candidate.request().formatId().equals(profile.formatId())) {
+            throw rejection(candidate.request(), "PROFILE_FORMAT_MISMATCH");
+        }
+        Instant evaluationTime = clock.instant();
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCred = CredentialSnapshots.copy(selectIssuerCredential(issuer, framework.formatId(),
                 CredentialUse.END_ENTITY_ISSUER, statusEvaluation));
-        VerifiedIssuanceCandidate candidate = verifyIssuanceCandidate(command);
-        AttributeSet enrichedOverrides = enrichOverrides(command.overrides(), issuerCred.encoded(),
-                issuer.issuerKeyRef());
-
-        // Defensive invariant: the X.509 backend requires issuer material in overrides.
-        if (enrichedOverrides.get(BcX509Attributes.ISSUER_CERT_DER).isEmpty()) {
-            throw new PkiException("Issuer material wiring failed: missing issuer cert DER override");
+        ValidatedCertificateRequest validated;
+        try {
+            validated = CertificateProfileValidator.validate(candidate, profile, active.reference(), issuerCred,
+                    evaluationTime);
+        } catch (PkiException exception) {
+            throw rejection(candidate.request(), statusCode(exception));
         }
-        if (enrichedOverrides.get(BcX509Attributes.ISSUER_KEYREF).isEmpty()) {
-            throw new PkiException("Issuer material wiring failed: missing issuer keyref override");
-        }
-        candidate = candidate.withAuthoritativeOverrides(command, enrichedOverrides);
+        BigInteger serial = CertificateSerialAllocator.allocate();
 
         CredentialBundle bundle;
         try {
-            bundle = CredentialSnapshots.copy(issuerBackend.issueEndEntity(candidate));
+            bundle = CredentialSnapshots.copy(issuerBackend.issueEndEntity(validated, issuerCred.encoded(),
+                    issuer.issuerKeyRef(), serial));
         } catch (RuntimeException ex) { // NOPMD - framework output must cross the snapshot boundary
             throw rejection(candidate.request(), "BACKEND_CREDENTIAL_MISMATCH");
         }
-        requireIssuedCredentialMatches(candidate, command, issuerCred, bundle);
+        requireIssuedCredentialMatches(validated, issuerCred, serial, bundle, candidate.request());
         store.putCredential(bundle.credential());
         return bundle;
     }
@@ -301,47 +320,6 @@ public final class DefaultIssuanceService implements IssuanceService {
         throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
     }
 
-    /**
-     * Enriches caller-supplied issuance overrides with issuer material required by
-     * the current X.509 backend wiring.
-     *
-     * <p>
-     * Store-authoritative issuer values take precedence. Values for
-     * {@link BcX509Attributes#ISSUER_CERT_DER} and
-     * {@link BcX509Attributes#ISSUER_KEYREF} are overwritten from the supplied
-     * issuer credential encoding and issuer key reference.
-     * </p>
-     *
-     * <p>
-     * The returned {@link AttributeSet} is a newly built instance and does not
-     * mutate the caller-supplied set.
-     * </p>
-     *
-     * @param overrides     original issuance overrides; must not be {@code null}
-     * @param issuerCertDer DER-encoded authoritative issuer credential payload;
-     *                      must not be {@code null}
-     * @param issuerKeyRef  authoritative issuer key reference; must not be
-     *                      {@code null}
-     * @return enriched attribute set containing authoritative issuer wiring
-     * @throws NullPointerException if any argument is {@code null}
-     */
-    private static AttributeSet enrichOverrides(AttributeSet overrides, EncodedObject issuerCertDer,
-            KeyRef issuerKeyRef) {
-        Objects.requireNonNull(overrides, "overrides");
-        Objects.requireNonNull(issuerCertDer, "issuerCertDer");
-        Objects.requireNonNull(issuerKeyRef, "issuerKeyRef");
-
-        SimpleAttributeSet.Builder b = SimpleAttributeSet.builder().putAll(overrides);
-        byte[] issuerBytes = issuerCertDer.bytes();
-        try {
-            b.put(BcX509Attributes.ISSUER_CERT_DER, new AttributeValue.BytesValue(issuerBytes.clone()));
-        } finally {
-            java.util.Arrays.fill(issuerBytes, (byte) 0);
-        }
-        b.put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(issuerKeyRef.value()));
-        return b.build();
-    }
-
     private VerifiedIssuanceCandidate verifyIssuanceCandidate(IssueEndEntityCommand command) {
         ParsedCertificationRequest supplied = command.request();
         byte[] csrDer = extractCsrDer(supplied);
@@ -350,7 +328,7 @@ public final class DefaultIssuanceService implements IssuanceService {
             requireExactMatch(supplied, reparsed);
             ProofOfPossessionStatus proofKind = requireVerifiedProof(supplied, reparsed);
             return new VerifiedIssuanceCandidate(reparsed, reparsed.requestId(), reparsed.publicKeyInfo(), proofKind,
-                    command, command.overrides());
+                    command);
         } finally {
             java.util.Arrays.fill(csrDer, (byte) 0);
         }
@@ -400,6 +378,15 @@ public final class DefaultIssuanceService implements IssuanceService {
         if (!supplied.subjectRef().equals(reparsed.subjectRef())) {
             throw rejection(supplied, "SUBJECT_MISMATCH");
         }
+        if (!supplied.subjectRdns().equals(reparsed.subjectRdns())
+                || !supplied.subjectAlternativeNames().equals(reparsed.subjectAlternativeNames())
+                || supplied.subjectAlternativeNamePresent() != reparsed.subjectAlternativeNamePresent()
+                || !supplied.requestedValidity().equals(reparsed.requestedValidity())
+                || !supplied.requestedProfileId().equals(reparsed.requestedProfileId())
+                || supplied.attributes().ids().size() != 1
+                || supplied.attributes().getAll(BcX509Attributes.CSR_DER).size() != 1) {
+            throw rejection(supplied, "REQUEST_SEMANTICS_MISMATCH");
+        }
         byte[] suppliedSpki = supplied.publicKeyInfo().bytes();
         byte[] reparsedSpki = reparsed.publicKeyInfo().bytes();
         try {
@@ -437,7 +424,7 @@ public final class DefaultIssuanceService implements IssuanceService {
     private PkiException rejection(ParsedCertificationRequest request, String code) {
         PkiException rejection = new PkiException("End-entity issuance rejected: " + code);
         try {
-            auditSink.record(new AuditEvent(Instant.now(), "ISSUANCE", "ISSUE_END_ENTITY_REJECTED", SYSTEM_PKI,
+            auditSink.record(new AuditEvent(clock.instant(), "ISSUANCE", "ISSUE_END_ENTITY_REJECTED", SYSTEM_PKI,
                     ISSUANCE_PURPOSE, Optional.empty(), Optional.of(request.formatId()),
                     Map.of("code", code)));
         } catch (RuntimeException auditFailure) { // NOPMD - preserve stable rejection and fail closed
@@ -446,45 +433,56 @@ public final class DefaultIssuanceService implements IssuanceService {
         return rejection;
     }
 
-    private void requireIssuedCredentialMatches(VerifiedIssuanceCandidate candidate, IssueEndEntityCommand command,
-            Credential issuerCredential, CredentialBundle bundle) {
-        ParsedCertificationRequest verifiedRequest = candidate.request();
+    private void requireIssuedCredentialMatches(ValidatedCertificateRequest validated, Credential issuerCredential,
+            BigInteger allocatedSerial, CredentialBundle bundle, ParsedCertificationRequest auditRequest) {
         if (bundle == null || bundle.credential() == null) {
-            throw rejection(verifiedRequest, "BACKEND_CREDENTIAL_MISMATCH");
+            throw rejection(auditRequest, "BACKEND_CREDENTIAL_MISMATCH");
         }
         Credential credential = bundle.credential();
         try {
+            CredentialProfileBindings.requireEndEntityBinding(credential.profileBinding(),
+                    validated.profileReference());
             if (!framework.formatId().equals(credential.formatId())
                     || credential.encoded().encoding() != Encoding.DER
-                    || !credential.subjectRef().equals(verifiedRequest.subjectRef())
-                    || !credential.issuerRef().equals(new zeroecho.pki.api.IssuerRef(command.issuerCaId()))
-                    || credential.status() != CredentialStatus.ISSUED
-                    || !credential.profileId().equals(command.profileId())) {
-                throw rejection(verifiedRequest, "BACKEND_CREDENTIAL_MISMATCH");
+                    || !credential.subjectRef().equals(validated.subjectRef())
+                    || !credential.issuerRef().equals(new zeroecho.pki.api.IssuerRef(validated.issuerCaId()))
+                    || credential.status() != CredentialStatus.ISSUED) {
+                throw rejection(auditRequest, "BACKEND_CREDENTIAL_MISMATCH");
             }
             X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
             X509CertificateHolder issuerHolder = new X509CertificateHolder(issuerCredential.encoded().bytes());
             byte[] actualSpki = holder.getSubjectPublicKeyInfo().getEncoded();
-            if (!MessageDigest.isEqual(candidate.exactPublicKey().bytes(), actualSpki)
-                    || !holder.getSubject().equals(new X500Name(verifiedRequest.subjectRef().value()))
+            if (!MessageDigest.isEqual(validated.exactPublicKey().bytes(), actualSpki)
+                    || !holder.getSubject().equals(BcX509ProfileSupport.subject(validated.subjectRdns()))
                     || !holder.getIssuer().equals(issuerHolder.getSubject())
                     || !holder.isSignatureValid(
                             new JcaContentVerifierProviderBuilder().build(issuerHolder.getSubjectPublicKeyInfo()))
+                    || !holder.getSerialNumber().equals(allocatedSerial)
                     || !credential.publicKeyId().equals(new PkiId("spki:" + sha256Hex(actualSpki)))
                     || !credential.credentialId()
                             .equals(new PkiId("x509:" + sha256Hex(credential.encoded().bytes())))
                     || !credential.serialOrUniqueId().equals(holder.getSerialNumber().toString())
-                    || credential.validity().notBefore().getEpochSecond() != holder.getNotBefore().toInstant()
+                    || !credential.validity().equals(validated.validity())
+                    || validated.validity().notBefore().getEpochSecond() != holder.getNotBefore().toInstant()
                             .getEpochSecond()
-                    || credential.validity().notAfter().getEpochSecond() != holder.getNotAfter().toInstant()
-                            .getEpochSecond()) {
-                throw rejection(verifiedRequest, "BACKEND_CREDENTIAL_MISMATCH");
+                    || validated.validity().notAfter().getEpochSecond() != holder.getNotAfter().toInstant()
+                            .getEpochSecond()
+                    || !BcX509ProfileSupport.matchesLeafExtensions(holder, validated)) {
+                throw rejection(auditRequest, "BACKEND_CREDENTIAL_MISMATCH");
             }
+        } catch (CredentialProfileBindings.Mismatch mismatch) {
+            throw rejection(auditRequest, CredentialProfileBindings.MISMATCH_CODE);
         } catch (PkiException ex) {
             throw ex;
         } catch (Exception ex) {
-            throw rejection(verifiedRequest, "BACKEND_CREDENTIAL_MISMATCH");
+            throw rejection(auditRequest, "BACKEND_CREDENTIAL_MISMATCH");
         }
+    }
+
+    private static String statusCode(PkiException exception) {
+        String message = exception.getMessage();
+        int codeIndex = message == null ? -1 : message.indexOf("code=");
+        return codeIndex < 0 ? "PROFILE_VALIDATION_FAILED" : message.substring(codeIndex + 5);
     }
 
     private static String sha256Hex(byte[] input) {

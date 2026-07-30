@@ -34,6 +34,7 @@
 package zeroecho.pki.impl.fs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -69,8 +71,20 @@ import zeroecho.pki.api.ca.CaKind;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.profile.CertificateProfileDefinition;
+import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.ExtendedKeyUsageId;
+import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
+import zeroecho.pki.api.profile.LeafCertificatePolicy;
+import zeroecho.pki.api.profile.LeafKeyUsage;
+import zeroecho.pki.api.profile.SubjectAlternativeNamePolicy;
+import zeroecho.pki.api.profile.SubjectPolicy;
+import zeroecho.pki.api.profile.SubjectRdnRule;
+import zeroecho.pki.api.profile.SubjectRdnType;
 import zeroecho.pki.api.policy.PolicyTrace;
 import zeroecho.pki.api.policy.PolicyTraceStep;
 import zeroecho.pki.api.publication.PublicationRecord;
@@ -127,7 +141,7 @@ public final class FilesystemPkiStoreTest {
         PublicationRecord publication = new PublicationRecord(new PkiId("publication-all"), now,
                 new PublicationTarget(PublicationTargetType.FILESYSTEM, "target-all", attributes),
                 credential.credentialId(), "CREDENTIAL", PublicationStatus.PUBLISHED);
-        CertificateProfile profile = TestObjects.minimalProfile("profile-all", true);
+        CertificateProfile profile = TestObjects.minimalProfile("profile-all");
         PolicyTrace trace = new PolicyTrace(new PkiId("decision-all"),
                 List.of(new PolicyTraceStep("rule-all", "ALLOW", List.of("approved"))));
         WorkflowStateRecord workflow = new WorkflowStateRecord(new PkiId("workflow-all"), "ISSUANCE",
@@ -143,7 +157,8 @@ public final class FilesystemPkiStoreTest {
                     credential.credentialId(), RevocationReason.KEY_COMPROMISE, attributes), now);
             store.putStatusObject(status);
             store.putPublicationRecord(publication);
-            store.putProfile(profile);
+            importProfile(store, profile, now);
+            store.activateProfile(profile.profileId(), 1);
             store.putPolicyTrace(trace);
             store.putWorkflowState(workflow);
 
@@ -156,7 +171,7 @@ public final class FilesystemPkiStoreTest {
             assertEquals(status.statusObjectId(),
                     store.getStatusObject(status.statusObjectId()).orElseThrow().statusObjectId());
             assertEquals(publication.publicationId(), store.listPublicationRecords().get(0).publicationId());
-            assertEquals(profile, store.getProfile(profile.profileId()).orElseThrow());
+            assertEquals(profile, store.requireActiveProfile(profile.profileId()).profile());
             assertEquals(trace, store.getPolicyTrace(trace.decisionId()).orElseThrow());
             assertEquals(workflow.opId(), store.getWorkflowState(workflow.opId()).orElseThrow().opId());
         }
@@ -252,7 +267,7 @@ public final class FilesystemPkiStoreTest {
             store.putCa(ca1);
 
             Instant at = Instant.now();
-            store.putProfile(TestObjects.minimalProfile("profile-snap-1", true));
+            importProfile(store, TestObjects.minimalProfile("profile-snap-1"), Instant.now());
 
             store.exportSnapshot(snapshot, at);
         }
@@ -282,8 +297,8 @@ public final class FilesystemPkiStoreTest {
         CaRecord caA = TestObjects.minimalCaRecord("ca-a", CaState.ACTIVE);
         CaRecord caB = TestObjects.minimalCaRecord("ca-b", CaState.ACTIVE);
 
-        CertificateProfile pA = TestObjects.minimalProfile("profile-a", true);
-        CertificateProfile pB = TestObjects.minimalProfile("profile-b", true);
+        CertificateProfile pA = TestObjects.minimalProfile("profile-a");
+        CertificateProfile pB = TestObjects.minimalProfile("profile-b");
 
         Instant at1;
         Instant at2;
@@ -295,12 +310,12 @@ public final class FilesystemPkiStoreTest {
             sleepMillis(120L);
 
             store.putCa(caB);
-            store.putProfile(pA);
+            importProfile(store, pA, Instant.now());
             at2 = Instant.now();
 
             sleepMillis(120L);
 
-            store.putProfile(pB);
+            importProfile(store, pB, Instant.now());
 
             // Export snapshots after all writes; in non-strict mode export must not fail.
             store.exportSnapshot(snap1, at1);
@@ -318,10 +333,11 @@ public final class FilesystemPkiStoreTest {
 
         try (FilesystemPkiStore s2 = new FilesystemPkiStore(snap2, options)) {
             List<CaRecord> cas = s2.listCas();
-            List<CertificateProfile> profiles = s2.listProfiles();
+            List<ImportedCertificateProfileVersion> profiles = s2.listProfileVersions("profile-a");
 
             Set<String> caIds = cas.stream().map(r -> r.caId().toString()).collect(Collectors.toSet());
-            Set<String> profileIds = profiles.stream().map(CertificateProfile::profileId).collect(Collectors.toSet());
+            Set<String> profileIds = profiles.stream().map(v -> v.reference().profileId())
+                    .collect(Collectors.toSet());
 
             System.out.println("...snapshot2 caIds: " + caIds);
             System.out.println("...snapshot2 profileIds: " + profileIds);
@@ -329,7 +345,7 @@ public final class FilesystemPkiStoreTest {
             assertTrue(caIds.contains("ca-a"));
             assertTrue(caIds.contains("ca-b"));
             assertTrue(profileIds.contains("profile-a"));
-            assertTrue(profileIds.contains("profile-b"));
+            assertFalse(profileIds.contains("profile-b"));
         }
 
         System.out.println("snapshotExportWithMultipleObjectsNonStrictDoesNotFail...ok");
@@ -344,7 +360,6 @@ public final class FilesystemPkiStoreTest {
 
         FsPkiStoreOptions options = strictSnapshotOptions();
 
-        IllegalStateException ex;
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
             // Create CA first.
             store.putCa(TestObjects.minimalCaRecord("ca-strict-1", CaState.ACTIVE));
@@ -354,14 +369,12 @@ public final class FilesystemPkiStoreTest {
             sleepMillis(120L);
 
             // Now create a new object that does not have history entry <= at.
-            store.putProfile(TestObjects.minimalProfile("profile-strict-1", true));
+            importProfile(store, TestObjects.minimalProfile("profile-strict-1"), Instant.now());
 
-            // Strict export must fail because current tree contains profile without history
-            // <= at.
-            ex = assertThrows(IllegalStateException.class, () -> store.exportSnapshot(snapshot, at));
+            // Immutable versions imported after the requested time are omitted.
+            store.exportSnapshot(snapshot, at);
         }
 
-        System.out.println("...exception: " + shorten(ex.toString(), 200));
         System.out.println("...store tree:");
         dumpTree(root);
 
@@ -379,7 +392,7 @@ public final class FilesystemPkiStoreTest {
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
             store.putCa(TestObjects.minimalCaRecord("ca-strict-ok", CaState.ACTIVE));
-            store.putProfile(TestObjects.minimalProfile("profile-strict-ok", true));
+            importProfile(store, TestObjects.minimalProfile("profile-strict-ok"), Instant.now());
 
             // "at" after all writes: strict export should succeed.
             Instant at = Instant.now();
@@ -394,8 +407,8 @@ public final class FilesystemPkiStoreTest {
 
         try (FilesystemPkiStore snap = new FilesystemPkiStore(snapshot, options)) {
             Set<String> caIds = snap.listCas().stream().map(r -> r.caId().toString()).collect(Collectors.toSet());
-            Set<String> profileIds = snap.listProfiles().stream().map(CertificateProfile::profileId)
-                    .collect(Collectors.toSet());
+            Set<String> profileIds = snap.listProfileVersions("profile-strict-ok").stream()
+                    .map(v -> v.reference().profileId()).collect(Collectors.toSet());
 
             System.out.println("...snapshot caIds: " + caIds);
             System.out.println("...snapshot profileIds: " + profileIds);
@@ -512,6 +525,17 @@ public final class FilesystemPkiStoreTest {
     /**
      * Deterministic domain fixtures.
      */
+    static void importProfile(FilesystemPkiStore store, CertificateProfile profile, Instant importedAt)
+            throws Exception {
+        CertificateProfileDefinition definition = new CertificateProfileDefinition(profile.profileId(), 1,
+                profile.formatId(), profile.displayName(), profile.leafPolicy());
+        byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(canonical);
+        CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1, hash);
+        store.importProfileVersion(new ImportedCertificateProfileVersion(reference, 1, definition, canonical,
+                importedAt));
+    }
+
     static final class TestObjects {
 
         private static final AtomicLong SEQ = new AtomicLong(1L);
@@ -528,16 +552,17 @@ public final class FilesystemPkiStoreTest {
             return new CaRecord(id, CaKind.ROOT, state, issuerKeyRef, subjectRef, caCredentials);
         }
 
-        static CertificateProfile minimalProfile(String profileId, boolean active) {
+        static CertificateProfile minimalProfile(String profileId) {
             FormatId formatId = new FormatId("fmt-x509");
-            String displayName = "Profile " + profileId;
-
-            List<AttributeId> required = List.of(new AttributeId("req-1"));
-            List<AttributeId> optional = List.of(new AttributeId("opt-1"));
-
-            Optional<Duration> maxValidity = Optional.of(Duration.ofDays(365));
-
-            return new CertificateProfile(profileId, formatId, displayName, required, optional, maxValidity, active);
+            SubjectPolicy subject = new SubjectPolicy(List.of(new SubjectRdnRule(
+                    SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true)));
+            SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(false, 0, 0,
+                    List.of(), false, Set.of(), false, false, false);
+            LeafCertificatePolicy leaf = new LeafCertificatePolicy(subject, sans,
+                    Set.of(LeafKeyUsage.DIGITAL_SIGNATURE, LeafKeyUsage.KEY_ENCIPHERMENT),
+                    Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1")), true, false, true,
+                    Set.of("RSA"), Duration.ofDays(365));
+            return new CertificateProfile(profileId, formatId, "Test leaf profile", leaf);
         }
 
         static Credential minimalCredential(String serial, String profileId) {
@@ -559,7 +584,7 @@ public final class FilesystemPkiStoreTest {
             AttributeSet attrs = emptyAttributes();
 
             return new Credential(credentialId, formatId, issuerRef, subjectRef, validity, serial, publicKeyId,
-                    profileId, status, encoded, attrs);
+                    new CaProfileBinding(profileId), status, encoded, attrs);
         }
 
         static AttributeSet emptyAttributes() {

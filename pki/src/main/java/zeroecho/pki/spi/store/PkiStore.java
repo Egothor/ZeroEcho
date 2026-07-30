@@ -42,7 +42,9 @@ import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.api.policy.PolicyTrace;
-import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.profile.ActiveCertificateProfile;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
@@ -243,44 +245,23 @@ public interface PkiStore extends SignWorkflowStore {
      */
     List<PublicationRecord> listPublicationRecords();
 
-    /**
-     * Persists or updates a certificate profile.
-     *
-     * <p>
-     * A certificate profile represents a reusable issuance template (for example:
-     * VPN client, VPN server, S/MIME). The profile may be referenced by higher
-     * layers during certificate issuance.
-     * </p>
-     *
-     * @param profile certificate profile (never {@code null})
-     * @throws NullPointerException  if {@code profile} is {@code null}
-     * @throws IllegalStateException if persistence fails
-     */
-    void putProfile(CertificateProfile profile);
+    /** Atomically imports one immutable validated profile version. */
+    ImportedCertificateProfileVersion importProfileVersion(ImportedCertificateProfileVersion version);
 
-    /**
-     * Retrieves a certificate profile by profile identifier.
-     *
-     * <p>
-     * The identifier is a stable, system-defined key (not a display name). It
-     * should be suitable for configuration and API use (for example:
-     * {@code "vpn-client"}).
-     * </p>
-     *
-     * @param profileId profile identifier (never {@code null})
-     * @return profile if present
-     * @throws NullPointerException  if {@code profileId} is {@code null}
-     * @throws IllegalStateException if retrieval fails
-     */
-    Optional<CertificateProfile> getProfile(String profileId);
+    /** Retrieves one imported version. */
+    Optional<ImportedCertificateProfileVersion> getProfileVersion(String profileId, long profileVersion);
 
-    /**
-     * Lists all stored certificate profiles.
-     *
-     * @return list of profiles (never {@code null})
-     * @throws IllegalStateException if listing fails
-     */
-    List<CertificateProfile> listProfiles();
+    /** Lists imported versions in ascending version order. */
+    List<ImportedCertificateProfileVersion> listProfileVersions(String profileId);
+
+    /** Atomically activates one imported version. */
+    CertificateProfileRef activateProfile(String profileId, long profileVersion);
+
+    /** Retrieves the current active reference. */
+    Optional<CertificateProfileRef> getActiveProfileRef(String profileId);
+
+    /** Resolves the exact active version and validated runtime projection. */
+    ActiveCertificateProfile requireActiveProfile(String profileId);
 
     /**
      * Persists a policy trace.

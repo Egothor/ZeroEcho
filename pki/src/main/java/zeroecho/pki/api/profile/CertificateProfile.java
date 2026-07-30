@@ -33,22 +33,15 @@
  ******************************************************************************/
 package zeroecho.pki.api.profile;
 
-import java.time.Duration;
-import java.util.List;
-import java.util.Optional;
-
 import zeroecho.pki.api.FormatId;
-import zeroecho.pki.api.attr.AttributeId;
 
 /**
  * Defines issuance constraints and mapping hints for a class of credentials.
  *
  * <p>
  * A profile is referenced by {@code profileId} during issuance. It defines
- * which universal attributes are required or allowed, and provides limits such
- * as maximum validity. Framework backends may use the profile as a source of
- * mapping hints when translating universal attributes into framework-specific
- * fields/extensions.
+ * the complete deny-by-default identity and extension policy for an end-entity
+ * credential. Requester fields absent from the profile are forbidden.
  * </p>
  *
  * <p>
@@ -58,14 +51,10 @@ import zeroecho.pki.api.attr.AttributeId;
  * @param profileId          stable profile identifier
  * @param formatId           framework/format supported by the profile
  * @param displayName        human-readable name
- * @param requiredAttributes list of required attribute identifiers
- * @param optionalAttributes list of optional attribute identifiers
- * @param maxValidity        optional maximum validity allowed by the profile
- * @param active             whether the profile is active for issuance
+ * @param leafPolicy         complete end-entity identity and extension policy
  */
 public record CertificateProfile(String profileId, FormatId formatId, String displayName,
-        List<AttributeId> requiredAttributes, List<AttributeId> optionalAttributes, Optional<Duration> maxValidity,
-        boolean active) {
+        LeafCertificatePolicy leafPolicy) {
 
     /**
      * Creates a certificate profile.
@@ -83,14 +72,22 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
         if (displayName == null || displayName.isBlank()) {
             throw new IllegalArgumentException("displayName must not be null/blank");
         }
-        if (requiredAttributes == null) {
-            throw new IllegalArgumentException("requiredAttributes must not be null");
+        if (leafPolicy == null) {
+            throw new IllegalArgumentException("leafPolicy must not be null");
         }
-        if (optionalAttributes == null) {
-            throw new IllegalArgumentException("optionalAttributes must not be null");
+    }
+
+    /**
+     * Creates the deterministic runtime projection of a validated definition.
+     *
+     * @param definition authoritative profile definition
+     * @return runtime profile projection
+     */
+    public static CertificateProfile fromDefinition(CertificateProfileDefinition definition) {
+        if (definition == null) {
+            throw new IllegalArgumentException("definition must not be null");
         }
-        if (maxValidity == null) {
-            throw new IllegalArgumentException("maxValidity must not be null");
-        }
+        return new CertificateProfile(definition.profileId(), definition.formatId(), definition.displayName(),
+                definition.leafPolicy());
     }
 }

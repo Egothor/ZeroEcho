@@ -207,6 +207,47 @@ final class FsOperations {
     }
 
     /**
+     * Atomically creates one immutable file and fails when the target exists.
+     *
+     * @param target immutable target
+     * @param data complete encoded image
+     * @throws IOException on persistence failure
+     * @throws DurabilityUncertainException after an atomic move whose directory
+     *                                     force failed
+     */
+    // The OS failure is deliberately replaced by the cause-free durability state.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    /* default */ static void writeNewAtomicStrict(final Path target, final byte[] data) throws IOException {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(data, "data");
+        Path parent = requireParent(target);
+        ensureDir(parent);
+        Path temporary = tempSibling(target);
+        boolean moved = false;
+        try {
+            Files.createFile(temporary, fileAttributesIfSupported());
+            try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                ByteBuffer buffer = ByteBuffer.wrap(data);
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
+                }
+                channel.force(true);
+            }
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+            moved = true;
+            try (FileChannel directory = FileChannel.open(parent, StandardOpenOption.READ)) {
+                directory.force(true);
+            } catch (IOException failure) {
+                throw new DurabilityUncertainException();
+            }
+        } finally {
+            if (!moved) {
+                Files.deleteIfExists(temporary);
+            }
+        }
+    }
+
+    /**
      * Signals a post-commit directory durability failure without exposing an
      * operating-system cause.
      */
@@ -214,7 +255,7 @@ final class FsOperations {
         private static final long serialVersionUID = -2422560154076956224L;
 
         private DurabilityUncertainException() {
-            super("revocation journal durability unconfirmed");
+            super("filesystem durability unconfirmed");
         }
     }
 

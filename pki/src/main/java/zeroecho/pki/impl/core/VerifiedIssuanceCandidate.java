@@ -33,21 +33,22 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.Validity;
-import zeroecho.pki.api.attr.AttributeId;
-import zeroecho.pki.api.attr.AttributeSet;
-import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.issuance.IssueEndEntityCommand;
+import zeroecho.pki.api.attr.AttributeSet;
+import zeroecho.pki.api.attr.AttributeId;
+import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
+import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
 
 /**
  * Immutable internal authority for a request that passed the issuance PoP gate.
@@ -68,11 +69,9 @@ public final class VerifiedIssuanceCandidate {
     private final PkiId issuerCaId;
     private final String profileId;
     private final Optional<Validity> validityOverride;
-    private final AttributeSet overrides;
 
     /* default */ VerifiedIssuanceCandidate(ParsedCertificationRequest request, PkiId fingerprint,
-            EncodedObject exactPublicKey, ProofOfPossessionStatus proofKind, IssueEndEntityCommand command,
-            AttributeSet authoritativeOverrides) {
+            EncodedObject exactPublicKey, ProofOfPossessionStatus proofKind, IssueEndEntityCommand command) {
         this.request = snapshot(Objects.requireNonNull(request, "request"));
         this.fingerprint = Objects.requireNonNull(fingerprint, "fingerprint");
         this.exactPublicKey = copy(Objects.requireNonNull(exactPublicKey, "exactPublicKey"));
@@ -81,7 +80,6 @@ public final class VerifiedIssuanceCandidate {
         this.issuerCaId = checkedCommand.issuerCaId();
         this.profileId = checkedCommand.profileId();
         this.validityOverride = checkedCommand.validityOverride();
-        this.overrides = snapshotAttributes(Objects.requireNonNull(authoritativeOverrides, "authoritativeOverrides"));
     }
 
     /**
@@ -147,44 +145,40 @@ public final class VerifiedIssuanceCandidate {
         return validityOverride;
     }
 
-    /**
-     * Returns a defensive snapshot of authoritative issuance overrides.
-     *
-     * @return immutable authoritative overrides, never {@code null}
-     */
-    public AttributeSet overrides() {
-        return snapshotAttributes(overrides);
-    }
-
-    /* default */ VerifiedIssuanceCandidate withAuthoritativeOverrides(IssueEndEntityCommand command,
-            AttributeSet authoritativeOverrides) {
-        return new VerifiedIssuanceCandidate(request, fingerprint, exactPublicKey, proofKind, command,
-                authoritativeOverrides);
-    }
-
     /* default */ static ParsedCertificationRequest snapshot(ParsedCertificationRequest source) {
         Objects.requireNonNull(source, "source");
         return new ParsedCertificationRequest(source.requestId(), source.formatId(), source.subjectRef(),
                 copy(source.publicKeyInfo()), source.requestedValidity(), source.requestedProfileId(),
-                snapshotAttributes(source.attributes()));
+                source.subjectRdns(), source.subjectAlternativeNames(), source.subjectAlternativeNamePresent(),
+                snapshotCsrAttribute(source.attributes()));
     }
 
     private static EncodedObject copy(EncodedObject source) {
         return new EncodedObject(source.encoding(), source.bytes().clone());
     }
 
+    private static AttributeSet snapshotCsrAttribute(AttributeSet source) {
+        AttributeValue value = source.get(BcX509Attributes.CSR_DER)
+                .orElseThrow(() -> new IllegalArgumentException("Missing canonical CSR attribute"));
+        if (!(value instanceof AttributeValue.BytesValue bytesValue)) {
+            throw new IllegalArgumentException("Canonical CSR attribute has the wrong type");
+        }
+        return new SimpleAttributeSet(List.of(new SimpleAttributeSet.Entry(BcX509Attributes.CSR_DER,
+                List.of(new AttributeValue.BytesValue(bytesValue.value())))));
+    }
+
     /* default */ static AttributeSet snapshotAttributes(AttributeSet source) {
         List<SimpleAttributeSet.Entry> entries = new ArrayList<>();
         for (AttributeId id : source.ids()) {
-            List<AttributeValue> values = source.getAll(id).stream().map(VerifiedIssuanceCandidate::copy).toList();
+            List<AttributeValue> values = source.getAll(id).stream().map(VerifiedIssuanceCandidate::copyValue).toList();
             entries.add(new SimpleAttributeSet.Entry(id, values));
         }
         return new SimpleAttributeSet(entries);
     }
 
-    private static AttributeValue copy(AttributeValue value) {
+    private static AttributeValue copyValue(AttributeValue value) {
         if (value instanceof AttributeValue.BytesValue bytesValue) {
-            return new AttributeValue.BytesValue(bytesValue.value().clone());
+            return new AttributeValue.BytesValue(bytesValue.value());
         }
         return value;
     }

@@ -34,13 +34,21 @@
 package zeroecho.pki.impl.fs;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import zeroecho.pki.impl.ProfileLifecycleFailure;
+import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
 
 /**
  * Snapshot exporter ("time travel") for {@link FilesystemPkiStore}.
@@ -70,6 +78,8 @@ import java.util.logging.Logger;
 final class FsSnapshotExporter {
 
     private static final Logger LOG = Logger.getLogger(FsSnapshotExporter.class.getName());
+    private static final String ACTIVE_POINTER_FILE = "active.bin";
+    private static final String BINARY_EXTENSION = ".bin";
 
     private final FsPkiStoreOptions options;
 
@@ -77,12 +87,19 @@ final class FsSnapshotExporter {
         this.options = Objects.requireNonNull(options, "options");
     }
 
+    /*
+     * Snapshot/profile failures deliberately cross this boundary without input-
+     * bearing causes or filesystem paths.
+     */
+    @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ void exportSnapshot(final Path sourceRoot, final Path targetRoot, final Instant at) {
         Objects.requireNonNull(sourceRoot, "sourceRoot");
         Objects.requireNonNull(targetRoot, "targetRoot");
         Objects.requireNonNull(at, "at");
 
         try {
+            List<SnapshotProfileArtifact> profiles =
+                    preflightImportedProfiles(sourceRoot.resolve("profiles"), at);
             FsOperations.ensureDir(targetRoot);
             FsPaths dst = new FsPaths(targetRoot);
 
@@ -98,18 +115,94 @@ final class FsSnapshotExporter {
             copyTreeIfExists(sourceRoot.resolve("publications"), targetRoot.resolve("publications"));
             copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
             copyTreeIfExists(sourceRoot.resolve("revocations"), targetRoot.resolve("revocations"));
+            copyImportedProfilesAsOf(profiles, targetRoot.resolve("profiles"));
 
             // reconstruct mutable entities from history (CAS and profiles)
             reconstructMutableTree(sourceRoot.resolve("cas"), targetRoot.resolve("cas"), at,
                     this.options.caHistoryPolicy(), this.options.strictSnapshotExport());
-            reconstructMutableTree(sourceRoot.resolve("profiles"), targetRoot.resolve("profiles"), at,
-                    this.options.profileHistoryPolicy(), this.options.strictSnapshotExport());
             // reconstruct workflow continuation state from history
             reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
                     this.options.workflowHistoryPolicy(), this.options.strictSnapshotExport());
 
+        } catch (SnapshotProfileFailure failure) {
+            throw new IllegalStateException(failure.getMessage());
         } catch (IOException e) {
-            throw new IllegalStateException("snapshot export failed", e);
+            throw new IllegalStateException("Snapshot export failed: code=SNAPSHOT_EXPORT_FAILED");
+        }
+    }
+
+    /*
+     * Strict codec and filesystem traversal can produce several runtime failure
+     * types; all are normalized without their untrusted causes.
+     */
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    private static List<SnapshotProfileArtifact> preflightImportedProfiles(Path profilesRoot, Instant at)
+            throws IOException {
+        if (!requireProfileRoot(profilesRoot)) {
+            return List.of();
+        }
+        List<SnapshotProfileArtifact> selected = new ArrayList<>();
+        try (java.util.stream.Stream<Path> files = Files.walk(profilesRoot)) {
+            for (Path path : files.filter(Files::isRegularFile)
+                    .sorted(Comparator.comparing(Path::toString)).toList()) {
+                collectProfileArtifact(profilesRoot, path, at, selected);
+            }
+        } catch (SnapshotProfileFailure failure) {
+            throw failure;
+        } catch (ProfileLifecycleFailure failure) {
+            throw SnapshotProfileFailure.of(failure.code());
+        } catch (IOException failure) {
+            throw SnapshotProfileFailure.of(Code.PROFILE_STORE_FAILURE);
+        } catch (RuntimeException failure) {
+            throw SnapshotProfileFailure.of(Code.PROFILE_VERSION_CORRUPT);
+        }
+        return List.copyOf(selected);
+    }
+
+    private static boolean requireProfileRoot(Path profilesRoot) {
+        if (!Files.exists(profilesRoot, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        if (!Files.isDirectory(profilesRoot, LinkOption.NOFOLLOW_LINKS)
+                || !Files.isReadable(profilesRoot)) {
+            throw SnapshotProfileFailure.of(Code.PROFILE_STORE_FAILURE);
+        }
+        return true;
+    }
+
+    private static void collectProfileArtifact(Path profilesRoot, Path path, Instant at,
+            List<SnapshotProfileArtifact> selected) throws IOException {
+        String fileName = path.getFileName().toString();
+        if (ACTIVE_POINTER_FILE.equals(fileName)) {
+            throw SnapshotProfileFailure.of(Code.PROFILE_ACTIVATION_HISTORY_UNAVAILABLE);
+        }
+        if (!fileName.endsWith(BINARY_EXTENSION)) {
+            throw SnapshotProfileFailure.of(Code.PROFILE_VERSION_CORRUPT);
+        }
+        byte[] artifact = Files.readAllBytes(path);
+        ValidatedImportedProfile validated = ValidatedImportedProfile.decode(artifact);
+        if (!expectedProfileVersionPath(profilesRoot, validated).equals(path)) {
+            throw SnapshotProfileFailure.of(Code.PROFILE_VERSION_CORRUPT);
+        }
+        if (!validated.version().importedAt().isAfter(at)) {
+            selected.add(new SnapshotProfileArtifact(profilesRoot.relativize(path), artifact));
+        }
+    }
+
+    private static Path expectedProfileVersionPath(Path profilesRoot, ValidatedImportedProfile validated) {
+        String profileId = validated.version().reference().profileId();
+        String encoded = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(profileId.getBytes(StandardCharsets.UTF_8));
+        return profilesRoot.resolve("by-id").resolve("id-" + encoded).resolve("versions")
+                .resolve(validated.version().reference().profileVersion() + BINARY_EXTENSION);
+    }
+
+    private static void copyImportedProfilesAsOf(List<SnapshotProfileArtifact> profiles, Path target)
+            throws IOException {
+        for (SnapshotProfileArtifact profile : profiles) {
+            Path output = target.resolve(profile.relativePath());
+            FsOperations.ensureDir(output.getParent());
+            FsOperations.writeAtomic(output, profile.bytes());
         }
     }
 
@@ -205,5 +298,32 @@ final class FsSnapshotExporter {
             throw new IllegalStateException("Required snapshot metadata is missing: " + source.getFileName());
         }
         FsOperations.writeAtomic(target, Files.readAllBytes(source));
+    }
+
+    private record SnapshotProfileArtifact(Path relativePath, byte[] bytes) {
+        private SnapshotProfileArtifact {
+            bytes = bytes.clone();
+        }
+
+        @Override
+        public byte[] bytes() {
+            return bytes.clone();
+        }
+    }
+
+    /** Cause-free internal marker for profile preflight rejection. */
+    private static final class SnapshotProfileFailure extends RuntimeException {
+        private static final long serialVersionUID = -4451876406166515230L;
+
+        private SnapshotProfileFailure(String message) {
+            super(message);
+        }
+
+        private static SnapshotProfileFailure of(Code code) {
+            String prefix = code == Code.PROFILE_ACTIVATION_HISTORY_UNAVAILABLE
+                    ? "Historical snapshot unavailable: code="
+                    : "Historical snapshot failed: code=";
+            return new SnapshotProfileFailure(prefix + code);
+        }
     }
 }

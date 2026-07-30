@@ -76,7 +76,9 @@ import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.api.policy.PolicyTrace;
-import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.profile.ActiveCertificateProfile;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
@@ -85,6 +87,8 @@ import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.impl.ProfileLifecycleFailure;
+import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
@@ -162,6 +166,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private final ReentrantLock signingTimeLock;
     private final ConcurrentMap<PkiId, SignLockEntry> signLocks;
     private final ConcurrentMap<PkiId, RevocationLockEntry> revocationLocks;
+    private final ConcurrentMap<String, ProfileLockEntry> profileLocks;
     private final AtomicBoolean durabilityUncertain;
 
     private final StoreOwnership ownership;
@@ -197,6 +202,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.signLocks = new ConcurrentHashMap<>();
         this.revocationLocks = new ConcurrentHashMap<>();
+        this.profileLocks = new ConcurrentHashMap<>();
         this.durabilityUncertain = new AtomicBoolean();
         this.signingTimeLock = new ReentrantLock();
         this.paths = new FsPaths(root);
@@ -442,31 +448,123 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
-    public void putProfile(final CertificateProfile profile) {
+    // Persistence causes may contain filesystem data and are intentionally redacted.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    public ImportedCertificateProfileVersion importProfileVersion(final ImportedCertificateProfileVersion version) {
         requireStoreUsable();
-        Objects.requireNonNull(profile, "profile");
-        String profileId = profile.profileId();
-        Path current = this.paths.profileCurrent(profileId);
-
-        writeWithHistory(this.paths.profileHistoryDir(profileId), current,
-                FsCodec.encode(FsCodec.CERTIFICATE_PROFILE, profile),
-                this.options.profileHistoryPolicy(), "PROFILE", FsUtil.safeSegment(profileId));
-    }
-
-    @Override
-    public Optional<CertificateProfile> getProfile(final String profileId) {
-        requireStoreUsable();
-        if (profileId == null || profileId.isBlank()) {
-            throw new IllegalArgumentException("profileId must not be null/blank");
+        Objects.requireNonNull(version, "version");
+        String profileId = version.reference().profileId();
+        ProfileLockEntry lock = acquireProfileLock(profileId);
+        try {
+            ValidatedImportedProfile.validate(version, profileId, version.reference().profileVersion());
+            Path target = paths.profileVersion(profileId, version.reference().profileVersion());
+            if (Files.exists(target)) {
+                ImportedCertificateProfileVersion existing = decodeProfileVersion(target, profileId,
+                        version.reference().profileVersion());
+                if (!existing.reference().equals(version.reference())) {
+                    throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CONFLICT);
+                }
+                return existing;
+            }
+            try {
+                FsOperations.writeNewAtomicStrict(target, FsCodec.encode(FsCodec.PROFILE_VERSION, version));
+                return version;
+            } catch (FileAlreadyExistsException conflict) {
+                ImportedCertificateProfileVersion existing = decodeProfileVersion(target, profileId,
+                        version.reference().profileVersion());
+                if (!existing.reference().equals(version.reference())) {
+                    throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CONFLICT);
+                }
+                return existing;
+            } catch (FsOperations.DurabilityUncertainException failure) {
+                durabilityUncertain.set(true);
+                throw new ProfileLifecycleFailure(Code.PROFILE_DURABILITY_UNCONFIRMED);
+            } catch (IOException failure) {
+                throw new ProfileLifecycleFailure(Code.PROFILE_IMPORT_FAILED);
+            }
+        } finally {
+            releaseProfileLock(profileId, lock);
         }
-        return readOptional(this.paths.profileCurrent(profileId), FsCodec.CERTIFICATE_PROFILE);
     }
 
     @Override
-    public List<CertificateProfile> listProfiles() {
+    public Optional<ImportedCertificateProfileVersion> getProfileVersion(final String profileId,
+            final long profileVersion) {
         requireStoreUsable();
-        Path root = this.paths.root().resolve("profiles").resolve("by-id");
-        return listCurrentRecords(root, FsCodec.CERTIFICATE_PROFILE);
+        requireProfileIdentity(profileId, profileVersion);
+        Path path = paths.profileVersion(profileId, profileVersion);
+        return Files.exists(path) ? Optional.of(decodeProfileVersion(path, profileId, profileVersion))
+                : Optional.empty();
+    }
+
+    @Override
+    // Filesystem failures are normalized to the stable store failure code.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    public List<ImportedCertificateProfileVersion> listProfileVersions(final String profileId) {
+        requireStoreUsable();
+        requireProfileIdentity(profileId, 1L);
+        Path directory = paths.profileVersionsDir(profileId);
+        if (!Files.isDirectory(directory)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(directory)) {
+            List<ImportedCertificateProfileVersion> versions = new ArrayList<>();
+            for (Path file : files.filter(Files::isRegularFile)
+                    .sorted(Comparator.comparingLong(FilesystemPkiStore::profileVersionFromPath)).toList()) {
+                long version = profileVersionFromPath(file);
+                versions.add(decodeProfileVersion(file, profileId, version));
+            }
+            return List.copyOf(versions);
+        } catch (IOException | SecurityException failure) {
+            throw new ProfileLifecycleFailure(Code.PROFILE_STORE_FAILURE);
+        }
+    }
+
+    @Override
+    // Persistence causes may contain filesystem data and are intentionally redacted.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    public CertificateProfileRef activateProfile(final String profileId, final long profileVersion) {
+        requireStoreUsable();
+        requireProfileIdentity(profileId, profileVersion);
+        ProfileLockEntry lock = acquireProfileLock(profileId);
+        try {
+            ImportedCertificateProfileVersion version = getProfileVersion(profileId, profileVersion)
+                    .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_VERSION_NOT_FOUND));
+            CertificateProfileRef reference = version.reference();
+            Optional<CertificateProfileRef> current = readActiveProfileRef(profileId);
+            if (current.filter(reference::equals).isPresent()) {
+                return reference;
+            }
+            try {
+                FsOperations.writeAtomicStrict(paths.profileActive(profileId),
+                        FsCodec.encode(FsCodec.ACTIVE_PROFILE_REF, reference));
+                return reference;
+            } catch (FsOperations.DurabilityUncertainException failure) {
+                durabilityUncertain.set(true);
+                throw new ProfileLifecycleFailure(Code.PROFILE_DURABILITY_UNCONFIRMED);
+            } catch (IOException failure) {
+                throw new ProfileLifecycleFailure(Code.PROFILE_ACTIVATION_FAILED);
+            }
+        } finally {
+            releaseProfileLock(profileId, lock);
+        }
+    }
+
+    @Override
+    public Optional<CertificateProfileRef> getActiveProfileRef(final String profileId) {
+        requireStoreUsable();
+        requireProfileIdentity(profileId, 1L);
+        return readValidatedActiveProfile(profileId).map(validated -> validated.version().reference());
+    }
+
+    @Override
+    public ActiveCertificateProfile requireActiveProfile(final String profileId) {
+        requireStoreUsable();
+        requireProfileIdentity(profileId, 1L);
+        ValidatedImportedProfile validated = readValidatedActiveProfile(profileId)
+                .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_NOT_ACTIVE));
+        ImportedCertificateProfileVersion version = validated.version();
+        return new ActiveCertificateProfile(version.reference(), version.definition());
     }
 
     @Override
@@ -820,6 +918,126 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
             return current.references.decrementAndGet() == 0 ? null : current;
         });
+    }
+
+    private ProfileLockEntry acquireProfileLock(String profileId) {
+        ProfileLockEntry entry = profileLocks.compute(profileId, (ignored, current) -> {
+            ProfileLockEntry selected = current == null ? new ProfileLockEntry() : current;
+            selected.references.incrementAndGet();
+            return selected;
+        });
+        entry.lock.lock();
+        return entry;
+    }
+
+    private void releaseProfileLock(String profileId, ProfileLockEntry entry) {
+        entry.lock.unlock();
+        profileLocks.computeIfPresent(profileId, (ignored, current) -> {
+            if (current != entry) { // NOPMD - identity protects a replacement lock entry
+                return current;
+            }
+            return current.references.decrementAndGet() == 0 ? null : current;
+        });
+    }
+
+    /*
+     * Strict decoding may throw several runtime parsing failures. They are
+     * deliberately collapsed without causes at this hostile persistence boundary.
+     */
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    private Optional<CertificateProfileRef> readActiveProfileRef(String profileId) {
+        Path path = paths.profileActive(profileId);
+        if (!Files.exists(path)) {
+            return Optional.empty();
+        }
+        try {
+            CertificateProfileRef reference = FsCodec.decode(FsCodec.ACTIVE_PROFILE_REF,
+                    FsOperations.readAll(path));
+            if (!profileId.equals(reference.profileId())) {
+                throw new ProfileLifecycleFailure(Code.PROFILE_ACTIVE_POINTER_CORRUPT);
+            }
+            return Optional.of(reference);
+        } catch (ProfileLifecycleFailure failure) {
+            throw failure;
+        } catch (IOException failure) {
+            throw new ProfileLifecycleFailure(Code.PROFILE_STORE_FAILURE);
+        } catch (RuntimeException failure) {
+            throw new ProfileLifecycleFailure(Code.PROFILE_ACTIVE_POINTER_CORRUPT);
+        }
+    }
+
+    private Optional<ValidatedImportedProfile> readValidatedActiveProfile(String profileId) {
+        ProfileLockEntry lock = acquireProfileLock(profileId);
+        try {
+            Optional<CertificateProfileRef> pointer = readActiveProfileRef(profileId);
+            if (pointer.isEmpty()) {
+                return Optional.empty();
+            }
+            CertificateProfileRef reference = pointer.orElseThrow();
+            Path path = paths.profileVersion(profileId, reference.profileVersion());
+            if (!Files.isRegularFile(path)) {
+                throw new ProfileLifecycleFailure(Code.PROFILE_ACTIVE_POINTER_CORRUPT);
+            }
+            ValidatedImportedProfile validated =
+                    decodeValidatedProfileVersion(path, profileId, reference.profileVersion());
+            if (!reference.equals(validated.version().reference())) {
+                throw new ProfileLifecycleFailure(Code.PROFILE_HASH_MISMATCH);
+            }
+            return Optional.of(validated);
+        } finally {
+            releaseProfileLock(profileId, lock);
+        }
+    }
+
+    private static ImportedCertificateProfileVersion decodeProfileVersion(Path path, String profileId,
+            long profileVersion) {
+        return decodeValidatedProfileVersion(path, profileId, profileVersion).version();
+    }
+
+    /*
+     * Strict codec and policy constructors expose multiple runtime failure types;
+     * all are intentionally normalized without their input-bearing causes.
+     */
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    private static ValidatedImportedProfile decodeValidatedProfileVersion(Path path, String profileId,
+            long profileVersion) {
+        try {
+            return ValidatedImportedProfile.decode(FsOperations.readAll(path), profileId, profileVersion);
+        } catch (ProfileLifecycleFailure failure) {
+            throw failure;
+        } catch (IOException failure) {
+            throw new ProfileLifecycleFailure(Code.PROFILE_STORE_FAILURE);
+        } catch (RuntimeException failure) {
+            throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CORRUPT);
+        }
+    }
+
+    // Numeric path details are intentionally excluded from the public failure.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    private static long profileVersionFromPath(Path path) {
+        String name = path.getFileName().toString();
+        if (!name.endsWith(".bin")) {
+            throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CORRUPT);
+        }
+        long value;
+        try {
+            value = Long.parseLong(name.substring(0, name.length() - 4));
+        } catch (NumberFormatException failure) {
+            throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CORRUPT);
+        }
+        if (value <= 0) {
+            throw new ProfileLifecycleFailure(Code.PROFILE_VERSION_CORRUPT);
+        }
+        return value;
+    }
+
+    private static void requireProfileIdentity(String profileId, long profileVersion) {
+        if (profileId == null || profileId.isBlank()) {
+            throw new IllegalArgumentException("profileId must not be null/blank");
+        }
+        if (profileVersion <= 0) {
+            throw new IllegalArgumentException("profileVersion must be positive");
+        }
     }
 
     private Optional<RevocationJournal> readRevocationJournal(PkiId credentialId) {
@@ -1213,6 +1431,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * Reference-counted per-credential revocation transition lock.
      */
     private static final class RevocationLockEntry {
+        private final ReentrantLock lock = new ReentrantLock();
+        private final AtomicInteger references = new AtomicInteger();
+    }
+
+    /** Reference-counted per-profile import and activation lock. */
+    private static final class ProfileLockEntry {
         private final ReentrantLock lock = new ReentrantLock();
         private final AtomicInteger references = new AtomicInteger();
     }

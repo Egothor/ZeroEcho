@@ -34,6 +34,8 @@
 package zeroecho.pki.impl.fs;
 
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Objects;
 
 import zeroecho.pki.api.PkiId;
@@ -55,6 +57,7 @@ import zeroecho.pki.api.PkiId;
  * </p>
  */
 final class FsPaths {
+    private static final String BINARY_EXTENSION = ".bin";
 
     private static final String BY_ID = "by-id";
 
@@ -109,20 +112,26 @@ final class FsPaths {
     }
 
     // -------------------------------------------------------------------------
-    // Profiles (mutable with history)
+    // Profiles (immutable versions plus one active pointer)
     // -------------------------------------------------------------------------
 
     /* default */ Path profileDir(final String profileId) {
         Objects.requireNonNull(profileId, "profileId");
-        return this.root.resolve("profiles").resolve(BY_ID).resolve(FsUtil.safeSegment(profileId));
+        String encoded = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(profileId.getBytes(StandardCharsets.UTF_8));
+        return this.root.resolve("profiles").resolve(BY_ID).resolve("id-" + encoded);
     }
 
-    /* default */ Path profileCurrent(final String profileId) {
-        return profileDir(profileId).resolve(CURRENT_FILE);
+    /* default */ Path profileVersion(final String profileId, final long profileVersion) {
+        return profileDir(profileId).resolve("versions").resolve(profileVersion + BINARY_EXTENSION);
     }
 
-    /* default */ Path profileHistoryDir(final String profileId) {
-        return profileDir(profileId).resolve(HISTORY_DIR);
+    /* default */ Path profileVersionsDir(final String profileId) {
+        return profileDir(profileId).resolve("versions");
+    }
+
+    /* default */ Path profileActive(final String profileId) {
+        return profileDir(profileId).resolve("active" + BINARY_EXTENSION);
     }
 
     // -------------------------------------------------------------------------
@@ -131,7 +140,8 @@ final class FsPaths {
 
     /* default */ Path credentialPath(final PkiId credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
-        return this.root.resolve("credentials").resolve(BY_ID).resolve(FsUtil.safeId(credentialId) + ".bin");
+        return this.root.resolve("credentials").resolve(BY_ID)
+                .resolve(FsUtil.safeId(credentialId) + BINARY_EXTENSION);
     }
 
     // -------------------------------------------------------------------------
@@ -140,7 +150,8 @@ final class FsPaths {
 
     /* default */ Path requestPath(final PkiId requestId) {
         Objects.requireNonNull(requestId, "requestId");
-        return this.root.resolve("requests").resolve(BY_ID).resolve(FsUtil.safeId(requestId) + ".bin");
+        return this.root.resolve("requests").resolve(BY_ID)
+                .resolve(FsUtil.safeId(requestId) + BINARY_EXTENSION);
     }
 
     /* default */ Path signWorkflowPath(final PkiId submissionId) {

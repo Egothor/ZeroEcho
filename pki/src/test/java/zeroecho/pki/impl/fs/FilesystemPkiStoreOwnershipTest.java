@@ -78,16 +78,19 @@ final class FilesystemPkiStoreOwnershipTest {
 
         FilesystemPkiStore first = new FilesystemPkiStore(root, options);
         try {
-            first.putProfile(FilesystemPkiStoreTest.TestObjects.minimalProfile("ownership-profile", true));
+            FilesystemPkiStoreTest.importProfile(first,
+                    FilesystemPkiStoreTest.TestObjects.minimalProfile("ownership-profile"),
+                    java.time.Instant.now());
+            first.activateProfile("ownership-profile", 1);
             assertOwnershipRejected(root);
-            assertTrue(first.getProfile("ownership-profile").isPresent());
+            assertTrue(first.getActiveProfileRef("ownership-profile").isPresent());
         } finally {
             first.close();
         }
         first.close();
 
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, options)) {
-            assertTrue(reopened.getProfile("ownership-profile").isPresent());
+            assertTrue(reopened.getActiveProfileRef("ownership-profile").isPresent());
         }
         System.out.println("sameJvmOwnerExcludesSecondStoreAndReleasesOnClose...ok");
     }
@@ -99,12 +102,18 @@ final class FilesystemPkiStoreOwnershipTest {
                 FsPkiStoreOptions.defaults());
                 FilesystemPkiStore second = new FilesystemPkiStore(tempDir.resolve("second"),
                         FsPkiStoreOptions.defaults())) {
-            first.putProfile(FilesystemPkiStoreTest.TestObjects.minimalProfile("first-profile", true));
-            second.putProfile(FilesystemPkiStoreTest.TestObjects.minimalProfile("second-profile", true));
-            assertTrue(first.getProfile("first-profile").isPresent());
-            assertFalse(first.getProfile("second-profile").isPresent());
-            assertTrue(second.getProfile("second-profile").isPresent());
-            assertFalse(second.getProfile("first-profile").isPresent());
+            FilesystemPkiStoreTest.importProfile(first,
+                    FilesystemPkiStoreTest.TestObjects.minimalProfile("first-profile"),
+                    java.time.Instant.now());
+            first.activateProfile("first-profile", 1);
+            FilesystemPkiStoreTest.importProfile(second,
+                    FilesystemPkiStoreTest.TestObjects.minimalProfile("second-profile"),
+                    java.time.Instant.now());
+            second.activateProfile("second-profile", 1);
+            assertTrue(first.getActiveProfileRef("first-profile").isPresent());
+            assertFalse(first.getActiveProfileRef("second-profile").isPresent());
+            assertTrue(second.getActiveProfileRef("second-profile").isPresent());
+            assertFalse(second.getActiveProfileRef("first-profile").isPresent());
         }
         System.out.println("separateStoreRootsRemainIndependent...ok");
     }

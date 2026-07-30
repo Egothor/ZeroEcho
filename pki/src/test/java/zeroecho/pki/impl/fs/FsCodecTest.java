@@ -41,6 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
@@ -55,13 +56,30 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.IssuerRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.credential.CaProfileBinding;
+import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CredentialProfileBinding;
+import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.profile.CertificateProfileDefinition;
+import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.ExtendedKeyUsageId;
+import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
+import zeroecho.pki.api.profile.LeafCertificatePolicy;
+import zeroecho.pki.api.profile.LeafKeyUsage;
+import zeroecho.pki.api.profile.SubjectAlternativeNamePolicy;
+import zeroecho.pki.api.profile.SubjectPolicy;
+import zeroecho.pki.api.profile.SubjectRdnRule;
+import zeroecho.pki.api.profile.SubjectRdnType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
@@ -77,10 +95,10 @@ final class FsCodecTest {
     @Test
     void approvedSchemaRoundTripAndTypeBinding() {
         System.out.println("approvedSchemaRoundTripAndTypeBinding");
-        CertificateProfile profile = profile();
+        ImportedCertificateProfileVersion profile = profileVersion();
 
-        byte[] encoded = FsCodec.encode(FsCodec.CERTIFICATE_PROFILE, profile);
-        CertificateProfile decoded = FsCodec.decode(FsCodec.CERTIFICATE_PROFILE, encoded);
+        byte[] encoded = FsCodec.encode(FsCodec.PROFILE_VERSION, profile);
+        ImportedCertificateProfileVersion decoded = FsCodec.decode(FsCodec.PROFILE_VERSION, encoded);
 
         System.out.println("...encoded length=" + encoded.length);
         assertEquals(profile, decoded);
@@ -91,7 +109,7 @@ final class FsCodecTest {
     @Test
     void currentEnvelopeRejectsUnknownOldAndCorruptedPayloads() {
         System.out.println("currentEnvelopeRejectsUnknownOldAndCorruptedPayloads");
-        byte[] valid = FsCodec.encode(FsCodec.CERTIFICATE_PROFILE, profile());
+        byte[] valid = FsCodec.encode(FsCodec.PROFILE_VERSION, profileVersion());
 
         byte[] unsupportedVersion = valid.clone();
         unsupportedVersion[VERSION_OFFSET] = (byte) (FsCodec.CURRENT_CODEC_VERSION + 1);
@@ -182,7 +200,7 @@ final class FsCodecTest {
     @Test
     void malformedPackedLengthAndOptionalMarkerFailClosed() {
         System.out.println("malformedPackedLengthAndOptionalMarkerFailClosed");
-        byte[] encoded = FsCodec.encode(FsCodec.CERTIFICATE_PROFILE, profile());
+        byte[] encoded = FsCodec.encode(FsCodec.PROFILE_VERSION, profileVersion());
         byte[] malformedLength = encoded.clone();
         malformedLength[FIRST_FIELD_TYPE_OFFSET + 1] = (byte) 0xFF;
         assertInvalid(malformedLength);
@@ -190,6 +208,21 @@ final class FsCodecTest {
         byte[] truncatedHeader = Arrays.copyOf(encoded, TYPE_OFFSET);
         assertInvalid(truncatedHeader);
         System.out.println("...ok");
+    }
+
+    @Test
+    void credentialProfileBindingDiscriminatorRoundTripsExactly() {
+        CertificateProfileRef reference = new CertificateProfileRef("profile-a", 1,
+                new byte[CertificateProfileRef.HASH_BYTES]);
+        List<CredentialProfileBinding> bindings = List.of(new EndEntityProfileBinding(reference),
+                new CaProfileBinding(reference.profileId()));
+
+        for (CredentialProfileBinding binding : bindings) {
+            Credential original = credential(binding);
+            Credential decoded = FsCodec.decode(FsCodec.CREDENTIAL, FsCodec.encode(FsCodec.CREDENTIAL, original));
+            assertEquals(binding, decoded.profileBinding());
+            assertEquals(binding.getClass(), decoded.profileBinding().getClass());
+        }
     }
 
     private static ParsedCertificationRequest roundTripRequest(AttributeSet attributes) {
@@ -206,14 +239,42 @@ final class FsCodecTest {
     }
 
     private static CertificateProfile profile() {
-        return new CertificateProfile("profile-a", new FormatId("x509"), "Profile A",
-                List.of(new AttributeId("required")), List.of(new AttributeId("optional")),
-                Optional.of(Duration.ofDays(365)), true);
+        SubjectPolicy subject = new SubjectPolicy(List.of(new SubjectRdnRule(
+                SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true)));
+        SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(false, 0, 0,
+                List.of(), false, java.util.Set.of(), false, false, false);
+        LeafCertificatePolicy leaf = new LeafCertificatePolicy(subject, sans,
+                java.util.Set.of(LeafKeyUsage.DIGITAL_SIGNATURE, LeafKeyUsage.KEY_ENCIPHERMENT),
+                java.util.Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1")), true, false, true,
+                java.util.Set.of("RSA"), Duration.ofDays(365));
+        return new CertificateProfile("profile-a", new FormatId("x509"), "Test leaf profile", leaf);
+    }
+
+    private static Credential credential(CredentialProfileBinding binding) {
+        return new Credential(new PkiId("credential-1"), new FormatId("x509"),
+                new IssuerRef(new PkiId("ca-1")), new SubjectRef("subject-1"),
+                new Validity(Instant.EPOCH, Instant.EPOCH.plusSeconds(1)), "1",
+                new PkiId("spki-1"), binding, CredentialStatus.ISSUED,
+                new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
+    }
+
+    private static ImportedCertificateProfileVersion profileVersion() {
+        try {
+            CertificateProfile profile = profile();
+            CertificateProfileDefinition definition = new CertificateProfileDefinition(profile.profileId(), 1,
+                    profile.formatId(), profile.displayName(), profile.leafPolicy());
+            byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
+            CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1,
+                    MessageDigest.getInstance("SHA-256").digest(canonical));
+            return new ImportedCertificateProfileVersion(reference, 1, definition, canonical, Instant.EPOCH);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     private static void assertInvalid(byte[] encoded) {
         IllegalStateException failure = assertThrows(IllegalStateException.class,
-                () -> FsCodec.decode(FsCodec.CERTIFICATE_PROFILE, encoded));
+                () -> FsCodec.decode(FsCodec.PROFILE_VERSION, encoded));
         assertTrue(failure.getMessage().contains("INVALID_CURRENT_PAYLOAD"));
     }
 

@@ -39,7 +39,6 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.DateTimeException;
 import java.util.ArrayList;
@@ -65,18 +64,28 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.ca.CaKind;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
+import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CredentialProfileBinding;
 import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.api.policy.PolicyTrace;
 import zeroecho.pki.api.policy.PolicyTraceStep;
-import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.profile.CertificateProfileDefinition;
+import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
+import zeroecho.pki.api.profile.SubjectAlternativeNameType;
+import zeroecho.pki.api.profile.SubjectRdnType;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.publication.PublicationStatus;
 import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.request.SubjectAlternativeName;
+import zeroecho.pki.api.request.SubjectRdn;
 import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
@@ -104,6 +113,7 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
  * structurally and decoded to {@link SimpleAttributeSet}.
  * </p>
  */
+// The closed codec keeps every strict schema in one non-reflective authority.
 @SuppressWarnings("PMD.CouplingBetweenObjects")
 final class FsCodec {
 
@@ -119,17 +129,17 @@ final class FsCodec {
     private static final int TOP_REVOCATION = 4;
     private static final int TOP_STATUS_OBJECT = 5;
     private static final int TOP_PUBLICATION = 6;
-    private static final int TOP_CERTIFICATE_PROFILE = 7;
     private static final int TOP_POLICY_TRACE = 8;
     private static final int TOP_WORKFLOW_STATE = 9;
     private static final int TOP_SIGN_WORKFLOW_RECORD = 10;
+    private static final int TOP_PROFILE_VERSION = 11;
+    private static final int TOP_ACTIVE_PROFILE_REF = 12;
 
     private static final int TYPE_STRING = 1;
     private static final int TYPE_BOOLEAN = 2;
     private static final int TYPE_LONG = 3;
     private static final int TYPE_BYTES = 4;
     private static final int TYPE_INSTANT = 5;
-    private static final int TYPE_DURATION = 6;
     private static final int TYPE_LIST = 7;
     private static final int TYPE_OPTIONAL = 8;
     private static final int TYPE_PKI_ID = 20;
@@ -158,6 +168,12 @@ final class FsCodec {
     private static final int TYPE_SIGN_STATE_ENUM = 59;
     private static final int TYPE_REVOCATION_STATE_ENUM = 60;
     private static final int TYPE_REVOCATION_TRANSITION = 61;
+    private static final int TYPE_SUBJECT_RDN_TYPE_ENUM = 62;
+    private static final int TYPE_SAN_TYPE_ENUM = 63;
+    private static final int TYPE_SUBJECT_RDN = 65;
+    private static final int TYPE_SAN = 66;
+    private static final int TYPE_PROFILE_REF = 72;
+    private static final int TYPE_PROFILE_BINDING = 73;
 
     private static final int ATTRIBUTE_STRING = 1;
     private static final int ATTRIBUTE_BOOLEAN = 2;
@@ -175,8 +191,16 @@ final class FsCodec {
     private static final ValueSchema<byte[]> BYTES = valueSchema(TYPE_BYTES, Writer::writeBytes, Reader::readBytes);
     private static final ValueSchema<Instant> INSTANT = valueSchema(TYPE_INSTANT, Writer::writeInstant,
             Reader::readInstant);
-    private static final ValueSchema<Duration> DURATION = valueSchema(TYPE_DURATION, Writer::writeDuration,
-            Reader::readDuration);
+    private static final ValueSchema<CertificateProfileRef> PROFILE_REF = valueSchema(TYPE_PROFILE_REF,
+            (writer, value) -> {
+                writer.writeValue(STRING, value.profileId());
+                writer.writeValue(LONG, value.profileVersion());
+                writer.writeValue(BYTES, value.canonicalSha256());
+            },
+            reader -> new CertificateProfileRef(reader.readValue(STRING), reader.readValue(LONG),
+                    reader.readValue(BYTES)));
+    private static final ValueSchema<CredentialProfileBinding> PROFILE_BINDING =
+            valueSchema(TYPE_PROFILE_BINDING, FsCodec::writeProfileBinding, FsCodec::readProfileBinding);
 
     private static final ValueSchema<Encoding> ENCODING = enumSchema(TYPE_ENCODING_ENUM,
             value -> switch (value) {
@@ -330,7 +354,44 @@ final class FsCodec {
                     throw new IOException("unknown SignWorkflowStore.State code " + code, ex);
                 }
             });
-
+    private static final ValueSchema<SubjectRdnType> SUBJECT_RDN_TYPE = enumSchema(TYPE_SUBJECT_RDN_TYPE_ENUM,
+            value -> switch (value) {
+                case COMMON_NAME -> 1;
+                case ORGANIZATION_NAME -> 2;
+                case ORGANIZATIONAL_UNIT_NAME -> 3;
+                case COUNTRY_NAME -> 4;
+                case STATE_OR_PROVINCE_NAME -> 5;
+                case LOCALITY_NAME -> 6;
+                case SERIAL_NUMBER -> 7;
+                case EMAIL_ADDRESS -> 8;
+                case PSEUDONYM -> 9;
+            },
+            code -> switch (code) {
+                case 1 -> SubjectRdnType.COMMON_NAME;
+                case 2 -> SubjectRdnType.ORGANIZATION_NAME;
+                case 3 -> SubjectRdnType.ORGANIZATIONAL_UNIT_NAME;
+                case 4 -> SubjectRdnType.COUNTRY_NAME;
+                case 5 -> SubjectRdnType.STATE_OR_PROVINCE_NAME;
+                case 6 -> SubjectRdnType.LOCALITY_NAME;
+                case 7 -> SubjectRdnType.SERIAL_NUMBER;
+                case 8 -> SubjectRdnType.EMAIL_ADDRESS;
+                case 9 -> SubjectRdnType.PSEUDONYM;
+                default -> throw unknownEnum("SubjectRdnType", code);
+            });
+    private static final ValueSchema<SubjectAlternativeNameType> SAN_TYPE = enumSchema(TYPE_SAN_TYPE_ENUM,
+            value -> switch (value) {
+                case DNS_NAME -> 1;
+                case IP_ADDRESS -> 2;
+                case URI -> 3;
+                case RFC822_NAME -> 4;
+            },
+            code -> switch (code) {
+                case 1 -> SubjectAlternativeNameType.DNS_NAME;
+                case 2 -> SubjectAlternativeNameType.IP_ADDRESS;
+                case 3 -> SubjectAlternativeNameType.URI;
+                case 4 -> SubjectAlternativeNameType.RFC822_NAME;
+                default -> throw unknownEnum("SubjectAlternativeNameType", code);
+            });
     private static final ValueSchema<PkiId> PKI_ID = valueSchema(TYPE_PKI_ID,
             (writer, value) -> writer.writeValue(STRING, value.value()),
             reader -> new PkiId(reader.readValue(STRING)));
@@ -363,7 +424,16 @@ final class FsCodec {
     private static final ValueSchema<AttributeId> ATTRIBUTE_ID = valueSchema(TYPE_ATTRIBUTE_ID,
             (writer, value) -> writer.writeValue(STRING, value.value()),
             reader -> new AttributeId(reader.readValue(STRING)));
-
+    private static final ValueSchema<SubjectRdn> SUBJECT_RDN = valueSchema(TYPE_SUBJECT_RDN,
+            (writer, value) -> {
+                writer.writeValue(SUBJECT_RDN_TYPE, value.type());
+                writer.writeValue(STRING, value.value());
+            },
+            reader -> new SubjectRdn(reader.readValue(SUBJECT_RDN_TYPE), reader.readValue(STRING)));
+    private static final ValueSchema<List<SubjectRdn>> SUBJECT_RDNS = listOf(SUBJECT_RDN);
+    private static final ValueSchema<SubjectAlternativeName> SUBJECT_ALT_NAME = valueSchema(TYPE_SAN,
+            FsCodec::writeSubjectAlternativeName, FsCodec::readSubjectAlternativeName);
+    private static final ValueSchema<List<SubjectAlternativeName>> SUBJECT_ALT_NAMES = listOf(SUBJECT_ALT_NAME);
     private static final ValueSchema<AttributeValue> ATTRIBUTE_VALUE = valueSchema(TYPE_ATTRIBUTE_VALUE,
             FsCodec::writeAttributeValue, FsCodec::readAttributeValue);
     private static final ValueSchema<List<AttributeValue>> ATTRIBUTE_VALUES = listOf(ATTRIBUTE_VALUE);
@@ -371,7 +441,6 @@ final class FsCodec {
             FsCodec::writeAttributeSet, FsCodec::readAttributeSet);
 
     private static final ValueSchema<List<String>> STRINGS = listOf(STRING);
-    private static final ValueSchema<List<AttributeId>> ATTRIBUTE_IDS = listOf(ATTRIBUTE_ID);
     private static final ValueSchema<PolicyTraceStep> POLICY_TRACE_STEP = valueSchema(TYPE_POLICY_TRACE_STEP,
             (writer, value) -> {
                 writer.writeValue(STRING, value.ruleId());
@@ -393,7 +462,6 @@ final class FsCodec {
     private static final ValueSchema<Optional<Validity>> OPTIONAL_VALIDITY = optionalOf(VALIDITY);
     private static final ValueSchema<Optional<String>> OPTIONAL_STRING = optionalOf(STRING);
     private static final ValueSchema<Optional<Instant>> OPTIONAL_INSTANT = optionalOf(INSTANT);
-    private static final ValueSchema<Optional<Duration>> OPTIONAL_DURATION = optionalOf(DURATION);
     private static final ValueSchema<Optional<EncodedObject>> OPTIONAL_ENCODED_OBJECT = optionalOf(ENCODED_OBJECT);
     private static final ValueSchema<Optional<RevocationReason>> OPTIONAL_REVOCATION_REASON =
             optionalOf(REVOCATION_REASON);
@@ -420,9 +488,6 @@ final class FsCodec {
             valueSchema(103, FsCodec::writeStatusObject, FsCodec::readStatusObject));
     /* package */ static final Schema<PublicationRecord> PUBLICATION = topLevel(TOP_PUBLICATION, "PUBLICATION",
             valueSchema(104, FsCodec::writePublication, FsCodec::readPublication));
-    /* package */ static final Schema<CertificateProfile> CERTIFICATE_PROFILE = topLevel(TOP_CERTIFICATE_PROFILE,
-            "CERTIFICATE_PROFILE", valueSchema(105, FsCodec::writeCertificateProfile,
-                    FsCodec::readCertificateProfile));
     /* package */ static final Schema<PolicyTrace> POLICY_TRACE = topLevel(TOP_POLICY_TRACE, "POLICY_TRACE",
             valueSchema(106, FsCodec::writePolicyTrace, FsCodec::readPolicyTrace));
     /* package */ static final Schema<WorkflowStateRecord> WORKFLOW_STATE = topLevel(TOP_WORKFLOW_STATE,
@@ -430,6 +495,11 @@ final class FsCodec {
     /* package */ static final Schema<SignWorkflowStore.Record> SIGN_WORKFLOW_RECORD = topLevel(
             TOP_SIGN_WORKFLOW_RECORD, "SIGN_WORKFLOW_RECORD",
             valueSchema(108, FsCodec::writeSignWorkflowRecord, FsCodec::readSignWorkflowRecord));
+    /* package */ static final Schema<ImportedCertificateProfileVersion> PROFILE_VERSION =
+            topLevel(TOP_PROFILE_VERSION, "PROFILE_VERSION",
+                    valueSchema(109, FsCodec::writeProfileVersion, FsCodec::readProfileVersion));
+    /* package */ static final Schema<CertificateProfileRef> ACTIVE_PROFILE_REF =
+            topLevel(TOP_ACTIVE_PROFILE_REF, "ACTIVE_PROFILE_REF", PROFILE_REF);
 
     private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(
             Map.entry(TOP_CA_RECORD, CA_RECORD),
@@ -438,10 +508,11 @@ final class FsCodec {
             Map.entry(TOP_REVOCATION, REVOCATION_JOURNAL),
             Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
             Map.entry(TOP_PUBLICATION, PUBLICATION),
-            Map.entry(TOP_CERTIFICATE_PROFILE, CERTIFICATE_PROFILE),
             Map.entry(TOP_POLICY_TRACE, POLICY_TRACE),
             Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE),
-            Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD));
+            Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD),
+            Map.entry(TOP_PROFILE_VERSION, PROFILE_VERSION),
+            Map.entry(TOP_ACTIVE_PROFILE_REF, ACTIVE_PROFILE_REF));
 
     private FsCodec() {
         // utility
@@ -596,7 +667,7 @@ final class FsCodec {
         writer.writeValue(VALIDITY, value.validity());
         writer.writeValue(STRING, value.serialOrUniqueId());
         writer.writeValue(PKI_ID, value.publicKeyId());
-        writer.writeValue(STRING, value.profileId());
+        writer.writeValue(PROFILE_BINDING, value.profileBinding());
         writer.writeValue(CREDENTIAL_STATUS, value.status());
         writer.writeValue(ENCODED_OBJECT, value.encoded());
         writer.writeValue(ATTRIBUTE_SET, value.attributes());
@@ -605,8 +676,29 @@ final class FsCodec {
     private static Credential readCredential(Reader reader) throws IOException {
         return new Credential(reader.readValue(PKI_ID), reader.readValue(FORMAT_ID), reader.readValue(ISSUER_REF),
                 reader.readValue(SUBJECT_REF), reader.readValue(VALIDITY), reader.readValue(STRING),
-                reader.readValue(PKI_ID), reader.readValue(STRING), reader.readValue(CREDENTIAL_STATUS),
+                reader.readValue(PKI_ID), reader.readValue(PROFILE_BINDING), reader.readValue(CREDENTIAL_STATUS),
                 reader.readValue(ENCODED_OBJECT), reader.readValue(ATTRIBUTE_SET));
+    }
+
+    private static void writeProfileBinding(Writer writer, CredentialProfileBinding value) throws IOException {
+        switch (value) {
+            case EndEntityProfileBinding endEntity -> {
+                writer.writeUnsignedByte(1);
+                writer.writeValue(PROFILE_REF, endEntity.reference());
+            }
+            case CaProfileBinding ca -> {
+                writer.writeUnsignedByte(2);
+                writer.writeValue(STRING, ca.profileId());
+            }
+        }
+    }
+
+    private static CredentialProfileBinding readProfileBinding(Reader reader) throws IOException {
+        return switch (reader.readUnsignedByte()) {
+            case 1 -> new EndEntityProfileBinding(reader.readValue(PROFILE_REF));
+            case 2 -> new CaProfileBinding(reader.readValue(STRING));
+            default -> throw new IOException("unknown credential profile binding");
+        };
     }
 
     private static void writeCaRecord(Writer writer, CaRecord value) throws IOException {
@@ -630,13 +722,17 @@ final class FsCodec {
         writer.writeValue(ENCODED_OBJECT, value.publicKeyInfo());
         writer.writeValue(OPTIONAL_VALIDITY, value.requestedValidity());
         writer.writeValue(OPTIONAL_STRING, value.requestedProfileId());
+        writer.writeValue(SUBJECT_RDNS, value.subjectRdns());
+        writer.writeValue(SUBJECT_ALT_NAMES, value.subjectAlternativeNames());
+        writer.writeValue(BOOLEAN, value.subjectAlternativeNamePresent());
         writer.writeValue(ATTRIBUTE_SET, value.attributes());
     }
 
     private static ParsedCertificationRequest readParsedRequest(Reader reader) throws IOException {
         return new ParsedCertificationRequest(reader.readValue(PKI_ID), reader.readValue(FORMAT_ID),
                 reader.readValue(SUBJECT_REF), reader.readValue(ENCODED_OBJECT), reader.readValue(OPTIONAL_VALIDITY),
-                reader.readValue(OPTIONAL_STRING), reader.readValue(ATTRIBUTE_SET));
+                reader.readValue(OPTIONAL_STRING), reader.readValue(SUBJECT_RDNS), reader.readValue(SUBJECT_ALT_NAMES),
+                reader.readValue(BOOLEAN), reader.readValue(ATTRIBUTE_SET));
     }
 
     private static void writeRevocationJournal(Writer writer, RevocationJournal value) throws IOException {
@@ -700,20 +796,53 @@ final class FsCodec {
                 reader.readValue(PUBLICATION_STATUS));
     }
 
-    private static void writeCertificateProfile(Writer writer, CertificateProfile value) throws IOException {
-        writer.writeValue(STRING, value.profileId());
-        writer.writeValue(FORMAT_ID, value.formatId());
-        writer.writeValue(STRING, value.displayName());
-        writer.writeValue(ATTRIBUTE_IDS, value.requiredAttributes());
-        writer.writeValue(ATTRIBUTE_IDS, value.optionalAttributes());
-        writer.writeValue(OPTIONAL_DURATION, value.maxValidity());
-        writer.writeValue(BOOLEAN, value.active());
+    private static void writeProfileVersion(Writer writer, ImportedCertificateProfileVersion value)
+            throws IOException {
+        writer.writeValue(PROFILE_REF, value.reference());
+        writer.writeValue(LONG, (long) value.schemaVersion());
+        writer.writeValue(BYTES, value.canonicalJson());
+        writer.writeValue(INSTANT, value.importedAt());
     }
 
-    private static CertificateProfile readCertificateProfile(Reader reader) throws IOException {
-        return new CertificateProfile(reader.readValue(STRING), reader.readValue(FORMAT_ID), reader.readValue(STRING),
-                reader.readValue(ATTRIBUTE_IDS), reader.readValue(ATTRIBUTE_IDS), reader.readValue(OPTIONAL_DURATION),
-                reader.readValue(BOOLEAN));
+    private static ImportedCertificateProfileVersion readProfileVersion(Reader reader) throws IOException {
+        CertificateProfileRef reference = reader.readValue(PROFILE_REF);
+        int schemaVersion = toInt(reader.readValue(LONG));
+        byte[] canonicalJson = reader.readValue(BYTES);
+        Instant importedAt = reader.readValue(INSTANT);
+        CertificateProfileDefinition definition;
+        try {
+            definition = CertificateProfileDocumentCodec.parse(canonicalJson);
+            return new ImportedCertificateProfileVersion(reference, schemaVersion, definition, canonicalJson,
+                    importedAt);
+        } finally {
+            Arrays.fill(canonicalJson, (byte) 0);
+        }
+    }
+
+    private static void writeSubjectAlternativeName(Writer writer, SubjectAlternativeName value) throws IOException {
+        writer.writeValue(SAN_TYPE, value.type());
+        switch (value) {
+            case SubjectAlternativeName.DnsName dns -> writer.writeValue(STRING, dns.value());
+            case SubjectAlternativeName.IpAddress ip -> writer.writeValue(BYTES, ip.bytes());
+            case SubjectAlternativeName.UriName uri -> writer.writeValue(STRING, uri.value());
+            case SubjectAlternativeName.Rfc822Name email -> writer.writeValue(STRING, email.value());
+        }
+    }
+
+    private static SubjectAlternativeName readSubjectAlternativeName(Reader reader) throws IOException {
+        return switch (reader.readValue(SAN_TYPE)) {
+            case DNS_NAME -> new SubjectAlternativeName.DnsName(reader.readValue(STRING));
+            case IP_ADDRESS -> new SubjectAlternativeName.IpAddress(reader.readValue(BYTES));
+            case URI -> new SubjectAlternativeName.UriName(reader.readValue(STRING));
+            case RFC822_NAME -> new SubjectAlternativeName.Rfc822Name(reader.readValue(STRING));
+        };
+    }
+
+    private static int toInt(long value) throws IOException {
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+            throw new IOException("integer value out of range");
+        }
+        return (int) value;
     }
 
     private static void writePolicyTrace(Writer writer, PolicyTrace value) throws IOException {
@@ -958,11 +1087,6 @@ final class FsCodec {
             Util.writePack7I(output, value.getNano());
         }
 
-        private void writeDuration(Duration value) throws IOException {
-            Util.writeLong(output, value.getSeconds());
-            Util.writePack7I(output, value.getNano());
-        }
-
         private void writeCount(int count) throws IOException {
             if (count < 0 || count > MAX_COLLECTION_ELEMENTS) {
                 throw new IOException("collection size out of range");
@@ -1041,19 +1165,6 @@ final class FsCodec {
                 return Instant.ofEpochSecond(seconds, nanos);
             } catch (DateTimeException ex) {
                 throw new IOException("invalid instant", ex);
-            }
-        }
-
-        private Duration readDuration() throws IOException {
-            long seconds = Util.readLong(input);
-            int nanos = Util.readPack7I(input);
-            if (nanos < 0 || nanos > 999_999_999) {
-                throw new IOException("invalid duration nanoseconds");
-            }
-            try {
-                return Duration.ofSeconds(seconds, nanos);
-            } catch (ArithmeticException ex) {
-                throw new IOException("invalid duration", ex);
             }
         }
 

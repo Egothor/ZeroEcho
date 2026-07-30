@@ -38,10 +38,27 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
+import org.bouncycastle.asn1.ASN1Encodable;
+import org.bouncycastle.asn1.ASN1OctetString;
+import org.bouncycastle.asn1.ASN1String;
+import org.bouncycastle.asn1.DERIA5String;
+import org.bouncycastle.asn1.DERPrintableString;
+import org.bouncycastle.asn1.DERUTF8String;
+import org.bouncycastle.asn1.pkcs.Attribute;
+import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
+import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.Extensions;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemReader;
@@ -52,8 +69,11 @@ import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.profile.SubjectRdnType;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.request.SubjectAlternativeName;
+import zeroecho.pki.api.request.SubjectRdn;
 import zeroecho.pki.spi.framework.CertificationRequestParser;
 
 /**
@@ -108,9 +128,13 @@ import zeroecho.pki.spi.framework.CertificationRequestParser;
  * This class is stateless and thread-safe.
  * </p>
  */
-// PMD cannot infer that retaining parser causes would violate the redaction contract.
-@SuppressWarnings("PMD.PreserveStackTrace")
+// PMD cannot infer the redaction boundary or the explicit closed parsing grammar.
+@SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CyclomaticComplexity" })
 public final class BcX509CertificationRequestParser implements CertificationRequestParser {
+    private static final int MAXIMUM_SUBJECT_DER_BYTES = 16 * 1024;
+    private static final int MAXIMUM_SAN_DER_BYTES = 32 * 1024;
+    private static final int MAXIMUM_SUBJECT_RDNS = 32;
+    private static final int SINGLE_ATTRIBUTE_VALUE = 1;
     /**
      * Parses a PKCS#10 certification request into the normalized PKI request
      * representation.
@@ -165,7 +189,9 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
             }
 
             X500Name subject = csr.getSubject();
-            SubjectRef subjectRef = new SubjectRef(subject.toString());
+            List<SubjectRdn> subjectRdns = parseSubject(subject);
+            SubjectRef subjectRef = subjectReference(subjectRdns);
+            List<SubjectAlternativeName> subjectAlternativeNames = parseSubjectAlternativeNames(csr);
 
             try {
                 spki = csr.getSubjectPublicKeyInfo().getEncoded();
@@ -180,13 +206,135 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
                     .put(BcX509Attributes.CSR_DER, new AttributeValue.BytesValue(csrDer.clone())).build();
 
             return new ParsedCertificationRequest(requestId, request.formatId(), subjectRef, publicKeyInfo,
-                    Optional.empty(), Optional.empty(), attrs);
+                    Optional.empty(), Optional.empty(), subjectRdns, subjectAlternativeNames,
+                    !subjectAlternativeNames.isEmpty(), attrs);
         } finally {
             java.util.Arrays.fill(csrDer, (byte) 0);
             if (spki != null) {
                 java.util.Arrays.fill(spki, (byte) 0);
             }
         }
+    }
+
+    // Each approved RDN requires one immutable typed value and round-trip check.
+    @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops" })
+    private static List<SubjectRdn> parseSubject(X500Name subject) {
+        try {
+            if (subject.getEncoded().length > MAXIMUM_SUBJECT_DER_BYTES) {
+                throw new PkiException("CSR subject rejected: code=SUBJECT_TOO_LARGE");
+            }
+            RDN[] rdns = subject.getRDNs();
+            if (rdns.length > MAXIMUM_SUBJECT_RDNS) {
+                throw new PkiException("CSR subject rejected: code=SUBJECT_TOO_MANY_RDNS");
+            }
+            List<SubjectRdn> result = new ArrayList<>(rdns.length);
+            for (RDN rdn : rdns) {
+                if (rdn == null || rdn.isMultiValued() || rdn.getFirst() == null) {
+                    throw new PkiException("CSR subject rejected: code=SUBJECT_MULTIVALUED");
+                }
+                SubjectRdnType type;
+                try {
+                    type = SubjectRdnType.fromOid(rdn.getFirst().getType().getId());
+                } catch (IllegalArgumentException exception) {
+                    throw new PkiException("CSR subject rejected: code=SUBJECT_RDN_UNSUPPORTED");
+                }
+                ASN1Encodable encodedValue = rdn.getFirst().getValue();
+                if (!(encodedValue instanceof DERUTF8String || encodedValue instanceof DERPrintableString
+                        || encodedValue instanceof DERIA5String) || !(encodedValue instanceof ASN1String stringValue)) {
+                    throw new PkiException("CSR subject rejected: code=SUBJECT_VALUE_UNSUPPORTED");
+                }
+                SubjectRdn parsed = new SubjectRdn(type, stringValue.getString());
+                X500Name rebuilt = BcX509ProfileSupport.subject(List.of(parsed));
+                ASN1Encodable rebuiltValue = rebuilt.getRDNs()[0].getFirst().getValue();
+                if (!(rebuiltValue instanceof ASN1String rebuiltString)
+                        || !rebuiltString.getString().equals(parsed.value())) {
+                    throw new PkiException("CSR subject rejected: code=SUBJECT_VALUE_AMBIGUOUS");
+                }
+                result.add(parsed);
+            }
+            return List.copyOf(result);
+        } catch (PkiException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new PkiException("CSR subject rejected: code=SUBJECT_MALFORMED");
+        }
+    }
+
+    private static SubjectRef subjectReference(List<SubjectRdn> rdns) {
+        return new SubjectRef(rdns.isEmpty() ? "x509:empty-subject" : BcX509ProfileSupport.subject(rdns).toString());
+    }
+
+    // The branches enforce the closed PKCS#10 extensionRequest grammar.
+    @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidRethrowingException" })
+    private static List<SubjectAlternativeName> parseSubjectAlternativeNames(PKCS10CertificationRequest csr) {
+        Attribute[] allAttributes = csr.getAttributes();
+        Attribute[] extensionRequests = csr.getAttributes(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest);
+        if (extensionRequests.length > 1 || allAttributes.length != extensionRequests.length) {
+            throw new PkiException("CSR attributes rejected: code=CSR_ATTRIBUTE_UNSUPPORTED");
+        }
+        if (extensionRequests.length == 0) {
+            return List.of();
+        }
+        Attribute request = extensionRequests[0];
+        if (request.getAttrValues().size() != SINGLE_ATTRIBUTE_VALUE) {
+            throw new PkiException("CSR extensions rejected: code=EXTENSION_REQUEST_MALFORMED");
+        }
+        Extensions extensions;
+        try {
+            extensions = Extensions.getInstance(request.getAttrValues().getObjectAt(0));
+        } catch (IllegalArgumentException exception) {
+            throw new PkiException("CSR extensions rejected: code=EXTENSION_REQUEST_MALFORMED");
+        }
+        org.bouncycastle.asn1.ASN1ObjectIdentifier[] identifiers = extensions.getExtensionOIDs();
+        if (identifiers.length != 1 || !Extension.subjectAlternativeName.equals(identifiers[0])) {
+            throw new PkiException("CSR extensions rejected: code=EXTENSION_UNSUPPORTED");
+        }
+        Extension sanExtension = extensions.getExtension(Extension.subjectAlternativeName);
+        if (sanExtension == null || sanExtension.isCritical()) {
+            throw new PkiException("CSR extensions rejected: code=SAN_CRITICALITY_REQUESTED");
+        }
+        try {
+            if (sanExtension.getEncoded().length > MAXIMUM_SAN_DER_BYTES) {
+                throw new PkiException("CSR extensions rejected: code=SAN_TOO_LARGE");
+            }
+            GeneralName[] names = GeneralNames.getInstance(sanExtension.getParsedValue()).getNames();
+            if (names.length == 0 || names.length > 64) {
+                throw new PkiException("CSR extensions rejected: code=SAN_COUNT_INVALID");
+            }
+            List<SubjectAlternativeName> result = new ArrayList<>(names.length);
+            Set<SubjectAlternativeName> unique = new HashSet<>();
+            for (GeneralName name : names) {
+                SubjectAlternativeName parsed = parseGeneralName(name);
+                if (!unique.add(parsed)) {
+                    throw new PkiException("CSR extensions rejected: code=SAN_DUPLICATE");
+                }
+                result.add(parsed);
+            }
+            return List.copyOf(result);
+        } catch (PkiException exception) {
+            throw exception;
+        } catch (IllegalArgumentException | IllegalStateException | java.io.IOException exception) {
+            throw new PkiException("CSR extensions rejected: code=SAN_MALFORMED");
+        }
+    }
+
+    private static SubjectAlternativeName parseGeneralName(GeneralName name) {
+        return switch (name.getTagNo()) {
+            case GeneralName.dNSName -> new SubjectAlternativeName.DnsName(asAsciiString(name.getName()));
+            case GeneralName.iPAddress -> new SubjectAlternativeName.IpAddress(
+                    ASN1OctetString.getInstance(name.getName()).getOctets());
+            case GeneralName.uniformResourceIdentifier ->
+                new SubjectAlternativeName.UriName(asAsciiString(name.getName()));
+            case GeneralName.rfc822Name -> new SubjectAlternativeName.Rfc822Name(asAsciiString(name.getName()));
+            default -> throw new PkiException("CSR extensions rejected: code=SAN_TYPE_UNSUPPORTED");
+        };
+    }
+
+    private static String asAsciiString(ASN1Encodable value) {
+        if (!(value instanceof ASN1String stringValue)) {
+            throw new PkiException("CSR extensions rejected: code=SAN_MALFORMED");
+        }
+        return stringValue.getString();
     }
 
     /**

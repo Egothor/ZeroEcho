@@ -1,0 +1,1 @@
+{"schemaVersion":1,"profiles":[{"resource":"zeroecho/pki/profiles/v1/server-tls.json"},{"resource":"zeroecho/pki/profiles/v1/vpn-server.json"},{"resource":"zeroecho/pki/profiles/v1/vpn-client.json"},{"resource":"zeroecho/pki/profiles/v1/email-signing.json"}]}

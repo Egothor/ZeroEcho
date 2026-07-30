@@ -80,6 +80,7 @@ import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.ca.IntermediateCertIssueCommand;
 import zeroecho.pki.api.ca.IntermediateCreateCommand;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
@@ -150,6 +151,9 @@ import zeroecho.pki.spi.store.PkiStore;
 public final class DefaultCaService implements CaService {
 
     private static final Logger LOG = Logger.getLogger(DefaultCaService.class.getName());
+    private static final String CREATE_INT_REJECTED = "CREATE_INTERMEDIATE_REJECTED";
+    private static final String ISSUE_INT_REJECTED = "ISSUE_INTERMEDIATE_REJECTED";
+    private static final String BACKEND_CRED_MISMATCH = "BACKEND_CREDENTIAL_MISMATCH";
 
     private final PkiStore store;
     private final CredentialFramework framework;
@@ -314,8 +318,9 @@ public final class DefaultCaService implements CaService {
         PkiId publicKeyId = new PkiId("spki:" + sha256Hex(spki.bytes()));
 
         Credential credential = new Credential(credId, command.formatId(), new IssuerRef(caId), subjectRef, validity,
-                serial.toString(), publicKeyId, command.profileId(), CredentialStatus.ISSUED,
+                serial.toString(), publicKeyId, new CaProfileBinding(command.profileId()), CredentialStatus.ISSUED,
                 new EncodedObject(Encoding.DER, certDer), command.attributes());
+        CredentialProfileBindings.requireCaBinding(credential.profileBinding(), command.profileId());
 
         CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, keyRef, subjectRef, List.of(credential));
         store.putCa(ca);
@@ -387,8 +392,10 @@ public final class DefaultCaService implements CaService {
 
         BigInteger serial = holder.getSerialNumber();
         Credential credential = new Credential(credId, command.formatId(), new IssuerRef(caId), command.subjectRef(),
-                validity, serial.toString(), publicKeyId, command.profileId(), CredentialStatus.ISSUED,
+                validity, serial.toString(), publicKeyId, new CaProfileBinding(command.profileId()),
+                CredentialStatus.ISSUED,
                 new EncodedObject(Encoding.DER, certDer), command.attributes());
+        CredentialProfileBindings.requireCaBinding(credential.profileBinding(), command.profileId());
         store.putCredential(credential);
         CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, command.keyRef(), command.subjectRef(),
                 List.of(credential));
@@ -442,7 +449,7 @@ public final class DefaultCaService implements CaService {
             throw new PkiException("Issuer CA has no credentials");
         }
         if (!framework.formatId().equals(command.formatId())) {
-            throw proofGate.rejection("CREATE_INTERMEDIATE_REJECTED", command.formatId(), Optional.empty(),
+            throw proofGate.rejection(CREATE_INT_REJECTED, command.formatId(), Optional.empty(),
                     "FORMAT_UNSUPPORTED");
         }
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
@@ -453,9 +460,9 @@ public final class DefaultCaService implements CaService {
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)).substring(0, 16));
 
         CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(command.keyRef().get(),
-                command.formatId(), "CREATE_INTERMEDIATE_REJECTED", Optional.of(caId));
+                command.formatId(), CREATE_INT_REJECTED, Optional.of(caId));
         EncodedObject subjectSpki = subjectProof.exactPublicKey();
-        requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), "CREATE_INTERMEDIATE_REJECTED",
+        requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), CREATE_INT_REJECTED,
                 Optional.of(caId));
         AttributeSet authoritative = authoritativeIntermediateAttributes(command.attributes(), issuer,
                 issuerCredential, subjectSpki, command.subjectRef());
@@ -463,15 +470,24 @@ public final class DefaultCaService implements CaService {
                 ManagedCaIssuance.Operation.CREATE_INTERMEDIATE, command.issuerCaId(), caId, command.profileId(),
                 Optional.empty(), authoritative, command.subjectRef());
 
+        Credential backendCredential;
+        try {
+            backendCredential = issuerBackend.issueIntermediateCertificate(issue);
+        } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
+            throw proofGate.rejection(CREATE_INT_REJECTED, command.formatId(), Optional.of(caId),
+                    BACKEND_CRED_MISMATCH);
+        }
+        requireCaBinding(backendCredential, command.profileId(), CREATE_INT_REJECTED,
+                command.formatId(), Optional.of(caId));
         Credential cred;
         try {
-            cred = CredentialSnapshots.copy(issuerBackend.issueIntermediateCertificate(issue));
+            cred = CredentialSnapshots.copy(backendCredential);
         } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
-            throw proofGate.rejection("CREATE_INTERMEDIATE_REJECTED", command.formatId(), Optional.of(caId),
-                    "BACKEND_CREDENTIAL_MISMATCH");
+            throw proofGate.rejection(CREATE_INT_REJECTED, command.formatId(), Optional.of(caId),
+                    BACKEND_CRED_MISMATCH);
         }
         requireIntermediateCredentialMatches(cred, issuerCredential, subjectSpki, command.subjectRef(),
-                command.issuerCaId(), caId, command.profileId(), "CREATE_INTERMEDIATE_REJECTED");
+                command.issuerCaId(), caId, CREATE_INT_REJECTED);
         store.putCredential(cred);
 
         CaRecord subject = new CaRecord(caId, CaKind.INTERMEDIATE, CaState.ACTIVE, command.keyRef().get(),
@@ -512,7 +528,8 @@ public final class DefaultCaService implements CaService {
         CaRecord subject = getCa(command.subjectCaId());
         ensureActive(subject, "subject");
         if (!framework.formatId().equals(command.formatId())) {
-            throw proofGate.rejection("ISSUE_INTERMEDIATE_REJECTED", command.formatId(), Optional.of(subject.caId()),
+            throw proofGate.rejection(ISSUE_INT_REJECTED, command.formatId(),
+                    Optional.of(subject.caId()),
                     "FORMAT_UNSUPPORTED");
         }
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
@@ -520,9 +537,9 @@ public final class DefaultCaService implements CaService {
                 CredentialUse.INTERMEDIATE_ISSUER, statusEvaluation));
 
         CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(subject.issuerKeyRef(),
-                command.formatId(), "ISSUE_INTERMEDIATE_REJECTED", Optional.of(subject.caId()));
+                command.formatId(), ISSUE_INT_REJECTED, Optional.of(subject.caId()));
         EncodedObject subjectSpki = subjectProof.exactPublicKey();
-        requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), "ISSUE_INTERMEDIATE_REJECTED",
+        requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), ISSUE_INT_REJECTED,
                 Optional.of(subject.caId()));
         AttributeSet authoritative = authoritativeIntermediateAttributes(command.attributes(), issuer,
                 issuerCredential, subjectSpki, subject.subjectRef());
@@ -530,15 +547,24 @@ public final class DefaultCaService implements CaService {
                 ManagedCaIssuance.Operation.ISSUE_INTERMEDIATE, command.issuerCaId(), command.subjectCaId(),
                 command.profileId(), command.requestedValidity(), authoritative, subject.subjectRef());
 
+        Credential backendCredential;
+        try {
+            backendCredential = issuerBackend.issueIntermediateCertificate(gated);
+        } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
+            throw proofGate.rejection(ISSUE_INT_REJECTED, command.formatId(),
+                    Optional.of(subject.caId()), BACKEND_CRED_MISMATCH);
+        }
+        requireCaBinding(backendCredential, command.profileId(), ISSUE_INT_REJECTED,
+                command.formatId(), Optional.of(subject.caId()));
         Credential cred;
         try {
-            cred = CredentialSnapshots.copy(issuerBackend.issueIntermediateCertificate(gated));
+            cred = CredentialSnapshots.copy(backendCredential);
         } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
-            throw proofGate.rejection("ISSUE_INTERMEDIATE_REJECTED", command.formatId(), Optional.of(subject.caId()),
-                    "BACKEND_CREDENTIAL_MISMATCH");
+            throw proofGate.rejection(ISSUE_INT_REJECTED, command.formatId(),
+                    Optional.of(subject.caId()), BACKEND_CRED_MISMATCH);
         }
         requireIntermediateCredentialMatches(cred, issuerCredential, subjectSpki, subject.subjectRef(),
-                command.issuerCaId(), subject.caId(), command.profileId(), "ISSUE_INTERMEDIATE_REJECTED");
+                command.issuerCaId(), subject.caId(), ISSUE_INT_REJECTED);
         store.putCredential(cred);
 
         List<Credential> updated = new ArrayList<>(subject.caCredentials());
@@ -771,16 +797,15 @@ public final class DefaultCaService implements CaService {
 
     private void requireIntermediateCredentialMatches(Credential credential, Credential issuerCredential,
             EncodedObject exactSubjectSpki, SubjectRef subjectRef, PkiId issuerCaId, PkiId subjectCaId,
-            String profileId, String action) {
+            String action) {
         try {
             if (!framework.formatId().equals(credential.formatId())
                     || credential.encoded().encoding() != Encoding.DER
                     || credential.status() != CredentialStatus.ISSUED
-                    || !credential.profileId().equals(profileId)
                     || !credential.subjectRef().equals(subjectRef)
                     || !credential.issuerRef().equals(new IssuerRef(issuerCaId))) {
                 throw proofGate.rejection(action, framework.formatId(), Optional.of(subjectCaId),
-                        "BACKEND_CREDENTIAL_MISMATCH");
+                        BACKEND_CRED_MISMATCH);
             }
             X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
             X509CertificateHolder issuerHolder = new X509CertificateHolder(issuerCredential.encoded().bytes());
@@ -810,13 +835,23 @@ public final class DefaultCaService implements CaService {
                     || credential.validity().notAfter().getEpochSecond() != holder.getNotAfter().toInstant()
                             .getEpochSecond()) {
                 throw proofGate.rejection(action, framework.formatId(), Optional.of(subjectCaId),
-                        "BACKEND_CREDENTIAL_MISMATCH");
+                        BACKEND_CRED_MISMATCH);
             }
         } catch (PkiException ex) {
             throw ex;
         } catch (Exception ex) {
             throw proofGate.rejection(action, framework.formatId(), Optional.of(subjectCaId),
-                    "BACKEND_CREDENTIAL_MISMATCH");
+                    BACKEND_CRED_MISMATCH);
+        }
+    }
+
+    private void requireCaBinding(Credential credential, String expectedCaProfileId, String action,
+            FormatId formatId, Optional<PkiId> objectId) {
+        try {
+            CredentialProfileBindings.requireCaBinding(
+                    credential == null ? null : credential.profileBinding(), expectedCaProfileId);
+        } catch (PkiException mismatch) {
+            throw proofGate.rejection(action, formatId, objectId, CredentialProfileBindings.MISMATCH_CODE);
         }
     }
 

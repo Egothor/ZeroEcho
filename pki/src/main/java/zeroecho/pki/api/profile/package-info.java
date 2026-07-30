@@ -45,6 +45,16 @@
  * framework constructs during credential creation.
  * </p>
  *
+ * <p>
+ * Built-in end-entity profile resources are deterministic baseline
+ * provisioning templates. Loading the catalogue neither persists nor activates
+ * a profile, and the resources are never implicit issuance defaults.
+ * Administrator-supplied profiles will use the same strict document schema.
+ * Canonical JSON and SHA-256 hashes support deterministic provisioning and
+ * audit. CA profile resources are intentionally absent until the CA profile
+ * policy model is defined.
+ * </p>
+ *
  * @since 1.0
  */
 package zeroecho.pki.api.profile;

@@ -37,7 +37,6 @@ import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.Validity;
-import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 
 /**
@@ -49,11 +48,9 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
  * @param profileId        profile id governing issuance
  * @param validityOverride optional requested validity override
  *                         (policy-validated)
- * @param overrides        additional universal attribute overrides
- *                         (policy-validated; may be empty but not null)
  */
 public record IssueEndEntityCommand(PkiId issuerCaId, ParsedCertificationRequest request, String profileId,
-        Optional<Validity> validityOverride, AttributeSet overrides) {
+        Optional<Validity> validityOverride) {
 
     /**
      * Creates an issuance command.
@@ -73,9 +70,6 @@ public record IssueEndEntityCommand(PkiId issuerCaId, ParsedCertificationRequest
         }
         if (validityOverride == null) {
             throw new IllegalArgumentException("validityOverride must not be null");
-        }
-        if (overrides == null) {
-            throw new IllegalArgumentException("overrides must not be null");
         }
     }
 }

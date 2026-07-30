@@ -48,6 +48,7 @@ import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
 import zeroecho.pki.api.revocation.RevocationCommand;
@@ -498,7 +499,7 @@ final class FilesystemRevocationJournalTest {
         return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
                 new Validity(TIME.minusSeconds(60), TIME.plusSeconds(60)), suffix,
-                new PkiId("key:" + suffix), "default", CredentialStatus.ISSUED,
+                new PkiId("key:" + suffix), new CaProfileBinding("default"), CredentialStatus.ISSUED,
                 new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }), new SimpleAttributeSet());
     }
 

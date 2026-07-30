@@ -60,7 +60,8 @@ final class CredentialSnapshots {
 
     /* default */ static Credential copy(Credential source) {
         return new Credential(source.credentialId(), source.formatId(), source.issuerRef(), source.subjectRef(),
-                source.validity(), source.serialOrUniqueId(), source.publicKeyId(), source.profileId(), source.status(),
+                source.validity(), source.serialOrUniqueId(), source.publicKeyId(), source.profileBinding(),
+                source.status(),
                 copy(source.encoded()), copy(source.attributes()));
     }
 

@@ -64,7 +64,7 @@ import zeroecho.pki.api.attr.AttributeSet;
  * @param serialOrUniqueId framework-specific unique identifier (serial for
  *                         X.509)
  * @param publicKeyId      stable identifier derived from the subject public key
- * @param profileId        profile governing issuance
+ * @param profileBinding   closed profile identity governing issuance
  * @param status           persisted issuance and inventory metadata; this value
  *                         is not sufficient for a trust decision because current
  *                         revocation state and evaluation time are external
@@ -74,7 +74,8 @@ import zeroecho.pki.api.attr.AttributeSet;
  * @param attributes       universal attribute set
  */
 public record Credential(PkiId credentialId, FormatId formatId, IssuerRef issuerRef, SubjectRef subjectRef,
-        Validity validity, String serialOrUniqueId, PkiId publicKeyId, String profileId, CredentialStatus status,
+        Validity validity, String serialOrUniqueId, PkiId publicKeyId, CredentialProfileBinding profileBinding,
+        CredentialStatus status,
         EncodedObject encoded, AttributeSet attributes) {
 
     /**
@@ -104,8 +105,8 @@ public record Credential(PkiId credentialId, FormatId formatId, IssuerRef issuer
         if (publicKeyId == null) {
             throw new IllegalArgumentException("publicKeyId must not be null");
         }
-        if (profileId == null || profileId.isBlank()) {
-            throw new IllegalArgumentException("profileId must not be null/blank");
+        if (profileBinding == null) {
+            throw new IllegalArgumentException("profileBinding must not be null");
         }
         if (status == null) {
             throw new IllegalArgumentException("status must not be null");
@@ -117,4 +118,5 @@ public record Credential(PkiId credentialId, FormatId formatId, IssuerRef issuer
             throw new IllegalArgumentException("attributes must not be null");
         }
     }
+
 }

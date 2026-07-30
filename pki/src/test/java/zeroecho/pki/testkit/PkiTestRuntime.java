@@ -51,12 +51,14 @@ import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.IssuanceService;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.RevocationService;
+import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.StatusObjectService;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.DefaultCaService;
 import zeroecho.pki.impl.core.DefaultCertificationRequestService;
 import zeroecho.pki.impl.core.DefaultIssuanceService;
 import zeroecho.pki.impl.core.DefaultRevocationService;
+import zeroecho.pki.impl.core.DefaultProfileService;
 import zeroecho.pki.impl.core.DefaultStatusObjectService;
 import zeroecho.pki.impl.core.StoreBackedEffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
@@ -92,6 +94,7 @@ public final class PkiTestRuntime implements AutoCloseable {
     private final CredentialFramework framework;
     private final CredentialIssuerBackend issuerBackend;
     private final EffectiveCredentialStatusResolver statusResolver;
+    private final ProfileService profileService;
 
     private final CaService caService;
     private final CertificationRequestService certificationRequestService;
@@ -113,12 +116,15 @@ public final class PkiTestRuntime implements AutoCloseable {
         this.issuerBackend = issuerBackend;
         Clock clock = Clock.systemUTC();
         this.statusResolver = new StoreBackedEffectiveCredentialStatusResolver(store, clock);
+        this.profileService = new DefaultProfileService(store, clock, auditSink);
         this.publicKeysByKeyRef = publicKeysByKeyRef;
         this.publicKeyResolveHook = () -> {
         };
 
         this.certificationRequestService = new DefaultCertificationRequestService(store, framework);
-        this.issuanceService = new DefaultIssuanceService(store, framework, issuerBackend, auditSink, statusResolver);
+        importAndActivate(H7ProfileDocuments.defaultProfile());
+        this.issuanceService = new DefaultIssuanceService(store, framework, issuerBackend, auditSink, statusResolver,
+                profileService, clock);
         this.revocationService = new DefaultRevocationService(store, clock, auditSink);
         this.statusObjectService = new DefaultStatusObjectService(store, framework, auditSink, statusResolver);
 
@@ -286,6 +292,19 @@ public final class PkiTestRuntime implements AutoCloseable {
         return statusResolver;
     }
 
+    /** @return production profile lifecycle service */
+    public ProfileService profileService() {
+        return profileService;
+    }
+
+    /**
+     * Imports and activates one strict JSON test document through production APIs.
+     */
+    public void importAndActivate(byte[] document) {
+        zeroecho.pki.api.profile.CertificateProfileRef reference = profileService.importProfile(document);
+        profileService.activateProfile(reference.profileId(), reference.profileVersion());
+    }
+
     public CaService caService() {
         return caService;
     }
@@ -319,7 +338,7 @@ public final class PkiTestRuntime implements AutoCloseable {
     public IssuanceService issuanceService(CredentialIssuerBackend backend,
             EffectiveCredentialStatusResolver resolver) {
         return new DefaultIssuanceService(store, framework, Objects.requireNonNull(backend, "backend"), auditSink,
-                Objects.requireNonNull(resolver, "resolver"));
+                Objects.requireNonNull(resolver, "resolver"), profileService, Clock.systemUTC());
     }
 
     public RevocationService revocationService() {
