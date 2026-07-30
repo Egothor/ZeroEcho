@@ -36,10 +36,10 @@
  *
  * <p>
  * This package provides streaming utilities and exportable content
- * implementations that render {@link zeroecho.ext.content.api.DataContent} for
+ * implementations that render {@link zeroecho.sdk.content.api.DataContent} for
  * deployment to external platforms or for script-based transport. Exports can
  * be produced as raw bytes or as platform-specific scripts according to
- * {@link zeroecho.ext.content.api.ExportableDataContent.ExportMode}.
+ * {@link zeroecho.sdk.content.api.ExportableDataContent.ExportMode}.
  * </p>
  *
  * <h2>Scope</h2>
@@ -60,9 +60,9 @@
  * <li><i>Piwigo uploader</i> - an exportable content implementation
  * (package-private) that can either upload an image directly to a Piwigo server
  * or generate Bash/CMD scripts that reconstruct and upload the image. It is
- * built on {@link zeroecho.ext.content.api.AbstractExportableDataContent} and
+ * built on {@link zeroecho.sdk.content.api.AbstractExportableDataContent} and
  * honors
- * {@link zeroecho.ext.content.api.ExportableDataContent.ExportMode}.</li>
+ * {@link zeroecho.sdk.content.api.ExportableDataContent.ExportMode}.</li>
  * </ul>
  *
  * <h2>Typical usage</h2>
@@ -87,7 +87,7 @@
  *
  * <h2>Security notes</h2>
  * <ul>
- * <li>Prefer exporting {@link zeroecho.ext.content.api.EncryptedContent} when
+ * <li>Prefer exporting {@link zeroecho.sdk.content.api.EncryptedContent} when
  * targeting untrusted destinations.</li>
  * <li>Avoid embedding secrets in scripts; pass credentials via environment
  * variables or secure stores when possible.</li>
@@ -98,8 +98,8 @@
  * <h2>Extensibility</h2>
  * <ul>
  * <li>New deployers should extend
- * {@link zeroecho.ext.content.api.AbstractExportableDataContent} and select a
- * default {@link zeroecho.ext.content.api.ExportableDataContent.ExportMode}
+ * {@link zeroecho.sdk.content.api.AbstractExportableDataContent} and select a
+ * default {@link zeroecho.sdk.content.api.ExportableDataContent.ExportMode}
  * appropriate for the platform.</li>
  * <li>Utilities like {@link Base64Stream} can be reused to generate
  * platform-friendly payloads without buffering whole files.</li>
