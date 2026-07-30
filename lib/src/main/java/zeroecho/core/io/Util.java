@@ -81,6 +81,16 @@ public final class Util { // NOPMD
     private static final int DEFAULT_BUFFER_SIZE = 32 * 1024;
     /** Largest unsigned 32-bit value accepted by the packed integer decoder. */
     private static final long MAX_PACKED_INTEGER = 0xffff_ffffL;
+    /** Maximum number of bytes in a packed 64-bit value. */
+    private static final int MAX_PACKED_LONG_BYTES = 10;
+    /** One-based position of the high-order packed payload group. */
+    private static final int PACKED_HIGH_PAYLOAD_POSITION = 1;
+    /** Largest high-order payload permitted in a ten-byte packed long. */
+    private static final int MAX_PACKED_LONG_HIGH_PAYLOAD = 1;
+    /** Bit marking the final byte of a packed value. */
+    private static final int PACKED_TERMINATION_BIT = 0x80;
+    /** Mask selecting the seven payload bits of a packed byte. */
+    private static final int PACKED_PAYLOAD_MASK = 0x7f;
 
     /**
      * Private constructor to prevent instantiation of this utility class.
@@ -300,22 +310,49 @@ public final class Util { // NOPMD
 
     /**
      * Reads a long value from the input stream using packed 7-bit encoding
-     * (variable length).
+     * (variable length). Payload groups are stored most-significant first, and the
+     * high bit marks the final byte. At most ten bytes are accepted. In a ten-byte
+     * representation, the first payload group is limited to one bit so that the
+     * encoded value fits exactly in the 64-bit {@code long} bit pattern.
+     *
+     * <p>
+     * Both non-negative and negative {@code long} values produced by
+     * {@link #writePack7L(OutputStream, long)} are supported. The method consumes
+     * exactly one complete packed value and performs at most ten stream reads.
      *
      * @param in the input stream
      * @return the long value read
-     * @throws IOException if an I/O error occurs or if the stream ends prematurely
+     * @throws EOFException if the stream ends before a terminating byte
+     * @throws IOException  if an I/O error occurs, the encoding exceeds ten bytes,
+     *                      or the payload exceeds 64 bits
      */
     public static long readPack7L(final InputStream in) throws IOException {
-        long result = in.read();
-        if (result > 0x7f) { // NOPMD
-            return result & 0x7fL;
+        long result = 0;
+        int highPayload = 0;
+        for (int bytes = PACKED_HIGH_PAYLOAD_POSITION; bytes <= MAX_PACKED_LONG_BYTES; bytes++) {
+            int current = in.read();
+            if (current < 0) {
+                throw new EOFException("read packed long EOF");
+            }
+            int payload = current & PACKED_PAYLOAD_MASK;
+            if (bytes == PACKED_HIGH_PAYLOAD_POSITION) {
+                highPayload = payload;
+            }
+            boolean terminated = (current & PACKED_TERMINATION_BIT) != 0;
+            if (bytes == MAX_PACKED_LONG_BYTES) {
+                if (!terminated) {
+                    throw new IOException("packed long exceeds ten bytes");
+                }
+                if (highPayload > MAX_PACKED_LONG_HIGH_PAYLOAD) {
+                    throw new IOException("packed long exceeds 64 bits");
+                }
+            }
+            result = (result << 7) | payload;
+            if (terminated) {
+                return result;
+            }
         }
-        int i;
-        for (i = in.read(); i < 0x80; i = in.read()) {
-            result = (result << 7) | i;
-        }
-        return (result << 7) | (i & 0x7f);
+        throw new IOException("packed long exceeds ten bytes");
     }
 
     /**
