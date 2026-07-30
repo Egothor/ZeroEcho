@@ -36,10 +36,9 @@ package zeroecho.ext.integrations.stegano;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
 import java.util.Locale;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -99,6 +98,9 @@ import javax.imageio.ImageIO;
  * }</pre>
  */
 public class LSBSteganographyMethod implements SteganographyMethod {
+    private static final int LENGTH_PREFIX_BYTES = Integer.BYTES;
+    private static final int LENGTH_PREFIX_BITS = LENGTH_PREFIX_BYTES * Byte.SIZE;
+    private static final int CARRIER_BITS_PER_PAYLOAD_BYTE = Byte.SIZE;
     private static final Logger LOG = Logger.getLogger(LSBSteganographyMethod.class.getName());
 
     /**
@@ -118,9 +120,9 @@ public class LSBSteganographyMethod implements SteganographyMethod {
      * @param message      the message stream to embed
      * @return an {@code InputStream} containing the stego image encoded in
      *         {@code outputFormat}
-     * @throws IOException              if an I/O error occurs while reading the
-     *                                  image or message, or while writing the
-     *                                  output image
+     * @throws IOException              if an I/O error occurs, the carrier is too
+     *                                  small, or the message exceeds the carrier's
+     *                                  bounded capacity
      * @throws IllegalArgumentException if {@code outputFormat} is unsupported for
      *                                  this method (for example, {@code JPEG})
      */
@@ -135,15 +137,14 @@ public class LSBSteganographyMethod implements SteganographyMethod {
             throw new IOException("Failed to read input image.");
         }
 
-        byte[] messageBytes = message.readAllBytes();
-        ByteArrayOutputStream fullData = new ByteArrayOutputStream();
-        DataOutputStream dos = new DataOutputStream(fullData);
-        dos.writeInt(messageBytes.length);
-        dos.write(messageBytes);
-        byte[] fullMessage = fullData.toByteArray();
-
         final int width = img.getWidth();
         final int height = img.getHeight();
+        final int maximumPayloadBytes = maximumPayloadBytes(width, height);
+        byte[] messageBytes = message.readNBytes(maximumPayloadBytes + 1);
+        if (messageBytes.length > maximumPayloadBytes) {
+            throw new IOException("LSB payload exceeds carrier capacity.");
+        }
+        final long requiredBits = requiredCarrierBits(messageBytes.length);
         int msgBitIndex = 0;
 
         if (LOG.isLoggable(Level.INFO)) {
@@ -152,13 +153,13 @@ public class LSBSteganographyMethod implements SteganographyMethod {
 
         outer: for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                if (msgBitIndex >= fullMessage.length * 8) {
+                if (msgBitIndex >= requiredBits) {
                     break outer;
                 }
 
                 int rgb = img.getRGB(x, y);
                 int gray = rgb & 0xFF;
-                int bit = (fullMessage[msgBitIndex / 8] >> (7 - (msgBitIndex % 8))) & 1;
+                int bit = embeddedBit(messageBytes, msgBitIndex);
                 gray = (gray & 0xFE) | bit;
                 int newRgb = (gray << 16) | (gray << 8) | gray;
                 img.setRGB(x, y, newRgb);
@@ -185,8 +186,10 @@ public class LSBSteganographyMethod implements SteganographyMethod {
      *
      * @param inputImage the stego image stream that contains an embedded message
      * @return an {@code InputStream} of the extracted message bytes
-     * @throws IOException if an I/O error occurs while reading the image or if the
-     *                     image cannot be decoded
+     * @throws EOFException if the carrier cannot contain the complete prefix or
+     *                      declared payload
+     * @throws IOException  if the image cannot be decoded or the embedded length
+     *                      is negative or outside the carrier's bounded capacity
      */
     @Override
     public InputStream extract(InputStream inputImage) throws IOException {
@@ -197,42 +200,38 @@ public class LSBSteganographyMethod implements SteganographyMethod {
 
         final int width = img.getWidth();
         final int height = img.getHeight();
-        ByteArrayOutputStream messageBytes = new ByteArrayOutputStream();
+        final long carrierBits = carrierBits(width, height);
+        if (carrierBits < LENGTH_PREFIX_BITS) {
+            throw new EOFException("LSB carrier length prefix is truncated.");
+        }
 
         if (LOG.isLoggable(Level.INFO)) {
             LOG.log(Level.INFO, "extract from picture w={0} x h={1}", new Object[] { width, height });
         }
 
-        int byteVal = 0;
-        int messageLength = -1;
-        int bitsCollected = 0;
-
-        outer: for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int gray = img.getRGB(x, y) & 0xFF;
-                int bit = gray & 1;
-                byteVal = (byteVal << 1) | bit;
-                bitsCollected++;
-
-                if (bitsCollected == 8) { // NOPMD
-                    messageBytes.write(byteVal);
-                    byteVal = 0;
-                    bitsCollected = 0;
-
-                    if (messageLength == -1 && messageBytes.size() == 4) {
-                        byte[] lenBytes = messageBytes.toByteArray();
-                        messageBytes.reset();
-                        messageLength = ByteBuffer.wrap(lenBytes).getInt();
-                    }
-
-                    if (messageLength != -1 && messageBytes.size() == messageLength) {
-                        break outer;
-                    }
-                }
-            }
+        int messageLength = 0;
+        for (int bitIndex = 0; bitIndex < LENGTH_PREFIX_BITS; bitIndex++) {
+            messageLength = (messageLength << 1) | carrierBit(img, width, bitIndex);
+        }
+        if (messageLength < 0) {
+            throw new IOException("LSB payload length is invalid.");
+        }
+        long requiredBits = requiredCarrierBits(messageLength);
+        if (requiredBits > carrierBits) {
+            throw new EOFException("LSB carrier payload is truncated.");
         }
 
-        return new ByteArrayInputStream(messageBytes.toByteArray());
+        byte[] messageBytes = new byte[messageLength];
+        long carrierBitIndex = LENGTH_PREFIX_BITS;
+        for (int byteIndex = 0; byteIndex < messageLength; byteIndex++) {
+            int value = 0;
+            for (int bitIndex = 0; bitIndex < Byte.SIZE; bitIndex++) {
+                value = (value << 1) | carrierBit(img, width, carrierBitIndex++);
+            }
+            messageBytes[byteIndex] = (byte) value;
+        }
+
+        return new ByteArrayInputStream(messageBytes);
     }
 
     /**
@@ -249,5 +248,48 @@ public class LSBSteganographyMethod implements SteganographyMethod {
     public StegoMetadata getMetadata() {
         return new StegoMetadata("LSB", "Least Significant Bit Spatial Domain Image Steganography",
                 "Embeds message bits into the least significant bits of grayscale pixel values.");
+    }
+
+    private static int maximumPayloadBytes(int width, int height) throws IOException {
+        long availableBits = carrierBits(width, height) - LENGTH_PREFIX_BITS;
+        if (availableBits < 0) {
+            throw new IOException("LSB carrier is too small.");
+        }
+        long maximumPayloadBytes = availableBits / CARRIER_BITS_PER_PAYLOAD_BYTE;
+        if (maximumPayloadBytes >= Integer.MAX_VALUE) {
+            throw new IOException("LSB carrier capacity exceeds supported range.");
+        }
+        return (int) maximumPayloadBytes;
+    }
+
+    private static long carrierBits(int width, int height) throws IOException {
+        try {
+            return Math.multiplyExact((long) width, (long) height);
+        } catch (ArithmeticException exception) {
+            throw new IOException("LSB carrier capacity is invalid.", exception);
+        }
+    }
+
+    private static long requiredCarrierBits(int payloadBytes) throws IOException {
+        try {
+            return Math.addExact(LENGTH_PREFIX_BITS,
+                    Math.multiplyExact((long) payloadBytes, CARRIER_BITS_PER_PAYLOAD_BYTE));
+        } catch (ArithmeticException exception) {
+            throw new IOException("LSB payload capacity is invalid.", exception);
+        }
+    }
+
+    private static int embeddedBit(byte[] message, int bitIndex) {
+        if (bitIndex < LENGTH_PREFIX_BITS) {
+            return (message.length >>> (LENGTH_PREFIX_BITS - 1 - bitIndex)) & 1;
+        }
+        int payloadBit = bitIndex - LENGTH_PREFIX_BITS;
+        return (message[payloadBit / Byte.SIZE] >>> (Byte.SIZE - 1 - payloadBit % Byte.SIZE)) & 1;
+    }
+
+    private static int carrierBit(BufferedImage image, int width, long bitIndex) {
+        int x = (int) (bitIndex % width);
+        int y = (int) (bitIndex / width);
+        return image.getRGB(x, y) & 1;
     }
 }
