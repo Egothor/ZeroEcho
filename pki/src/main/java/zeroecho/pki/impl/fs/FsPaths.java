@@ -154,7 +154,7 @@ final class FsPaths {
     }
 
     // -------------------------------------------------------------------------
-    // Revocations (mutable with history)
+    // Revocations (single authoritative journal)
     // -------------------------------------------------------------------------
 
     /* default */ Path revocationDir(final PkiId credentialId) {
@@ -162,12 +162,8 @@ final class FsPaths {
         return this.root.resolve("revocations").resolve("by-credential").resolve(FsUtil.safeId(credentialId));
     }
 
-    /* default */ Path revocationCurrent(final PkiId credentialId) {
-        return revocationDir(credentialId).resolve(CURRENT_FILE);
-    }
-
-    /* default */ Path revocationHistoryDir(final PkiId credentialId) {
-        return revocationDir(credentialId).resolve(HISTORY_DIR);
+    /* default */ Path revocationJournal(final PkiId credentialId) {
+        return revocationDir(credentialId).resolve("journal.bin");
     }
 
     // -------------------------------------------------------------------------

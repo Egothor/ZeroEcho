@@ -31,47 +31,64 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-package zeroecho.pki.api.revocation;
+package zeroecho.pki.api.credential;
 
 import java.time.Instant;
 
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.attr.AttributeSet;
+import zeroecho.pki.api.PkiException;
 
 /**
- * Persisted revocation record.
+ * Resolves authoritative runtime credential status for trust decisions.
  *
  * <p>
- * This record is the authoritative input for generating status objects (CRLs,
- * OCSP responses, or framework-specific revocation lists).
+ * One {@link Evaluation} captures one authoritative instant and must be reused
+ * for every candidate considered by the same operation.
  * </p>
- *
- * @param credentialId   revoked credential id
- * @param revocationTime server time when revocation was recorded
- * @param reason         revocation reason
- * @param attributes     additional revocation attributes (e.g., invalidity
- *                       date), must not contain secrets
  */
-public record RevokedRecord(PkiId credentialId, Instant revocationTime, RevocationReason reason,
-        AttributeSet attributes) {
+@FunctionalInterface
+public interface EffectiveCredentialStatusResolver {
 
     /**
-     * Creates a revocation record.
+     * Starts one status evaluation using one captured authoritative time.
      *
-     * @throws IllegalArgumentException if inputs are null
+     * @return evaluation session
+     * @throws PkiException if the authoritative time cannot be obtained safely
      */
-    public RevokedRecord {
-        if (credentialId == null) {
-            throw new IllegalArgumentException("credentialId must not be null");
-        }
-        if (revocationTime == null) {
-            throw new IllegalArgumentException("revocationTime must not be null");
-        }
-        if (reason == null) {
-            throw new IllegalArgumentException("reason must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
+    Evaluation beginEvaluation();
+
+    /**
+     * One immutable-time effective-status evaluation.
+     */
+    interface Evaluation {
+
+        /**
+         * Returns the authoritative instant captured for this evaluation.
+         *
+         * @return evaluation instant
+         */
+        Instant evaluationTime();
+
+        /**
+         * Resolves one credential using current revocation state and the captured
+         * evaluation time.
+         *
+         * @param credential credential to resolve
+         * @return effective runtime status
+         * @throws NullPointerException if {@code credential} is {@code null}
+         * @throws PkiException if current status cannot be resolved safely
+         */
+        EffectiveCredentialStatus resolve(Credential credential);
+
+        /**
+         * Requires a credential to be usable for the supplied operation category.
+         *
+         * @param credential credential to check
+         * @param use trust-decision category
+         * @return the supplied credential when usable
+         * @throws NullPointerException if an argument is {@code null}
+         * @throws PkiException if status resolution fails or the credential is not
+         *         usable
+         */
+        Credential requireUsable(Credential credential, CredentialUse use);
     }
 }

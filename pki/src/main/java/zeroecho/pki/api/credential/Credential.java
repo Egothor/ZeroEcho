@@ -65,7 +65,11 @@ import zeroecho.pki.api.attr.AttributeSet;
  *                         X.509)
  * @param publicKeyId      stable identifier derived from the subject public key
  * @param profileId        profile governing issuance
- * @param status           inventory status
+ * @param status           persisted issuance and inventory metadata; this value
+ *                         is not sufficient for a trust decision because current
+ *                         revocation state and evaluation time are external
+ *                         runtime inputs. Security-sensitive callers must use
+ *                         {@link EffectiveCredentialStatusResolver}.
  * @param encoded          encoded credential bytes
  * @param attributes       universal attribute set
  */

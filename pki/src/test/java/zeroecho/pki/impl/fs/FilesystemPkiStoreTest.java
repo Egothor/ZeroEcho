@@ -78,8 +78,9 @@ import zeroecho.pki.api.publication.PublicationStatus;
 import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.revocation.RevocationCommand;
+import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationReason;
-import zeroecho.pki.api.revocation.RevokedRecord;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
@@ -120,8 +121,6 @@ public final class FilesystemPkiStoreTest {
                 new FormatId("fmt-x509"), new SubjectRef("CN=request-all"),
                 new EncodedObject(Encoding.DER, new byte[] { 4, 5, 6 }), Optional.empty(),
                 Optional.of("profile-all"), attributes);
-        RevokedRecord revocation = TestObjects.minimalRevocation(credential.credentialId().value(), now,
-                RevocationReason.KEY_COMPROMISE);
         StatusObject status = new StatusObject(new PkiId("status-all"), new FormatId("fmt-x509"), ca.caId(),
                 StatusObjectType.CRL, now, Optional.of(now.plusSeconds(60L)),
                 new EncodedObject(Encoding.DER, new byte[] { 7, 8 }), attributes);
@@ -140,7 +139,8 @@ public final class FilesystemPkiStoreTest {
             store.putCa(ca);
             store.putCredential(credential);
             store.putRequest(request);
-            store.putRevocation(revocation);
+            RevocationJournal revocation = store.transitionRevocation(new RevocationCommand.RevokePermanently(
+                    credential.credentialId(), RevocationReason.KEY_COMPROMISE, attributes), now);
             store.putStatusObject(status);
             store.putPublicationRecord(publication);
             store.putProfile(profile);
@@ -152,7 +152,7 @@ public final class FilesystemPkiStoreTest {
                     store.getCredential(credential.credentialId()).orElseThrow().credentialId());
             assertEquals(request.requestId(), store.getRequest(request.requestId()).orElseThrow().requestId());
             assertEquals(revocation.credentialId(),
-                    store.getRevocation(revocation.credentialId()).orElseThrow().credentialId());
+                    store.getRevocationJournal(revocation.credentialId()).orElseThrow().credentialId());
             assertEquals(status.statusObjectId(),
                     store.getStatusObject(status.statusObjectId()).orElseThrow().statusObjectId());
             assertEquals(publication.publicationId(), store.listPublicationRecords().get(0).publicationId());
@@ -213,30 +213,29 @@ public final class FilesystemPkiStoreTest {
     }
 
     @Test
-    void revocationHistorySupportsOverwriteWithTrail() throws Exception {
-        System.out.println("revocationHistorySupportsOverwriteWithTrail");
+    void revocationJournalPersistsLegalTransitions() throws Exception {
+        System.out.println("revocationJournalPersistsLegalTransitions");
 
         Path root = tmp.resolve("store-revocation-history");
         FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            RevokedRecord r1 = TestObjects.minimalRevocation("cred-rev-1", Instant.EPOCH.plusSeconds(10L),
-                    RevocationReason.KEY_COMPROMISE);
-            store.putRevocation(r1);
+            Credential credential = TestObjects.minimalCredential("SERIAL-REV", "profile-rev");
+            store.putCredential(credential);
+            store.transitionRevocation(new RevocationCommand.Hold(credential.credentialId(),
+                    TestObjects.emptyAttributes()), Instant.EPOCH.plusSeconds(10L));
+            store.transitionRevocation(new RevocationCommand.Unhold(credential.credentialId(),
+                    TestObjects.emptyAttributes()), Instant.EPOCH.plusSeconds(11L));
 
-            RevokedRecord r2 = new RevokedRecord(r1.credentialId(), r1.revocationTime().plusSeconds(1L), r1.reason(),
-                    r1.attributes());
-            store.putRevocation(r2);
-
-            Optional<RevokedRecord> loaded = store.getRevocation(r1.credentialId());
+            Optional<RevocationJournal> loaded = store.getRevocationJournal(credential.credentialId());
             assertTrue(loaded.isPresent());
-            assertEquals(r2.revocationTime(), loaded.get().revocationTime());
+            assertEquals(2L, loaded.get().latest().revision());
         }
 
         System.out.println("...store tree:");
         dumpTree(root);
 
-        System.out.println("revocationHistorySupportsOverwriteWithTrail...ok");
+        System.out.println("revocationJournalPersistsLegalTransitions...ok");
     }
 
     @Test
@@ -561,12 +560,6 @@ public final class FilesystemPkiStoreTest {
 
             return new Credential(credentialId, formatId, issuerRef, subjectRef, validity, serial, publicKeyId,
                     profileId, status, encoded, attrs);
-        }
-
-        static RevokedRecord minimalRevocation(String credentialId, Instant when, RevocationReason reason) {
-            PkiId id = new PkiId(credentialId);
-            AttributeSet attrs = emptyAttributes();
-            return new RevokedRecord(id, when, reason, attrs);
         }
 
         static AttributeSet emptyAttributes() {

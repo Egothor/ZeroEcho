@@ -36,6 +36,7 @@ package zeroecho.pki.impl.fs;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
@@ -155,6 +156,66 @@ final class FsOperations {
         forceFileBestEffort(tmp);
         moveIntoPlace(tmp, target);
         forceDirectoryBestEffort(parent);
+    }
+
+    /**
+     * Strictly persists one authoritative revocation journal image.
+     *
+     * <p>The namespace commit point is an {@link StandardCopyOption#ATOMIC_MOVE}
+     * in the target directory. No non-atomic fallback is permitted. A directory
+     * force failure after that move is reported distinctly because the durable
+     * authoritative image is then uncertain.</p>
+     *
+     * @param target journal target
+     * @param data complete encoded journal
+     * @throws IOException on a pre-commit persistence failure
+     * @throws DurabilityUncertainException after a committed move whose directory
+     *                                     force failed
+     */
+    // The original directory-force cause is replaced by a marker that cannot expose
+    // a filesystem path or operating-system diagnostic.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    /* default */ static void writeAtomicStrict(final Path target, final byte[] data) throws IOException {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(data, "data");
+        Path parent = requireParent(target);
+        ensureDir(parent);
+        Path temporary = tempSibling(target);
+        boolean moved = false;
+        try {
+            createOrTruncateTemp(temporary);
+            try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE,
+                    StandardOpenOption.TRUNCATE_EXISTING)) {
+                ByteBuffer buffer = ByteBuffer.wrap(data);
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
+                }
+                channel.force(true);
+            }
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            moved = true;
+            try (FileChannel directory = FileChannel.open(parent, StandardOpenOption.READ)) {
+                directory.force(true);
+            } catch (IOException failure) {
+                throw new DurabilityUncertainException();
+            }
+        } finally {
+            if (!moved) {
+                Files.deleteIfExists(temporary);
+            }
+        }
+    }
+
+    /**
+     * Signals a post-commit directory durability failure without exposing an
+     * operating-system cause.
+     */
+    /* default */ static final class DurabilityUncertainException extends IOException {
+        private static final long serialVersionUID = -2422560154076956224L;
+
+        private DurabilityUncertainException() {
+            super("revocation journal durability unconfirmed");
+        }
     }
 
     /**

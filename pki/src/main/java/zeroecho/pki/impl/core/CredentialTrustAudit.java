@@ -31,40 +31,44 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-package zeroecho.pki.api.revocation;
+package zeroecho.pki.impl.core;
 
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.attr.AttributeSet;
+import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
+
+import zeroecho.pki.api.audit.AuditEvent;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
+import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CredentialUse;
+import zeroecho.pki.api.credential.EffectiveCredentialStatus;
+import zeroecho.pki.spi.audit.AuditSink;
 
 /**
- * Command to revoke a credential.
- *
- * <p>
- * Additional revocation metadata (e.g., invalidity date) may be conveyed via
- * {@code attributes} using universal attribute definitions.
- * </p>
- *
- * @param credentialId credential identifier to revoke
- * @param reason       revocation reason
- * @param attributes   additional revocation attributes (may be empty but not
- *                     null)
+ * Emits one best-effort, redacted caller-level credential trust rejection.
  */
-public record RevokeCommand(PkiId credentialId, RevocationReason reason, AttributeSet attributes) {
+final class CredentialTrustAudit {
+    private static final Principal SYSTEM_PKI = new Principal("SYSTEM", "pki");
+    private static final Purpose TRUST_PURPOSE = new Purpose("CREDENTIAL_TRUST");
 
-    /**
-     * Creates a revoke command.
-     *
-     * @throws IllegalArgumentException if inputs are null
-     */
-    public RevokeCommand {
-        if (credentialId == null) {
-            throw new IllegalArgumentException("credentialId must not be null");
-        }
-        if (reason == null) {
-            throw new IllegalArgumentException("reason must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
+    private CredentialTrustAudit() {
+        // Utility class.
+    }
+
+    // Best-effort audit callbacks are untrusted; broad catch and empty handling preserve
+    // the authoritative trust rejection without exposing listener diagnostics.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.EmptyCatchBlock" })
+    /* default */ static void rejected(AuditSink sink, Instant time, Credential credential, CredentialUse use,
+            String code, EffectiveCredentialStatus status) {
+        Map<String, String> details = status == null
+                ? Map.of("code", code, "operation", use.name())
+                : Map.of("code", code, "operation", use.name(), "effectiveStatus", status.name());
+        try {
+            sink.record(new AuditEvent(time, "CREDENTIAL_TRUST", "CREDENTIAL_REJECTED", SYSTEM_PKI, TRUST_PURPOSE,
+                    Optional.of(credential.credentialId()), Optional.empty(), details));
+        } catch (RuntimeException auditFailure) {
+            // Best-effort auditing must not change the trust decision or expose sink data.
         }
     }
 }

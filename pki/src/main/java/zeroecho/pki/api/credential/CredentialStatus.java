@@ -37,8 +37,9 @@ package zeroecho.pki.api.credential;
  * Status of a credential as tracked by PKI inventory.
  *
  * <p>
- * Status may be computed from validity and revocation state or stored directly
- * depending on implementation.
+ * This value is persisted issuance and inventory metadata. It is not an
+ * authoritative trust decision: current revocation state and evaluation time
+ * must be resolved through {@link EffectiveCredentialStatusResolver}.
  * </p>
  */
 public enum CredentialStatus {

@@ -37,6 +37,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.PublicKey;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
@@ -51,11 +52,13 @@ import zeroecho.pki.api.IssuanceService;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.RevocationService;
 import zeroecho.pki.api.StatusObjectService;
+import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.DefaultCaService;
 import zeroecho.pki.impl.core.DefaultCertificationRequestService;
 import zeroecho.pki.impl.core.DefaultIssuanceService;
 import zeroecho.pki.impl.core.DefaultRevocationService;
 import zeroecho.pki.impl.core.DefaultStatusObjectService;
+import zeroecho.pki.impl.core.StoreBackedEffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.audit.InMemoryAuditSink;
@@ -88,6 +91,7 @@ public final class PkiTestRuntime implements AutoCloseable {
 
     private final CredentialFramework framework;
     private final CredentialIssuerBackend issuerBackend;
+    private final EffectiveCredentialStatusResolver statusResolver;
 
     private final CaService caService;
     private final CertificationRequestService certificationRequestService;
@@ -107,17 +111,19 @@ public final class PkiTestRuntime implements AutoCloseable {
         this.auditSink = new InMemoryAuditSink();
         this.framework = framework;
         this.issuerBackend = issuerBackend;
+        Clock clock = Clock.systemUTC();
+        this.statusResolver = new StoreBackedEffectiveCredentialStatusResolver(store, clock);
         this.publicKeysByKeyRef = publicKeysByKeyRef;
         this.publicKeyResolveHook = () -> {
         };
 
         this.certificationRequestService = new DefaultCertificationRequestService(store, framework);
-        this.issuanceService = new DefaultIssuanceService(store, framework, issuerBackend, auditSink);
-        this.revocationService = new DefaultRevocationService(store);
-        this.statusObjectService = new DefaultStatusObjectService(store, framework);
+        this.issuanceService = new DefaultIssuanceService(store, framework, issuerBackend, auditSink, statusResolver);
+        this.revocationService = new DefaultRevocationService(store, clock, auditSink);
+        this.statusObjectService = new DefaultStatusObjectService(store, framework, auditSink, statusResolver);
 
         this.caService = new DefaultCaService(store, framework, issuerBackend, this::resolvePublicKeyInfo, signingBus,
-                auditSink, "SHA256withRSA", signingTtl);
+                auditSink, statusResolver, "SHA256withRSA", signingTtl);
     }
 
     /**
@@ -276,19 +282,30 @@ public final class PkiTestRuntime implements AutoCloseable {
         return issuerBackend;
     }
 
+    public EffectiveCredentialStatusResolver statusResolver() {
+        return statusResolver;
+    }
+
     public CaService caService() {
         return caService;
     }
 
     public CaService caService(CredentialFramework credentialFramework) {
         return new DefaultCaService(store, Objects.requireNonNull(credentialFramework, "credentialFramework"),
-                issuerBackend, this::resolvePublicKeyInfo, signingBus, auditSink, "SHA256withRSA",
+                issuerBackend, this::resolvePublicKeyInfo, signingBus, auditSink, statusResolver, "SHA256withRSA",
                 Duration.ofSeconds(2));
     }
 
     public CaService caService(CredentialIssuerBackend backend) {
         return new DefaultCaService(store, framework, Objects.requireNonNull(backend, "backend"),
-                this::resolvePublicKeyInfo, signingBus, auditSink, "SHA256withRSA", Duration.ofSeconds(2));
+                this::resolvePublicKeyInfo, signingBus, auditSink, statusResolver, "SHA256withRSA",
+                Duration.ofSeconds(2));
+    }
+
+    public CaService caService(CredentialIssuerBackend backend, EffectiveCredentialStatusResolver resolver) {
+        return new DefaultCaService(store, framework, Objects.requireNonNull(backend, "backend"),
+                this::resolvePublicKeyInfo, signingBus, auditSink, Objects.requireNonNull(resolver, "resolver"),
+                "SHA256withRSA", Duration.ofSeconds(2));
     }
 
     public CertificationRequestService certificationRequestService() {
@@ -299,12 +316,23 @@ public final class PkiTestRuntime implements AutoCloseable {
         return issuanceService;
     }
 
+    public IssuanceService issuanceService(CredentialIssuerBackend backend,
+            EffectiveCredentialStatusResolver resolver) {
+        return new DefaultIssuanceService(store, framework, Objects.requireNonNull(backend, "backend"), auditSink,
+                Objects.requireNonNull(resolver, "resolver"));
+    }
+
     public RevocationService revocationService() {
         return revocationService;
     }
 
     public StatusObjectService statusObjectService() {
         return statusObjectService;
+    }
+
+    public StatusObjectService statusObjectService(EffectiveCredentialStatusResolver resolver) {
+        return new DefaultStatusObjectService(store, framework, auditSink, Objects.requireNonNull(resolver,
+                "resolver"));
     }
 
     /**

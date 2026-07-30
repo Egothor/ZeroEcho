@@ -31,36 +31,30 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-package zeroecho.pki.api.revocation;
-
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.attr.AttributeSet;
+package zeroecho.pki.api.credential;
 
 /**
- * Command to place a credential on hold.
- *
- * <p>
- * Frameworks may map this to X.509 {@code certificateHold} or equivalent
- * semantics.
- * </p>
- *
- * @param credentialId credential identifier
- * @param attributes   optional additional attributes (may be empty but not
- *                     null)
+ * Closed categories of currently reachable credential trust decisions.
  */
-public record HoldCommand(PkiId credentialId, AttributeSet attributes) {
+public enum CredentialUse {
 
     /**
-     * Creates a hold command.
-     *
-     * @throws IllegalArgumentException if inputs are null
+     * Issuer credential used for end-entity issuance.
      */
-    public HoldCommand {
-        if (credentialId == null) {
-            throw new IllegalArgumentException("credentialId must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
-    }
+    END_ENTITY_ISSUER,
+
+    /**
+     * Issuer credential used for intermediate CA issuance.
+     */
+    INTERMEDIATE_ISSUER,
+
+    /**
+     * Issuer credential used to sign a status object.
+     */
+    STATUS_OBJECT_ISSUER,
+
+    /**
+     * Leaf credential delivered in a trusted credential bundle.
+     */
+    BUNDLE_DELIVERY
 }

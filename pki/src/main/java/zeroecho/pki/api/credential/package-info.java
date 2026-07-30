@@ -43,8 +43,8 @@
  * <h2>Notes</h2>
  * <ul>
  * <li>Credentials are treated as immutable artifacts once issued.</li>
- * <li>Status values capture the operational lifecycle (e.g., issued, expired,
- * revoked, on hold).</li>
+ * <li>Persisted inventory status does not replace runtime effective-status
+ * resolution for security-sensitive credential use.</li>
  * </ul>
  *
  * @since 1.0

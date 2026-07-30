@@ -62,6 +62,9 @@ import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
 import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.credential.CredentialUse;
+import zeroecho.pki.api.credential.EffectiveCredentialStatus;
+import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.api.issuance.BundleCommand;
 import zeroecho.pki.api.issuance.IssueEndEntityCommand;
 import zeroecho.pki.api.issuance.ReissueCommand;
@@ -98,9 +101,8 @@ import zeroecho.pki.spi.store.PkiStore;
  * <ul>
  * <li>the issuer CA must exist,</li>
  * <li>the issuer CA must be in {@link CaState#ACTIVE} state,</li>
- * <li>the issuer CA must expose a currently valid
- * {@link CredentialStatus#ISSUED} credential for the active framework
- * {@link FormatId},</li>
+ * <li>the issuer CA must expose an effectively usable credential for the active
+ * framework {@link FormatId},</li>
  * <li>issuer material required by the current X.509 runtime wiring must be
  * present in issuance overrides before the backend is invoked,</li>
  * <li>the backend result is defensively snapshotted and its X.509 subject key,
@@ -150,6 +152,7 @@ public final class DefaultIssuanceService implements IssuanceService {
     private final CredentialFramework framework;
     private final CredentialIssuerBackend issuerBackend;
     private final AuditSink auditSink;
+    private final EffectiveCredentialStatusResolver statusResolver;
 
     /**
      * Creates the issuance service bound to the supplied persistence and framework
@@ -163,14 +166,18 @@ public final class DefaultIssuanceService implements IssuanceService {
      *                      gate-produced candidates; must not be {@code null}
      * @param auditSink required sink for safe rejection audit events; must not be
      *                  {@code null}
+     * @param statusResolver authoritative runtime credential-status resolver; must
+     *                       not be {@code null}
      * @throws NullPointerException if an argument is {@code null}
      */
     public DefaultIssuanceService(PkiStore store, CredentialFramework framework,
-            CredentialIssuerBackend issuerBackend, AuditSink auditSink) {
+            CredentialIssuerBackend issuerBackend, AuditSink auditSink,
+            EffectiveCredentialStatusResolver statusResolver) {
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
         this.issuerBackend = Objects.requireNonNull(issuerBackend, "issuerBackend");
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
+        this.statusResolver = Objects.requireNonNull(statusResolver, "statusResolver");
     }
 
     /**
@@ -195,8 +202,9 @@ public final class DefaultIssuanceService implements IssuanceService {
      * @return defensive snapshot of the validated credential bundle
      * @throws NullPointerException if {@code command} is {@code null}
      * @throws PkiException         if the issuer CA does not exist, is not active,
-     *                              has no credentials, no compatible issuer
-     *                              current issued credential can be selected,
+     *                              has no credentials, no compatible effectively
+     *                              usable issuer credential can be selected, or
+     *                              current revocation state cannot be resolved,
      *                              issuer material enrichment fails, backend
      *                              issuance or result validation fails, or
      *                              persistence of the validated leaf fails
@@ -204,7 +212,6 @@ public final class DefaultIssuanceService implements IssuanceService {
     @Override
     public CredentialBundle issueEndEntity(IssueEndEntityCommand command) {
         Objects.requireNonNull(command, "command");
-        VerifiedIssuanceCandidate candidate = verifyIssuanceCandidate(command);
         CaRecord issuer = store.getCa(command.issuerCaId()).orElseThrow(() -> new PkiException("Issuer CA not found"));
 
         if (issuer.state() != CaState.ACTIVE) {
@@ -214,7 +221,10 @@ public final class DefaultIssuanceService implements IssuanceService {
             throw new PkiException("Issuer CA has no credentials");
         }
 
-        Credential issuerCred = CredentialSnapshots.copy(selectIssuerCredential(issuer, framework.formatId()));
+        EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
+        Credential issuerCred = CredentialSnapshots.copy(selectIssuerCredential(issuer, framework.formatId(),
+                CredentialUse.END_ENTITY_ISSUER, statusEvaluation));
+        VerifiedIssuanceCandidate candidate = verifyIssuanceCandidate(command);
         AttributeSet enrichedOverrides = enrichOverrides(command.overrides(), issuerCred.encoded(),
                 issuer.issuerKeyRef());
 
@@ -243,15 +253,10 @@ public final class DefaultIssuanceService implements IssuanceService {
      * format.
      *
      * <p>
-     * The selected credential must match the requested {@link FormatId}, have
-     * {@link CredentialStatus#ISSUED} status, and contain the current instant
-     * within its inclusive validity interval. No status or validity fallback is
-     * permitted.
-     * </p>
-     *
-     * <p>
-     * This method does not evaluate profile suitability or revocation information
-     * external to {@link CredentialStatus}.
+     * The selected credential must match the requested {@link FormatId} and
+     * resolve as effectively usable against current revocation state and the
+     * operation's captured evaluation instant. Resolution failures abort
+     * selection.
      * </p>
      *
      * @param issuer   issuer CA record containing candidate credentials; must not
@@ -261,24 +266,39 @@ public final class DefaultIssuanceService implements IssuanceService {
      * @return selected issuer credential
      * @throws NullPointerException if {@code issuer} or {@code formatId} is
      *                              {@code null}
-     * @throws PkiException         if the issuer CA has no current issued
-     *                              credential compatible with the requested format
+     * @throws PkiException         if the issuer CA has no compatible effectively
+     *                              usable credential or revocation resolution fails
      */
-    private static Credential selectIssuerCredential(CaRecord issuer, FormatId formatId) {
+    private Credential selectIssuerCredential(CaRecord issuer, FormatId formatId, CredentialUse use,
+            EffectiveCredentialStatusResolver.Evaluation evaluation) {
         Objects.requireNonNull(issuer, "issuer");
         Objects.requireNonNull(formatId, "formatId");
 
-        Instant now = Instant.now();
+        Credential lastRejected = null;
+        EffectiveCredentialStatus lastStatus = null;
         for (Credential c : issuer.caCredentials()) {
-            if (c == null) {
+            if (c == null || !formatId.equals(c.formatId())) {
                 continue;
             }
-            if (formatId.equals(c.formatId()) && c.status() == CredentialStatus.ISSUED
-                    && !now.isBefore(c.validity().notBefore()) && !now.isAfter(c.validity().notAfter())) {
+            EffectiveCredentialStatus status;
+            try {
+                status = evaluation.resolve(c);
+            } catch (PkiException exception) {
+                CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), c, use,
+                        StoreBackedEffectiveCredentialStatusResolver.RESOLUTION_FAILED_CODE, null);
+                throw exception;
+            }
+            if (status == EffectiveCredentialStatus.USABLE) {
                 return c;
             }
+            lastRejected = c;
+            lastStatus = status;
         }
-        throw new PkiException("Issuer CA has no current issued credential for formatId " + formatId.value());
+        if (lastRejected != null) {
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), lastRejected, use,
+                    "ISSUER_CREDENTIAL_UNAVAILABLE", lastStatus);
+        }
+        throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
     }
 
     /**
@@ -561,13 +581,30 @@ public final class DefaultIssuanceService implements IssuanceService {
      *         no chain elements
      * @throws NullPointerException if {@code command} is {@code null}
      * @throws PkiException         if the requested credential does not exist in
-     *                              the store
+     *                              the store or is not currently usable
      */
     @Override
     public CredentialBundle buildBundle(BundleCommand command) {
         Objects.requireNonNull(command, "command");
         PkiId credId = command.credentialId();
         Credential leaf = store.getCredential(credId).orElseThrow(() -> new PkiException("Credential not found"));
+        EffectiveCredentialStatusResolver.Evaluation evaluation = statusResolver.beginEvaluation();
+        EffectiveCredentialStatus status;
+        try {
+            status = evaluation.resolve(leaf);
+        } catch (PkiException exception) {
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), leaf,
+                    CredentialUse.BUNDLE_DELIVERY,
+                    StoreBackedEffectiveCredentialStatusResolver.RESOLUTION_FAILED_CODE, null);
+            throw exception;
+        }
+        if (status != EffectiveCredentialStatus.USABLE) {
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), leaf,
+                    CredentialUse.BUNDLE_DELIVERY,
+                    StoreBackedEffectiveCredentialStatusResolver.NOT_USABLE_CODE, status);
+            throw new PkiException("Credential trust rejected: code="
+                    + StoreBackedEffectiveCredentialStatusResolver.NOT_USABLE_CODE);
+        }
         // Minimal bundle: leaf only. Chain selection and publication are higher-layer
         // concerns.
         return new CredentialBundle(leaf, List.of());

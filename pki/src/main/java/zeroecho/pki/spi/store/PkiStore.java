@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.spi.store;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -44,7 +45,8 @@ import zeroecho.pki.api.policy.PolicyTrace;
 import zeroecho.pki.api.profile.CertificateProfile;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
-import zeroecho.pki.api.revocation.RevokedRecord;
+import zeroecho.pki.api.revocation.RevocationCommand;
+import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.status.StatusObject;
 
 /**
@@ -154,31 +156,28 @@ public interface PkiStore extends SignWorkflowStore {
     Optional<ParsedCertificationRequest> getRequest(PkiId requestId);
 
     /**
-     * Persists or updates a revocation record.
+     * Atomically validates and appends one legal revocation transition.
      *
-     * @param record revocation record (never {@code null})
-     * @throws NullPointerException  if {@code record} is {@code null}
-     * @throws IllegalStateException if persistence fails
+     * @param command trusted transition command
+     * @param transitionTime authoritative transition time
+     * @return committed journal
      */
-    void putRevocation(RevokedRecord record);
+    RevocationJournal transitionRevocation(RevocationCommand command, Instant transitionTime);
 
     /**
-     * Retrieves a revocation record for a given credential.
+     * Retrieves the authoritative revocation journal for a credential.
      *
-     * @param credentialId credential identifier (never {@code null})
-     * @return revocation record if present
-     * @throws NullPointerException  if {@code credentialId} is {@code null}
-     * @throws IllegalStateException if retrieval fails
+     * @param credentialId credential identifier
+     * @return journal when present
      */
-    Optional<RevokedRecord> getRevocation(PkiId credentialId);
+    Optional<RevocationJournal> getRevocationJournal(PkiId credentialId);
 
     /**
-     * Lists all revocation records.
+     * Lists authoritative revocation journals.
      *
-     * @return list of revocation records (never {@code null})
-     * @throws IllegalStateException if listing fails
+     * @return immutable journal list
      */
-    List<RevokedRecord> listRevocations();
+    List<RevocationJournal> listRevocationJournals();
 
     /**
      * Persists a status object.

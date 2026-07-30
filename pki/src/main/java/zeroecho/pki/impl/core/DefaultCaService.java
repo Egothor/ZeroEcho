@@ -81,6 +81,9 @@ import zeroecho.pki.api.ca.IntermediateCertIssueCommand;
 import zeroecho.pki.api.ca.IntermediateCreateCommand;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.credential.CredentialUse;
+import zeroecho.pki.api.credential.EffectiveCredentialStatus;
+import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
@@ -152,6 +155,8 @@ public final class DefaultCaService implements CaService {
     private final CredentialFramework framework;
     private final CredentialIssuerBackend issuerBackend;
     private final CaProofGate proofGate;
+    private final AuditSink auditSink;
+    private final EffectiveCredentialStatusResolver statusResolver;
 
     /**
      * Creates a CA service bound to a specific store, credential framework, and
@@ -189,6 +194,8 @@ public final class DefaultCaService implements CaService {
      *                             {@code null}
      * @param auditSink            required sink for safe CA proof rejection events;
      *                             must not be {@code null}
+     * @param statusResolver       authoritative runtime credential-status resolver;
+     *                             must not be {@code null}
      * @param signatureAlgorithmId non-blank JCA signature algorithm identifier used
      *                             for certificate signing requests initiated by
      *                             this service
@@ -203,14 +210,15 @@ public final class DefaultCaService implements CaService {
      */
     public DefaultCaService(PkiStore store, CredentialFramework framework, CredentialIssuerBackend issuerBackend,
             PublicKeyInfoResolver publicKeyResolver, PkiSigningBus signingBus, AuditSink auditSink,
-            String signatureAlgorithmId, Duration signingTtl) {
+            EffectiveCredentialStatusResolver statusResolver, String signatureAlgorithmId, Duration signingTtl) {
 
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
         this.issuerBackend = Objects.requireNonNull(issuerBackend, "issuerBackend");
         Objects.requireNonNull(publicKeyResolver, "publicKeyResolver");
         Objects.requireNonNull(signingBus, "signingBus");
-        Objects.requireNonNull(auditSink, "auditSink");
+        this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
+        this.statusResolver = Objects.requireNonNull(statusResolver, "statusResolver");
         if (signatureAlgorithmId == null || signatureAlgorithmId.isBlank()) {
             throw new IllegalArgumentException("signatureAlgorithmId must not be null/blank");
         }
@@ -406,6 +414,13 @@ public final class DefaultCaService implements CaService {
      * generation is performed by this service.
      * </p>
      *
+     * <p>
+     * Issuer credentials are evaluated against current revocation state and one
+     * authoritative evaluation instant before managed-key proof or signing work.
+     * Non-usable candidates are skipped; status-resolution failure aborts the
+     * operation.
+     * </p>
+     *
      * @param command intermediate CA creation command; must not be {@code null}
      * @return identifier of the newly persisted intermediate CA
      * @throws NullPointerException if {@code command} is {@code null}
@@ -430,6 +445,9 @@ public final class DefaultCaService implements CaService {
             throw proofGate.rejection("CREATE_INTERMEDIATE_REJECTED", command.formatId(), Optional.empty(),
                     "FORMAT_UNSUPPORTED");
         }
+        EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
+        Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, command.formatId(),
+                CredentialUse.INTERMEDIATE_ISSUER, statusEvaluation));
 
         PkiId caId = new PkiId("ca:" + sha256Hex((issuer.caId().value() + "\n" + command.subjectRef().value())
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)).substring(0, 16));
@@ -437,7 +455,6 @@ public final class DefaultCaService implements CaService {
         CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(command.keyRef().get(),
                 command.formatId(), "CREATE_INTERMEDIATE_REJECTED", Optional.of(caId));
         EncodedObject subjectSpki = subjectProof.exactPublicKey();
-        Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, command.formatId()));
         requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), "CREATE_INTERMEDIATE_REJECTED",
                 Optional.of(caId));
         AttributeSet authoritative = authoritativeIntermediateAttributes(command.attributes(), issuer,
@@ -473,6 +490,13 @@ public final class DefaultCaService implements CaService {
      * stored and appended to the subject CA credential history.
      * </p>
      *
+     * <p>
+     * Issuer credentials are evaluated against current revocation state and one
+     * authoritative evaluation instant before managed-key proof or signing work.
+     * Non-usable candidates are skipped; status-resolution failure aborts the
+     * operation.
+     * </p>
+     *
      * @param command intermediate certificate issuance command; must not be
      *                {@code null}
      * @return issued credential persisted for the subject CA
@@ -491,11 +515,13 @@ public final class DefaultCaService implements CaService {
             throw proofGate.rejection("ISSUE_INTERMEDIATE_REJECTED", command.formatId(), Optional.of(subject.caId()),
                     "FORMAT_UNSUPPORTED");
         }
+        EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
+        Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, command.formatId(),
+                CredentialUse.INTERMEDIATE_ISSUER, statusEvaluation));
 
         CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(subject.issuerKeyRef(),
                 command.formatId(), "ISSUE_INTERMEDIATE_REJECTED", Optional.of(subject.caId()));
         EncodedObject subjectSpki = subjectProof.exactPublicKey();
-        Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, command.formatId()));
         requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), "ISSUE_INTERMEDIATE_REJECTED",
                 Optional.of(subject.caId()));
         AttributeSet authoritative = authoritativeIntermediateAttributes(command.attributes(), issuer,
@@ -669,17 +695,33 @@ public final class DefaultCaService implements CaService {
         }
     }
 
-    private static Credential selectIssuerCredential(CaRecord issuer, FormatId formatId) {
-        Instant now = Instant.now();
+    private Credential selectIssuerCredential(CaRecord issuer, FormatId formatId, CredentialUse use,
+            EffectiveCredentialStatusResolver.Evaluation evaluation) {
+        Credential lastRejected = null;
+        EffectiveCredentialStatus lastStatus = null;
         for (Credential credential : issuer.caCredentials()) {
-            if (credential != null && formatId.equals(credential.formatId())
-                    && credential.status() == CredentialStatus.ISSUED
-                    && !now.isBefore(credential.validity().notBefore())
-                    && !now.isAfter(credential.validity().notAfter())) {
+            if (credential == null || !formatId.equals(credential.formatId())) {
+                continue;
+            }
+            EffectiveCredentialStatus status;
+            try {
+                status = evaluation.resolve(credential);
+            } catch (PkiException exception) {
+                CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), credential, use,
+                        StoreBackedEffectiveCredentialStatusResolver.RESOLUTION_FAILED_CODE, null);
+                throw exception;
+            }
+            if (status == EffectiveCredentialStatus.USABLE) {
                 return credential;
             }
+            lastRejected = credential;
+            lastStatus = status;
         }
-        throw new PkiException("Issuer CA has no current issued credential for formatId " + formatId.value());
+        if (lastRejected != null) {
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), lastRejected, use,
+                    "ISSUER_CREDENTIAL_UNAVAILABLE", lastStatus);
+        }
+        throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
     }
 
     private void requireValidImportedRoot(CaImportCommand command, X509CertificateHolder holder) {

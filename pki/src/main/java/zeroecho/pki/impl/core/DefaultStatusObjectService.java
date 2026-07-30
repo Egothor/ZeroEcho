@@ -34,29 +34,40 @@
 package zeroecho.pki.impl.core;
 
 import java.math.BigInteger;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.Set;
 
 import org.bouncycastle.cert.X509CertificateHolder;
 
+import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.StatusObjectService;
-import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.credential.Credential;
-import zeroecho.pki.api.revocation.RevokedRecord;
+import zeroecho.pki.api.credential.CredentialUse;
+import zeroecho.pki.api.credential.EffectiveCredentialStatus;
+import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
+import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationReason;
+import zeroecho.pki.api.revocation.RevocationState;
+import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectGenerateCommand;
 import zeroecho.pki.api.status.StatusObjectQuery;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
+import zeroecho.pki.spi.audit.AuditSink;
+import zeroecho.pki.spi.framework.CrlEntry;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.store.PkiStore;
 
@@ -68,15 +79,15 @@ import zeroecho.pki.spi.store.PkiStore;
  * the configured {@link PkiStore} and delegates format-specific object creation
  * to the active {@link CredentialFramework}. The store acts as the
  * authoritative source of issuer CA state, issuer credentials, revocation
- * records, and previously generated status objects.
+ * journals, and previously generated status objects.
  * </p>
  *
  * <p>
  * The current runtime implementation primarily supports generation workflows
  * that require issuer certificate material and issuer signing key indirection
  * to be provided through status-object attributes. For X.509 CRL generation,
- * this class additionally derives revoked certificate serial numbers from the
- * revocation and credential records currently available in the store.
+ * this class derives structured CRL entries from authoritative journals and the
+ * referenced X.509 credentials.
  * </p>
  *
  * <h2>Persistence model</h2>
@@ -93,9 +104,9 @@ import zeroecho.pki.spi.store.PkiStore;
  * <li>This service does not access private key material directly.</li>
  * <li>Issuer signing capability is conveyed only through
  * {@link BcX509Attributes#ISSUER_KEYREF}.</li>
- * <li>For CRL generation, malformed credentials and unresolved revocation
- * targets are silently ignored by the current implementation rather than
- * failing the entire generation request.</li>
+ * <li>For CRL generation, every active journal and referenced target is
+ * validated before signing. Any unresolved or malformed state aborts generation
+ * with a stable redacted failure.</li>
  * <li>The correctness of the generated status object depends on the configured
  * {@link CredentialFramework} matching the requested runtime format and
  * honoring the supplied attributes.</li>
@@ -109,23 +120,12 @@ import zeroecho.pki.spi.store.PkiStore;
  * </p>
  */
 public final class DefaultStatusObjectService implements StatusObjectService {
-    private static final Logger LOG = Logger.getLogger(DefaultStatusObjectService.class.getName());
-
-    /**
-     * Attribute identifier used to pass one revoked certificate serial number to
-     * the current X.509 CRL backend wiring.
-     *
-     * <p>
-     * The current implementation adds this attribute repeatedly during CRL input
-     * assembly. The effective handling of multiple values is therefore determined
-     * by the semantics of {@link SimpleAttributeSet.Builder} and by the downstream
-     * status object generator contract.
-     * </p>
-     */
-    private static final AttributeId CRL_REVOKED_SERIAL = new AttributeId("urn:zeroecho:pki:x509:crl:revoked");
+    private static final String CRL_GENERATION_FAILED = "CRL_GENERATION_FAILED";
 
     private final PkiStore store;
     private final CredentialFramework framework;
+    private final AuditSink auditSink;
+    private final EffectiveCredentialStatusResolver statusResolver;
 
     /**
      * Creates a status object service bound to the supplied persistence and
@@ -136,12 +136,16 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      *                  not be {@code null}
      * @param framework credential framework providing the format-specific status
      *                  object generator; must not be {@code null}
-     * @throws NullPointerException if {@code store} or {@code framework} is
-     *                              {@code null}
+     * @param auditSink required sink for safe trust-rejection audit events
+     * @param statusResolver authoritative runtime credential-status resolver
+     * @throws NullPointerException if an argument is {@code null}
      */
-    public DefaultStatusObjectService(PkiStore store, CredentialFramework framework) {
+    public DefaultStatusObjectService(PkiStore store, CredentialFramework framework, AuditSink auditSink,
+            EffectiveCredentialStatusResolver statusResolver) {
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
+        this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
+        this.statusResolver = Objects.requireNonNull(statusResolver, "statusResolver");
     }
 
     /**
@@ -150,9 +154,9 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      *
      * <p>
      * The issuer CA must already exist, must be in {@link CaState#ACTIVE} state,
-     * and must expose at least one CA credential. The current implementation uses
-     * the last credential in {@link CaRecord#caCredentials()} as the effective
-     * issuer credential for status-object generation.
+     * and must expose at least one usable credential matching the requested
+     * format. Candidates are evaluated newest-first against current revocation
+     * state and one authoritative evaluation time.
      * </p>
      *
      * <p>
@@ -167,17 +171,17 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      * </ul>
      *
      * <p>
-     * When {@link StatusObjectType#CRL} is requested, the service additionally
-     * scans all revocation records in the store, excludes entries with
-     * {@code REMOVE_FROM_CRL}, resolves the referenced credentials, filters them to
-     * the requested issuer CA, extracts X.509 serial numbers, and forwards serials
-     * that fit into a signed 64-bit integer as repeated {@link #CRL_REVOKED_SERIAL}
-     * attributes.
+     * When {@link StatusObjectType#CRL} is requested, the service validates every
+     * authoritative active journal before signing. Current hold and permanent
+     * states are transported with the exact positive X.509 serial, authoritative
+     * transition time, and explicit reason. Current {@code CLEAR} states are
+     * omitted.
      * </p>
      *
      * <p>
-     * Malformed credential payloads encountered during CRL input derivation are
-     * ignored by the current implementation and do not abort generation.
+     * Missing targets, malformed credentials, duplicate serials, future
+     * transitions, corrupt journals, and store failures abort the complete CRL
+     * before generator invocation or persistence with a stable redacted error.
      * </p>
      *
      * @param command status object generation request; must not be {@code null}
@@ -200,44 +204,144 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         if (ca.caCredentials().isEmpty()) {
             throw new PkiException("Issuer CA has no credentials");
         }
-        Credential issuerCred = ca.caCredentials().get(ca.caCredentials().size() - 1);
+        EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
+        Credential issuerCred = selectIssuerCredential(ca, command, statusEvaluation);
+        List<CrlEntry> crlEntries = command.type() == StatusObjectType.CRL
+                ? collectCrlEntries(command.issuerCaId(), statusEvaluation.evaluationTime())
+                : List.of();
 
         SimpleAttributeSet.Builder b = SimpleAttributeSet.builder();
         b.putAll(command.attributes());
         b.put(BcX509Attributes.ISSUER_CERT_DER, new AttributeValue.BytesValue(issuerCred.encoded().bytes()));
         b.put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(ca.issuerKeyRef().value()));
 
-        if (command.type() == StatusObjectType.CRL) {
-            List<RevokedRecord> revs = store.listRevocations();
-            for (RevokedRecord rr : revs) {
-                if (rr.reason() == zeroecho.pki.api.revocation.RevocationReason.REMOVE_FROM_CRL) {
-                    continue;
-                }
-                Optional<Credential> credOpt = store.getCredential(rr.credentialId());
-                if (credOpt.isEmpty()) {
-                    continue;
-                }
-                Credential cred = credOpt.get();
-                if (!command.issuerCaId().equals(cred.issuerRef().caId())) {
-                    continue;
-                }
-                try {
-                    X509CertificateHolder h = new X509CertificateHolder(cred.encoded().bytes()); // NOPMD
-                    BigInteger serial = h.getSerialNumber();
-                    if (serial.bitLength() <= 63) { // NOPMD
-                        b.put(CRL_REVOKED_SERIAL, new AttributeValue.IntegerValue(serial.longValue())); // NOPMD
-                    }
-                } catch (Exception ex) {
-                    LOG.log(Level.FINE, "malformed credential ignored", ex);
-                }
-            }
-        }
-
         StatusObjectGenerateCommand wired = new StatusObjectGenerateCommand(command.issuerCaId(), command.type(),
                 command.formatId(), b.build());
-        StatusObject obj = framework.statusObjectGenerator().generate(wired);
+        if (command.type() == StatusObjectType.CRL) {
+            return generateAndPersistCrl(wired, crlEntries);
+        }
+        StatusObject obj = framework.statusObjectGenerator().generate(wired, crlEntries);
         store.putStatusObject(obj);
         return obj;
+    }
+
+    // Framework, signing, and store failures may carry provider or persisted
+    // material. CRL generation deliberately replaces the complete boundary with
+    // one fresh cause-free and suppressed-free exception.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    private StatusObject generateAndPersistCrl(StatusObjectGenerateCommand command, List<CrlEntry> entries) {
+        try {
+            StatusObject generated = framework.statusObjectGenerator().generate(command, entries);
+            store.putStatusObject(generated);
+            return generated;
+        } catch (RuntimeException exception) {
+            throw crlGenerationFailure();
+        }
+    }
+
+    // Store and parser failures may contain persisted material; the complete
+    // collection boundary deliberately replaces every cause with one stable code.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    private List<CrlEntry> collectCrlEntries(PkiId issuerCaId, Instant evaluationTime) {
+        try {
+            List<RevocationJournal> journals =
+                    Objects.requireNonNull(store.listRevocationJournals(), "revocation journals");
+            List<CrlEntry> entries = new java.util.ArrayList<>();
+            Set<BigInteger> serials = new HashSet<>();
+            for (RevocationJournal journal : journals) {
+                collectCrlEntry(issuerCaId, evaluationTime, journal, serials).ifPresent(entries::add);
+            }
+            return List.copyOf(entries);
+        } catch (RuntimeException exception) {
+            throw crlGenerationFailure();
+        }
+    }
+
+    private Optional<CrlEntry> collectCrlEntry(PkiId issuerCaId, Instant evaluationTime,
+            RevocationJournal journal, Set<BigInteger> serials) {
+        Objects.requireNonNull(journal, "journal");
+        RevocationTransition latest = Objects.requireNonNull(journal.latest(), "latest transition");
+        if (latest.time().isAfter(evaluationTime)) {
+            throw crlGenerationFailure();
+        }
+        if (latest.state() == RevocationState.CLEAR) {
+            return Optional.empty();
+        }
+        Credential credential = store.getCredential(journal.credentialId()).orElseThrow(
+                DefaultStatusObjectService::crlGenerationFailure);
+        if (!issuerCaId.equals(credential.issuerRef().caId())) {
+            return Optional.empty();
+        }
+        if (!BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())
+                || credential.encoded().encoding() != Encoding.DER) {
+            throw crlGenerationFailure();
+        }
+        BigInteger serial = certificateSerial(credential);
+        if (!serials.add(serial)) {
+            throw crlGenerationFailure();
+        }
+        RevocationReason reason = switch (latest.state()) {
+            case HELD -> RevocationReason.CERTIFICATE_HOLD;
+            case PERMANENTLY_REVOKED -> latest.permanentReason().orElseThrow(
+                    DefaultStatusObjectService::crlGenerationFailure);
+            case CLEAR -> throw crlGenerationFailure();
+        };
+        return Optional.of(new CrlEntry(serial, latest.time(), reason));
+    }
+
+    // Parser failures can contain persisted certificate details; the original
+    // cause is intentionally removed at this public service boundary.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    private static BigInteger certificateSerial(Credential credential) {
+        byte[] der = credential.encoded().bytes();
+        BigInteger serial;
+        try {
+            serial = new X509CertificateHolder(der).getSerialNumber();
+        } catch (Exception exception) {
+            throw crlGenerationFailure();
+        } finally {
+            Arrays.fill(der, (byte) 0);
+        }
+        if (serial == null || serial.signum() <= 0) {
+            throw crlGenerationFailure();
+        }
+        return serial;
+    }
+
+    private static PkiException crlGenerationFailure() {
+        return new PkiException("CRL generation failed: code=" + CRL_GENERATION_FAILED);
+    }
+
+    private Credential selectIssuerCredential(CaRecord ca, StatusObjectGenerateCommand command,
+            EffectiveCredentialStatusResolver.Evaluation evaluation) {
+        Credential lastRejected = null;
+        EffectiveCredentialStatus lastStatus = null;
+        List<Credential> credentials = ca.caCredentials();
+        for (int index = credentials.size() - 1; index >= 0; index--) {
+            Credential credential = credentials.get(index);
+            if (credential == null || !command.formatId().equals(credential.formatId())) {
+                continue;
+            }
+            EffectiveCredentialStatus status;
+            try {
+                status = evaluation.resolve(credential);
+            } catch (PkiException exception) {
+                CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), credential,
+                        CredentialUse.STATUS_OBJECT_ISSUER,
+                        StoreBackedEffectiveCredentialStatusResolver.RESOLUTION_FAILED_CODE, null);
+                throw exception;
+            }
+            if (status == EffectiveCredentialStatus.USABLE) {
+                return credential;
+            }
+            lastRejected = credential;
+            lastStatus = status;
+        }
+        if (lastRejected != null) {
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), lastRejected,
+                    CredentialUse.STATUS_OBJECT_ISSUER, "ISSUER_CREDENTIAL_UNAVAILABLE", lastStatus);
+        }
+        throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
     }
 
     /**

@@ -77,8 +77,10 @@ import zeroecho.pki.api.publication.PublicationStatus;
 import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationReason;
-import zeroecho.pki.api.revocation.RevokedRecord;
+import zeroecho.pki.api.revocation.RevocationState;
+import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
@@ -154,6 +156,8 @@ final class FsCodec {
     private static final int TYPE_PUBLICATION_STATUS_ENUM = 57;
     private static final int TYPE_DURABILITY_POLICY_ENUM = 58;
     private static final int TYPE_SIGN_STATE_ENUM = 59;
+    private static final int TYPE_REVOCATION_STATE_ENUM = 60;
+    private static final int TYPE_REVOCATION_TRANSITION = 61;
 
     private static final int ATTRIBUTE_STRING = 1;
     private static final int ATTRIBUTE_BOOLEAN = 2;
@@ -247,6 +251,18 @@ final class FsCodec {
                 case 9 -> RevocationReason.PRIVILEGE_WITHDRAWN;
                 case 10 -> RevocationReason.AA_COMPROMISE;
                 default -> throw unknownEnum("RevocationReason", code);
+            });
+    private static final ValueSchema<RevocationState> REVOCATION_STATE = enumSchema(TYPE_REVOCATION_STATE_ENUM,
+            value -> switch (value) {
+                case CLEAR -> 1;
+                case HELD -> 2;
+                case PERMANENTLY_REVOKED -> 3;
+            },
+            code -> switch (code) {
+                case 1 -> RevocationState.CLEAR;
+                case 2 -> RevocationState.HELD;
+                case 3 -> RevocationState.PERMANENTLY_REVOKED;
+                default -> throw unknownEnum("RevocationState", code);
             });
     private static final ValueSchema<StatusObjectType> STATUS_OBJECT_TYPE = enumSchema(TYPE_STATUS_OBJECT_TYPE_ENUM,
             value -> switch (value) {
@@ -379,6 +395,13 @@ final class FsCodec {
     private static final ValueSchema<Optional<Instant>> OPTIONAL_INSTANT = optionalOf(INSTANT);
     private static final ValueSchema<Optional<Duration>> OPTIONAL_DURATION = optionalOf(DURATION);
     private static final ValueSchema<Optional<EncodedObject>> OPTIONAL_ENCODED_OBJECT = optionalOf(ENCODED_OBJECT);
+    private static final ValueSchema<Optional<RevocationReason>> OPTIONAL_REVOCATION_REASON =
+            optionalOf(REVOCATION_REASON);
+    private static final ValueSchema<RevocationTransition> REVOCATION_TRANSITION =
+            valueSchema(TYPE_REVOCATION_TRANSITION, FsCodec::writeRevocationTransition,
+                    FsCodec::readRevocationTransition);
+    private static final ValueSchema<List<RevocationTransition>> REVOCATION_TRANSITIONS =
+            listOf(REVOCATION_TRANSITION);
 
     private static final ValueSchema<Credential> CREDENTIAL_VALUE = valueSchema(TYPE_CREDENTIAL_RECORD,
             FsCodec::writeCredential, FsCodec::readCredential);
@@ -390,8 +413,9 @@ final class FsCodec {
             CREDENTIAL_VALUE);
     /* package */ static final Schema<ParsedCertificationRequest> PARSED_REQUEST = topLevel(TOP_PARSED_REQUEST,
             "PARSED_REQUEST", valueSchema(101, FsCodec::writeParsedRequest, FsCodec::readParsedRequest));
-    /* package */ static final Schema<RevokedRecord> REVOCATION = topLevel(TOP_REVOCATION, "REVOCATION",
-            valueSchema(102, FsCodec::writeRevocation, FsCodec::readRevocation));
+    /* package */ static final Schema<RevocationJournal> REVOCATION_JOURNAL =
+            topLevel(TOP_REVOCATION, "REVOCATION_JOURNAL",
+                    valueSchema(102, FsCodec::writeRevocationJournal, FsCodec::readRevocationJournal));
     /* package */ static final Schema<StatusObject> STATUS_OBJECT = topLevel(TOP_STATUS_OBJECT, "STATUS_OBJECT",
             valueSchema(103, FsCodec::writeStatusObject, FsCodec::readStatusObject));
     /* package */ static final Schema<PublicationRecord> PUBLICATION = topLevel(TOP_PUBLICATION, "PUBLICATION",
@@ -411,7 +435,7 @@ final class FsCodec {
             Map.entry(TOP_CA_RECORD, CA_RECORD),
             Map.entry(TOP_CREDENTIAL, CREDENTIAL),
             Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
-            Map.entry(TOP_REVOCATION, REVOCATION),
+            Map.entry(TOP_REVOCATION, REVOCATION_JOURNAL),
             Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
             Map.entry(TOP_PUBLICATION, PUBLICATION),
             Map.entry(TOP_CERTIFICATE_PROFILE, CERTIFICATE_PROFILE),
@@ -615,16 +639,33 @@ final class FsCodec {
                 reader.readValue(OPTIONAL_STRING), reader.readValue(ATTRIBUTE_SET));
     }
 
-    private static void writeRevocation(Writer writer, RevokedRecord value) throws IOException {
+    private static void writeRevocationJournal(Writer writer, RevocationJournal value) throws IOException {
         writer.writeValue(PKI_ID, value.credentialId());
-        writer.writeValue(INSTANT, value.revocationTime());
-        writer.writeValue(REVOCATION_REASON, value.reason());
+        writer.writeValue(LONG, (long) RevocationJournal.CURRENT_VERSION);
+        writer.writeValue(REVOCATION_TRANSITIONS, value.transitions());
+    }
+
+    private static RevocationJournal readRevocationJournal(Reader reader) throws IOException {
+        PkiId credentialId = reader.readValue(PKI_ID);
+        long version = reader.readValue(LONG);
+        if (version != RevocationJournal.CURRENT_VERSION) {
+            throw new IOException("Unsupported revocation journal version");
+        }
+        return new RevocationJournal(credentialId, reader.readValue(REVOCATION_TRANSITIONS));
+    }
+
+    private static void writeRevocationTransition(Writer writer, RevocationTransition value) throws IOException {
+        writer.writeValue(LONG, value.revision());
+        writer.writeValue(REVOCATION_STATE, value.state());
+        writer.writeValue(INSTANT, value.time());
+        writer.writeValue(OPTIONAL_REVOCATION_REASON, value.permanentReason());
         writer.writeValue(ATTRIBUTE_SET, value.attributes());
     }
 
-    private static RevokedRecord readRevocation(Reader reader) throws IOException {
-        return new RevokedRecord(reader.readValue(PKI_ID), reader.readValue(INSTANT),
-                reader.readValue(REVOCATION_REASON), reader.readValue(ATTRIBUTE_SET));
+    private static RevocationTransition readRevocationTransition(Reader reader) throws IOException {
+        return new RevocationTransition(reader.readValue(LONG), reader.readValue(REVOCATION_STATE),
+                reader.readValue(INSTANT), reader.readValue(OPTIONAL_REVOCATION_REASON),
+                reader.readValue(ATTRIBUTE_SET));
     }
 
     private static void writeStatusObject(Writer writer, StatusObject value) throws IOException {

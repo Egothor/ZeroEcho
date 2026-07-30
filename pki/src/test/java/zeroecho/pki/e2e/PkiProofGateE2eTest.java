@@ -172,7 +172,7 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"), keys)) {
             CountingIssuerBackend counting = new CountingIssuerBackend(runtime.issuerBackend());
             DefaultIssuanceService issuance = new DefaultIssuanceService(runtime.store(), runtime.framework(),
-                    counting, runtime.auditSink());
+                    counting, runtime.auditSink(), runtime.statusResolver());
             ParsedCertificationRequest valid = parse(runtime, makeCsr(subjectKey, subjectKey, "CN=Leaf"));
 
             assertThrows(PkiException.class,
@@ -217,7 +217,7 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"), Map.of())) {
             CountingIssuerBackend counting = new CountingIssuerBackend(runtime.issuerBackend());
             DefaultIssuanceService issuance = new DefaultIssuanceService(runtime.store(), runtime.framework(),
-                    counting, runtime.auditSink());
+                    counting, runtime.auditSink(), runtime.statusResolver());
             CaService caService = runtime.caService(counting);
             ParsedCertificationRequest request = new ParsedCertificationRequest(new PkiId("csr:unsupported"),
                     runtime.framework().formatId(), new SubjectRef("CN=Unsupported"),
@@ -265,11 +265,15 @@ final class PkiProofGateE2eTest {
     void endEntityGateRejectsMalformedTamperedAndSubstitutedRequests(@TempDir Path tempDir) throws Exception {
         System.out.println("endEntityGateRejectsMalformedTamperedAndSubstitutedRequests");
 
+        KeyPair rootKey = generateRsa();
         KeyPair subjectKey = generateRsa();
         KeyPair otherKey = generateRsa();
+        KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:root");
         KeyRef subjectKeyRef = new KeyRef("kref:v1:keyring:test:subject");
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"),
-                Map.of(subjectKeyRef, subjectKey))) {
+                Map.of(rootKeyRef, rootKey, subjectKeyRef, subjectKey))) {
+            PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
+                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             PKCS10CertificationRequest validCsr = makeCsr(subjectKey, subjectKey, "CN=Subject");
             ParsedCertificationRequest valid = parse(runtime, validCsr);
             ParsedCertificationRequest pss = parse(runtime,
@@ -289,44 +293,44 @@ final class PkiProofGateE2eTest {
                     new zeroecho.pki.api.issuance.VerificationPolicy(true, Optional.empty()));
             assertEquals(ProofOfPossessionStatus.FAILED, unsupportedProof.status());
 
-            assertRejected(runtime, withAttributes(valid, new SimpleAttributeSet()), "CSR_MISSING");
-            assertRejected(runtime, withCsr(valid, new byte[] { 0x01 }), "CSR_MALFORMED");
+            assertRejected(runtime, rootCaId, withAttributes(valid, new SimpleAttributeSet()), "CSR_MISSING");
+            assertRejected(runtime, rootCaId, withCsr(valid, new byte[] { 0x01 }), "CSR_MALFORMED");
 
             byte[] tampered = csrDer(valid).clone();
             tampered[tampered.length - 1] ^= 0x01;
             ParsedCertificationRequest tamperedParsed = parse(runtime, new PKCS10CertificationRequest(tampered));
-            assertRejected(runtime, tamperedParsed, "PROOF_FAILED");
+            assertRejected(runtime, rootCaId, tamperedParsed, "PROOF_FAILED");
 
             ParsedCertificationRequest wrongSigner = parse(runtime,
                     makeCsr(subjectKey, otherKey, "CN=Subject"));
-            assertRejected(runtime, wrongSigner, "PROOF_FAILED");
+            assertRejected(runtime, rootCaId, wrongSigner, "PROOF_FAILED");
 
-            assertRejected(runtime,
+            assertRejected(runtime, rootCaId,
                     new ParsedCertificationRequest(new PkiId("csr:substituted"), valid.formatId(), valid.subjectRef(),
                             valid.publicKeyInfo(), valid.requestedValidity(), valid.requestedProfileId(),
                             valid.attributes()),
                     "REQUEST_ID_MISMATCH");
-            assertRejected(runtime,
+            assertRejected(runtime, rootCaId,
                     new ParsedCertificationRequest(valid.requestId(), valid.formatId(), new SubjectRef("CN=Other"),
                             valid.publicKeyInfo(), valid.requestedValidity(), valid.requestedProfileId(),
                             valid.attributes()),
                     "SUBJECT_MISMATCH");
-            assertRejected(runtime,
+            assertRejected(runtime, rootCaId,
                     new ParsedCertificationRequest(valid.requestId(), valid.formatId(), valid.subjectRef(),
                             new EncodedObject(Encoding.DER, otherKey.getPublic().getEncoded()),
                             valid.requestedValidity(), valid.requestedProfileId(), valid.attributes()),
                     "SPKI_MISMATCH");
-            assertRejected(runtime,
+            assertRejected(runtime, rootCaId,
                     new ParsedCertificationRequest(valid.requestId(), new FormatId("unsupported"), valid.subjectRef(),
                             valid.publicKeyInfo(), valid.requestedValidity(), valid.requestedProfileId(),
                             valid.attributes()),
                     "FORMAT_UNSUPPORTED");
             byte[] maximum = new byte[1024 * 1024];
             System.arraycopy(csrDer(valid), 0, maximum, 0, csrDer(valid).length);
-            assertRejected(runtime, withCsr(valid, maximum), "CSR_MALFORMED");
-            assertRejected(runtime, withCsr(valid, new byte[1024 * 1024 + 1]), "CSR_TOO_LARGE");
+            assertRejected(runtime, rootCaId, withCsr(valid, maximum), "CSR_MALFORMED");
+            assertRejected(runtime, rootCaId, withCsr(valid, new byte[1024 * 1024 + 1]), "CSR_TOO_LARGE");
 
-            assertTrue(runtime.store().listCas().isEmpty());
+            assertEquals(1, runtime.store().listCas().size());
             AuditEvent last = runtime.auditSink().snapshot().get(runtime.auditSink().snapshot().size() - 1);
             assertEquals("ISSUE_END_ENTITY_REJECTED", last.action());
             assertEquals("SYSTEM", last.principal().type());
@@ -341,7 +345,9 @@ final class PkiProofGateE2eTest {
     void endEntityGateForcesRequiredPolicyAndRejectsEveryNonVerifiedStatus(@TempDir Path tempDir) throws Exception {
         System.out.println("endEntityGateForcesRequiredPolicyAndRejectsEveryNonVerifiedStatus");
 
+        KeyPair rootKey = generateRsa();
         KeyPair subjectKey = generateRsa();
+        KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:root");
         KeyRef subjectKeyRef = new KeyRef("kref:v1:keyring:test:subject");
         for (ProofOfPossessionStatus status : new ProofOfPossessionStatus[] {
                 ProofOfPossessionStatus.NOT_PRESENT,
@@ -350,17 +356,20 @@ final class PkiProofGateE2eTest {
             AtomicBoolean required = new AtomicBoolean();
             Path caseDir = tempDir.resolve(status.name());
             try (PkiTestRuntime runtime = PkiTestRuntime.create(caseDir, caseDir.resolve("bus.log"),
-                    Map.of(subjectKeyRef, subjectKey), Map.of(subjectKeyRef, subjectKey.getPublic()),
+                    Map.of(rootKeyRef, rootKey, subjectKeyRef, subjectKey),
+                    Map.of(rootKeyRef, rootKey.getPublic(), subjectKeyRef, subjectKey.getPublic()),
                     (request, policy) -> {
                         required.set(policy.requireProofOfPossession());
                         return new ProofOfPossessionResult(status, Optional.empty());
                     })) {
+                PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
+                        new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
                 ParsedCertificationRequest parsed = parse(runtime, makeCsr(subjectKey, subjectKey, "CN=Subject"));
-                assertThrows(PkiException.class, () -> issue(runtime, parsed));
+                assertThrows(PkiException.class, () -> issue(runtime, rootCaId, parsed));
                 assertTrue(required.get());
                 assertEquals("PROOF_" + status.name(),
                         runtime.auditSink().snapshot().get(0).details().get("code"));
-                assertTrue(runtime.store().listCas().isEmpty());
+                assertEquals(1, runtime.store().listCas().size());
             }
         }
 
@@ -653,7 +662,7 @@ final class PkiProofGateE2eTest {
                 }
             };
             DefaultIssuanceService throwingBackendService = new DefaultIssuanceService(runtime.store(),
-                    runtime.framework(), throwingBackend, runtime.auditSink());
+                    runtime.framework(), throwingBackend, runtime.auditSink(), runtime.statusResolver());
             PkiException backendRejection = assertThrows(PkiException.class,
                     () -> throwingBackendService.issueEndEntity(new IssueEndEntityCommand(rootCaId, subject,
                             "default", Optional.empty(), new SimpleAttributeSet())));
@@ -678,7 +687,7 @@ final class PkiProofGateE2eTest {
                 }
             };
             DefaultIssuanceService service = new DefaultIssuanceService(runtime.store(), runtime.framework(),
-                    maliciousBackend, runtime.auditSink());
+                    maliciousBackend, runtime.auditSink(), runtime.statusResolver());
             assertThrows(PkiException.class,
                     () -> service.issueEndEntity(new IssueEndEntityCommand(rootCaId, subject, "default",
                             Optional.empty(), new SimpleAttributeSet())));
@@ -707,7 +716,7 @@ final class PkiProofGateE2eTest {
                         }
                     };
             DefaultIssuanceService invalidSignatureService = new DefaultIssuanceService(runtime.store(),
-                    runtime.framework(), invalidSignatureBackend, runtime.auditSink());
+                    runtime.framework(), invalidSignatureBackend, runtime.auditSink(), runtime.statusResolver());
             assertThrows(PkiException.class,
                     () -> invalidSignatureService.issueEndEntity(new IssueEndEntityCommand(rootCaId, subject,
                             "default", Optional.empty(), new SimpleAttributeSet())));
@@ -727,7 +736,7 @@ final class PkiProofGateE2eTest {
                         }
                     };
             DefaultIssuanceService snapshotService = new DefaultIssuanceService(runtime.store(),
-                    runtime.framework(), mutableBackend, runtime.auditSink());
+                    runtime.framework(), mutableBackend, runtime.auditSink(), runtime.statusResolver());
             CredentialBundle returned = snapshotService.issueEndEntity(new IssueEndEntityCommand(rootCaId, subject,
                     "default", Optional.empty(), new SimpleAttributeSet()));
             byte[] expectedLeaf = returned.credential().encoded().bytes().clone();
@@ -763,6 +772,8 @@ final class PkiProofGateE2eTest {
                             "default", Optional.empty(), new SimpleAttributeSet())));
             assertEquals(before, runtime.submittedSignCount());
 
+            runtime.store().putCa(new CaRecord(root.caId(), root.kind(), root.state(), root.issuerKeyRef(),
+                    root.subjectRef(), List.of(original)));
             ParsedCertificationRequest missing = withAttributes(subject, new SimpleAttributeSet());
             AttributeSet hostileAttributes = new AttributeSet() {
                 @Override
@@ -789,7 +800,7 @@ final class PkiProofGateE2eTest {
             DefaultIssuanceService failingAudit = new DefaultIssuanceService(runtime.store(), runtime.framework(),
                     runtime.issuerBackend(), event -> {
                         throw new IllegalStateException("DO_NOT_LOG_PAYLOAD_SENTINEL");
-                    });
+                    }, runtime.statusResolver());
             PkiException rejection = assertThrows(PkiException.class,
                     () -> failingAudit.issueEndEntity(new IssueEndEntityCommand(rootCaId, missing, "default",
                             Optional.empty(), new SimpleAttributeSet())));
@@ -1080,15 +1091,16 @@ final class PkiProofGateE2eTest {
                 source.publicKeyInfo(), source.requestedValidity(), source.requestedProfileId(), attributes);
     }
 
-    private static void assertRejected(PkiTestRuntime runtime, ParsedCertificationRequest request, String code) {
+    private static void assertRejected(PkiTestRuntime runtime, PkiId issuerCaId,
+            ParsedCertificationRequest request, String code) {
         int before = runtime.auditSink().snapshot().size();
-        assertThrows(PkiException.class, () -> issue(runtime, request));
+        assertThrows(PkiException.class, () -> issue(runtime, issuerCaId, request));
         assertEquals(before + 1, runtime.auditSink().snapshot().size());
         assertEquals(code, runtime.auditSink().snapshot().get(before).details().get("code"));
     }
 
-    private static void issue(PkiTestRuntime runtime, ParsedCertificationRequest request) {
-        runtime.issuanceService().issueEndEntity(new IssueEndEntityCommand(new PkiId("ca:absent"), request, "default",
+    private static void issue(PkiTestRuntime runtime, PkiId issuerCaId, ParsedCertificationRequest request) {
+        runtime.issuanceService().issueEndEntity(new IssueEndEntityCommand(issuerCaId, request, "default",
                 Optional.empty(), new SimpleAttributeSet()));
     }
 

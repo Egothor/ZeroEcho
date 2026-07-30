@@ -62,11 +62,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Stream;
 
 import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.credential.Credential;
@@ -76,7 +79,11 @@ import zeroecho.pki.api.policy.PolicyTrace;
 import zeroecho.pki.api.profile.CertificateProfile;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
-import zeroecho.pki.api.revocation.RevokedRecord;
+import zeroecho.pki.api.revocation.RevocationCommand;
+import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationReason;
+import zeroecho.pki.api.revocation.RevocationState;
+import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.spi.store.PkiStore;
@@ -102,11 +109,10 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
  * fails with {@link IllegalStateException}. This is intentional to surface
  * anomalous behavior for audit and incident analysis.
  *
- * <li><strong>Audit history for mutable entities:</strong> CA records,
- * profiles, and revocations are treated as "mutable but auditable": each update
- * appends an immutable history entry and then updates {@code current.bin}
- * atomically. This supports forensic reconstruction, and snapshot export ("time
- * travel") without mutating the store.</li>
+ * <li><strong>Audit history for mutable entities:</strong> CA records and
+ * profiles append history before updating {@code current.bin}. Revocation state
+ * is instead one atomically replaced, internally ordered journal per
+ * credential.</li>
  *
  * <li><strong>Deterministic behavior:</strong> filenames, ordering, and cleanup
  * semantics are deterministic. Cleanup occurs only during writes
@@ -155,6 +161,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private final AtomicLong signingTimeWatermark;
     private final ReentrantLock signingTimeLock;
     private final ConcurrentMap<PkiId, SignLockEntry> signLocks;
+    private final ConcurrentMap<PkiId, RevocationLockEntry> revocationLocks;
+    private final AtomicBoolean durabilityUncertain;
 
     private final StoreOwnership ownership;
 
@@ -188,6 +196,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         Objects.requireNonNull(root, "root");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.signLocks = new ConcurrentHashMap<>();
+        this.revocationLocks = new ConcurrentHashMap<>();
+        this.durabilityUncertain = new AtomicBoolean();
         this.signingTimeLock = new ReentrantLock();
         this.paths = new FsPaths(root);
 
@@ -239,6 +249,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * @throws IllegalStateException    if export fails
      */
     public void exportSnapshot(final Path targetRoot, final Instant at) {
+        requireStoreUsable();
         Objects.requireNonNull(targetRoot, "targetRoot");
         Objects.requireNonNull(at, "at");
         new FsSnapshotExporter(this.options).exportSnapshot(this.paths.root(), targetRoot, at);
@@ -246,6 +257,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putCa(final CaRecord record) {
+        requireStoreUsable();
         Objects.requireNonNull(record, "record");
         PkiId caId = record.caId();
         Path current = this.paths.caCurrent(caId);
@@ -256,6 +268,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<CaRecord> getCa(final PkiId caId) {
+        requireStoreUsable();
         Objects.requireNonNull(caId, "caId");
         Path p = this.paths.caCurrent(caId);
         return readOptional(p, FsCodec.CA_RECORD);
@@ -263,12 +276,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<CaRecord> listCas() {
+        requireStoreUsable();
         Path casRoot = this.paths.root().resolve("cas").resolve("by-id");
         return listCurrentRecords(casRoot, FsCodec.CA_RECORD);
     }
 
     @Override
     public void putCredential(final Credential credential) {
+        requireStoreUsable();
         Objects.requireNonNull(credential, "credential");
         PkiId id = credential.credentialId();
         Path p = this.paths.credentialPath(id);
@@ -277,12 +292,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<Credential> getCredential(final PkiId credentialId) {
+        requireStoreUsable();
         Objects.requireNonNull(credentialId, "credentialId");
         return readOptional(this.paths.credentialPath(credentialId), FsCodec.CREDENTIAL);
     }
 
     @Override
     public void putRequest(final ParsedCertificationRequest request) {
+        requireStoreUsable();
         Objects.requireNonNull(request, "request");
         PkiId id = request.requestId();
         writeOnce(this.paths.requestPath(id), FsCodec.encode(FsCodec.PARSED_REQUEST, request), "REQUEST",
@@ -291,34 +308,91 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<ParsedCertificationRequest> getRequest(final PkiId requestId) {
+        requireStoreUsable();
         Objects.requireNonNull(requestId, "requestId");
         return readOptional(this.paths.requestPath(requestId), FsCodec.PARSED_REQUEST);
     }
 
     @Override
-    public void putRevocation(final RevokedRecord record) {
-        Objects.requireNonNull(record, "record");
-        PkiId credId = record.credentialId();
-        Path current = this.paths.revocationCurrent(credId);
-
-        writeWithHistory(this.paths.revocationHistoryDir(credId), current, FsCodec.encode(FsCodec.REVOCATION, record),
-                this.options.revocationHistoryPolicy(), "REVOCATION", FsUtil.safeId(credId));
+    // Store failures are intentionally replaced by one stable redacted boundary.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    public RevocationJournal transitionRevocation(final RevocationCommand command, final Instant transitionTime) {
+        requireStoreUsable();
+        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(transitionTime, "transitionTime");
+        PkiId credentialId = command.credentialId();
+        RevocationLockEntry lock = acquireRevocationLock(credentialId);
+        try {
+            Optional<Credential> credential;
+            try {
+                credential = getCredential(credentialId);
+            } catch (RuntimeException failure) {
+                throw corruptRevocationState();
+            }
+            if (credential.isEmpty()) {
+                throw new PkiException("Revocation target unavailable: code=REVOCATION_CREDENTIAL_NOT_FOUND");
+            }
+            Optional<RevocationJournal> current;
+            try {
+                current = readRevocationJournal(credentialId);
+            } catch (RuntimeException failure) {
+                throw corruptRevocationState();
+            }
+            RevocationJournal updated = appendRevocation(current, credentialId, command, transitionTime);
+            try {
+                FsOperations.writeAtomicStrict(paths.revocationJournal(credentialId),
+                        FsCodec.encode(FsCodec.REVOCATION_JOURNAL, updated));
+            } catch (FsOperations.DurabilityUncertainException failure) {
+                durabilityUncertain.set(true);
+                throw new PkiException(
+                        "Revocation durability unconfirmed: code=REVOCATION_DURABILITY_UNCONFIRMED");
+            } catch (IOException ex) {
+                throw new PkiException("Revocation persistence failed: code=REVOCATION_PERSIST_FAILED");
+            }
+            return updated;
+        } finally {
+            releaseRevocationLock(credentialId, lock);
+        }
     }
 
     @Override
-    public Optional<RevokedRecord> getRevocation(final PkiId credentialId) {
+    public Optional<RevocationJournal> getRevocationJournal(final PkiId credentialId) {
+        requireStoreUsable();
         Objects.requireNonNull(credentialId, "credentialId");
-        return readOptional(this.paths.revocationCurrent(credentialId), FsCodec.REVOCATION);
+        return readRevocationJournal(credentialId);
     }
 
     @Override
-    public List<RevokedRecord> listRevocations() {
+    // Listing failures are intentionally replaced by one stable redacted boundary.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    public List<RevocationJournal> listRevocationJournals() {
+        requireStoreUsable();
         Path root = this.paths.root().resolve("revocations").resolve("by-credential");
-        return listCurrentRecords(root, FsCodec.REVOCATION);
+        if (!Files.isDirectory(root)) {
+            return List.of();
+        }
+        try (Stream<Path> directories = Files.list(root)) {
+            List<RevocationJournal> journals = new ArrayList<>();
+            for (Path entityDir : directories.filter(Files::isDirectory)
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString())).toList()) {
+                Path journalPath = entityDir.resolve("journal.bin");
+                if (Files.exists(journalPath)) {
+                    RevocationJournal journal = decodeRevocationJournal(journalPath);
+                    if (!entityDir.getFileName().toString().equals(FsUtil.safeId(journal.credentialId()))) {
+                        throw corruptRevocationState();
+                    }
+                    journals.add(journal);
+                }
+            }
+            return List.copyOf(journals);
+        } catch (IOException ex) {
+            throw corruptRevocationState();
+        }
     }
 
     @Override
     public void putStatusObject(final StatusObject object) {
+        requireStoreUsable();
         Objects.requireNonNull(object, "object");
         PkiId id = object.statusObjectId();
         writeOnce(this.paths.statusObjectPath(id), FsCodec.encode(FsCodec.STATUS_OBJECT, object), "STATUS_OBJECT",
@@ -327,12 +401,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<StatusObject> getStatusObject(final PkiId statusObjectId) {
+        requireStoreUsable();
         Objects.requireNonNull(statusObjectId, "statusObjectId");
         return readOptional(this.paths.statusObjectPath(statusObjectId), FsCodec.STATUS_OBJECT);
     }
 
     @Override
     public List<StatusObject> listStatusObjects(final PkiId issuerCaId) {
+        requireStoreUsable();
         Objects.requireNonNull(issuerCaId, "issuerCaId");
 
         // Deterministic but coarse: scan all and filter by issuer id.
@@ -351,6 +427,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putPublicationRecord(final PublicationRecord record) {
+        requireStoreUsable();
         Objects.requireNonNull(record, "record");
         PkiId id = record.publicationId();
         writeOnce(this.paths.publicationPath(id), FsCodec.encode(FsCodec.PUBLICATION, record), "PUBLICATION",
@@ -359,12 +436,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<PublicationRecord> listPublicationRecords() {
+        requireStoreUsable();
         Path byId = this.paths.root().resolve("publications").resolve("by-id");
         return listBinaryFiles(byId, FsCodec.PUBLICATION);
     }
 
     @Override
     public void putProfile(final CertificateProfile profile) {
+        requireStoreUsable();
         Objects.requireNonNull(profile, "profile");
         String profileId = profile.profileId();
         Path current = this.paths.profileCurrent(profileId);
@@ -376,6 +455,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<CertificateProfile> getProfile(final String profileId) {
+        requireStoreUsable();
         if (profileId == null || profileId.isBlank()) {
             throw new IllegalArgumentException("profileId must not be null/blank");
         }
@@ -384,12 +464,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<CertificateProfile> listProfiles() {
+        requireStoreUsable();
         Path root = this.paths.root().resolve("profiles").resolve("by-id");
         return listCurrentRecords(root, FsCodec.CERTIFICATE_PROFILE);
     }
 
     @Override
     public void putPolicyTrace(final PolicyTrace trace) {
+        requireStoreUsable();
         Objects.requireNonNull(trace, "trace");
         PkiId id = trace.decisionId();
         writeOnce(this.paths.policyTracePath(id), FsCodec.encode(FsCodec.POLICY_TRACE, trace), "POLICY_TRACE",
@@ -398,6 +480,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<PolicyTrace> getPolicyTrace(final PkiId decisionId) {
+        requireStoreUsable();
         Objects.requireNonNull(decisionId, "decisionId");
         return readOptional(this.paths.policyTracePath(decisionId), FsCodec.POLICY_TRACE);
     }
@@ -408,6 +491,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void putWorkflowState(final WorkflowStateRecord record) {
+        requireStoreUsable();
         Objects.requireNonNull(record, "record");
 
         PkiId opId = record.opId();
@@ -420,12 +504,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<WorkflowStateRecord> getWorkflowState(final PkiId opId) {
+        requireStoreUsable();
         Objects.requireNonNull(opId, "opId");
         return readOptional(this.paths.workflowCurrent(opId), FsCodec.WORKFLOW_STATE);
     }
 
     @Override
     public void deleteWorkflowState(final PkiId opId) {
+        requireStoreUsable();
         Objects.requireNonNull(opId, "opId");
         Path current = this.paths.workflowCurrent(opId);
 
@@ -438,12 +524,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<WorkflowStateRecord> listWorkflowStates() {
+        requireStoreUsable();
         // List by operation directory (workflows/by-op/<opId>/current.bin)
         return listCurrentRecords(this.paths.workflowRoot(), FsCodec.WORKFLOW_STATE);
     }
 
     @Override
     public Instant signingNow() {
+        requireStoreUsable();
         signingTimeLock.lock();
         try {
             long monotonic = Math.max(signingTimeWatermark.get(), clock.instant().toEpochMilli());
@@ -457,21 +545,25 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public String signingNamespace() {
+        requireStoreUsable();
         return signingNamespace;
     }
 
     @Override
     public Duration signingHorizon() {
+        requireStoreUsable();
         return options.signingOperationHorizon();
     }
 
     @Override
     public Duration signingPermittedSkew() {
+        requireStoreUsable();
         return options.signingIdPermittedSkew();
     }
 
     @Override
     public SignWorkflowStore.CreateResult createSignIntent(SignWorkflowStore.Record intent) {
+        requireStoreUsable();
         Objects.requireNonNull(intent, "intent");
         SignLockEntry lock = acquireSignLock(intent.submissionId());
         try {
@@ -504,6 +596,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<SignWorkflowStore.Record> getSignRecord(PkiId submissionId) {
+        requireStoreUsable();
         Objects.requireNonNull(submissionId, "submissionId");
         SignLockEntry lock = acquireSignLock(submissionId);
         try {
@@ -515,11 +608,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public List<SignWorkflowStore.Record> listSignRecords() {
+        requireStoreUsable();
         Path root = paths.signWorkflowRoot();
         if (!Files.isDirectory(root)) {
             return List.of();
         }
-        try (java.util.stream.Stream<Path> directories = Files.list(root)) {
+        try (Stream<Path> directories = Files.list(root)) {
             return directories.filter(Files::isDirectory)
                     .map(directory -> directory.resolve(FsPaths.CURRENT_FILE))
                     .filter(Files::isRegularFile)
@@ -535,6 +629,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Record> tryClaimSign(PkiId submissionId, long expectedRevision,
             Duration lease) {
+        requireStoreUsable();
         requirePositive(lease, "lease");
         SignLockEntry lock = acquireSignLock(submissionId);
         try {
@@ -562,6 +657,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public Optional<SignWorkflowStore.Record> renewSignClaim(PkiId submissionId, long expectedRevision, long fence,
             Duration lease) {
+        requireStoreUsable();
         requirePositive(lease, "lease");
         SignLockEntry lock = acquireSignLock(submissionId);
         try {
@@ -587,6 +683,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public Optional<SignWorkflowStore.Record> transitionSign(PkiId submissionId, long expectedRevision, long fence,
             SignWorkflowStore.State target, Optional<String> detailCode, Optional<EncodedObject> result,
             Optional<Instant> providerUpdatedAt) {
+        requireStoreUsable();
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(detailCode, "detailCode");
         Objects.requireNonNull(result, "result");
@@ -622,6 +719,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public Optional<SignWorkflowStore.Record> retireSign(PkiId submissionId, long expectedRevision, long fence) {
+        requireStoreUsable();
         SignLockEntry lock = acquireSignLock(submissionId);
         try {
             Optional<SignWorkflowStore.Record> optional = readSignRecord(submissionId);
@@ -645,6 +743,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public int purgeExpiredSignRecords() {
+        requireStoreUsable();
         Path root = paths.signWorkflowRoot();
         if (!Files.isDirectory(root)) {
             return 0;
@@ -677,6 +776,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         this.ownership.close();
     }
 
+    private void requireStoreUsable() {
+        if (durabilityUncertain.get()) {
+            throw new PkiException("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED");
+        }
+    }
+
     private SignLockEntry acquireSignLock(PkiId submissionId) {
         SignLockEntry entry = signLocks.compute(submissionId, (ignored, current) -> {
             SignLockEntry selected = current == null ? new SignLockEntry() : current;
@@ -695,6 +800,115 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
             return current.references.decrementAndGet() == 0 ? null : current;
         });
+    }
+
+    private RevocationLockEntry acquireRevocationLock(PkiId credentialId) {
+        RevocationLockEntry entry = revocationLocks.compute(credentialId, (ignored, current) -> {
+            RevocationLockEntry selected = current == null ? new RevocationLockEntry() : current;
+            selected.references.incrementAndGet();
+            return selected;
+        });
+        entry.lock.lock();
+        return entry;
+    }
+
+    private void releaseRevocationLock(PkiId credentialId, RevocationLockEntry entry) {
+        entry.lock.unlock();
+        revocationLocks.computeIfPresent(credentialId, (ignored, current) -> {
+            if (current != entry) { // NOPMD - identity protects a replacement lock entry
+                return current;
+            }
+            return current.references.decrementAndGet() == 0 ? null : current;
+        });
+    }
+
+    private Optional<RevocationJournal> readRevocationJournal(PkiId credentialId) {
+        Path path = paths.revocationJournal(credentialId);
+        if (!Files.exists(path)) {
+            return Optional.empty();
+        }
+        RevocationJournal journal = decodeRevocationJournal(path);
+        validateRevocationJournal(credentialId, journal);
+        return Optional.of(journal);
+    }
+
+    // Codec and filesystem failures are external persisted-state boundaries; raw
+    // causes are deliberately removed from the stable corruption exception.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    private static RevocationJournal decodeRevocationJournal(Path path) {
+        try {
+            return FsCodec.decode(FsCodec.REVOCATION_JOURNAL, FsOperations.readAll(path));
+        } catch (IOException | RuntimeException ex) {
+            throw corruptRevocationState();
+        }
+    }
+
+    // Revision overflow is persisted-state corruption and is mapped to the stable,
+    // redacted state-corruption boundary.
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    private static RevocationJournal appendRevocation(Optional<RevocationJournal> current, PkiId credentialId,
+            RevocationCommand command, Instant transitionTime) {
+        if (current.isPresent() && transitionTime.isBefore(current.get().latest().time())) {
+            throw new PkiException("Revocation transition conflict: code=REVOCATION_TRANSITION_CONFLICT");
+        }
+        RevocationState previous = current.map(RevocationJournal::latest).map(RevocationTransition::state)
+                .orElse(null);
+        RevocationState next = nextRevocationState(previous, command);
+        long revision = current.map(RevocationJournal::latest).map(RevocationTransition::revision)
+                .map(value -> {
+                    try {
+                        return Math.addExact(value, 1L);
+                    } catch (ArithmeticException ex) {
+                        throw corruptRevocationState();
+                    }
+                }).orElse(1L);
+        List<RevocationTransition> transitions = new ArrayList<>(
+                current.map(RevocationJournal::transitions).orElseGet(List::of));
+        Optional<RevocationReason> permanentReason = command instanceof RevocationCommand.RevokePermanently revoke
+                ? Optional.of(revoke.reason()) : Optional.empty();
+        transitions.add(new RevocationTransition(revision, next, transitionTime,
+                permanentReason, command.attributes()));
+        RevocationJournal journal = new RevocationJournal(credentialId, transitions);
+        validateRevocationJournal(credentialId, journal);
+        return journal;
+    }
+
+    private static RevocationState nextRevocationState(RevocationState previous, RevocationCommand command) {
+        if (previous == RevocationState.PERMANENTLY_REVOKED) {
+            throw new PkiException("Revocation is terminal: code=REVOCATION_TERMINAL");
+        }
+        boolean hold = command instanceof RevocationCommand.Hold;
+        boolean unhold = command instanceof RevocationCommand.Unhold;
+        if (previous == null) {
+            return unhold ? throwIllegalTransition()
+                    : hold ? RevocationState.HELD : RevocationState.PERMANENTLY_REVOKED;
+        }
+        return switch (previous) {
+            case CLEAR -> unhold ? throwIllegalTransition()
+                    : hold ? RevocationState.HELD : RevocationState.PERMANENTLY_REVOKED;
+            case HELD -> hold ? throwIllegalTransition()
+                    : unhold ? RevocationState.CLEAR : RevocationState.PERMANENTLY_REVOKED;
+            case PERMANENTLY_REVOKED -> throw new PkiException(
+                    "Revocation is terminal: code=REVOCATION_TERMINAL");
+        };
+    }
+
+    private static void validateRevocationJournal(PkiId expectedId, RevocationJournal journal) {
+        if (!expectedId.equals(journal.credentialId())) {
+            throw corruptRevocationState();
+        }
+    }
+
+    private static RevocationState throwIllegalTransition() {
+        throw illegalRevocationTransition();
+    }
+
+    private static PkiException illegalRevocationTransition() {
+        return new PkiException("Revocation transition rejected: code=REVOCATION_TRANSITION_ILLEGAL");
+    }
+
+    private static PkiException corruptRevocationState() {
+        return new PkiException("Revocation state invalid: code=REVOCATION_STATE_CORRUPT");
     }
 
     private Optional<SignWorkflowStore.Record> readSignRecord(PkiId submissionId) {
@@ -991,6 +1205,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * Reference-counted lock entry removed when no mutation uses it.
      */
     private static final class SignLockEntry {
+        private final ReentrantLock lock = new ReentrantLock();
+        private final AtomicInteger references = new AtomicInteger();
+    }
+
+    /**
+     * Reference-counted per-credential revocation transition lock.
+     */
+    private static final class RevocationLockEntry {
         private final ReentrantLock lock = new ReentrantLock();
         private final AtomicInteger references = new AtomicInteger();
     }

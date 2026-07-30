@@ -278,12 +278,14 @@ public final class BcX509CredentialFramework implements CredentialFramework {
          * status-object generator has been wired.
          *
          * @param command ignored command parameter
+         * @param crlEntries ignored structured CRL entries
          * @return never returns normally
          * @throws UnsupportedOperationException always
          */
         @Override
         public zeroecho.pki.api.status.StatusObject generate(
-                zeroecho.pki.api.status.StatusObjectGenerateCommand command) {
+                zeroecho.pki.api.status.StatusObjectGenerateCommand command,
+                java.util.List<zeroecho.pki.spi.framework.CrlEntry> crlEntries) {
             throw new UnsupportedOperationException("X.509 status object generator not wired");
         }
     }

@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.spi.framework;
 
+import java.util.List;
+
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectGenerateCommand;
 
@@ -47,9 +49,11 @@ public interface StatusObjectGenerator {
      * Generates a status object.
      *
      * @param command generation command
+     * @param crlEntries structured CRL entries; empty for non-CRL objects
      * @return generated status object
-     * @throws IllegalArgumentException if {@code command} is invalid
+     * @throws IllegalArgumentException if {@code command} or {@code crlEntries}
+     *                                  is invalid
      * @throws RuntimeException         if generation fails
      */
-    StatusObject generate(StatusObjectGenerateCommand command);
+    StatusObject generate(StatusObjectGenerateCommand command, List<CrlEntry> crlEntries);
 }

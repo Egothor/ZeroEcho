@@ -33,7 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.api;
 
-import zeroecho.pki.api.revocation.RevokedRecord;
 import zeroecho.pki.api.transfer.ExportArtifact;
 import zeroecho.pki.api.transfer.ExportFormat;
 import zeroecho.pki.api.transfer.ExportQuery;
@@ -72,17 +71,6 @@ public interface ImportExportService {
      * @throws PkiException             if import fails
      */
     PkiId importCaCertificate(PkiId caId, EncodedObject caCertificate, ImportPolicy policy);
-
-    /**
-     * Imports a revocation record.
-     *
-     * @param record revocation record
-     * @param policy import policy
-     * @return imported revocation record id (implementation-defined)
-     * @throws IllegalArgumentException if inputs are invalid
-     * @throws PkiException             if import fails
-     */
-    PkiId importRevocation(RevokedRecord record, ImportPolicy policy);
 
     /**
      * Exports credentials matching the query constraints in the requested export

@@ -31,36 +31,41 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
-package zeroecho.pki.api.revocation;
-
-import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.attr.AttributeSet;
+package zeroecho.pki.api.credential;
 
 /**
- * Command to remove a hold from a credential.
+ * Runtime status used when deciding whether a credential may participate in a
+ * security-sensitive operation.
  *
  * <p>
- * Frameworks may map this to X.509 {@code removeFromCRL} or equivalent
- * semantics.
+ * This status is derived from persisted inventory metadata, current revocation
+ * state, and one authoritative evaluation time. It is not persisted.
  * </p>
- *
- * @param credentialId credential identifier
- * @param attributes   optional additional attributes (may be empty but not
- *                     null)
  */
-public record UnholdCommand(PkiId credentialId, AttributeSet attributes) {
+public enum EffectiveCredentialStatus {
 
     /**
-     * Creates an unhold command.
-     *
-     * @throws IllegalArgumentException if inputs are null
+     * The credential is issued, unrevoked, and within its validity interval.
      */
-    public UnholdCommand {
-        if (credentialId == null) {
-            throw new IllegalArgumentException("credentialId must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
-    }
+    USABLE,
+
+    /**
+     * The credential validity interval has not started.
+     */
+    NOT_YET_VALID,
+
+    /**
+     * The credential is expired by metadata or evaluation time.
+     */
+    EXPIRED,
+
+    /**
+     * The credential is temporarily held.
+     */
+    HELD,
+
+    /**
+     * The credential is permanently revoked.
+     */
+    PERMANENTLY_REVOKED
 }

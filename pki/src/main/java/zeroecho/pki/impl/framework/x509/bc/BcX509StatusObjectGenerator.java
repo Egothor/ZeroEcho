@@ -33,17 +33,19 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
+import org.bouncycastle.asn1.x509.CRLReason;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.cert.X509CRLHolder;
 import org.bouncycastle.cert.X509CertificateHolder;
@@ -57,14 +59,14 @@ import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
-import zeroecho.pki.api.attr.AttributeValue.IntegerValue;
+import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectGenerateCommand;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.spi.framework.CrlEntry;
 import zeroecho.pki.spi.framework.StatusObjectGenerator;
 
 /**
@@ -73,8 +75,8 @@ import zeroecho.pki.spi.framework.StatusObjectGenerator;
  * <p>
  * The current implementation supports only generation of X.509 certificate
  * revocation lists (CRLs). It assembles a version 2 CRL from issuer-side wiring
- * attributes, optional revoked-certificate serial numbers supplied through the
- * attribute set, and delegated signing performed via {@link PkiSigningBus}.
+ * attributes, structured {@link CrlEntry} values, and delegated signing
+ * performed via {@link PkiSigningBus}.
  * </p>
  *
  * <p>
@@ -86,10 +88,7 @@ import zeroecho.pki.spi.framework.StatusObjectGenerator;
  * {@link AttributeValue.BytesValue} containing the issuer certificate in DER
  * form,</li>
  * <li>{@link BcX509Attributes#ISSUER_KEYREF} as an
- * {@link AttributeValue.StringValue} identifying the issuer signing key,</li>
- * <li>optionally one or more {@link #CRL_REVOKED_SERIAL} values as
- * {@link AttributeValue.IntegerValue} instances representing serial numbers of
- * revoked certificates.</li>
+ * {@link AttributeValue.StringValue} identifying the issuer signing key.</li>
  * </ul>
  *
  * <p>
@@ -105,10 +104,11 @@ import zeroecho.pki.spi.framework.StatusObjectGenerator;
  *
  * <h2>Revoked-entry handling</h2>
  * <p>
- * Revoked certificate serial numbers are read from all values associated with
- * {@link #CRL_REVOKED_SERIAL}. Only {@link IntegerValue} entries with a
- * positive numeric value are included as CRL entries. Non-positive serials and
- * non-integer attribute values are ignored.
+ * Structured entries preserve the full positive {@code BigInteger} serial,
+ * authoritative transition instant, and exact supported revocation reason.
+ * X.509 {@code Date} carries millisecond precision; this generator deliberately
+ * truncates each transition instant to whole seconds only at the DER CRL-entry
+ * boundary.
  * </p>
  *
  * <h2>Update semantics</h2>
@@ -142,18 +142,6 @@ import zeroecho.pki.spi.framework.StatusObjectGenerator;
  * </p>
  */
 public final class BcX509StatusObjectGenerator implements StatusObjectGenerator {
-
-    /**
-     * Attribute identifier used to carry one revoked certificate serial number for
-     * CRL generation.
-     *
-     * <p>
-     * Multiple values associated with this identifier may be supplied in the input
-     * {@link AttributeSet}. Each positive {@link IntegerValue} contributes one CRL
-     * entry.
-     * </p>
-     */
-    private static final AttributeId CRL_REVOKED_SERIAL = new AttributeId("urn:zeroecho:pki:x509:crl:revoked");
 
     private final PkiSigningBus signingBus;
     private final String signatureAlgorithmId;
@@ -212,6 +200,7 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
      * </ul>
      *
      * @param command status object generation command; must not be {@code null}
+     * @param crlEntries structured current CRL entries; must not be {@code null}
      * @return generated CRL status object
      * @throws IllegalArgumentException if {@code command} is {@code null}, if the
      *                                  requested status object type is unsupported,
@@ -223,8 +212,9 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
      *                                  if signing fails, or if CRL encoding fails
      */
     @Override
-    public StatusObject generate(StatusObjectGenerateCommand command) {
+    public StatusObject generate(StatusObjectGenerateCommand command, List<CrlEntry> crlEntries) {
         validateCommandOrThrow(command);
+        List<CrlEntry> validatedEntries = validateEntries(crlEntries);
 
         IssuerMaterial issuerMaterial = extractIssuerMaterialOrThrow(command.attributes());
         Instant thisUpdate = Instant.now();
@@ -232,13 +222,18 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         Date thisUpdateDate = Date.from(thisUpdate);
 
         X509v2CRLBuilder builder = newCrlBuilder(issuerMaterial.issuerHolder(), thisUpdateDate, nextUpdate);
-        addRevokedEntries(builder, command.attributes(), thisUpdateDate);
+        addRevokedEntries(builder, validatedEntries);
         addAuthorityKeyIdentifierOrThrow(builder, issuerMaterial.issuerHolder());
 
         X509CRLHolder crl = buildSignedCrlOrThrow(builder, issuerMaterial.keyRef());
         byte[] crlDer = encodeCrlOrThrow(crl);
 
         return toStatusObject(command, crlDer, thisUpdate, nextUpdate);
+    }
+
+    private static List<CrlEntry> validateEntries(List<CrlEntry> crlEntries) {
+        Objects.requireNonNull(crlEntries, "crlEntries");
+        return List.copyOf(crlEntries);
     }
 
     /**
@@ -318,34 +313,32 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
     }
 
     /**
-     * Adds revoked-certificate entries to the CRL builder from framework
-     * attributes.
+     * Adds validated structured revoked-certificate entries to the CRL builder.
      *
-     * <p>
-     * Only positive {@link IntegerValue} attribute values associated with
-     * {@link #CRL_REVOKED_SERIAL} are added. Non-integer and non-positive values
-     * are ignored.
-     * </p>
-     *
-     * @param builder        target CRL builder; must not be {@code null}
-     * @param attributes     source attributes; must not be {@code null}
-     * @param revocationDate date to use for all generated CRL entries; must not be
-     *                       {@code null}
+     * @param builder target CRL builder; must not be {@code null}
+     * @param entries validated structured entries
      */
-    private static void addRevokedEntries(X509v2CRLBuilder builder, AttributeSet attributes, Date revocationDate) {
-        List<AttributeValue> revoked = attributes.getAll(CRL_REVOKED_SERIAL);
-        for (AttributeValue value : revoked) {
-            if (!(value instanceof IntegerValue)) {
-                continue;
-            }
-
-            long serial = ((IntegerValue) value).value();
-            if (serial <= 0) {
-                continue;
-            }
-
-            builder.addCRLEntry(BigInteger.valueOf(serial), revocationDate, 0);
+    private static void addRevokedEntries(X509v2CRLBuilder builder, List<CrlEntry> entries) {
+        for (CrlEntry entry : entries) {
+            Instant encodedTime = entry.transitionTime().truncatedTo(ChronoUnit.SECONDS);
+            builder.addCRLEntry(entry.serialNumber(), Date.from(encodedTime), reasonCode(entry.reason()));
         }
+    }
+
+    private static int reasonCode(RevocationReason reason) {
+        return switch (reason) {
+            case UNSPECIFIED -> CRLReason.unspecified;
+            case KEY_COMPROMISE -> CRLReason.keyCompromise;
+            case CA_COMPROMISE -> CRLReason.cACompromise;
+            case AFFILIATION_CHANGED -> CRLReason.affiliationChanged;
+            case SUPERSEDED -> CRLReason.superseded;
+            case CESSATION_OF_OPERATION -> CRLReason.cessationOfOperation;
+            case CERTIFICATE_HOLD -> CRLReason.certificateHold;
+            case REMOVE_FROM_CRL -> throw new IllegalArgumentException(
+                    "REMOVE_FROM_CRL is not an active CRL entry");
+            case PRIVILEGE_WITHDRAWN -> CRLReason.privilegeWithdrawn;
+            case AA_COMPROMISE -> CRLReason.aACompromise;
+        };
     }
 
     /**

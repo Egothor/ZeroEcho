@@ -97,14 +97,13 @@ final class FsSnapshotExporter {
             copyTreeIfExists(sourceRoot.resolve("policy"), targetRoot.resolve("policy"));
             copyTreeIfExists(sourceRoot.resolve("publications"), targetRoot.resolve("publications"));
             copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
+            copyTreeIfExists(sourceRoot.resolve("revocations"), targetRoot.resolve("revocations"));
 
-            // reconstruct mutable entities from history (CAS, PROFILES, REVOCATIONS)
+            // reconstruct mutable entities from history (CAS and profiles)
             reconstructMutableTree(sourceRoot.resolve("cas"), targetRoot.resolve("cas"), at,
                     this.options.caHistoryPolicy(), this.options.strictSnapshotExport());
             reconstructMutableTree(sourceRoot.resolve("profiles"), targetRoot.resolve("profiles"), at,
                     this.options.profileHistoryPolicy(), this.options.strictSnapshotExport());
-            reconstructMutableTree(sourceRoot.resolve("revocations"), targetRoot.resolve("revocations"), at,
-                    this.options.revocationHistoryPolicy(), this.options.strictSnapshotExport());
             // reconstruct workflow continuation state from history
             reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
                     this.options.workflowHistoryPolicy(), this.options.strictSnapshotExport());
