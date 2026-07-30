@@ -7,8 +7,10 @@ package zeroecho.core.storage;
 /**
  * Fills keyring randomness buffers.
  *
- * <p>This package-private seam supports deterministic format tests; production
- * creation uses the authoritative shared secure random source.</p>
+ * <p>
+ * This package-private seam supports deterministic format tests; production
+ * creation uses the authoritative shared secure random source.
+ * </p>
  */
 @FunctionalInterface
 interface KeyringRandomBytes {

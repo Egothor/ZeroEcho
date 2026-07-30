@@ -41,28 +41,30 @@ import zeroecho.pki.spi.ProviderConfig;
 /**
  * ServiceLoader provider for {@link SignatureWorkflow}.
  *
- * <p>Service loading discovers provider factories only. Runtime capabilities,
+ * <p>
+ * Service loading discovers provider factories only. Runtime capabilities,
  * including keyring unlock providers, are supplied explicitly through
  * {@link #allocate(ProviderConfig, SignatureWorkflowRuntimeDependencies)} and
- * are never stored in textual provider configuration.</p>
+ * are never stored in textual provider configuration.
+ * </p>
  */
 public interface SignatureWorkflowProvider extends ConfigurableProvider<SignatureWorkflow> {
     /**
      * Allocates a workflow using explicit process-local runtime dependencies.
      *
-     * <p>The default implementation supports providers that need no additional
-     * runtime capability. A provider requiring a software keyring must override
-     * this method and reject an absent unlock provider before opening any
-     * workflow resource.</p>
+     * <p>
+     * The default implementation supports providers that need no additional runtime
+     * capability. A provider requiring a software keyring must override this method
+     * and reject an absent unlock provider before opening any workflow resource.
+     * </p>
      *
-     * @param config structural provider configuration
+     * @param config       structural provider configuration
      * @param dependencies explicit process-local runtime dependencies
      * @return allocated workflow
      * @throws NullPointerException if {@code dependencies} is {@code null}
-     * @throws RuntimeException if allocation fails
+     * @throws RuntimeException     if allocation fails
      */
-    default SignatureWorkflow allocate(ProviderConfig config,
-            SignatureWorkflowRuntimeDependencies dependencies) {
+    default SignatureWorkflow allocate(ProviderConfig config, SignatureWorkflowRuntimeDependencies dependencies) {
         Objects.requireNonNull(dependencies, "dependencies must not be null");
         return allocate(config);
     }

@@ -85,8 +85,8 @@ public final class SecretPassword implements SecretContent, Destroyable {
     }
 
     /**
-     * Constructs a password from a caller-owned character array. The supplied
-     * array is cloned and remains owned by the caller.
+     * Constructs a password from a caller-owned character array. The supplied array
+     * is cloned and remains owned by the caller.
      *
      * @param password password characters; must not be {@code null}
      * @throws NullPointerException if {@code password} is {@code null}

@@ -74,9 +74,8 @@ class CapabilityValueSemanticsTest {
     void nullAndIncompatibleDefaultsAreRejectedAtConstruction() {
         System.out.println("nullAndIncompatibleDefaultsAreRejectedAtConstruction");
         assertThrows(NullPointerException.class, () -> capability(() -> null));
-        assertThrows(IllegalArgumentException.class,
-                () -> new Capability("DIGEST", AlgorithmFamily.DIGEST, KeyUsage.DIGEST, DigestContext.class,
-                        NullKey.class, TestSpec.class, new OtherSpec()));
+        assertThrows(IllegalArgumentException.class, () -> new Capability("DIGEST", AlgorithmFamily.DIGEST,
+                KeyUsage.DIGEST, DigestContext.class, NullKey.class, TestSpec.class, new OtherSpec()));
 
         System.out.println("...invalidDefaultsRejected=true");
         System.out.println("nullAndIncompatibleDefaultsAreRejectedAtConstruction...ok");
@@ -121,8 +120,7 @@ class CapabilityValueSemanticsTest {
                     (key, spec) -> {
                         runtimeSpecs.add(spec);
                         return mock(DigestContext.class);
-                    },
-                    () -> new TestSpec(Integer.toString(evaluations.incrementAndGet())));
+                    }, () -> new TestSpec(Integer.toString(evaluations.incrementAndGet())));
         }
     }
 }

@@ -158,24 +158,22 @@ public final class Tag { // NOPMD
      * @throws GeneralSecurityException if a cryptographic error occurs during
      *                                  signature or digest processing
      */
-    public static int main(String[] args, Options root)
-            throws ParseException, IOException, GeneralSecurityException {
+    public static int main(String[] args, Options root) throws ParseException, IOException, GeneralSecurityException {
         return main(args, root, KeyringUnlocks.console());
     }
 
     /**
      * Executes the command with an explicit keyring unlock source.
      *
-     * @param args command arguments
-     * @param root root options
+     * @param args           command arguments
+     * @param root           root options
      * @param unlockProvider keyring password provider
      * @return process exit code
-     * @throws ParseException if parsing fails
-     * @throws IOException if I/O fails
+     * @throws ParseException           if parsing fails
+     * @throws IOException              if I/O fails
      * @throws GeneralSecurityException if cryptographic processing fails
      */
-    public static int main(String[] args, Options root,
-            KeyringUnlockProvider unlockProvider)
+    public static int main(String[] args, Options root, KeyringUnlockProvider unlockProvider)
             throws ParseException, IOException, GeneralSecurityException {
         ZeroEchoSession session = new ZeroEchoSession();
         Options opts = root;
@@ -222,13 +220,13 @@ public final class Tag { // NOPMD
                 if (produce) {
                     String privAlias = require(cli, PRIV_OPT, "signature produce requires --priv <alias>");
                     PrivateKey priv = keyring.getPrivate(privAlias);
-                    tail = new TagTrailerDataContentBuilder<>(
-                            TagEngineBuilder.signature(session, alg, priv, spec)).build(true);
+                    tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.signature(session, alg, priv, spec))
+                            .build(true);
                 } else {
                     String pubAlias = require(cli, PUB_OPT, "signature verify requires --pub <alias>");
                     PublicKey pub = keyring.getPublic(pubAlias);
-                    tail = new TagTrailerDataContentBuilder<>(
-                            TagEngineBuilder.signature(session, alg, pub, spec)).build(false);
+                    tail = new TagTrailerDataContentBuilder<>(TagEngineBuilder.signature(session, alg, pub, spec))
+                            .build(false);
                 }
             }
         } else { // digest

@@ -58,6 +58,7 @@ public final class PasswordOpener implements RecipientOpener {
     public PasswordOpener(Pbkdf2Limits limits) {
         this.limits = java.util.Objects.requireNonNull(limits, "limits must not be null");
     }
+
     /**
      * Attempts to open a password-based recipient entry using a password unlock
      * material.

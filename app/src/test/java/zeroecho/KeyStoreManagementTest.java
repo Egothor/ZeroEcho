@@ -139,8 +139,7 @@ public class KeyStoreManagementTest {
         assertTrue(attempted > 0, "No generation attempts were successful");
 
         // Verify by reloading and materializing.
-        zeroecho.core.storage.KeyringPassword password =
-                TestKeyringUnlocks.provider().acquire();
+        zeroecho.core.storage.KeyringPassword password = TestKeyringUnlocks.provider().acquire();
         KeyringStore store;
         try {
             store = KeyringStore.open(ring, password);
@@ -197,15 +196,13 @@ public class KeyStoreManagementTest {
     // ---- helpers ----
 
     private static boolean hasAsymmetricDefault(CryptoAlgorithm alg) {
-        return alg.keyOperations().stream()
-                .anyMatch(info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE
-                        && info.defaultSpec() != null);
+        return alg.keyOperations().stream().anyMatch(
+                info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE && info.defaultSpec() != null);
     }
 
     private static boolean hasSymmetricDefault(CryptoAlgorithm alg) {
         return alg.keyOperations().stream()
-                .anyMatch(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE
-                        && info.defaultSpec() != null);
+                .anyMatch(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE && info.defaultSpec() != null);
     }
 
     private static String sanitize(String id) {

@@ -12,11 +12,11 @@ import zeroecho.pki.api.attr.AttributeSet;
 /**
  * One committed transition in an authoritative revocation journal.
  *
- * @param revision positive contiguous revision
- * @param state resulting state
- * @param time authoritative transition time
+ * @param revision        positive contiguous revision
+ * @param state           resulting state
+ * @param time            authoritative transition time
  * @param permanentReason permanent reason only for permanent state
- * @param attributes safe administrative metadata
+ * @param attributes      safe administrative metadata
  */
 public record RevocationTransition(long revision, RevocationState state, Instant time,
         Optional<RevocationReason> permanentReason, AttributeSet attributes) {

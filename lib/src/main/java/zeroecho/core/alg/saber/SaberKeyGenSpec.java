@@ -43,7 +43,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * A {@code SaberKeyGenSpec} selects one of the SABER parameter variants
  * standardized in round-3 submissions. Each variant balances performance,
  * bandwidth, and security level. This spec is passed to a registered
- * {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} to generate a SABER key pair.
+ * {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} to generate a SABER key
+ * pair.
  * </p>
  *
  * <h2>Variants</h2> The {@link Variant} enumeration identifies supported SABER

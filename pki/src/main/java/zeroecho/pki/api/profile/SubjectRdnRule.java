@@ -10,15 +10,15 @@ import java.util.Optional;
 /**
  * Immutable occurrence and ownership rule for one supported subject RDN type.
  *
- * @param type                 exact supported RDN type
- * @param minimumOccurrences   minimum number of occurrences
- * @param maximumOccurrences   maximum number of occurrences
- * @param maximumUtf8Bytes     maximum encoded value length, at most 256 bytes
- * @param fixedValue           optional profile-fixed value
- * @param requesterSupplied    whether the requester may supply the value
+ * @param type               exact supported RDN type
+ * @param minimumOccurrences minimum number of occurrences
+ * @param maximumOccurrences maximum number of occurrences
+ * @param maximumUtf8Bytes   maximum encoded value length, at most 256 bytes
+ * @param fixedValue         optional profile-fixed value
+ * @param requesterSupplied  whether the requester may supply the value
  */
-public record SubjectRdnRule(SubjectRdnType type, int minimumOccurrences, int maximumOccurrences,
-        int maximumUtf8Bytes, Optional<String> fixedValue, boolean requesterSupplied) {
+public record SubjectRdnRule(SubjectRdnType type, int minimumOccurrences, int maximumOccurrences, int maximumUtf8Bytes,
+        Optional<String> fixedValue, boolean requesterSupplied) {
 
     /** Maximum hard value size. */
     public static final int HARD_MAXIMUM_UTF8_BYTES = 256;

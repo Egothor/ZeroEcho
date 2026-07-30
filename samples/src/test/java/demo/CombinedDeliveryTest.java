@@ -75,24 +75,21 @@ class CombinedDeliveryTest {
     }
 
     KeyPair generateKyberKeys() throws GeneralSecurityException {
-        KeyPair kp = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
+        KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
         LOG.log(Level.INFO, "ML-KEM key pair generated");
 
         return kp;
     }
 
     KeyPair generateRsaKeys() throws GeneralSecurityException {
-        KeyPair kp = session.keyBuilders().asymmetric()
-                .generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
+        KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa4096());
         LOG.log(Level.INFO, "RSA key pair generated");
 
         return kp;
     }
 
     KeyPair generateElGamalKeys() throws GeneralSecurityException {
-        KeyPair kp = session.keyBuilders().asymmetric()
-                .generateKeyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
+        KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("ElGamal", ElgamalParamSpec.ffdhe2048());
         LOG.log(Level.INFO, "ElGamal key pair generated");
 
         return kp;

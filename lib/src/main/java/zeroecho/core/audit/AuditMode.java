@@ -10,8 +10,10 @@ package zeroecho.core.audit;
 /**
  * Defines the session-owned automatic auditing strategy.
  *
- * <p>Audit listener failures are best-effort diagnostics and never change the
- * outcome of a cryptographic operation.</p>
+ * <p>
+ * Audit listener failures are best-effort diagnostics and never change the
+ * outcome of a cryptographic operation.
+ * </p>
  *
  * @since 1.0
  */

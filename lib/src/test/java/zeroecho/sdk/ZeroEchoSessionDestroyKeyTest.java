@@ -81,10 +81,7 @@ class ZeroEchoSessionDestroyKeyTest {
     }
 
     private enum Behavior {
-        SUCCESS,
-        FAIL_CHECKED,
-        FAIL_RUNTIME,
-        NO_TRANSITION
+        SUCCESS, FAIL_CHECKED, FAIL_RUNTIME, NO_TRANSITION
     }
 
     private static final class TestKey implements Key, Destroyable {

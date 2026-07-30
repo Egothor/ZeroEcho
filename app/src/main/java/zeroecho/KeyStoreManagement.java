@@ -192,16 +192,15 @@ public final class KeyStoreManagement {
     /**
      * Executes the command with an explicit unlock source.
      *
-     * @param args arguments passed by the application dispatcher
+     * @param args              arguments passed by the application dispatcher
      * @param dispatcherOptions dispatcher options
-     * @param unlockProvider explicit destroyable-password provider
+     * @param unlockProvider    explicit destroyable-password provider
      * @return process exit code
-     * @throws ParseException if parsing fails
-     * @throws IOException if keyring I/O fails
+     * @throws ParseException           if parsing fails
+     * @throws IOException              if keyring I/O fails
      * @throws GeneralSecurityException if cryptographic processing fails
      */
-    public static int main(final String[] args, final Options dispatcherOptions,
-            KeyringUnlockProvider unlockProvider)
+    public static int main(final String[] args, final Options dispatcherOptions, KeyringUnlockProvider unlockProvider)
             throws ParseException, IOException, GeneralSecurityException {
         ZeroEchoSession session = new ZeroEchoSession();
         defineOptions(dispatcherOptions);
@@ -218,8 +217,7 @@ public final class KeyStoreManagement {
         }
 
         Path keyringPath = Path.of(cmd.getOptionValue(KEYSTORE_OPTION.getLongOpt()));
-        try (KeyringStore store = Files.exists(keyringPath)
-                ? KeyringUnlocks.open(keyringPath, unlockProvider)
+        try (KeyringStore store = Files.exists(keyringPath) ? KeyringUnlocks.open(keyringPath, unlockProvider)
                 : KeyringUnlocks.create(keyringPath, unlockProvider)) {
             if (cmd.hasOption(LIST_ALIASES_OPTION.getLongOpt())) {
                 listAliases(store);
@@ -310,8 +308,8 @@ public final class KeyStoreManagement {
      * @param store keyring store to mutate
      * @param cmd   parsed command line
      */
-    public static void doGenerate(final ZeroEchoSession session, final KeyringStore store,
-            final CommandLine cmd) throws IOException, GeneralSecurityException {
+    public static void doGenerate(final ZeroEchoSession session, final KeyringStore store, final CommandLine cmd)
+            throws IOException, GeneralSecurityException {
         String algId = required(cmd, ALG_OPTION, "--alg is required for --generate");
         String aliasBase = required(cmd, ALIAS_OPTION, "--alias is required for --generate");
         String kind = cmd.getOptionValue(KIND_OPTION.getLongOpt());
@@ -391,8 +389,7 @@ public final class KeyStoreManagement {
     }
 
     private static void generateSymmetric(ZeroEchoSession session, KeyringStore store, CryptoAlgorithm algorithm,
-            String algorithmId, String alias, boolean overwrite)
-            throws IOException, GeneralSecurityException {
+            String algorithmId, String alias, boolean overwrite) throws IOException, GeneralSecurityException {
         GeneratedSecret generated = firstGeneratedSecret(session, algorithm, algorithmId);
         ensureWritable(store, alias, overwrite);
         store.putSecret(alias, algorithmId, generated.key());
@@ -430,9 +427,7 @@ public final class KeyStoreManagement {
 
     /** Selects the exact key-generation operation requested by the command. */
     private enum GenerationKind {
-        ASYMMETRIC,
-        SYMMETRIC,
-        NONE
+        ASYMMETRIC, SYMMETRIC, NONE
     }
 
     private static String required(CommandLine cmd, Option opt, String message) {

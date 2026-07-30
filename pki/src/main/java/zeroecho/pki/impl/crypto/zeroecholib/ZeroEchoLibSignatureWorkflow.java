@@ -109,8 +109,8 @@ import zeroecho.sdk.ZeroEchoSession;
  * layer and ZeroEcho-lib based key material handling backed by
  * {@link KeyringStore}. It resolves opaque {@link KeyRef} values to provider-
  * local keyring aliases, materializes the required key objects inside this
- * boundary, and performs signing or verification through
- * the explicit {@link ZeroEchoSession} and {@link SignatureContext}.
+ * boundary, and performs signing or verification through the explicit
+ * {@link ZeroEchoSession} and {@link SignatureContext}.
  * </p>
  *
  * <p>
@@ -119,8 +119,8 @@ import zeroecho.sdk.ZeroEchoSession;
  * by returning an operation identifier and exposing the terminal outcome
  * through {@link #status(PkiId)}. Each submitted operation is executed
  * immediately in the caller thread. Signing requests and terminal outcomes are
- * retained durably in the configured operation root for the configured operation
- * horizon.
+ * retained durably in the configured operation root for the configured
+ * operation horizon.
  * </p>
  *
  * <h2>Supported operations</h2>
@@ -209,8 +209,8 @@ import zeroecho.sdk.ZeroEchoSession;
  * signature result are stored durably until the configured operation horizon.
  * Exact submissions attach to these records after restart.</li>
  * <li>A signing record found in {@link State#RUNNING} during restart is changed
- * durably to {@link State#FAILED} with detail
- * {@code RECOVERY_INCOMPLETE}; signing is not replayed.</li>
+ * durably to {@link State#FAILED} with detail {@code RECOVERY_INCOMPLETE};
+ * signing is not replayed.</li>
  * <li>Verification statuses and notification registrations are memory-only and
  * are lost when the provider is closed or the process restarts.</li>
  * <li>The underlying {@link KeyringStore} is loaded lazily on first use and
@@ -301,24 +301,21 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
             KeyringUnlockProvider keyringUnlockProvider) {
         this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
-                keyringUnlockProvider,
-                (category, cleared) -> {
+                keyringUnlockProvider, (category, cleared) -> {
                 });
     }
 
     /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
             KeyringUnlockProvider keyringUnlockProvider, KeyringStore keyring) {
-        this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix,
-                requireComponentSuffix, keyringUnlockProvider);
-        this.keyringOrNull = java.util.Objects.requireNonNull(
-                keyring, "keyring must not be null");
+        this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
+                keyringUnlockProvider);
+        this.keyringOrNull = java.util.Objects.requireNonNull(keyring, "keyring must not be null");
     }
 
     /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
-            KeyringUnlockProvider keyringUnlockProvider,
-            BiConsumer<String, byte[]> cleanupObserver) {
+            KeyringUnlockProvider keyringUnlockProvider, BiConsumer<String, byte[]> cleanupObserver) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("id must not be blank");
         }
@@ -384,8 +381,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             }
             this.timeWatermark = new AtomicLong(loadTimeWatermark());
             Path domain = this.operationRoot.resolve("DOMAIN");
-            this.boundNamespace = new AtomicReference<>(Files.exists(domain)
-                    ? Files.readString(domain, StandardCharsets.US_ASCII).trim() : null);
+            this.boundNamespace = new AtomicReference<>(
+                    Files.exists(domain) ? Files.readString(domain, StandardCharsets.US_ASCII).trim() : null);
             loadOperationRecords();
             purgeExpiredOperations();
         } catch (IOException ex) {
@@ -529,8 +526,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
                 return opId;
             }
             OperationResult result = new OperationResult(Optional.of(signature), Optional.empty());
-            completeSign(request, new OperationStatus(State.SUCCEEDED, completedAt, Optional.of(DC_SIGNED),
-                    Optional.of(result)));
+            completeSign(request,
+                    new OperationStatus(State.SUCCEEDED, completedAt, Optional.of(DC_SIGNED), Optional.of(result)));
             return opId;
 
         } catch (InvalidRequestException inv) { // NOPMD
@@ -539,20 +536,20 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             return opId;
 
         } catch (IOException io) {
-            completeSign(request, new OperationStatus(State.FAILED, now(),
-                    Optional.of(DC_KEYRING_IO_ERROR), Optional.empty()));
+            completeSign(request,
+                    new OperationStatus(State.FAILED, now(), Optional.of(DC_KEYRING_IO_ERROR), Optional.empty()));
             logSafeFailure("SIGN", DC_KEYRING_IO_ERROR, io);
             return opId;
 
         } catch (GeneralSecurityException sec) {
-            completeSign(request, new OperationStatus(State.FAILED, now(),
-                    Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
+            completeSign(request,
+                    new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
             logSafeFailure("SIGN", DC_CRYPTO_FAILURE, sec);
             return opId;
 
         } catch (RuntimeException ex) { // NOPMD
-            completeSign(request, new OperationStatus(State.FAILED, now(),
-                    Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
+            completeSign(request,
+                    new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
             logSafeFailure("SIGN", DC_CRYPTO_FAILURE, ex);
             return opId;
         } finally {
@@ -576,10 +573,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
                     throw new IllegalStateException("Stale signing fencing token");
                 }
                 OperationStatus existing = statuses.get(operationId);
-                if (request.fencingToken() > existingFence && existing != null
-                        && existing.state() == State.RUNNING) {
-                    event = new OperationStatus(State.FAILED, now(), Optional.of("FENCE_SUPERSEDED"),
-                            Optional.empty());
+                if (request.fencingToken() > existingFence && existing != null && existing.state() == State.RUNNING) {
+                    event = new OperationStatus(State.FAILED, now(), Optional.of("FENCE_SUPERSEDED"), Optional.empty());
                     fences.put(operationId, request.fencingToken());
                     statuses.put(operationId, event);
                     persistOperationRecord(operationId, event);
@@ -612,8 +607,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
                     && fences.getOrDefault(operationId, 0L) == request.fencingToken()
                     && constantTimeEquals(fingerprints.get(operationId), request.semanticFingerprint())) {
                 OperationStatus committedStatus = terminal;
-                if (terminal.state() == State.SUCCEEDED
-                        && deadlineReached(request.deadline(), terminal.updatedAt())) {
+                if (terminal.state() == State.SUCCEEDED && deadlineReached(request.deadline(), terminal.updatedAt())) {
                     committedStatus = expiredStatus(terminal.updatedAt());
                 }
                 statuses.put(operationId, committedStatus);
@@ -703,25 +697,22 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             return opId;
 
         } catch (InvalidRequestException inv) { // NOPMD
-            putStatus(opId,
-                    new OperationStatus(State.FAILED, now(), Optional.of(inv.detailCode), Optional.empty()));
+            putStatus(opId, new OperationStatus(State.FAILED, now(), Optional.of(inv.detailCode), Optional.empty()));
             return opId;
 
         } catch (IOException io) {
-            putStatus(opId, new OperationStatus(State.FAILED, now(), Optional.of(DC_KEYRING_IO_ERROR),
-                    Optional.empty()));
+            putStatus(opId,
+                    new OperationStatus(State.FAILED, now(), Optional.of(DC_KEYRING_IO_ERROR), Optional.empty()));
             logSafeFailure("VERIFY", DC_KEYRING_IO_ERROR, io);
             return opId;
 
         } catch (GeneralSecurityException sec) {
-            putStatus(opId,
-                    new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
+            putStatus(opId, new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
             logSafeFailure("VERIFY", DC_CRYPTO_FAILURE, sec);
             return opId;
 
         } catch (RuntimeException ex) { // NOPMD
-            putStatus(opId,
-                    new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
+            putStatus(opId, new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
             logSafeFailure("VERIFY", DC_CRYPTO_FAILURE, ex);
             return opId;
         } finally {
@@ -774,8 +765,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
      *
      * <p>
      * Cancellation is serialized with completion for the same signing identifier,
-     * validates the fencing token, and durably records {@link State#CANCELLED}.
-     * It succeeds only while the retained operation is non-terminal.
+     * validates the fencing token, and durably records {@link State#CANCELLED}. It
+     * succeeds only while the retained operation is non-terminal.
      * </p>
      *
      * @param operationId workflow operation identifier; must not be {@code null}
@@ -809,8 +800,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
                 return false;
             }
             this.fences.put(operationId, fencingToken);
-            cancelled = new OperationStatus(State.CANCELLED, now(), Optional.of(DC_CANCELLED),
-                    Optional.empty());
+            cancelled = new OperationStatus(State.CANCELLED, now(), Optional.of(DC_CANCELLED), Optional.empty());
             statuses.put(operationId, cancelled);
             persistOperationRecord(operationId, cancelled);
         } finally {
@@ -1079,8 +1069,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         ContextSpec contextSpec = profile.map(SignatureInteropProfile::contextSpec).orElse(null);
 
         int sigLen;
-        try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub,
-                contextSpec)) {
+        try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub, contextSpec)) {
             sigLen = verifier.tagLength();
         }
 
@@ -1125,8 +1114,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             convertedSignature = true;
         }
 
-        try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub,
-                contextSpec)) {
+        try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub, contextSpec)) {
             verifier.setExpectedTag(internalSignature);
             try (InputStream in = verifier.wrap(new ByteArrayInputStream(msg))) {
                 in.transferTo(OutputStream.nullOutputStream());
@@ -1141,8 +1129,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         }
     }
 
-    private EncodedObject encodeSignatureOrThrow(Encoding encoding, byte[] sigBytes)
-            throws InvalidRequestException {
+    private EncodedObject encodeSignatureOrThrow(Encoding encoding, byte[] sigBytes) throws InvalidRequestException {
         if (encoding == Encoding.BINARY || encoding == Encoding.DER) {
             return new EncodedObject(encoding, sigBytes);
         }
@@ -1305,8 +1292,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             if (!current.isBefore(SigningSubmissionId.parse(operationId).createdAt().plus(operationHorizon))) {
                 SignLockEntry lock = acquireOperationLock(operationId);
                 try {
-                    if (requests.containsKey(operationId) && !current.isBefore(
-                            SigningSubmissionId.parse(operationId).createdAt().plus(operationHorizon))) {
+                    if (requests.containsKey(operationId) && !current
+                            .isBefore(SigningSubmissionId.parse(operationId).createdAt().plus(operationHorizon))) {
                         requests.remove(operationId);
                         fingerprints.remove(operationId);
                         fences.remove(operationId);
@@ -1349,8 +1336,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
 
     private static void restrictPermissions(Path path, boolean directory) throws IOException {
         try {
-            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(
-                    directory ? "rwx------" : "rw-------"));
+            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(directory ? "rwx------" : "rw-------"));
         } catch (UnsupportedOperationException ex) {
             // Non-POSIX platforms rely on their native access-control mechanism.
             if (LOG.isLoggable(Level.FINEST)) {
@@ -1395,9 +1381,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
                     }
                     OperationStatus loaded = new OperationStatus(state, updatedAt, detail, result);
                     boolean repaired = false;
-                    if (state == State.SUCCEEDED
-                            && (updatedAt.isBefore(parsedId.createdAt())
-                                    || deadlineReached(request.deadline(), updatedAt))) {
+                    if (state == State.SUCCEEDED && (updatedAt.isBefore(parsedId.createdAt())
+                            || deadlineReached(request.deadline(), updatedAt))) {
                         loaded = expiredStatus(updatedAt);
                         repaired = true;
                     }
@@ -1541,8 +1526,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             throw new IllegalStateException("Truncated persisted signing payload");
         }
         try {
-            Optional<Encoding> preferred = input.readBoolean()
-                    ? Optional.of(encodingFromCode(input.readInt()))
+            Optional<Encoding> preferred = input.readBoolean() ? Optional.of(encodingFromCode(input.readInt()))
                     : Optional.empty();
             Optional<Instant> deadline = input.readBoolean()
                     ? Optional.of(Instant.ofEpochSecond(input.readLong(), input.readInt()))
@@ -1596,8 +1580,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         };
     }
 
-    private void writeOperationResult(DataOutputStream output, Optional<OperationResult> result)
-            throws IOException {
+    private void writeOperationResult(DataOutputStream output, Optional<OperationResult> result) throws IOException {
         output.writeBoolean(result.isPresent());
         if (result.isEmpty()) {
             return;

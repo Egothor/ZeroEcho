@@ -17,10 +17,12 @@ import java.util.TreeMap;
 /**
  * Immutable registry of {@link CryptoAlgorithm} providers.
  *
- * <p>Providers are discovered once through {@link ServiceLoader}, sorted by
+ * <p>
+ * Providers are discovered once through {@link ServiceLoader}, sorted by
  * canonical algorithm identifier, and retained in one immutable registry.
  * Runtime policy and auditing belong exclusively to explicitly created
- * {@link zeroecho.sdk.ZeroEchoSession} instances.</p>
+ * {@link zeroecho.sdk.ZeroEchoSession} instances.
+ * </p>
  *
  * @since 1.0
  */

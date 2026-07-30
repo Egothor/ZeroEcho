@@ -27,7 +27,8 @@ import zeroecho.core.context.DigestContext;
 import zeroecho.sdk.ZeroEchoSession;
 
 /**
- * Verifies authoritative registry ownership and explicitly scoped runtime state.
+ * Verifies authoritative registry ownership and explicitly scoped runtime
+ * state.
  */
 class CryptoArchitectureTest {
 
@@ -51,8 +52,8 @@ class CryptoArchitectureTest {
         System.out.println("explicitPolicyOrder");
         List<String> events = new ArrayList<>();
         AuditListener listener = policyOrderListener(events);
-        ZeroEchoSession allowed = new ZeroEchoSession().withAuditListener(listener).withPolicy(
-                (id, role, key, spec) -> events.add("policy"));
+        ZeroEchoSession allowed = new ZeroEchoSession().withAuditListener(listener)
+                .withPolicy((id, role, key, spec) -> events.add("policy"));
         try (DigestContext context = allowed.createContext("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE)) {
             assertSame(CryptoAlgorithms.require("DIGEST"), context.algorithm());
         }
@@ -60,19 +61,18 @@ class CryptoArchitectureTest {
 
         events.clear();
         IllegalArgumentException denial = new IllegalArgumentException("controlled denial");
-        ZeroEchoSession denied = new ZeroEchoSession().withAuditListener(listener).withPolicy(
-                (id, role, key, spec) -> {
-                    events.add("policy");
-                    throw denial;
-                });
+        ZeroEchoSession denied = new ZeroEchoSession().withAuditListener(listener).withPolicy((id, role, key, spec) -> {
+            events.add("policy");
+            throw denial;
+        });
         assertSame(denial, assertThrows(IllegalArgumentException.class,
                 () -> denied.createContext("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE)));
         assertEquals(List.of("policy"), events);
 
         events.clear();
         IllegalStateException failure = new IllegalStateException("controlled policy failure");
-        ZeroEchoSession failing = new ZeroEchoSession().withAuditListener(listener).withPolicy(
-                (id, role, key, spec) -> {
+        ZeroEchoSession failing = new ZeroEchoSession().withAuditListener(listener)
+                .withPolicy((id, role, key, spec) -> {
                     events.add("policy");
                     throw failure;
                 });
@@ -91,8 +91,7 @@ class CryptoArchitectureTest {
         AtomicInteger secondEvents = new AtomicInteger();
         AuditListener firstListener = contextListener(firstEvents);
         AuditListener secondListener = contextListener(secondEvents);
-        ZeroEchoSession wrapped = new ZeroEchoSession().withAuditListener(firstListener)
-                .withAuditMode(AuditMode.WRAP);
+        ZeroEchoSession wrapped = new ZeroEchoSession().withAuditListener(firstListener).withAuditMode(AuditMode.WRAP);
         ZeroEchoSession direct = new ZeroEchoSession().withAuditListener(secondListener);
 
         try (DigestContext wrappedContext = wrapped.createContext("DIGEST", KeyUsage.DIGEST, NullKey.INSTANCE)) {

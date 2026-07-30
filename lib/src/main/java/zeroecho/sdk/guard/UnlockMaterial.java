@@ -18,9 +18,11 @@ import zeroecho.core.annotation.Describable;
 /**
  * Caller-owned session-operation input used to unlock a recipient entry.
  *
- * <p>Components accepting an {@code UnlockMaterial} borrow it and do not destroy
+ * <p>
+ * Components accepting an {@code UnlockMaterial} borrow it and do not destroy
  * it. The caller must keep it usable until the operation completes and destroy
- * password material afterwards.</p>
+ * password material afterwards.
+ * </p>
  */
 public sealed interface UnlockMaterial extends Describable {
     /**
@@ -44,8 +46,10 @@ public sealed interface UnlockMaterial extends Describable {
     /**
      * Destroyable password unlocking material backed by an owned character array.
      *
-     * <p>Construction and access use defensive copies. Destruction is idempotent
-     * and prevents subsequent access.</p>
+     * <p>
+     * Construction and access use defensive copies. Destruction is idempotent and
+     * prevents subsequent access.
+     * </p>
      */
     final class Password implements UnlockMaterial, Destroyable {
         private final char[] characters;

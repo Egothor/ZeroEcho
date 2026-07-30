@@ -183,8 +183,7 @@ final class FsCodec {
     private static final int MARKER_ABSENT = 0;
     private static final int MARKER_PRESENT = 1;
 
-    private static final ValueSchema<String> STRING = valueSchema(TYPE_STRING, Writer::writeString,
-            Reader::readString);
+    private static final ValueSchema<String> STRING = valueSchema(TYPE_STRING, Writer::writeString, Reader::readString);
     private static final ValueSchema<Boolean> BOOLEAN = valueSchema(TYPE_BOOLEAN, Writer::writeBoolean,
             Reader::readBoolean);
     private static final ValueSchema<Long> LONG = valueSchema(TYPE_LONG, Writer::writeLong, Reader::readLong);
@@ -196,55 +195,47 @@ final class FsCodec {
                 writer.writeValue(STRING, value.profileId());
                 writer.writeValue(LONG, value.profileVersion());
                 writer.writeValue(BYTES, value.canonicalSha256());
-            },
-            reader -> new CertificateProfileRef(reader.readValue(STRING), reader.readValue(LONG),
+            }, reader -> new CertificateProfileRef(reader.readValue(STRING), reader.readValue(LONG),
                     reader.readValue(BYTES)));
-    private static final ValueSchema<CredentialProfileBinding> PROFILE_BINDING =
-            valueSchema(TYPE_PROFILE_BINDING, FsCodec::writeProfileBinding, FsCodec::readProfileBinding);
+    private static final ValueSchema<CredentialProfileBinding> PROFILE_BINDING = valueSchema(TYPE_PROFILE_BINDING,
+            FsCodec::writeProfileBinding, FsCodec::readProfileBinding);
 
-    private static final ValueSchema<Encoding> ENCODING = enumSchema(TYPE_ENCODING_ENUM,
-            value -> switch (value) {
-                case DER -> 1;
-                case PEM -> 2;
-                case BINARY -> 3;
-            },
-            code -> switch (code) {
-                case 1 -> Encoding.DER;
-                case 2 -> Encoding.PEM;
-                case 3 -> Encoding.BINARY;
-                default -> throw unknownEnum("Encoding", code);
-            });
-    private static final ValueSchema<CaKind> CA_KIND = enumSchema(TYPE_CA_KIND_ENUM,
-            value -> switch (value) {
-                case ROOT -> 1;
-                case INTERMEDIATE -> 2;
-            },
-            code -> switch (code) {
-                case 1 -> CaKind.ROOT;
-                case 2 -> CaKind.INTERMEDIATE;
-                default -> throw unknownEnum("CaKind", code);
-            });
-    private static final ValueSchema<CaState> CA_STATE = enumSchema(TYPE_CA_STATE_ENUM,
-            value -> switch (value) {
-                case ACTIVE -> 1;
-                case RETIRED -> 2;
-                case COMPROMISED -> 3;
-                case DISABLED -> 4;
-            },
-            code -> switch (code) {
-                case 1 -> CaState.ACTIVE;
-                case 2 -> CaState.RETIRED;
-                case 3 -> CaState.COMPROMISED;
-                case 4 -> CaState.DISABLED;
-                default -> throw unknownEnum("CaState", code);
-            });
+    private static final ValueSchema<Encoding> ENCODING = enumSchema(TYPE_ENCODING_ENUM, value -> switch (value) {
+        case DER -> 1;
+        case PEM -> 2;
+        case BINARY -> 3;
+    }, code -> switch (code) {
+        case 1 -> Encoding.DER;
+        case 2 -> Encoding.PEM;
+        case 3 -> Encoding.BINARY;
+        default -> throw unknownEnum("Encoding", code);
+    });
+    private static final ValueSchema<CaKind> CA_KIND = enumSchema(TYPE_CA_KIND_ENUM, value -> switch (value) {
+        case ROOT -> 1;
+        case INTERMEDIATE -> 2;
+    }, code -> switch (code) {
+        case 1 -> CaKind.ROOT;
+        case 2 -> CaKind.INTERMEDIATE;
+        default -> throw unknownEnum("CaKind", code);
+    });
+    private static final ValueSchema<CaState> CA_STATE = enumSchema(TYPE_CA_STATE_ENUM, value -> switch (value) {
+        case ACTIVE -> 1;
+        case RETIRED -> 2;
+        case COMPROMISED -> 3;
+        case DISABLED -> 4;
+    }, code -> switch (code) {
+        case 1 -> CaState.ACTIVE;
+        case 2 -> CaState.RETIRED;
+        case 3 -> CaState.COMPROMISED;
+        case 4 -> CaState.DISABLED;
+        default -> throw unknownEnum("CaState", code);
+    });
     private static final ValueSchema<CredentialStatus> CREDENTIAL_STATUS = enumSchema(TYPE_CREDENTIAL_STATUS_ENUM,
             value -> switch (value) {
                 case ISSUED -> 1;
                 case REVOKED -> 2;
                 case EXPIRED -> 3;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> CredentialStatus.ISSUED;
                 case 2 -> CredentialStatus.REVOKED;
                 case 3 -> CredentialStatus.EXPIRED;
@@ -262,8 +253,7 @@ final class FsCodec {
                 case REMOVE_FROM_CRL -> 8;
                 case PRIVILEGE_WITHDRAWN -> 9;
                 case AA_COMPROMISE -> 10;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> RevocationReason.UNSPECIFIED;
                 case 2 -> RevocationReason.KEY_COMPROMISE;
                 case 3 -> RevocationReason.CA_COMPROMISE;
@@ -281,8 +271,7 @@ final class FsCodec {
                 case CLEAR -> 1;
                 case HELD -> 2;
                 case PERMANENTLY_REVOKED -> 3;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> RevocationState.CLEAR;
                 case 2 -> RevocationState.HELD;
                 case 3 -> RevocationState.PERMANENTLY_REVOKED;
@@ -294,8 +283,7 @@ final class FsCodec {
                 case DELTA_CRL -> 2;
                 case OCSP -> 3;
                 case REVOCATION_LIST -> 4;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> StatusObjectType.CRL;
                 case 2 -> StatusObjectType.DELTA_CRL;
                 case 3 -> StatusObjectType.OCSP;
@@ -303,15 +291,13 @@ final class FsCodec {
                 default -> throw unknownEnum("StatusObjectType", code);
             });
     private static final ValueSchema<PublicationTargetType> PUBLICATION_TARGET_TYPE = enumSchema(
-            TYPE_PUBLICATION_TARGET_TYPE_ENUM,
-            value -> switch (value) {
+            TYPE_PUBLICATION_TARGET_TYPE_ENUM, value -> switch (value) {
                 case FILESYSTEM -> 1;
                 case LDAP -> 2;
                 case HTTP -> 3;
                 case OBJECT_STORE -> 4;
                 case CUSTOM -> 5;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> PublicationTargetType.FILESYSTEM;
                 case 2 -> PublicationTargetType.LDAP;
                 case 3 -> PublicationTargetType.HTTP;
@@ -324,29 +310,25 @@ final class FsCodec {
                 case PUBLISHED -> 1;
                 case SKIPPED -> 2;
                 case FAILED -> 3;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> PublicationStatus.PUBLISHED;
                 case 2 -> PublicationStatus.SKIPPED;
                 case 3 -> PublicationStatus.FAILED;
                 default -> throw unknownEnum("PublicationStatus", code);
             });
     private static final ValueSchema<OrchestrationDurabilityPolicy> DURABILITY_POLICY = enumSchema(
-            TYPE_DURABILITY_POLICY_ENUM,
-            value -> switch (value) {
+            TYPE_DURABILITY_POLICY_ENUM, value -> switch (value) {
                 case STRICT_ABORT_ON_RESTART -> 1;
                 case DURABLE_MIN_STATE -> 2;
                 case DURABLE_ENCRYPTED_STATE -> 3;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> OrchestrationDurabilityPolicy.STRICT_ABORT_ON_RESTART;
                 case 2 -> OrchestrationDurabilityPolicy.DURABLE_MIN_STATE;
                 case 3 -> OrchestrationDurabilityPolicy.DURABLE_ENCRYPTED_STATE;
                 default -> throw unknownEnum("OrchestrationDurabilityPolicy", code);
             });
     private static final ValueSchema<SignWorkflowStore.State> SIGN_STATE = valueSchema(TYPE_SIGN_STATE_ENUM,
-            (writer, value) -> writer.writeUnsignedByte(value.persistentCode()),
-            reader -> {
+            (writer, value) -> writer.writeUnsignedByte(value.persistentCode()), reader -> {
                 int code = reader.readUnsignedByte();
                 try {
                     return SignWorkflowStore.State.fromPersistentCode(code);
@@ -365,8 +347,7 @@ final class FsCodec {
                 case SERIAL_NUMBER -> 7;
                 case EMAIL_ADDRESS -> 8;
                 case PSEUDONYM -> 9;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> SubjectRdnType.COMMON_NAME;
                 case 2 -> SubjectRdnType.ORGANIZATION_NAME;
                 case 3 -> SubjectRdnType.ORGANIZATIONAL_UNIT_NAME;
@@ -384,8 +365,7 @@ final class FsCodec {
                 case IP_ADDRESS -> 2;
                 case URI -> 3;
                 case RFC822_NAME -> 4;
-            },
-            code -> switch (code) {
+            }, code -> switch (code) {
                 case 1 -> SubjectAlternativeNameType.DNS_NAME;
                 case 2 -> SubjectAlternativeNameType.IP_ADDRESS;
                 case 3 -> SubjectAlternativeNameType.URI;
@@ -393,8 +373,7 @@ final class FsCodec {
                 default -> throw unknownEnum("SubjectAlternativeNameType", code);
             });
     private static final ValueSchema<PkiId> PKI_ID = valueSchema(TYPE_PKI_ID,
-            (writer, value) -> writer.writeValue(STRING, value.value()),
-            reader -> new PkiId(reader.readValue(STRING)));
+            (writer, value) -> writer.writeValue(STRING, value.value()), reader -> new PkiId(reader.readValue(STRING)));
     private static final ValueSchema<KeyRef> KEY_REF = valueSchema(TYPE_KEY_REF,
             (writer, value) -> writer.writeValue(STRING, value.value()),
             reader -> new KeyRef(reader.readValue(STRING)));
@@ -407,29 +386,23 @@ final class FsCodec {
     private static final ValueSchema<FormatId> FORMAT_ID = valueSchema(TYPE_FORMAT_ID,
             (writer, value) -> writer.writeValue(STRING, value.value()),
             reader -> new FormatId(reader.readValue(STRING)));
-    private static final ValueSchema<Validity> VALIDITY = valueSchema(TYPE_VALIDITY,
-            (writer, value) -> {
-                writer.writeValue(INSTANT, value.notBefore());
-                writer.writeValue(INSTANT, value.notAfter());
-            },
-            reader -> new Validity(reader.readValue(INSTANT), reader.readValue(INSTANT)));
+    private static final ValueSchema<Validity> VALIDITY = valueSchema(TYPE_VALIDITY, (writer, value) -> {
+        writer.writeValue(INSTANT, value.notBefore());
+        writer.writeValue(INSTANT, value.notAfter());
+    }, reader -> new Validity(reader.readValue(INSTANT), reader.readValue(INSTANT)));
     private static final ValueSchema<EncodedObject> ENCODED_OBJECT = valueSchema(TYPE_ENCODED_OBJECT,
             FsCodec::writeEncodedObject, FsCodec::readEncodedObject);
-    private static final ValueSchema<Principal> PRINCIPAL = valueSchema(TYPE_PRINCIPAL,
-            (writer, value) -> {
-                writer.writeValue(STRING, value.type());
-                writer.writeValue(STRING, value.name());
-            },
-            reader -> new Principal(reader.readValue(STRING), reader.readValue(STRING)));
+    private static final ValueSchema<Principal> PRINCIPAL = valueSchema(TYPE_PRINCIPAL, (writer, value) -> {
+        writer.writeValue(STRING, value.type());
+        writer.writeValue(STRING, value.name());
+    }, reader -> new Principal(reader.readValue(STRING), reader.readValue(STRING)));
     private static final ValueSchema<AttributeId> ATTRIBUTE_ID = valueSchema(TYPE_ATTRIBUTE_ID,
             (writer, value) -> writer.writeValue(STRING, value.value()),
             reader -> new AttributeId(reader.readValue(STRING)));
-    private static final ValueSchema<SubjectRdn> SUBJECT_RDN = valueSchema(TYPE_SUBJECT_RDN,
-            (writer, value) -> {
-                writer.writeValue(SUBJECT_RDN_TYPE, value.type());
-                writer.writeValue(STRING, value.value());
-            },
-            reader -> new SubjectRdn(reader.readValue(SUBJECT_RDN_TYPE), reader.readValue(STRING)));
+    private static final ValueSchema<SubjectRdn> SUBJECT_RDN = valueSchema(TYPE_SUBJECT_RDN, (writer, value) -> {
+        writer.writeValue(SUBJECT_RDN_TYPE, value.type());
+        writer.writeValue(STRING, value.value());
+    }, reader -> new SubjectRdn(reader.readValue(SUBJECT_RDN_TYPE), reader.readValue(STRING)));
     private static final ValueSchema<List<SubjectRdn>> SUBJECT_RDNS = listOf(SUBJECT_RDN);
     private static final ValueSchema<SubjectAlternativeName> SUBJECT_ALT_NAME = valueSchema(TYPE_SAN,
             FsCodec::writeSubjectAlternativeName, FsCodec::readSubjectAlternativeName);
@@ -446,8 +419,7 @@ final class FsCodec {
                 writer.writeValue(STRING, value.ruleId());
                 writer.writeValue(STRING, value.outcome());
                 writer.writeValue(STRINGS, value.notes());
-            },
-            reader -> new PolicyTraceStep(reader.readValue(STRING), reader.readValue(STRING),
+            }, reader -> new PolicyTraceStep(reader.readValue(STRING), reader.readValue(STRING),
                     reader.readValue(STRINGS)));
     private static final ValueSchema<List<PolicyTraceStep>> POLICY_TRACE_STEPS = listOf(POLICY_TRACE_STEP);
     private static final ValueSchema<PublicationTarget> PUBLICATION_TARGET = valueSchema(TYPE_PUBLICATION_TARGET,
@@ -455,21 +427,18 @@ final class FsCodec {
                 writer.writeValue(PUBLICATION_TARGET_TYPE, value.type());
                 writer.writeValue(STRING, value.targetId());
                 writer.writeValue(ATTRIBUTE_SET, value.attributes());
-            },
-            reader -> new PublicationTarget(reader.readValue(PUBLICATION_TARGET_TYPE), reader.readValue(STRING),
+            }, reader -> new PublicationTarget(reader.readValue(PUBLICATION_TARGET_TYPE), reader.readValue(STRING),
                     reader.readValue(ATTRIBUTE_SET)));
 
     private static final ValueSchema<Optional<Validity>> OPTIONAL_VALIDITY = optionalOf(VALIDITY);
     private static final ValueSchema<Optional<String>> OPTIONAL_STRING = optionalOf(STRING);
     private static final ValueSchema<Optional<Instant>> OPTIONAL_INSTANT = optionalOf(INSTANT);
     private static final ValueSchema<Optional<EncodedObject>> OPTIONAL_ENCODED_OBJECT = optionalOf(ENCODED_OBJECT);
-    private static final ValueSchema<Optional<RevocationReason>> OPTIONAL_REVOCATION_REASON =
-            optionalOf(REVOCATION_REASON);
-    private static final ValueSchema<RevocationTransition> REVOCATION_TRANSITION =
-            valueSchema(TYPE_REVOCATION_TRANSITION, FsCodec::writeRevocationTransition,
-                    FsCodec::readRevocationTransition);
-    private static final ValueSchema<List<RevocationTransition>> REVOCATION_TRANSITIONS =
-            listOf(REVOCATION_TRANSITION);
+    private static final ValueSchema<Optional<RevocationReason>> OPTIONAL_REVOCATION_REASON = optionalOf(
+            REVOCATION_REASON);
+    private static final ValueSchema<RevocationTransition> REVOCATION_TRANSITION = valueSchema(
+            TYPE_REVOCATION_TRANSITION, FsCodec::writeRevocationTransition, FsCodec::readRevocationTransition);
+    private static final ValueSchema<List<RevocationTransition>> REVOCATION_TRANSITIONS = listOf(REVOCATION_TRANSITION);
 
     private static final ValueSchema<Credential> CREDENTIAL_VALUE = valueSchema(TYPE_CREDENTIAL_RECORD,
             FsCodec::writeCredential, FsCodec::readCredential);
@@ -477,13 +446,11 @@ final class FsCodec {
 
     /* package */ static final Schema<CaRecord> CA_RECORD = topLevel(TOP_CA_RECORD, "CA_RECORD",
             valueSchema(100, FsCodec::writeCaRecord, FsCodec::readCaRecord));
-    /* package */ static final Schema<Credential> CREDENTIAL = topLevel(TOP_CREDENTIAL, "CREDENTIAL",
-            CREDENTIAL_VALUE);
+    /* package */ static final Schema<Credential> CREDENTIAL = topLevel(TOP_CREDENTIAL, "CREDENTIAL", CREDENTIAL_VALUE);
     /* package */ static final Schema<ParsedCertificationRequest> PARSED_REQUEST = topLevel(TOP_PARSED_REQUEST,
             "PARSED_REQUEST", valueSchema(101, FsCodec::writeParsedRequest, FsCodec::readParsedRequest));
-    /* package */ static final Schema<RevocationJournal> REVOCATION_JOURNAL =
-            topLevel(TOP_REVOCATION, "REVOCATION_JOURNAL",
-                    valueSchema(102, FsCodec::writeRevocationJournal, FsCodec::readRevocationJournal));
+    /* package */ static final Schema<RevocationJournal> REVOCATION_JOURNAL = topLevel(TOP_REVOCATION,
+            "REVOCATION_JOURNAL", valueSchema(102, FsCodec::writeRevocationJournal, FsCodec::readRevocationJournal));
     /* package */ static final Schema<StatusObject> STATUS_OBJECT = topLevel(TOP_STATUS_OBJECT, "STATUS_OBJECT",
             valueSchema(103, FsCodec::writeStatusObject, FsCodec::readStatusObject));
     /* package */ static final Schema<PublicationRecord> PUBLICATION = topLevel(TOP_PUBLICATION, "PUBLICATION",
@@ -495,24 +462,17 @@ final class FsCodec {
     /* package */ static final Schema<SignWorkflowStore.Record> SIGN_WORKFLOW_RECORD = topLevel(
             TOP_SIGN_WORKFLOW_RECORD, "SIGN_WORKFLOW_RECORD",
             valueSchema(108, FsCodec::writeSignWorkflowRecord, FsCodec::readSignWorkflowRecord));
-    /* package */ static final Schema<ImportedCertificateProfileVersion> PROFILE_VERSION =
-            topLevel(TOP_PROFILE_VERSION, "PROFILE_VERSION",
-                    valueSchema(109, FsCodec::writeProfileVersion, FsCodec::readProfileVersion));
-    /* package */ static final Schema<CertificateProfileRef> ACTIVE_PROFILE_REF =
-            topLevel(TOP_ACTIVE_PROFILE_REF, "ACTIVE_PROFILE_REF", PROFILE_REF);
+    /* package */ static final Schema<ImportedCertificateProfileVersion> PROFILE_VERSION = topLevel(TOP_PROFILE_VERSION,
+            "PROFILE_VERSION", valueSchema(109, FsCodec::writeProfileVersion, FsCodec::readProfileVersion));
+    /* package */ static final Schema<CertificateProfileRef> ACTIVE_PROFILE_REF = topLevel(TOP_ACTIVE_PROFILE_REF,
+            "ACTIVE_PROFILE_REF", PROFILE_REF);
 
-    private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(
-            Map.entry(TOP_CA_RECORD, CA_RECORD),
-            Map.entry(TOP_CREDENTIAL, CREDENTIAL),
-            Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
-            Map.entry(TOP_REVOCATION, REVOCATION_JOURNAL),
-            Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
-            Map.entry(TOP_PUBLICATION, PUBLICATION),
-            Map.entry(TOP_POLICY_TRACE, POLICY_TRACE),
-            Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE),
-            Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD),
-            Map.entry(TOP_PROFILE_VERSION, PROFILE_VERSION),
-            Map.entry(TOP_ACTIVE_PROFILE_REF, ACTIVE_PROFILE_REF));
+    private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(Map.entry(TOP_CA_RECORD, CA_RECORD),
+            Map.entry(TOP_CREDENTIAL, CREDENTIAL), Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
+            Map.entry(TOP_REVOCATION, REVOCATION_JOURNAL), Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
+            Map.entry(TOP_PUBLICATION, PUBLICATION), Map.entry(TOP_POLICY_TRACE, POLICY_TRACE),
+            Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE), Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD),
+            Map.entry(TOP_PROFILE_VERSION, PROFILE_VERSION), Map.entry(TOP_ACTIVE_PROFILE_REF, ACTIVE_PROFILE_REF));
 
     private FsCodec() {
         // utility
@@ -540,8 +500,8 @@ final class FsCodec {
         try {
             return decodeCurrentPayload(schema, encoded);
         } catch (IOException | IllegalArgumentException ex) {
-            throw new IllegalStateException(
-                    "Decoding failed: schema=" + schema.name + " code=INVALID_CURRENT_PAYLOAD", ex);
+            throw new IllegalStateException("Decoding failed: schema=" + schema.name + " code=INVALID_CURRENT_PAYLOAD",
+                    ex);
         }
     }
 
@@ -653,8 +613,8 @@ final class FsCodec {
         int count = reader.readCount();
         List<SimpleAttributeSet.Entry> entries = new ArrayList<>(count);
         for (int index = 0; index < count; index++) {
-            entries.add(new SimpleAttributeSet.Entry(reader.readValue(ATTRIBUTE_ID),
-                    reader.readValue(ATTRIBUTE_VALUES)));
+            entries.add(
+                    new SimpleAttributeSet.Entry(reader.readValue(ATTRIBUTE_ID), reader.readValue(ATTRIBUTE_VALUES)));
         }
         return new SimpleAttributeSet(entries);
     }
@@ -796,8 +756,7 @@ final class FsCodec {
                 reader.readValue(PUBLICATION_STATUS));
     }
 
-    private static void writeProfileVersion(Writer writer, ImportedCertificateProfileVersion value)
-            throws IOException {
+    private static void writeProfileVersion(Writer writer, ImportedCertificateProfileVersion value) throws IOException {
         writer.writeValue(PROFILE_REF, value.reference());
         writer.writeValue(LONG, (long) value.schemaVersion());
         writer.writeValue(BYTES, value.canonicalJson());
@@ -867,10 +826,9 @@ final class FsCodec {
     }
 
     private static WorkflowStateRecord readWorkflowState(Reader reader) throws IOException {
-        return new WorkflowStateRecord(reader.readValue(PKI_ID), reader.readValue(STRING),
-                reader.readValue(PRINCIPAL), reader.readValue(DURABILITY_POLICY), reader.readValue(INSTANT),
-                reader.readValue(INSTANT), reader.readValue(INSTANT), reader.readValue(ENCODING),
-                reader.readValue(OPTIONAL_ENCODED_OBJECT));
+        return new WorkflowStateRecord(reader.readValue(PKI_ID), reader.readValue(STRING), reader.readValue(PRINCIPAL),
+                reader.readValue(DURABILITY_POLICY), reader.readValue(INSTANT), reader.readValue(INSTANT),
+                reader.readValue(INSTANT), reader.readValue(ENCODING), reader.readValue(OPTIONAL_ENCODED_OBJECT));
     }
 
     private static void writeSignWorkflowRecord(Writer writer, SignWorkflowStore.Record value) throws IOException {
@@ -993,7 +951,7 @@ final class FsCodec {
          * Encodes a value.
          *
          * @param writer destination writer
-         * @param value value to encode
+         * @param value  value to encode
          * @throws IOException if encoding fails
          */
         void encode(Writer writer, T value) throws IOException;

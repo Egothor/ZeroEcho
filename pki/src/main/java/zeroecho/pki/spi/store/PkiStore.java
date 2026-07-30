@@ -160,7 +160,7 @@ public interface PkiStore extends SignWorkflowStore {
     /**
      * Atomically validates and appends one legal revocation transition.
      *
-     * @param command trusted transition command
+     * @param command        trusted transition command
      * @param transitionTime authoritative transition time
      * @return committed journal
      */
@@ -250,18 +250,18 @@ public interface PkiStore extends SignWorkflowStore {
      *
      * <p>
      * Every version stored under one logical profile ID must have the same
-     * certificate kind. An implementation must reject an import whose kind
-     * differs from any already imported version for that ID. For an existing
-     * identical ID and version, exact canonical-reference equality is
-     * idempotent and returns the committed version; a different reference for
-     * that same version is a version conflict. This same-version decision takes
-     * precedence over the cross-version kind check.
+     * certificate kind. An implementation must reject an import whose kind differs
+     * from any already imported version for that ID. For an existing identical ID
+     * and version, exact canonical-reference equality is idempotent and returns the
+     * committed version; a different reference for that same version is a version
+     * conflict. This same-version decision takes precedence over the cross-version
+     * kind check.
      * </p>
      *
      * @param version validated immutable version to import
      * @return the newly committed version or the identical existing version
-     * @throws RuntimeException if validation, kind consistency, conflict
-     *                          handling, or durable persistence fails
+     * @throws RuntimeException if validation, kind consistency, conflict handling,
+     *                          or durable persistence fails
      */
     ImportedCertificateProfileVersion importProfileVersion(ImportedCertificateProfileVersion version);
 

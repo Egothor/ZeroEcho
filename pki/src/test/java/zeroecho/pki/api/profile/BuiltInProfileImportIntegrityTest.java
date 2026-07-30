@@ -57,10 +57,8 @@ final class BuiltInProfileImportIntegrityTest {
         root.addHandler(logs);
         try {
             for (BuiltInCertificateProfileTemplate template : invalid) {
-                PkiException failure = assertThrows(PkiException.class,
-                        () -> service.importBuiltIn(template));
-                assertEquals("Profile lifecycle operation failed: code=BUILT_IN_PROFILE_INVALID",
-                        failure.getMessage());
+                PkiException failure = assertThrows(PkiException.class, () -> service.importBuiltIn(template));
+                assertEquals("Profile lifecycle operation failed: code=BUILT_IN_PROFILE_INVALID", failure.getMessage());
                 assertEquals(null, failure.getCause());
                 assertEquals(0, failure.getSuppressed().length);
                 assertFalse(failure.getMessage().contains(SENTINEL));
@@ -75,8 +73,8 @@ final class BuiltInProfileImportIntegrityTest {
     }
 
     private static PkiStore countingStore(AtomicInteger calls) {
-        return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(),
-                new Class<?>[] { PkiStore.class }, (proxy, method, arguments) -> {
+        return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
+                (proxy, method, arguments) -> {
                     if (method.getDeclaringClass() == Object.class) {
                         return switch (method.getName()) {
                             case "hashCode" -> System.identityHashCode(proxy);
@@ -91,10 +89,8 @@ final class BuiltInProfileImportIntegrityTest {
     }
 
     private static BuiltInCertificateProfileTemplate builtIn(String profileId) {
-        return BuiltInCertificateProfileCatalog.load(
-                BuiltInProfileImportIntegrityTest.class.getClassLoader()).stream()
-                .filter(template -> profileId.equals(template.definition().profileId()))
-                .findFirst().orElseThrow();
+        return BuiltInCertificateProfileCatalog.load(BuiltInProfileImportIntegrityTest.class.getClassLoader()).stream()
+                .filter(template -> profileId.equals(template.definition().profileId())).findFirst().orElseThrow();
     }
 
     private static final class CollectingHandler extends Handler {

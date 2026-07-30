@@ -345,8 +345,7 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
      * When {@link #getStream()} is invoked, this class creates an
      * {@link zeroecho.core.context.EncryptionContext} for the "RSA" algorithm in
      * {@link zeroecho.core.KeyUsage#ENCRYPT} role via
-     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
-     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
      * attaches the upstream stream, and returns a pull-based stream that encrypts
      * on-the-fly using the configured {@link RsaEncSpec}.
      * </p>
@@ -407,8 +406,7 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
      * When {@link #getStream()} is invoked, this class creates an
      * {@link zeroecho.core.context.EncryptionContext} for the "RSA" algorithm in
      * {@link zeroecho.core.KeyUsage#DECRYPT} role via
-     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
-     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
      * attaches the upstream stream, and returns a pull-based stream that decrypts
      * on-the-fly using the configured {@link RsaEncSpec}.
      * </p>

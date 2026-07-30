@@ -49,9 +49,11 @@ import zeroecho.core.spi.PrivateKeyImporter;
  * {@link EcdsaPrivateKeySpec}. This builder is responsible for importing ECDSA
  * private keys from encoded representations.
  *
- * <p>The exact supported operation is
- * {@link #importPrivate(EcdsaPrivateKeySpec)}. Generation and public import are
- * registered through their own operation-specific implementations.</p>
+ * <p>
+ * The exact supported operation is {@link #importPrivate(EcdsaPrivateKeySpec)}.
+ * Generation and public import are registered through their own
+ * operation-specific implementations.
+ * </p>
  *
  * <h2>Encoding</h2> The {@link EcdsaPrivateKeySpec} stores the private key in
  * PKCS#8 DER format. This builder delegates to a JCA {@link KeyFactory} for the

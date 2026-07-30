@@ -46,8 +46,7 @@ final class DefaultProfileServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-30T10:00:00Z"), ZoneOffset.UTC);
 
     @Test
-    void builtInImportIsInactiveUntilExplicitActivationAndSurvivesRestart(@TempDir Path directory)
-            throws Exception {
+    void builtInImportIsInactiveUntilExplicitActivationAndSurvivesRestart(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
         Path root = directory.resolve("store");
         CertificateProfileRef reference;
@@ -69,8 +68,8 @@ final class DefaultProfileServiceTest {
     @Test
     void repeatImportIsIdempotentAndConflictingVersionIsRejected(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
-        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"),
-                FsPkiStoreOptions.defaults(), CLOCK)) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(),
+                CLOCK)) {
             DefaultProfileService service = service(store);
             CertificateProfileRef first = service.importProfile(template.canonicalJson());
             CertificateProfileRef repeated = service.importProfile(template.canonicalJson());
@@ -91,8 +90,8 @@ final class DefaultProfileServiceTest {
                 .replace("\"profileVersion\":1", "\"profileVersion\":2")
                 .replace("\"displayName\":\"VPN Client\"", "\"displayName\":\"VPN Client v2\"");
         byte[] versionTwo = versionTwoText.getBytes(StandardCharsets.UTF_8);
-        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"),
-                FsPkiStoreOptions.defaults(), CLOCK)) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(),
+                CLOCK)) {
             DefaultProfileService service = service(store);
             CertificateProfileRef one = service.importProfile(template.canonicalJson());
             service.activateProfile("vpn-client", 1);
@@ -107,11 +106,10 @@ final class DefaultProfileServiceTest {
     }
 
     @Test
-    void historicalSnapshotFailsBeforeTargetCreationWhenActivePointerExists(@TempDir Path directory)
-            throws Exception {
+    void historicalSnapshotFailsBeforeTargetCreationWhenActivePointerExists(@TempDir Path directory) throws Exception {
         Path target = directory.resolve("snapshot");
-        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"),
-                FsPkiStoreOptions.defaults(), CLOCK)) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(),
+                CLOCK)) {
             DefaultProfileService service = service(store);
             service.importBuiltIn(builtIn("email-signing"));
             service.activateProfile("email-signing", 1);
@@ -123,11 +121,10 @@ final class DefaultProfileServiceTest {
     }
 
     @Test
-    void concurrentIdenticalAndConflictingImportsAreSerializedPerProfile(@TempDir Path directory)
-            throws Exception {
+    void concurrentIdenticalAndConflictingImportsAreSerializedPerProfile(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
-        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"),
-                FsPkiStoreOptions.defaults(), CLOCK)) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(),
+                CLOCK)) {
             DefaultProfileService service = service(store);
             List<CertificateProfileRef> identical = runConcurrently(
                     () -> service.importProfile(template.canonicalJson()),
@@ -136,17 +133,15 @@ final class DefaultProfileServiceTest {
             assertEquals(1, service.listImportedVersions("server-tls").size());
 
             byte[] versionTwo = new String(template.canonicalJson(), StandardCharsets.UTF_8)
-                    .replace("\"profileVersion\":1", "\"profileVersion\":2")
-                    .getBytes(StandardCharsets.UTF_8);
+                    .replace("\"profileVersion\":1", "\"profileVersion\":2").getBytes(StandardCharsets.UTF_8);
             byte[] conflictingVersionTwo = new String(versionTwo, StandardCharsets.UTF_8)
                     .replace("\"displayName\":\"Server TLS\"", "\"displayName\":\"Changed v2\"")
                     .getBytes(StandardCharsets.UTF_8);
-            List<Attempt> conflicting = runAttempts(
-                    () -> service.importProfile(versionTwo),
+            List<Attempt> conflicting = runAttempts(() -> service.importProfile(versionTwo),
                     () -> service.importProfile(conflictingVersionTwo));
             assertEquals(1L, conflicting.stream().filter(Attempt::succeeded).count());
-            assertEquals(1L, conflicting.stream().filter(attempt -> attempt.message()
-                    .contains("PROFILE_VERSION_CONFLICT")).count());
+            assertEquals(1L, conflicting.stream()
+                    .filter(attempt -> attempt.message().contains("PROFILE_VERSION_CONFLICT")).count());
             assertEquals(2, service.listImportedVersions("server-tls").size());
         }
     }
@@ -158,13 +153,12 @@ final class DefaultProfileServiceTest {
                 .replace("\"profileVersion\":1", "\"profileVersion\":2")
                 .replace("\"displayName\":\"VPN Client\"", "\"displayName\":\"VPN Client v2\"")
                 .getBytes(StandardCharsets.UTF_8);
-        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"),
-                FsPkiStoreOptions.defaults(), CLOCK)) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(),
+                CLOCK)) {
             DefaultProfileService service = service(store);
             CertificateProfileRef one = service.importProfile(template.canonicalJson());
             CertificateProfileRef two = service.importProfile(versionTwo);
-            List<CertificateProfileRef> results = runConcurrently(
-                    () -> service.activateProfile("vpn-client", 1),
+            List<CertificateProfileRef> results = runConcurrently(() -> service.activateProfile("vpn-client", 1),
                     () -> service.activateProfile("vpn-client", 2));
             assertTrue(results.contains(one));
             assertTrue(results.contains(two));
@@ -177,11 +171,10 @@ final class DefaultProfileServiceTest {
     @Test
     void activationRequiresAnImportedVersionAndRepeatedActivationIsIdempotent(@TempDir Path directory)
             throws Exception {
-        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"),
-                FsPkiStoreOptions.defaults(), CLOCK)) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(),
+                CLOCK)) {
             DefaultProfileService service = service(store);
-            PkiException missing = assertThrows(PkiException.class,
-                    () -> service.activateProfile("server-tls", 1));
+            PkiException missing = assertThrows(PkiException.class, () -> service.activateProfile("server-tls", 1));
             assertTrue(missing.getMessage().contains("PROFILE_VERSION_NOT_FOUND"));
             assertTrue(service.getActiveReference("server-tls").isEmpty());
 
@@ -204,20 +197,15 @@ final class DefaultProfileServiceTest {
         Logger root = Logger.getLogger("");
         root.addHandler(logs);
         try {
-            assertSanitized(() -> service.importProfile(new byte[] { 1, 2, 3 }),
-                    "PROFILE_IMPORT_VALIDATION_FAILED", sentinel);
-            assertSanitized(() -> service.importProfile(builtIn("server-tls").canonicalJson()),
-                    "PROFILE_IMPORT_FAILED", sentinel);
-            assertSanitized(() -> service.activateProfile("server-tls", 1),
-                    "PROFILE_ACTIVATION_FAILED", sentinel);
-            assertSanitized(() -> service.requireActiveProfile("server-tls"),
-                    "PROFILE_STORE_FAILURE", sentinel);
-            assertSanitized(() -> service.getImportedVersion("server-tls", 1),
-                    "PROFILE_STORE_FAILURE", sentinel);
-            assertSanitized(() -> service.listImportedVersions("server-tls"),
-                    "PROFILE_STORE_FAILURE", sentinel);
-            assertSanitized(() -> service.getActiveReference("server-tls"),
-                    "PROFILE_STORE_FAILURE", sentinel);
+            assertSanitized(() -> service.importProfile(new byte[] { 1, 2, 3 }), "PROFILE_IMPORT_VALIDATION_FAILED",
+                    sentinel);
+            assertSanitized(() -> service.importProfile(builtIn("server-tls").canonicalJson()), "PROFILE_IMPORT_FAILED",
+                    sentinel);
+            assertSanitized(() -> service.activateProfile("server-tls", 1), "PROFILE_ACTIVATION_FAILED", sentinel);
+            assertSanitized(() -> service.requireActiveProfile("server-tls"), "PROFILE_STORE_FAILURE", sentinel);
+            assertSanitized(() -> service.getImportedVersion("server-tls", 1), "PROFILE_STORE_FAILURE", sentinel);
+            assertSanitized(() -> service.listImportedVersions("server-tls"), "PROFILE_STORE_FAILURE", sentinel);
+            assertSanitized(() -> service.getActiveReference("server-tls"), "PROFILE_STORE_FAILURE", sentinel);
         } finally {
             root.removeHandler(logs);
             logs.close();
@@ -233,13 +221,12 @@ final class DefaultProfileServiceTest {
 
     private static BuiltInCertificateProfileTemplate builtIn(String profileId) {
         return BuiltInCertificateProfileCatalog.load(DefaultProfileServiceTest.class.getClassLoader()).stream()
-                .filter(template -> profileId.equals(template.definition().profileId()))
-                .findFirst().orElseThrow();
+                .filter(template -> profileId.equals(template.definition().profileId())).findFirst().orElseThrow();
     }
 
     private static PkiStore failingStore(String sentinel) {
-        return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(),
-                new Class<?>[] { PkiStore.class }, (proxy, method, arguments) -> {
+        return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
+                (proxy, method, arguments) -> {
                     if (method.getDeclaringClass() == Object.class) {
                         return switch (method.getName()) {
                             case "hashCode" -> System.identityHashCode(proxy);

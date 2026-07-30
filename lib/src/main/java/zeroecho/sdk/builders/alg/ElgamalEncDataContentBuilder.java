@@ -361,8 +361,7 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
      * {@link ElgamalEncSpec}. When {@link #getStream()} is called, it creates an
      * {@link zeroecho.core.context.EncryptionContext} for the "ElGamal" algorithm
      * in {@link zeroecho.core.KeyUsage#ENCRYPT} role via
-     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
-     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
      * attaches the upstream stream, and returns a pull-based stream that encrypts
      * on the fly.
      * </p>
@@ -426,8 +425,7 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
      * {@link ElgamalEncSpec}. When {@link #getStream()} is called, it creates an
      * {@link zeroecho.core.context.EncryptionContext} for the "ElGamal" algorithm
      * in {@link zeroecho.core.KeyUsage#DECRYPT} role via
-     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
-     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)},
      * attaches the upstream stream, and returns a pull-based stream that decrypts
      * on the fly.
      * </p>

@@ -47,8 +47,7 @@ class BlockGeometryTest {
         assertEquals(2, first.inChunkSize());
         assertEquals(3, first.outChunkSize());
         assertEquals(0, first.finalizationOutputChunks());
-        assertEquals("BlockGeometry[inChunkSize=2, outChunkSize=3, finalizationOutputChunks=0]",
-                first.toString());
+        assertEquals("BlockGeometry[inChunkSize=2, outChunkSize=3, finalizationOutputChunks=0]", first.toString());
         System.out.println("...legacyFields=true");
         System.out.println("valueSemantics...ok");
     }
@@ -56,7 +55,8 @@ class BlockGeometryTest {
     @Test
     void actualRsaPath() throws Exception {
         System.out.println("actualRsaPath");
-        KeyPair keyPair = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair keyPair = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA",
+                RsaKeyGenSpec.rsa2048());
         RsaEncSpec spec = RsaEncSpec.oaep(RsaEncSpec.Hash.SHA256);
         BlockGeometry encryptGeometry = BlockGeometry.forRsa(spec, keyPair.getPublic(), true);
         BlockGeometry decryptGeometry = BlockGeometry.forRsa(spec, keyPair.getPrivate(), false);
@@ -66,7 +66,8 @@ class BlockGeometryTest {
         assertEquals(256, decryptGeometry.inChunkSize());
         assertEquals(256, decryptGeometry.outChunkSize());
 
-        EncryptionContext context = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.ENCRYPT, keyPair.getPublic(), spec);
+        EncryptionContext context = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.ENCRYPT,
+                keyPair.getPublic(), spec);
         try (InputStream stream = context.attach(new ByteArrayInputStream(new byte[] { 1, 2, 3 }))) {
             assertEquals(256, stream.readAllBytes().length);
         } finally {

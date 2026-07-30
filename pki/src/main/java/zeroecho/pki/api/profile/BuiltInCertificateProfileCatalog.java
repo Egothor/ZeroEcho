@@ -50,12 +50,10 @@ import zeroecho.pki.api.PkiException;
 public final class BuiltInCertificateProfileCatalog {
 
     /** Fixed packaged catalogue manifest resource. */
-    public static final String MANIFEST_RESOURCE =
-            "zeroecho/pki/profiles/v1/catalog.json";
+    public static final String MANIFEST_RESOURCE = "zeroecho/pki/profiles/v1/catalog.json";
 
     private static final String PROFILE_RESOURCE_ROOT = "zeroecho/pki/profiles/v1/";
-    private static final int MAXIMUM_RESOURCE_BYTES =
-            CertificateProfileDocumentCodec.MAXIMUM_DOCUMENT_BYTES;
+    private static final int MAXIMUM_RESOURCE_BYTES = CertificateProfileDocumentCodec.MAXIMUM_DOCUMENT_BYTES;
     private static final int MAXIMUM_MANIFEST_ENTRIES = 128;
     private static final int MAXIMUM_MANIFEST_DEPTH = 16;
     private static final int MAXIMUM_MANIFEST_STRING_BYTES = 4_096;
@@ -65,11 +63,10 @@ public final class BuiltInCertificateProfileCatalog {
     private static final String FIELD_SCHEMA_VERSION = "schemaVersion";
     private static final String FIELD_PROFILES = "profiles";
     private static final String FIELD_RESOURCE = "resource";
-    private static final String ERROR_PREFIX =
-            "Built-in certificate profile catalogue rejected: code=";
-    private static final Set<String> EXPECTED_PROFILE_IDS =
-            Set.of("server-tls", "vpn-server", "vpn-client", "email-signing",
-                    "root-ca", "intermediate-ca");
+    private static final String ERROR_PREFIX = "Built-in certificate profile catalogue rejected: code=";
+    private static final Set<String> EXPECTED_PROFILE_IDS = Set.of("server-tls", "vpn-server", "vpn-client",
+            "email-signing", "root-ca", "intermediate-ca");
+
     private BuiltInCertificateProfileCatalog() {
     }
 
@@ -98,15 +95,13 @@ public final class BuiltInCertificateProfileCatalog {
         }
     }
 
-    private static BuiltInCertificateProfileTemplate loadTemplate(ClassLoader classLoader,
-            String resourceName) {
+    private static BuiltInCertificateProfileTemplate loadTemplate(ClassLoader classLoader, String resourceName) {
         byte[] resourceBytes = readUniqueResource(classLoader, resourceName);
         CertificateProfileDefinition definition = parseProfile(resourceBytes);
         byte[] canonicalJson = canonicalize(definition);
         requireCanonicalResource(resourceBytes, canonicalJson);
         requireCanonicalRoundTrip(definition, canonicalJson);
-        return new BuiltInCertificateProfileTemplate(definition, canonicalJson,
-                sha256(canonicalJson), resourceName);
+        return new BuiltInCertificateProfileTemplate(definition, canonicalJson, sha256(canonicalJson), resourceName);
     }
 
     private static void requireCanonicalResource(byte[] resourceBytes, byte[] canonicalJson) {
@@ -115,17 +110,15 @@ public final class BuiltInCertificateProfileCatalog {
         }
     }
 
-    private static void requireCanonicalRoundTrip(CertificateProfileDefinition definition,
-            byte[] canonicalJson) {
+    private static void requireCanonicalRoundTrip(CertificateProfileDefinition definition, byte[] canonicalJson) {
         if (!definition.equals(parseProfile(canonicalJson))) {
             throw failure("PROFILE_CANONICALIZATION_INVALID");
         }
     }
 
     private static void validateResourceName(String resourceName) {
-        if (resourceName == null || resourceName.isEmpty()
-                || resourceName.startsWith("/") || resourceName.contains("..")
-                || resourceName.indexOf('\\') >= 0 || resourceName.indexOf(':') >= 0
+        if (resourceName == null || resourceName.isEmpty() || resourceName.startsWith("/")
+                || resourceName.contains("..") || resourceName.indexOf('\\') >= 0 || resourceName.indexOf(':') >= 0
                 || !resourceName.startsWith(PROFILE_RESOURCE_ROOT)
                 || resourceName.length() <= PROFILE_RESOURCE_ROOT.length()) {
             throw failure("MANIFEST_RESOURCE_INVALID");
@@ -156,8 +149,7 @@ public final class BuiltInCertificateProfileCatalog {
     }
 
     private static byte[] readBounded(InputStream input) throws IOException {
-        ByteArrayOutputStream output = new ByteArrayOutputStream(
-                Math.min(READ_BUFFER_BYTES, MAXIMUM_RESOURCE_BYTES));
+        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(READ_BUFFER_BYTES, MAXIMUM_RESOURCE_BYTES));
         byte[] buffer = new byte[READ_BUFFER_BYTES];
         int total = 0;
         while (true) {
@@ -236,12 +228,10 @@ public final class BuiltInCertificateProfileCatalog {
             if (!hashes.add(ByteBuffer.wrap(template.canonicalSha256()))) {
                 throw failure("DUPLICATE_PROFILE_HASH");
             }
-            if (!identities.add(new ProfileIdentity(definition.profileId(),
-                    definition.profileVersion()))) {
+            if (!identities.add(new ProfileIdentity(definition.profileId(), definition.profileVersion()))) {
                 throw failure("DUPLICATE_PROFILE_IDENTITY");
             }
-            if (definition.profileVersion() != EXPECTED_PROFILE_VERSION
-                    || !profileIds.add(definition.profileId())) {
+            if (definition.profileVersion() != EXPECTED_PROFILE_VERSION || !profileIds.add(definition.profileId())) {
                 throw failure("BUILT_IN_PROFILE_SET_INVALID");
             }
             switch (definition.certificateType()) {
@@ -253,8 +243,7 @@ public final class BuiltInCertificateProfileCatalog {
         }
 
         private List<BuiltInCertificateProfileTemplate> finish() {
-            if (templates.size() != EXPECTED_PROFILE_IDS.size()
-                    || !profileIds.equals(EXPECTED_PROFILE_IDS)
+            if (templates.size() != EXPECTED_PROFILE_IDS.size() || !profileIds.equals(EXPECTED_PROFILE_IDS)
                     || endEntityCount != 4 || rootCount != 1 || intermediateCount != 1) {
                 throw failure("BUILT_IN_PROFILE_SET_INVALID");
             }
@@ -271,32 +260,23 @@ public final class BuiltInCertificateProfileCatalog {
             if (encoded.length == 0) {
                 throw failure("MANIFEST_EMPTY");
             }
-            try (JsonParser parser = JSON_FACTORY.createParser(ObjectReadContext.empty(),
-                    encoded, 0, encoded.length)) {
+            try (JsonParser parser = JSON_FACTORY.createParser(ObjectReadContext.empty(), encoded, 0, encoded.length)) {
                 ManifestDocument document = readDocument(parser);
                 requireEndOfInput(parser);
                 return validate(document);
             } catch (StreamConstraintsException ex) {
                 throw failure("MANIFEST_LIMIT_EXCEEDED");
             } catch (JacksonException ex) {
-                throw failure(isDuplicateFailure(ex)
-                        ? "MANIFEST_DUPLICATE_FIELD" : "MANIFEST_MALFORMED");
+                throw failure(isDuplicateFailure(ex) ? "MANIFEST_DUPLICATE_FIELD" : "MANIFEST_MALFORMED");
             }
         }
 
         private static JsonFactory createJsonFactory() {
-            StreamReadConstraints constraints = StreamReadConstraints.builder()
-                    .maxNestingDepth(MAXIMUM_MANIFEST_DEPTH)
-                    .maxDocumentLength(MAXIMUM_RESOURCE_BYTES)
-                    .maxTokenCount(1_024)
-                    .maxNumberLength(10)
-                    .maxStringLength(MAXIMUM_MANIFEST_STRING_BYTES)
-                    .maxNameLength(32)
-                    .build();
-            JsonFactoryBuilder builder = JsonFactory.builder()
-                    .streamReadConstraints(constraints)
-                    .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-                    .disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
+            StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(MAXIMUM_MANIFEST_DEPTH)
+                    .maxDocumentLength(MAXIMUM_RESOURCE_BYTES).maxTokenCount(1_024).maxNumberLength(10)
+                    .maxStringLength(MAXIMUM_MANIFEST_STRING_BYTES).maxNameLength(32).build();
+            JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
+                    .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
             for (JsonReadFeature feature : JsonReadFeature.values()) {
                 builder.disable(feature);
             }

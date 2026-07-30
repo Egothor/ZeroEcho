@@ -68,8 +68,7 @@ class AesTest {
     private final ZeroEchoSession zeroEchoSession = new ZeroEchoSession();
 
     SecretKey generateAesKey() throws GeneralSecurityException {
-        SecretKey key = zeroEchoSession.keyBuilders().symmetric()
-                .generate("AES", AesKeyGenSpec.aes256());
+        SecretKey key = zeroEchoSession.keyBuilders().symmetric().generate("AES", AesKeyGenSpec.aes256());
         LOG.log(Level.INFO, "AES256 key generated");
 
         return key;
@@ -203,7 +202,8 @@ class AesTest {
         // Sample message to encrypt
         byte[] msg = randomBytes(100);
 
-        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).generateKey(256).modeGcm(128).withHeader();
+        AesDataContentBuilder aesBuilder = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
+                .generateKey(256).modeGcm(128).withHeader();
 
         // The builder stores generated IV and AAD inside the stream header
         DataContent dccb = DataContentChainBuilder.encrypt().add(PlainBytesBuilder.builder().bytes(msg)).add(aesBuilder)
@@ -220,7 +220,8 @@ class AesTest {
 
         dccb = DataContentChainBuilder.decrypt().add(PlainBytesBuilder.builder().bytes(encrypted))
                 // Use the same AES key for decryption; IV and AAD are restored from the header
-                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).importKeyRaw(key.getEncoded()).modeGcm(128).withHeader())
+                .add(AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).importKeyRaw(key.getEncoded())
+                        .modeGcm(128).withHeader())
                 // Build the pipeline
                 .build();
         byte[] decrypted;

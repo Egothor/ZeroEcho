@@ -102,8 +102,7 @@ public record BlockGeometry(int inChunkSize, int outChunkSize, int finalizationO
                     "inChunkSize must not exceed outChunkSize: " + inChunkSize + " > " + outChunkSize);
         }
         if (finalizationOutputChunks != 0) {
-            throw new IllegalArgumentException(
-                    "finalizationOutputChunks must be zero: " + finalizationOutputChunks);
+            throw new IllegalArgumentException("finalizationOutputChunks must be zero: " + finalizationOutputChunks);
         }
     }
 

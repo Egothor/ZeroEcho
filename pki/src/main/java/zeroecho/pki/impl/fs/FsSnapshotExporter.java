@@ -98,8 +98,7 @@ final class FsSnapshotExporter {
         Objects.requireNonNull(at, "at");
 
         try {
-            List<SnapshotProfileArtifact> profiles =
-                    preflightImportedProfiles(sourceRoot.resolve("profiles"), at);
+            List<SnapshotProfileArtifact> profiles = preflightImportedProfiles(sourceRoot.resolve("profiles"), at);
             FsOperations.ensureDir(targetRoot);
             FsPaths dst = new FsPaths(targetRoot);
 
@@ -143,8 +142,7 @@ final class FsSnapshotExporter {
         }
         List<SnapshotProfileArtifact> selected = new ArrayList<>();
         try (java.util.stream.Stream<Path> files = Files.walk(profilesRoot)) {
-            for (Path path : files.filter(Files::isRegularFile)
-                    .sorted(Comparator.comparing(Path::toString)).toList()) {
+            for (Path path : files.filter(Files::isRegularFile).sorted(Comparator.comparing(Path::toString)).toList()) {
                 collectProfileArtifact(profilesRoot, path, at, selected);
             }
         } catch (SnapshotProfileFailure failure) {
@@ -163,8 +161,7 @@ final class FsSnapshotExporter {
         if (!Files.exists(profilesRoot, LinkOption.NOFOLLOW_LINKS)) {
             return false;
         }
-        if (!Files.isDirectory(profilesRoot, LinkOption.NOFOLLOW_LINKS)
-                || !Files.isReadable(profilesRoot)) {
+        if (!Files.isDirectory(profilesRoot, LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(profilesRoot)) {
             throw SnapshotProfileFailure.of(Code.PROFILE_STORE_FAILURE);
         }
         return true;

@@ -66,8 +66,7 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  *
  * <h2>Thread-safety</h2> Stateless and safe for concurrent use. Each call to
  * {@link zeroecho.core.spi.PrivateKeyImporter#importPrivate(AlgorithmKeySpec)}
- * creates a new
- * {@link java.security.KeyFactory}.
+ * creates a new {@link java.security.KeyFactory}.
  *
  * @since 1.0
  */

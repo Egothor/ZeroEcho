@@ -41,8 +41,8 @@ import zeroecho.pki.api.FormatId;
  * Defines issuance constraints and mapping hints for a class of credentials.
  *
  * <p>
- * A profile is referenced by {@code profileId} during issuance. It defines
- * the complete deny-by-default identity and extension policy for an end-entity
+ * A profile is referenced by {@code profileId} during issuance. It defines the
+ * complete deny-by-default identity and extension policy for an end-entity
  * credential. Requester fields absent from the profile are forbidden.
  * </p>
  *
@@ -50,15 +50,15 @@ import zeroecho.pki.api.FormatId;
  * Profiles must not include secrets.
  * </p>
  *
- * @param profileId          stable profile identifier
- * @param formatId           framework/format supported by the profile
- * @param displayName        human-readable name
- * @param maximumValidity    positive maximum validity
- * @param subjectPolicy      complete end-entity subject policy
- * @param leafPolicy         complete end-entity extension policy
+ * @param profileId       stable profile identifier
+ * @param formatId        framework/format supported by the profile
+ * @param displayName     human-readable name
+ * @param maximumValidity positive maximum validity
+ * @param subjectPolicy   complete end-entity subject policy
+ * @param leafPolicy      complete end-entity extension policy
  */
-public record CertificateProfile(String profileId, FormatId formatId, String displayName,
-        Duration maximumValidity, SubjectPolicy subjectPolicy, LeafCertificatePolicy leafPolicy) {
+public record CertificateProfile(String profileId, FormatId formatId, String displayName, Duration maximumValidity,
+        SubjectPolicy subjectPolicy, LeafCertificatePolicy leafPolicy) {
 
     /**
      * Creates a certificate profile.
@@ -76,8 +76,8 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
         if (displayName == null || displayName.isBlank()) {
             throw new IllegalArgumentException("displayName must not be null/blank");
         }
-        if (maximumValidity == null || maximumValidity.isZero() || maximumValidity.isNegative()
-                || subjectPolicy == null || leafPolicy == null) {
+        if (maximumValidity == null || maximumValidity.isZero() || maximumValidity.isNegative() || subjectPolicy == null
+                || leafPolicy == null) {
             throw new IllegalArgumentException("profile policies and maximum validity must be valid");
         }
     }

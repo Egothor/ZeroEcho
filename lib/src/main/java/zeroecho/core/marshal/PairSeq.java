@@ -61,8 +61,8 @@ import java.util.List;
  *
  * <h2>Serialization</h2>
  * <ul>
- * <li>{@link #writeTo(Appendable)} outputs each pair as {@code k=v\n}
- * lines without escaping and reports checked I/O failures.</li>
+ * <li>{@link #writeTo(Appendable)} outputs each pair as {@code k=v\n} lines
+ * without escaping and reports checked I/O failures.</li>
  * <li>{@link #readFrom(java.io.Reader)} parses lines in the same format,
  * ignoring blank lines and comments starting with {@code #}.</li>
  * </ul>
@@ -99,8 +99,7 @@ public final class PairSeq {
             if (kv[elementIndex] == null) {
                 int pairIndex = elementIndex >>> 1;
                 String role = (elementIndex & 1) == 0 ? "key" : "value";
-                throw new IllegalArgumentException(
-                        "pair " + pairIndex + " " + role + " must not be null");
+                throw new IllegalArgumentException("pair " + pairIndex + " " + role + " must not be null");
             }
         }
         return new PairSeq(kv.clone());
@@ -201,8 +200,8 @@ public final class PairSeq {
     }
 
     /**
-     * Appends all pairs to the target as {@code key=value} lines, reporting
-     * checked I/O failures directly.
+     * Appends all pairs to the target as {@code key=value} lines, reporting checked
+     * I/O failures directly.
      *
      * <p>
      * No escaping is performed; callers must ensure keys and values do not contain

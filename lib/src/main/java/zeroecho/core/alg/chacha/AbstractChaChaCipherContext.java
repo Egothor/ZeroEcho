@@ -243,8 +243,8 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
      * Ensures a nonce is available in the context.
      *
      * <ul>
-     * <li>For encryption, always generates a new nonce after the context has
-     * been atomically claimed and stores a copy in the context.</li>
+     * <li>For encryption, always generates a new nonce after the context has been
+     * atomically claimed and stores a copy in the context.</li>
      * <li>For decryption, validates presence and correct length.</li>
      * </ul>
      *
@@ -283,10 +283,7 @@ abstract class AbstractChaChaCipherContext<S extends ChaChaBaseSpec> implements 
 
     /** Single-use encryption lifecycle states. */
     private enum OperationState {
-        NEW,
-        ENCRYPTING,
-        COMPLETED,
-        FAILED
+        NEW, ENCRYPTING, COMPLETED, FAILED
     }
 
     /** Marks the owning encryption context terminal as its stream is consumed. */

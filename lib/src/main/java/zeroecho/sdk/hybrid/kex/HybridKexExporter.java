@@ -155,8 +155,10 @@ public final class HybridKexExporter implements Destroyable, AutoCloseable {
     /**
      * Overwrites the exporter root secret and salt.
      *
-     * <p>Destruction is idempotent. All subsequent export or diagnostic access
-     * fails with {@link IllegalStateException}.</p>
+     * <p>
+     * Destruction is idempotent. All subsequent export or diagnostic access fails
+     * with {@link IllegalStateException}.
+     * </p>
      */
     @Override
     public void destroy() {

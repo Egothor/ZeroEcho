@@ -17,19 +17,18 @@ import zeroecho.pki.api.FormatId;
  * Runtime activation state is deliberately excluded.
  * </p>
  *
- * @param certificateType kind of certificate governed by the profile
- * @param profileId       stable profile identifier
- * @param profileVersion  positive configuration version
- * @param formatId        framework/format identifier
- * @param displayName     human-readable profile name
- * @param maximumValidity positive maximum validity
- * @param subjectPolicy   complete subject policy
+ * @param certificateType   kind of certificate governed by the profile
+ * @param profileId         stable profile identifier
+ * @param profileVersion    positive configuration version
+ * @param formatId          framework/format identifier
+ * @param displayName       human-readable profile name
+ * @param maximumValidity   positive maximum validity
+ * @param subjectPolicy     complete subject policy
  * @param certificatePolicy closed certificate-specific policy variant
  */
-public record CertificateProfileDefinition(CertificateProfileKind certificateType,
-        String profileId, long profileVersion, FormatId formatId, String displayName,
-        Duration maximumValidity, SubjectPolicy subjectPolicy,
-        CertificatePolicy certificatePolicy) {
+public record CertificateProfileDefinition(CertificateProfileKind certificateType, String profileId,
+        long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
+        SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy) {
 
     /** Current certificate-profile document schema version. */
     public static final int SCHEMA_VERSION = 2;
@@ -37,8 +36,8 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
     /**
      * Creates a certificate-profile definition.
      *
-     * @throws IllegalArgumentException if a required value is absent or the
-     *                                  profile version is not positive
+     * @throws IllegalArgumentException if a required value is absent or the profile
+     *                                  version is not positive
      */
     public CertificateProfileDefinition {
         if (certificateType == null) {

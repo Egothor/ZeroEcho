@@ -50,9 +50,11 @@ import zeroecho.core.spi.PublicKeyImporter;
  * pairs, but focuses solely on importing public key material.
  * </p>
  *
- * <p>The exact supported operation is
+ * <p>
+ * The exact supported operation is
  * {@link #importPublic(SphincsPlusPublicKeySpec)}. Other key operations are
- * registered through their own exact interfaces.</p>
+ * registered through their own exact interfaces.
+ * </p>
  *
  * <h2>Example</h2> <pre>{@code
  * // Assuming bytes contain an X.509-encoded SPHINCS+ public key:

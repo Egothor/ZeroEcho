@@ -58,15 +58,12 @@ class SecretSpecLifecycleTest {
             new SpecCase("zeroecho.core.alg.kyber.KyberPrivateKeySpec", "pkcs8", 8, Factory.CONSTRUCTOR),
             new SpecCase("zeroecho.core.alg.mldsa.MldsaPrivateKeySpec", "encoded", 8, Factory.CONSTRUCTOR),
             new SpecCase("zeroecho.core.alg.ntru.NtruPrivateKeySpec", "pkcs8", 8, Factory.CONSTRUCTOR),
-            new SpecCase("zeroecho.core.alg.ntruprime.NtrulPrimePrivateKeySpec", "pkcs8", 8,
-                    Factory.CONSTRUCTOR),
-            new SpecCase("zeroecho.core.alg.ntruprime.SntruPrimePrivateKeySpec", "pkcs8", 8,
-                    Factory.CONSTRUCTOR),
+            new SpecCase("zeroecho.core.alg.ntruprime.NtrulPrimePrivateKeySpec", "pkcs8", 8, Factory.CONSTRUCTOR),
+            new SpecCase("zeroecho.core.alg.ntruprime.SntruPrimePrivateKeySpec", "pkcs8", 8, Factory.CONSTRUCTOR),
             new SpecCase("zeroecho.core.alg.rsa.RsaPrivateKeySpec", "encoded", 8, Factory.CONSTRUCTOR),
             new SpecCase("zeroecho.core.alg.saber.SaberPrivateKeySpec", "pkcs8", 8, Factory.CONSTRUCTOR),
             new SpecCase("zeroecho.core.alg.slhdsa.SlhDsaPrivateKeySpec", "encoded", 8, Factory.CONSTRUCTOR),
-            new SpecCase("zeroecho.core.alg.sphincsplus.SphincsPlusPrivateKeySpec", "encoded", 8,
-                    Factory.CONSTRUCTOR),
+            new SpecCase("zeroecho.core.alg.sphincsplus.SphincsPlusPrivateKeySpec", "encoded", 8, Factory.CONSTRUCTOR),
             new SpecCase("zeroecho.core.alg.xdh.XdhPrivateKeySpec", "encoded", 8, Factory.CONSTRUCTOR));
 
     @Test
@@ -131,14 +128,14 @@ class SecretSpecLifecycleTest {
                 () -> AesKeyImportSpec.unmarshal(PairSeq.of("k.b64", aesKey, "k.b64", "%")));
         assertThrows(IllegalArgumentException.class,
                 () -> ChaChaKeyImportSpec.unmarshal(PairSeq.of("k.b64", chachaKey, "k.b64", "%")));
-        assertThrows(IllegalArgumentException.class, () -> HmacKeyImportSpec.unmarshal(
-                PairSeq.of("mac", "HmacSHA256", "k.b64", encodedPrivateKey, "k.b64", "%")));
-        assertThrows(IllegalArgumentException.class, () -> MldsaPrivateKeySpec.unmarshal(
-                PairSeq.of("pkcs8.b64", encodedPrivateKey, "pkcs8.b64", "%")));
-        assertThrows(IllegalArgumentException.class, () -> SlhDsaPrivateKeySpec.unmarshal(
-                PairSeq.of("pkcs8.b64", encodedPrivateKey, "pkcs8.b64", "%")));
-        assertThrows(IllegalArgumentException.class, () -> SphincsPlusPrivateKeySpec.unmarshal(
-                PairSeq.of("pkcs8.b64", encodedPrivateKey, "pkcs8.b64", "%")));
+        assertThrows(IllegalArgumentException.class, () -> HmacKeyImportSpec
+                .unmarshal(PairSeq.of("mac", "HmacSHA256", "k.b64", encodedPrivateKey, "k.b64", "%")));
+        assertThrows(IllegalArgumentException.class,
+                () -> MldsaPrivateKeySpec.unmarshal(PairSeq.of("pkcs8.b64", encodedPrivateKey, "pkcs8.b64", "%")));
+        assertThrows(IllegalArgumentException.class,
+                () -> SlhDsaPrivateKeySpec.unmarshal(PairSeq.of("pkcs8.b64", encodedPrivateKey, "pkcs8.b64", "%")));
+        assertThrows(IllegalArgumentException.class, () -> SphincsPlusPrivateKeySpec
+                .unmarshal(PairSeq.of("pkcs8.b64", encodedPrivateKey, "pkcs8.b64", "%")));
         System.out.println("...cases=6");
         System.out.println("unmarshalCleansUpWhenMalformedDataFollowsValidSecretMaterial...ok");
     }
@@ -195,7 +192,8 @@ class SecretSpecLifecycleTest {
         generator.initialize(2048);
         KeyPair pair = generator.generateKeyPair();
         RsaPrivateKeySpec rsaSpec = new RsaPrivateKeySpec(pair.getPrivate().getEncoded());
-        PrivateKey imported = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().importPrivate("RSA", rsaSpec);
+        PrivateKey imported = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().importPrivate("RSA",
+                rsaSpec);
         assertArrayEquals(pair.getPrivate().getEncoded(), imported.getEncoded());
         assertFalse(rsaSpec.isDestroyed());
         assertArrayEquals(pair.getPrivate().getEncoded(), rsaSpec.encoded());
@@ -221,9 +219,7 @@ class SecretSpecLifecycleTest {
     }
 
     private enum Factory {
-        CONSTRUCTOR,
-        STATIC_RAW,
-        HMAC
+        CONSTRUCTOR, STATIC_RAW, HMAC
     }
 
     private record SpecCase(String className, String accessor, int length, Factory factory) {

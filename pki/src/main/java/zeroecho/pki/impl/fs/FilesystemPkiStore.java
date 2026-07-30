@@ -154,8 +154,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private static final String SIGN_FINGERPRINT_PREFIX = "signfp:v1:";
     private static final int SIGN_FINGERPRINT_HEX_LENGTH = 64;
     private static final long INITIAL_FENCE = 0L;
-    private static final String STORE_OWNERSHIP_UNAVAILABLE =
-            "Filesystem store ownership unavailable: code=STORE_ALREADY_OPEN";
+    private static final String STORE_OWNERSHIP_UNAVAILABLE = "Filesystem store ownership unavailable: code=STORE_ALREADY_OPEN";
 
     private final FsPkiStoreOptions options;
     private final FsPaths paths;
@@ -186,15 +185,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     /**
      * Opens or creates a filesystem store with an explicit authoritative clock.
      *
-     * @param root store root directory
+     * @param root    store root directory
      * @param options store options
-     * @param clock authoritative signing workflow clock
+     * @param clock   authoritative signing workflow clock
      * @throws IllegalArgumentException if an argument is {@code null}
-     * @throws IllegalStateException if the store cannot be opened or is already
-     *                               owned by another store instance or process
+     * @throws IllegalStateException    if the store cannot be opened or is already
+     *                                  owned by another store instance or process
      */
-    // StoreOwnership transfers to this store on success and remains open until close();
-    // try-with-resources here would release process ownership at constructor return.
+    // StoreOwnership transfers to this store on success and remains open until
+    // close();
+    // try-with-resources here would release process ownership at constructor
+    // return.
     @SuppressWarnings("PMD.CloseResource")
     public FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock) {
         this.options = Objects.requireNonNull(options, "options");
@@ -350,8 +351,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         FsCodec.encode(FsCodec.REVOCATION_JOURNAL, updated));
             } catch (FsOperations.DurabilityUncertainException failure) {
                 durabilityUncertain.set(true);
-                throw new PkiException(
-                        "Revocation durability unconfirmed: code=REVOCATION_DURABILITY_UNCONFIRMED");
+                throw new PkiException("Revocation durability unconfirmed: code=REVOCATION_DURABILITY_UNCONFIRMED");
             } catch (IOException ex) {
                 throw new PkiException("Revocation persistence failed: code=REVOCATION_PERSIST_FAILED");
             }
@@ -448,7 +448,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
-    // Persistence causes may contain filesystem data and are intentionally redacted.
+    // Persistence causes may contain filesystem data and are intentionally
+    // redacted.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public ImportedCertificateProfileVersion importProfileVersion(final ImportedCertificateProfileVersion version) {
         requireStoreUsable();
@@ -489,10 +490,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     private void requireConsistentProfileKind(ImportedCertificateProfileVersion candidate) {
-        for (ImportedCertificateProfileVersion existing :
-                listProfileVersions(candidate.reference().profileId())) {
-            if (existing.definition().certificateType()
-                    != candidate.definition().certificateType()) {
+        for (ImportedCertificateProfileVersion existing : listProfileVersions(candidate.reference().profileId())) {
+            if (existing.definition().certificateType() != candidate.definition().certificateType()) {
                 throw new ProfileLifecycleFailure(Code.PROFILE_KIND_CONFLICT);
             }
         }
@@ -532,7 +531,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
-    // Persistence causes may contain filesystem data and are intentionally redacted.
+    // Persistence causes may contain filesystem data and are intentionally
+    // redacted.
     @SuppressWarnings("PMD.PreserveStackTrace")
     public CertificateProfileRef activateProfile(final String profileId, final long profileVersion) {
         requireStoreUsable();
@@ -723,12 +723,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             return List.of();
         }
         try (Stream<Path> directories = Files.list(root)) {
-            return directories.filter(Files::isDirectory)
-                    .map(directory -> directory.resolve(FsPaths.CURRENT_FILE))
-                    .filter(Files::isRegularFile)
-                    .sorted(Comparator.comparing(Path::toString))
-                    .map(this::readSignRecordFile)
-                    .peek(record -> validateSignRecord(record.submissionId(), record))
+            return directories.filter(Files::isDirectory).map(directory -> directory.resolve(FsPaths.CURRENT_FILE))
+                    .filter(Files::isRegularFile).sorted(Comparator.comparing(Path::toString))
+                    .map(this::readSignRecordFile).peek(record -> validateSignRecord(record.submissionId(), record))
                     .toList();
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to list authoritative signing records", ex);
@@ -736,8 +733,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
-    public Optional<SignWorkflowStore.Record> tryClaimSign(PkiId submissionId, long expectedRevision,
-            Duration lease) {
+    public Optional<SignWorkflowStore.Record> tryClaimSign(PkiId submissionId, long expectedRevision, Duration lease) {
         requireStoreUsable();
         requirePositive(lease, "lease");
         SignLockEntry lock = acquireSignLock(submissionId);
@@ -778,8 +774,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             if (current.revision() != expectedRevision || current.fence() != fence || current.leaseUntil().isEmpty()) {
                 return Optional.empty();
             }
-            SignWorkflowStore.Record renewed = copySignRecord(current, current.state(), current.revision() + 1L,
-                    fence, Optional.of(signingNow().plus(lease)), current.detailCode(), current.result(),
+            SignWorkflowStore.Record renewed = copySignRecord(current, current.state(), current.revision() + 1L, fence,
+                    Optional.of(signingNow().plus(lease)), current.detailCode(), current.result(),
                     current.providerUpdatedAt());
             writeSignRecord(renewed);
             return Optional.of(renewed);
@@ -813,8 +809,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 throw new IllegalArgumentException("Signing result does not match target state");
             }
             if (target == SignWorkflowStore.State.SUCCEEDED
-                    && (providerUpdatedAt.isEmpty()
-                            || !providerUpdatedAt.get().isBefore(current.deadline()))) {
+                    && (providerUpdatedAt.isEmpty() || !providerUpdatedAt.get().isBefore(current.deadline()))) {
                 throw new IllegalArgumentException("Successful signing completion timestamp is not trustworthy");
             }
             SignWorkflowStore.Record transitioned = copySignRecord(current, target, current.revision() + 1L, fence,
@@ -865,8 +860,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 try {
                     Optional<SignWorkflowStore.Record> current = readSignRecord(record.submissionId());
                     if (current.isPresent() && current.get().state() == SignWorkflowStore.State.RETIRED
-                            && !current.get().createdAt().plus(options.signingOperationHorizon())
-                                    .isAfter(signingNow())
+                            && !current.get().createdAt().plus(options.signingOperationHorizon()).isAfter(signingNow())
                             && Files.deleteIfExists(paths.signWorkflowPath(record.submissionId()))) {
                         purged++;
                     }
@@ -962,8 +956,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             return Optional.empty();
         }
         try {
-            CertificateProfileRef reference = FsCodec.decode(FsCodec.ACTIVE_PROFILE_REF,
-                    FsOperations.readAll(path));
+            CertificateProfileRef reference = FsCodec.decode(FsCodec.ACTIVE_PROFILE_REF, FsOperations.readAll(path));
             if (!profileId.equals(reference.profileId())) {
                 throw new ProfileLifecycleFailure(Code.PROFILE_ACTIVE_POINTER_CORRUPT);
             }
@@ -989,8 +982,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             if (!Files.isRegularFile(path)) {
                 throw new ProfileLifecycleFailure(Code.PROFILE_ACTIVE_POINTER_CORRUPT);
             }
-            ValidatedImportedProfile validated =
-                    decodeValidatedProfileVersion(path, profileId, reference.profileVersion());
+            ValidatedImportedProfile validated = decodeValidatedProfileVersion(path, profileId,
+                    reference.profileVersion());
             if (!reference.equals(validated.version().reference())) {
                 throw new ProfileLifecycleFailure(Code.PROFILE_HASH_MISMATCH);
             }
@@ -1080,23 +1073,22 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         if (current.isPresent() && transitionTime.isBefore(current.get().latest().time())) {
             throw new PkiException("Revocation transition conflict: code=REVOCATION_TRANSITION_CONFLICT");
         }
-        RevocationState previous = current.map(RevocationJournal::latest).map(RevocationTransition::state)
-                .orElse(null);
+        RevocationState previous = current.map(RevocationJournal::latest).map(RevocationTransition::state).orElse(null);
         RevocationState next = nextRevocationState(previous, command);
-        long revision = current.map(RevocationJournal::latest).map(RevocationTransition::revision)
-                .map(value -> {
-                    try {
-                        return Math.addExact(value, 1L);
-                    } catch (ArithmeticException ex) {
-                        throw corruptRevocationState();
-                    }
-                }).orElse(1L);
+        long revision = current.map(RevocationJournal::latest).map(RevocationTransition::revision).map(value -> {
+            try {
+                return Math.addExact(value, 1L);
+            } catch (ArithmeticException ex) {
+                throw corruptRevocationState();
+            }
+        }).orElse(1L);
         List<RevocationTransition> transitions = new ArrayList<>(
                 current.map(RevocationJournal::transitions).orElseGet(List::of));
         Optional<RevocationReason> permanentReason = command instanceof RevocationCommand.RevokePermanently revoke
-                ? Optional.of(revoke.reason()) : Optional.empty();
-        transitions.add(new RevocationTransition(revision, next, transitionTime,
-                permanentReason, command.attributes()));
+                ? Optional.of(revoke.reason())
+                : Optional.empty();
+        transitions
+                .add(new RevocationTransition(revision, next, transitionTime, permanentReason, command.attributes()));
         RevocationJournal journal = new RevocationJournal(credentialId, transitions);
         validateRevocationJournal(credentialId, journal);
         return journal;
@@ -1113,12 +1105,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     : hold ? RevocationState.HELD : RevocationState.PERMANENTLY_REVOKED;
         }
         return switch (previous) {
-            case CLEAR -> unhold ? throwIllegalTransition()
-                    : hold ? RevocationState.HELD : RevocationState.PERMANENTLY_REVOKED;
-            case HELD -> hold ? throwIllegalTransition()
-                    : unhold ? RevocationState.CLEAR : RevocationState.PERMANENTLY_REVOKED;
-            case PERMANENTLY_REVOKED -> throw new PkiException(
-                    "Revocation is terminal: code=REVOCATION_TERMINAL");
+            case CLEAR ->
+                unhold ? throwIllegalTransition() : hold ? RevocationState.HELD : RevocationState.PERMANENTLY_REVOKED;
+            case HELD ->
+                hold ? throwIllegalTransition() : unhold ? RevocationState.CLEAR : RevocationState.PERMANENTLY_REVOKED;
+            case PERMANENTLY_REVOKED -> throw new PkiException("Revocation is terminal: code=REVOCATION_TERMINAL");
         };
     }
 
@@ -1172,7 +1163,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     // Parsing and canonicalization failures can carry persisted request material;
-    // validation deliberately replaces every such cause with a safe corruption code.
+    // validation deliberately replaces every such cause with a safe corruption
+    // code.
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     private void validateSignRecord(PkiId requestedId, SignWorkflowStore.Record record) {
         Objects.requireNonNull(requestedId, "requestedId");
@@ -1197,8 +1189,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requireValidSignRecord(parsed.namespace().equals(record.namespace()), record, "ID_NAMESPACE_MISMATCH");
         requireValidSignRecord(parsed.createdAt().equals(record.createdAt()), record, "ID_TIMESTAMP_MISMATCH");
         requireValidSignRecord(!record.createdAt().isAfter(futureLimit), record, "CREATION_TIME_FUTURE");
-        requireValidSignRecord(record.deadline().isAfter(record.createdAt())
-                && !record.deadline().isAfter(horizonEnd), record, "DEADLINE_INVALID");
+        requireValidSignRecord(record.deadline().isAfter(record.createdAt()) && !record.deadline().isAfter(horizonEnd),
+                record, "DEADLINE_INVALID");
         requireValidSignRecord(continuation.isBoundTo(record.submissionId(), record.owner()), record,
                 "CONTINUATION_IDENTITY_MISMATCH");
 
@@ -1275,9 +1267,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     || target == SignWorkflowStore.State.CANCELLING || target == SignWorkflowStore.State.EXPIRED;
         }
         if (source == SignWorkflowStore.State.CANCELLING) {
-            return target == SignWorkflowStore.State.CANCELLING
-                    || target == SignWorkflowStore.State.SUCCEEDED || target == SignWorkflowStore.State.FAILED
-                    || target == SignWorkflowStore.State.CANCELLED || target == SignWorkflowStore.State.EXPIRED;
+            return target == SignWorkflowStore.State.CANCELLING || target == SignWorkflowStore.State.SUCCEEDED
+                    || target == SignWorkflowStore.State.FAILED || target == SignWorkflowStore.State.CANCELLED
+                    || target == SignWorkflowStore.State.EXPIRED;
         }
         return false;
     }
@@ -1297,8 +1289,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     requireValidSignRecord(record.revision() == 0L && record.leaseUntil().isEmpty(), record,
                             "INTENT_INITIAL_CLAIM_INVALID");
                 } else {
-                    requireValidSignRecord(record.revision() >= record.fence()
-                            && record.leaseUntil().isPresent(), record, "INTENT_CLAIM_INVALID");
+                    requireValidSignRecord(record.revision() >= record.fence() && record.leaseUntil().isPresent(),
+                            record, "INTENT_CLAIM_INVALID");
                 }
             }
             case DISPATCHED -> {
@@ -1312,8 +1304,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 requireValidSignRecord(record.revision() > record.fence(), record, "CANCELLING_REVISION_INVALID");
                 requireValidSignRecord(record.leaseUntil().isEmpty() && record.result().isEmpty()
                         && record.providerUpdatedAt().isEmpty(), record, "CANCELLING_TERMINAL_DATA_PRESENT");
-                requireValidSignRecord(record.detailCode().filter(code -> "CANCEL_REQUESTED".equals(code)
-                        || "CANCEL_SUBMITTED".equals(code)).isPresent(), record, "DETAIL_CODE_INVALID");
+                requireValidSignRecord(record.detailCode()
+                        .filter(code -> "CANCEL_REQUESTED".equals(code) || "CANCEL_SUBMITTED".equals(code)).isPresent(),
+                        record, "DETAIL_CODE_INVALID");
             }
             case SUCCEEDED -> {
                 requireValidSignRecord(record.fence() > 0L && record.revision() - record.fence() >= 2L, record,
@@ -1334,8 +1327,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         "FAILURE_DETAIL_CONTRADICTORY");
             }
             case CANCELLED -> {
-                requireValidSignRecord(record.revision() - record.fence() >= 2L, record,
-                        "CANCELLED_REVISION_INVALID");
+                requireValidSignRecord(record.revision() - record.fence() >= 2L, record, "CANCELLED_REVISION_INVALID");
                 requireValidSignRecord(record.leaseUntil().isEmpty() && record.result().isEmpty(), record,
                         "CANCELLED_RESULT_OR_LEASE_PRESENT");
                 requireValidSignRecord(!hasLifecycleCode(record.detailCode(), "SIGNED"), record,
@@ -1352,10 +1344,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 requireValidSignRecord(record.leaseUntil().isEmpty(), record, "RETIRED_LEASE_PRESENT");
                 requireDetailCode(record, "RETIRED");
                 if (record.result().isPresent()) {
-                    requireValidSignRecord(record.fence() > 0L && record.revision() - record.fence() >= 3L
-                            && record.providerUpdatedAt().isPresent()
-                            && record.providerUpdatedAt().get().isBefore(record.deadline()), record,
-                            "PROVIDER_TIME_INVALID");
+                    requireValidSignRecord(
+                            record.fence() > 0L && record.revision() - record.fence() >= 3L
+                                    && record.providerUpdatedAt().isPresent()
+                                    && record.providerUpdatedAt().get().isBefore(record.deadline()),
+                            record, "PROVIDER_TIME_INVALID");
                 } else {
                     requireValidSignRecord(record.revision() - record.fence() >= 2L, record,
                             "RETIRED_TERMINAL_REVISION_INVALID");
@@ -1390,12 +1383,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     private static boolean hasContradictorySuccessCode(Optional<String> detailCode) {
-        return hasLifecycleCode(detailCode, "INTENT")
-                || hasLifecycleCode(detailCode, "DISPATCHED")
-                || hasLifecycleCode(detailCode, "CANCEL_REQUESTED")
-                || hasLifecycleCode(detailCode, "CANCELLED")
-                || hasLifecycleCode(detailCode, "EXPIRED")
-                || hasLifecycleCode(detailCode, "RETIRED")
+        return hasLifecycleCode(detailCode, "INTENT") || hasLifecycleCode(detailCode, "DISPATCHED")
+                || hasLifecycleCode(detailCode, "CANCEL_REQUESTED") || hasLifecycleCode(detailCode, "CANCELLED")
+                || hasLifecycleCode(detailCode, "EXPIRED") || hasLifecycleCode(detailCode, "RETIRED")
                 || hasLifecycleCode(detailCode, "REQUEST_INTEGRITY_FAILURE")
                 || hasLifecycleCode(detailCode, "PROVIDER_ID_MISMATCH")
                 || hasLifecycleCode(detailCode, "PROVIDER_SUBMISSION_FAILED")
@@ -1473,7 +1463,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             this.lock = lock;
         }
 
-        // Raw lock exceptions are deliberately replaced by the stable redacted contention code.
+        // Raw lock exceptions are deliberately replaced by the stable redacted
+        // contention code.
         @SuppressWarnings("PMD.PreserveStackTrace")
         private static StoreOwnership acquire(Path lockFile) throws IOException {
             FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
@@ -1534,8 +1525,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 }
                 closed = true;
                 if (releaseFailed || closeFailed) {
-                    throw new IOException("Filesystem store ownership release failed: "
-                            + "code=STORE_OWNERSHIP_RELEASE_FAILED");
+                    throw new IOException(
+                            "Filesystem store ownership release failed: " + "code=STORE_OWNERSHIP_RELEASE_FAILED");
                 }
             } finally {
                 closeLock.unlock();

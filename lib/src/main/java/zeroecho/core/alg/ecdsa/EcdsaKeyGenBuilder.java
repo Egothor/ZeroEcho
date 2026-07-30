@@ -45,14 +45,14 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * <h2>ECDSA Key Pair Generator</h2>
  *
  * Implementation of {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} for
- * {@link EcdsaCurveSpec}.
- * This builder is responsible for generating new elliptic curve key pairs for
- * use with the {@link EcdsaAlgorithm}.
+ * {@link EcdsaCurveSpec}. This builder is responsible for generating new
+ * elliptic curve key pairs for use with the {@link EcdsaAlgorithm}.
  *
- * <p>The exact supported operation is
- * {@link #generateKeyPair(EcdsaCurveSpec)}. Public and private import are
- * registered separately through {@link EcdsaPublicKeyBuilder} and
- * {@link EcdsaPrivateKeyBuilder}.</p>
+ * <p>
+ * The exact supported operation is {@link #generateKeyPair(EcdsaCurveSpec)}.
+ * Public and private import are registered separately through
+ * {@link EcdsaPublicKeyBuilder} and {@link EcdsaPrivateKeyBuilder}.
+ * </p>
  *
  * <h2>Usage</h2> Typically accessed through the session key-operation API or
  * {@link CryptoAlgorithm#asymmetricKeyPairGenerator(Class)}.

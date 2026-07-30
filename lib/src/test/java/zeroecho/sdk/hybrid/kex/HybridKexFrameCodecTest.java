@@ -67,17 +67,9 @@ class HybridKexFrameCodecTest {
     @Test
     void rejectsMalformedFrames() {
         String name = start("rejectsMalformedFrames");
-        byte[][] malformed = {
-                new byte[7],
-                ints(-1, 0),
-                ints(0, -1),
-                ints(1, 0),
-                ints(0, 1),
-                append(ints(0, 0), (byte) 0x7f),
-                new byte[HybridKexContext.MAX_FRAME_BYTES + 1],
-                ints(0, HybridKexContext.MAX_FRAME_BYTES),
-                ints(Integer.MAX_VALUE, 0)
-        };
+        byte[][] malformed = { new byte[7], ints(-1, 0), ints(0, -1), ints(1, 0), ints(0, 1),
+                append(ints(0, 0), (byte) 0x7f), new byte[HybridKexContext.MAX_FRAME_BYTES + 1],
+                ints(0, HybridKexContext.MAX_FRAME_BYTES), ints(Integer.MAX_VALUE, 0) };
 
         for (byte[] frame : malformed) {
             assertThrows(IOException.class, () -> HybridKexContext.decode(frame));

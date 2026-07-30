@@ -128,8 +128,7 @@ class HybridKexDemoTest {
         KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // PQC leg: Bob is the KEM recipient (has ML-KEM keypair).
-        KeyPair bobPqc = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // Hybrid profile: default HKDF label, 32-byte output suitable for symmetric
         // keys.
@@ -142,14 +141,14 @@ class HybridKexDemoTest {
             // Alice (initiator): classic uses Alice private + Bob classic public
             // (out-of-band).
             // ...PQC uses Bob PQC public and will produce a KEM ciphertext.
-            alice = HybridKexContexts.initiator(session, profile, "Xdh", aliceClassic.getPrivate(), bobClassic.getPublic(),
-                    XdhSpec.X25519, "ML-KEM", bobPqc.getPublic(), null);
+            alice = HybridKexContexts.initiator(session, profile, "Xdh", aliceClassic.getPrivate(),
+                    bobClassic.getPublic(), XdhSpec.X25519, "ML-KEM", bobPqc.getPublic(), null);
 
             // Bob (responder): classic uses Bob private + Alice classic public
             // (out-of-band).
             // ...PQC uses Bob PQC private and will consume Alice's ciphertext.
-            bob = HybridKexContexts.responder(session, profile, "Xdh", bobClassic.getPrivate(), aliceClassic.getPublic(),
-                    XdhSpec.X25519, "ML-KEM", bobPqc.getPrivate(), null);
+            bob = HybridKexContexts.responder(session, profile, "Xdh", bobClassic.getPrivate(),
+                    aliceClassic.getPublic(), XdhSpec.X25519, "ML-KEM", bobPqc.getPrivate(), null);
 
             // Alice -> Bob: hybrid message carries PQC ciphertext; classic part is empty.
             byte[] msgA = alice.getPeerMessage();
@@ -183,8 +182,7 @@ class HybridKexDemoTest {
         KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // PQC leg: Bob is the KEM recipient (has ML-KEM keypair).
-        KeyPair bobPqc = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);
 
@@ -195,15 +193,15 @@ class HybridKexDemoTest {
             // Alice classic leg is message-based (PAIR_MESSAGE): it will emit her public
             // key as SPKI bytes.
             // ...PQC leg (KEM initiator) will emit ciphertext.
-            alice = HybridKexContexts.initiatorPairMessage(session, profile, "Xdh", new KeyPairKey(aliceClassic), XdhSpec.X25519,
-                    "ML-KEM", bobPqc.getPublic(), null);
+            alice = HybridKexContexts.initiatorPairMessage(session, profile, "Xdh", new KeyPairKey(aliceClassic),
+                    XdhSpec.X25519, "ML-KEM", bobPqc.getPublic(), null);
 
             // Bob classic leg is message-based (PAIR_MESSAGE): it will emit his public key
             // as SPKI bytes.
             // ...PQC leg (KEM responder) consumes ciphertext and typically does not emit a
             // PQC message.
-            bob = HybridKexContexts.responderPairMessage(session, profile, "Xdh", new KeyPairKey(bobClassic), XdhSpec.X25519,
-                    "ML-KEM", bobPqc.getPrivate(), null);
+            bob = HybridKexContexts.responderPairMessage(session, profile, "Xdh", new KeyPairKey(bobClassic),
+                    XdhSpec.X25519, "ML-KEM", bobPqc.getPrivate(), null);
 
             // Alice -> Bob: hybrid message carries classic SPKI + PQC ciphertext.
             byte[] msgA = alice.getPeerMessage();
@@ -355,8 +353,7 @@ class HybridKexDemoTest {
         KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // ...Generate PQC (recipient) keys (ML-KEM-768).
-        KeyPair bobPqc = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // ...Create a profile for HKDF (output length 32 bytes).
         HybridKexProfile profile = HybridKexProfile.defaultProfile(32);

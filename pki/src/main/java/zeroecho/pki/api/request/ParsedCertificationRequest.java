@@ -58,21 +58,27 @@ import zeroecho.pki.api.attr.AttributeSet;
  * issuance.
  * </p>
  *
- * @param requestId          stable identifier for the request (typically
- *                           derived from the request payload fingerprint)
- * @param formatId           framework/format identifier
- * @param subjectRef         normalized subject reference for policy and
- *                           inventory correlation
- * @param publicKeyInfo      requested public key information (SPKI DER
- *                           preferred where applicable)
- * @param requestedValidity  optional validity requested by the subject; policy
- *                           may override or deny
- * @param requestedProfileId optional profile hint; policy may override or deny
- * @param subjectRdns ordered typed single-valued subject components
- * @param subjectAlternativeNames ordered typed SAN entries
- * @param subjectAlternativeNamePresent whether one valid SAN extension was present
- * @param attributes proof-carrying parser attributes; issuance policy rejects all
- *                   attributes except the canonical CSR transport attribute
+ * @param requestId                     stable identifier for the request
+ *                                      (typically derived from the request
+ *                                      payload fingerprint)
+ * @param formatId                      framework/format identifier
+ * @param subjectRef                    normalized subject reference for policy
+ *                                      and inventory correlation
+ * @param publicKeyInfo                 requested public key information (SPKI
+ *                                      DER preferred where applicable)
+ * @param requestedValidity             optional validity requested by the
+ *                                      subject; policy may override or deny
+ * @param requestedProfileId            optional profile hint; policy may
+ *                                      override or deny
+ * @param subjectRdns                   ordered typed single-valued subject
+ *                                      components
+ * @param subjectAlternativeNames       ordered typed SAN entries
+ * @param subjectAlternativeNamePresent whether one valid SAN extension was
+ *                                      present
+ * @param attributes                    proof-carrying parser attributes;
+ *                                      issuance policy rejects all attributes
+ *                                      except the canonical CSR transport
+ *                                      attribute
  */
 public record ParsedCertificationRequest(PkiId requestId, FormatId formatId, SubjectRef subjectRef,
         EncodedObject publicKeyInfo, Optional<Validity> requestedValidity, Optional<String> requestedProfileId,
@@ -88,13 +94,13 @@ public record ParsedCertificationRequest(PkiId requestId, FormatId formatId, Sub
      * constructor cannot bypass typed subject or SAN validation.
      * </p>
      *
-     * @param requestId request identifier
-     * @param formatId format identifier
-     * @param subjectRef diagnostic subject reference
-     * @param publicKeyInfo public-key information
-     * @param requestedValidity requested validity
+     * @param requestId          request identifier
+     * @param formatId           format identifier
+     * @param subjectRef         diagnostic subject reference
+     * @param publicKeyInfo      public-key information
+     * @param requestedValidity  requested validity
      * @param requestedProfileId requested profile
-     * @param attributes diagnostic attributes
+     * @param attributes         diagnostic attributes
      */
     public ParsedCertificationRequest(PkiId requestId, FormatId formatId, SubjectRef subjectRef,
             EncodedObject publicKeyInfo, Optional<Validity> requestedValidity, Optional<String> requestedProfileId,

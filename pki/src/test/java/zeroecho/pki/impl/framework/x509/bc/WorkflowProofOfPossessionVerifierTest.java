@@ -71,8 +71,7 @@ public final class WorkflowProofOfPossessionVerifierTest {
         System.out.println("verifyRsaCsrViaWorkflow_ok");
 
         Path keyringPath = tempDir.resolve("keyring.zek");
-        try (KeyringPassword password =
-                zeroecho.pki.impl.crypto.zeroecholib.TestKeyringUnlocks.provider().acquire();
+        try (KeyringPassword password = zeroecho.pki.impl.crypto.zeroecholib.TestKeyringUnlocks.provider().acquire();
                 KeyringStore ignored = KeyringStore.create(keyringPath, password)) {
             // Encoded-key verification needs no persisted key entry.
         }
@@ -92,9 +91,8 @@ public final class WorkflowProofOfPossessionVerifierTest {
 
         ParsedCertificationRequest parsed = new BcX509CertificationRequestParser().parse(req);
 
-        ZeroEchoLibSignatureWorkflowProvider provider =
-                new ZeroEchoLibSignatureWorkflowProvider(
-                        zeroecho.pki.impl.crypto.zeroecholib.TestKeyringUnlocks.provider());
+        ZeroEchoLibSignatureWorkflowProvider provider = new ZeroEchoLibSignatureWorkflowProvider(
+                zeroecho.pki.impl.crypto.zeroecholib.TestKeyringUnlocks.provider());
         ProviderConfig cfg = new ProviderConfig(provider.id(), Map.of("keyringPath", keyringPath.toString(),
                 "operationRoot", tempDir.resolve("signing-operations").toString()));
         SignatureWorkflow wf = provider.allocate(cfg);

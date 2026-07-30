@@ -27,8 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 class KeyringNonceReservationTest {
     private static final int MAGIC_BYTES = 8;
     private static final int VERSION_OFFSET = MAGIC_BYTES;
-    private static final int HIGH_WATER_OFFSET =
-            MAGIC_BYTES + Integer.BYTES + KeyringStore.UUID_BYTES + Integer.BYTES;
+    private static final int HIGH_WATER_OFFSET = MAGIC_BYTES + Integer.BYTES + KeyringStore.UUID_BYTES + Integer.BYTES;
     private static final int TAG_BYTES = 32;
     private static final int CURRENT_SIDECAR_VERSION = 2;
     private static final char[] PASSWORD = { 'n', 'o', 'n', 'c', 'e' };
@@ -47,8 +46,7 @@ class KeyringNonceReservationTest {
         for (int index = 0; index < storeId.length; index++) {
             storeId[index] = (byte) (0xa0 + index);
         }
-        byte[] expected = HexFormat.of().parseHex(
-                "54e0e054749745a3ef5e2cc5a5c16bafed6f39df9daa4ff412bac74d56bd27b9");
+        byte[] expected = HexFormat.of().parseHex("54e0e054749745a3ef5e2cc5a5c16bafed6f39df9daa4ff412bac74d56bd27b9");
         byte[] first = null;
         byte[] second = null;
         byte[] changedMaster = null;
@@ -88,13 +86,12 @@ class KeyringNonceReservationTest {
         byte[] retainedMacKey;
         byte[] macKeyCopy;
         try (KeyringPassword password = password()) {
-            KeyringStore store = KeyringStore.create(path, password,
-                    KeyringProtection.standard(), deterministicRandom());
+            KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
+                    deterministicRandom());
             retainedMacKey = field(store, "nonceReservationMacKey");
             macKeyCopy = retainedMacKey.clone();
             assertEquals(CURRENT_SIDECAR_VERSION,
-                    ByteBuffer.wrap(Files.readAllBytes(sidecar(path)),
-                            VERSION_OFFSET, Integer.BYTES).getInt());
+                    ByteBuffer.wrap(Files.readAllBytes(sidecar(path)), VERSION_OFFSET, Integer.BYTES).getInt());
             store.close();
             store.close();
             assertTrue(allZero(retainedMacKey));
@@ -109,8 +106,7 @@ class KeyringNonceReservationTest {
             wipe(reservation);
             wipe(macKeyCopy);
         }
-        try (KeyringPassword password = password();
-                KeyringStore reopened = KeyringStore.open(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore reopened = KeyringStore.open(path, password)) {
             assertTrue(reopened.aliases().isEmpty());
         }
         ok();
@@ -153,14 +149,13 @@ class KeyringNonceReservationTest {
         Arrays.fill(material, (byte) 0x4a);
         try {
             try (KeyringPassword password = password();
-                    KeyringStore store = KeyringStore.create(path, password,
-                            KeyringProtection.standard(), deterministicRandom())) {
+                    KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
+                            deterministicRandom())) {
                 assertEquals(1L, longField(store, "nonceHighWater"));
                 Files.move(path, saved);
                 Files.createDirectory(path);
                 assertThrows(IOException.class,
-                        () -> store.putSecret("failed", "AES",
-                                new SecretKeySpec(material, "AES")));
+                        () -> store.putSecret("failed", "AES", new SecretKeySpec(material, "AES")));
                 assertEquals(3L, sidecarHighWater(sidecar(path)));
                 assertEquals(3L, longField(store, "nonceHighWater"));
                 Files.delete(path);
@@ -168,17 +163,15 @@ class KeyringNonceReservationTest {
             }
 
             try (KeyringPassword password = password();
-                    KeyringStore reopened = KeyringStore.open(path, password,
-                            KeyringProtection.standard(), deterministicRandom(51))) {
+                    KeyringStore reopened = KeyringStore.open(path, password, KeyringProtection.standard(),
+                            deterministicRandom(51))) {
                 assertEquals(3L, longField(reopened, "nonceHighWater"));
                 assertTrue(reopened.aliases().isEmpty());
-                reopened.putSecret("accepted", "AES",
-                        new SecretKeySpec(material, "AES"));
+                reopened.putSecret("accepted", "AES", new SecretKeySpec(material, "AES"));
                 assertEquals(5L, longField(reopened, "nonceHighWater"));
                 assertEquals(5L, sidecarHighWater(sidecar(path)));
             }
-            try (KeyringPassword password = password();
-                    KeyringStore reopened = KeyringStore.open(path, password)) {
+            try (KeyringPassword password = password(); KeyringStore reopened = KeyringStore.open(path, password)) {
                 assertEquals(5L, longField(reopened, "nonceHighWater"));
                 assertArrayEquals(material, reopened.getSecret("accepted").getEncoded());
             }
@@ -198,24 +191,21 @@ class KeyringNonceReservationTest {
         Arrays.fill(material, (byte) 0x35);
         RecordingRandom random = new RecordingRandom(1);
         try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password,
-                        KeyringProtection.standard(), random)) {
+                KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(), random)) {
             byte[] mainBefore = Files.readAllBytes(path);
             try {
                 assertEquals(List.of(32, 32, 16, 11, 3), random.requests());
                 Files.move(reservation, saved);
                 Files.createDirectory(reservation);
                 assertThrows(IOException.class,
-                        () -> store.putSecret("failed", "AES",
-                                new SecretKeySpec(material, "AES")));
+                        () -> store.putSecret("failed", "AES", new SecretKeySpec(material, "AES")));
                 assertEquals(1L, longField(store, "nonceHighWater"));
                 assertArrayEquals(mainBefore, Files.readAllBytes(path));
                 assertEquals(List.of(32, 32, 16, 11, 3, 16), random.requests());
 
                 Files.delete(reservation);
                 Files.move(saved, reservation);
-                store.putSecret("accepted", "AES",
-                        new SecretKeySpec(material, "AES"));
+                store.putSecret("accepted", "AES", new SecretKeySpec(material, "AES"));
                 assertEquals(3L, longField(store, "nonceHighWater"));
                 assertEquals(List.of(32, 32, 16, 11, 3, 16, 16), random.requests());
             } finally {
@@ -237,8 +227,7 @@ class KeyringNonceReservationTest {
         Arrays.fill(second, (byte) 0x22);
         RecordingRandom random = new RecordingRandom(7);
         try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password,
-                        KeyringProtection.standard(), random)) {
+                KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(), random)) {
             assertEquals(1L, longField(store, "nonceHighWater"));
             assertEquals(List.of(32, 32, 16, 11, 3), random.requests());
             store.putSecret("one", "AES", new SecretKeySpec(first, "AES"));
@@ -261,8 +250,8 @@ class KeyringNonceReservationTest {
         byte[] image;
         byte[] master;
         try (KeyringPassword password = password()) {
-            KeyringStore store = KeyringStore.create(path, password,
-                    KeyringProtection.standard(), deterministicRandom());
+            KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
+                    deterministicRandom());
             image = Files.readAllBytes(sidecar(path));
             master = field(store, "masterKey").clone();
             store.close();
@@ -304,14 +293,13 @@ class KeyringNonceReservationTest {
         }
     }
 
-    private Path sidecarWithVersion(String file, int version, boolean useMasterKey)
-            throws Exception {
+    private Path sidecarWithVersion(String file, int version, boolean useMasterKey) throws Exception {
         Path path = temporaryDirectory.resolve(file);
         byte[] image;
         byte[] key;
         try (KeyringPassword password = password()) {
-            KeyringStore store = KeyringStore.create(path, password,
-                    KeyringProtection.standard(), deterministicRandom());
+            KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
+                    deterministicRandom());
             image = Files.readAllBytes(sidecar(path));
             key = field(store, useMasterKey ? "masterKey" : "nonceReservationMacKey").clone();
             store.close();
@@ -343,8 +331,7 @@ class KeyringNonceReservationTest {
 
     private Path sidecarWithTrailingByte(String file) throws Exception {
         Path path = createAndClose(file);
-        Files.write(sidecar(path), new byte[] { 0 },
-                java.nio.file.StandardOpenOption.APPEND);
+        Files.write(sidecar(path), new byte[] { 0 }, java.nio.file.StandardOpenOption.APPEND);
         return path;
     }
 
@@ -356,11 +343,9 @@ class KeyringNonceReservationTest {
         byte[] mainBefore = Files.readAllBytes(path);
         byte[] sidecarBefore = Files.readAllBytes(sidecar(path));
         try (KeyringPassword password = password()) {
-            KeyringException exception = assertThrows(KeyringException.class,
-                    () -> KeyringStore.open(path, password));
+            KeyringException exception = assertThrows(KeyringException.class, () -> KeyringStore.open(path, password));
             assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID, exception.code());
-            assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID.name(),
-                    exception.getMessage());
+            assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID.name(), exception.getMessage());
             assertArrayEquals(mainBefore, Files.readAllBytes(path));
             assertArrayEquals(sidecarBefore, Files.readAllBytes(sidecar(path)));
         } finally {
@@ -376,8 +361,8 @@ class KeyringNonceReservationTest {
     private Path createAndClose(String file, int randomSeed) throws Exception {
         Path path = temporaryDirectory.resolve(file);
         try (KeyringPassword password = password();
-                KeyringStore ignored = KeyringStore.create(path, password,
-                        KeyringProtection.standard(), deterministicRandom(randomSeed))) {
+                KeyringStore ignored = KeyringStore.create(path, password, KeyringProtection.standard(),
+                        deterministicRandom(randomSeed))) {
             // Creation writes the initial durable reservation.
         }
         return path;
@@ -454,8 +439,7 @@ class KeyringNonceReservationTest {
     }
 
     private static int indexOf(byte[] haystack, byte[] needle) {
-        outer:
-        for (int index = 0; index <= haystack.length - needle.length; index++) {
+        outer: for (int index = 0; index <= haystack.length - needle.length; index++) {
             for (int offset = 0; offset < needle.length; offset++) {
                 if (haystack[index + offset] != needle[offset]) {
                     continue outer;

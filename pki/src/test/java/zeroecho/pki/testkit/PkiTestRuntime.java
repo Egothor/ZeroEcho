@@ -196,8 +196,7 @@ public final class PkiTestRuntime implements AutoCloseable {
         BcX509StatusObjectGenerator statusGen = new BcX509StatusObjectGenerator(signingBus, "SHA256withRSA",
                 Duration.ofSeconds(2));
         BcX509CredentialFramework baseFramework = new BcX509CredentialFramework();
-        CredentialFramework framework = proofVerifier
-                .map(verifier -> baseFramework.wired(statusGen, verifier))
+        CredentialFramework framework = proofVerifier.map(verifier -> baseFramework.wired(statusGen, verifier))
                 .orElseGet(() -> baseFramework.wired(statusGen));
 
         return new PkiTestRuntime(store, signingBus, signer, framework, issuerBackend, publicByRef,
@@ -217,8 +216,8 @@ public final class PkiTestRuntime implements AutoCloseable {
         }
         SignatureWorkflow signer = new InMemorySignatureWorkflow(byRef, false);
         PkiSigningBus signingBus = new PkiSigningBus(store, signer, busFile);
-        BcX509CredentialIssuerBackend issuerBackend = new BcX509CredentialIssuerBackend(signingBus,
-                "SHA256withRSA", signingTtl);
+        BcX509CredentialIssuerBackend issuerBackend = new BcX509CredentialIssuerBackend(signingBus, "SHA256withRSA",
+                signingTtl);
         BcX509StatusObjectGenerator statusGen = new BcX509StatusObjectGenerator(signingBus, "SHA256withRSA",
                 signingTtl);
         CredentialFramework framework = new BcX509CredentialFramework().wired(statusGen);
@@ -258,7 +257,7 @@ public final class PkiTestRuntime implements AutoCloseable {
     /**
      * Replaces only the public key returned by the managed-key resolver.
      *
-     * @param keyRef managed key reference
+     * @param keyRef    managed key reference
      * @param publicKey replacement resolved public key
      */
     public void replaceResolvedKey(KeyRef keyRef, PublicKey publicKey) {
@@ -335,9 +334,9 @@ public final class PkiTestRuntime implements AutoCloseable {
 
     public CaService caService(ProfileService profiles) {
         provisionCaProfiles();
-        return new DefaultCaService(store, framework, issuerBackend, this::resolvePublicKeyInfo, signingBus,
-                auditSink, statusResolver, Objects.requireNonNull(profiles, "profiles"), Clock.systemUTC(),
-                "SHA256withRSA", Duration.ofSeconds(2));
+        return new DefaultCaService(store, framework, issuerBackend, this::resolvePublicKeyInfo, signingBus, auditSink,
+                statusResolver, Objects.requireNonNull(profiles, "profiles"), Clock.systemUTC(), "SHA256withRSA",
+                Duration.ofSeconds(2));
     }
 
     private synchronized void provisionCaProfiles() {
@@ -348,8 +347,7 @@ public final class PkiTestRuntime implements AutoCloseable {
                 .filter(template -> template.definition().profileId().equals("root-ca")
                         || template.definition().profileId().equals("intermediate-ca"))
                 .forEach(template -> {
-                    zeroecho.pki.api.profile.CertificateProfileRef reference =
-                            profileService.importBuiltIn(template);
+                    zeroecho.pki.api.profile.CertificateProfileRef reference = profileService.importBuiltIn(template);
                     profileService.activateProfile(reference.profileId(), reference.profileVersion());
                 });
         caProfilesProvisioned = true;
@@ -378,8 +376,8 @@ public final class PkiTestRuntime implements AutoCloseable {
     }
 
     public StatusObjectService statusObjectService(EffectiveCredentialStatusResolver resolver) {
-        return new DefaultStatusObjectService(store, framework, auditSink, Objects.requireNonNull(resolver,
-                "resolver"));
+        return new DefaultStatusObjectService(store, framework, auditSink,
+                Objects.requireNonNull(resolver, "resolver"));
     }
 
     /**

@@ -53,15 +53,15 @@
  * </p>
  *
  * <p>
- * Unlock passwords are destroyable, transfer ownership to the receiver, and
- * are destroyed immediately after the master key is unwrapped. The unlocked
- * store retains the master key, its domain-separated nonce-reservation MAC
- * key, and encrypted entry records; closing the store clears this material.
- * The store requires a POSIX filesystem on which owner-only permissions can be
- * verified. A directory-force failure after atomic replacement makes the open
- * instance unusable until close and authenticated reopen resolves which
- * complete image is current. Non-exportable keys must remain behind an
- * external provider reference.
+ * Unlock passwords are destroyable, transfer ownership to the receiver, and are
+ * destroyed immediately after the master key is unwrapped. The unlocked store
+ * retains the master key, its domain-separated nonce-reservation MAC key, and
+ * encrypted entry records; closing the store clears this material. The store
+ * requires a POSIX filesystem on which owner-only permissions can be verified.
+ * A directory-force failure after atomic replacement makes the open instance
+ * unusable until close and authenticated reopen resolves which complete image
+ * is current. Non-exportable keys must remain behind an external provider
+ * reference.
  * </p>
  *
  * <p>

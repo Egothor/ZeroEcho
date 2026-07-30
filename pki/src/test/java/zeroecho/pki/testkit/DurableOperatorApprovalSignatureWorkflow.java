@@ -174,8 +174,8 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
         Objects.requireNonNull(operationId, "operationId");
         persistDecision(operationId, DECISION_APPROVE);
         Instant now = Instant.now();
-        OperationStatus st = deadlineReached(loadDeadline(operationId), now)
-                ? expired(now) : new OperationStatus(State.PENDING, now, Optional.of("APPROVED"), Optional.empty());
+        OperationStatus st = deadlineReached(loadDeadline(operationId), now) ? expired(now)
+                : new OperationStatus(State.PENDING, now, Optional.of("APPROVED"), Optional.empty());
         persistStatus(operationId, st);
         notifySink(operationId, st);
     }

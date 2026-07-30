@@ -11,7 +11,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
 
 /**
  * Generates asymmetric key pairs for one exact specification type.
- * Implementations must be stateless or otherwise safe for concurrent invocation.
+ * Implementations must be stateless or otherwise safe for concurrent
+ * invocation.
  *
  * @param <S> specification type
  * @since 1.0

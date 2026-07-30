@@ -12,17 +12,20 @@ import zeroecho.core.spi.KeyringUnlockProvider;
 /**
  * Immutable runtime dependencies supplied when opening a signature workflow.
  *
- * <p>These dependencies are process-local capabilities. They are never encoded
- * in {@link zeroecho.pki.spi.ProviderConfig}, persisted, or discovered through
+ * <p>
+ * These dependencies are process-local capabilities. They are never encoded in
+ * {@link zeroecho.pki.spi.ProviderConfig}, persisted, or discovered through
  * {@link java.util.ServiceLoader}. An absent keyring unlock provider is valid
- * only for workflow implementations that do not use a software keyring.</p>
+ * only for workflow implementations that do not use a software keyring.
+ * </p>
  *
- * <p>Instances are immutable and safe for concurrent use. This object does not
- * acquire or retain password material.</p>
+ * <p>
+ * Instances are immutable and safe for concurrent use. This object does not
+ * acquire or retain password material.
+ * </p>
  */
 public final class SignatureWorkflowRuntimeDependencies {
-    private static final SignatureWorkflowRuntimeDependencies NONE =
-            new SignatureWorkflowRuntimeDependencies(null);
+    private static final SignatureWorkflowRuntimeDependencies NONE = new SignatureWorkflowRuntimeDependencies(null);
 
     private final KeyringUnlockProvider keyringUnlockProvider;
 
@@ -40,18 +43,15 @@ public final class SignatureWorkflowRuntimeDependencies {
     }
 
     /**
-     * Creates dependencies containing an explicit software-keyring unlock
-     * provider.
+     * Creates dependencies containing an explicit software-keyring unlock provider.
      *
      * @param provider provider returning a fresh destroyable password for each
-     *        keyring open
+     *                 keyring open
      * @return immutable runtime dependencies containing {@code provider}
      * @throws NullPointerException if {@code provider} is {@code null}
      */
-    public static SignatureWorkflowRuntimeDependencies withKeyringUnlockProvider(
-            KeyringUnlockProvider provider) {
-        return new SignatureWorkflowRuntimeDependencies(
-                Objects.requireNonNull(provider, "provider must not be null"));
+    public static SignatureWorkflowRuntimeDependencies withKeyringUnlockProvider(KeyringUnlockProvider provider) {
+        return new SignatureWorkflowRuntimeDependencies(Objects.requireNonNull(provider, "provider must not be null"));
     }
 
     /**

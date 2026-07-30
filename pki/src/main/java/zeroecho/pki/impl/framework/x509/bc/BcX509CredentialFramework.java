@@ -75,8 +75,8 @@ import zeroecho.pki.spi.framework.StatusObjectGenerator;
  * <ul>
  * <li>This class is an orchestration and component-aggregation object; it does
  * not itself process private key material.</li>
- * <li>Credential issuance remains owned by proof-gated core services rather than
- * this framework facade.</li>
+ * <li>Credential issuance remains owned by proof-gated core services rather
+ * than this framework facade.</li>
  * <li>The default instance intentionally fails fast for issuance and
  * status-object generation so that partially wired deployments do not silently
  * degrade into incomplete behavior.</li>
@@ -120,8 +120,8 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      * <p>
      * Status-object generation is intentionally left unsupported in this default
      * configuration and may be supplied explicitly through
-     * {@link #wired(BcX509StatusObjectGenerator)}. Credential issuance is not exposed by the
-     * framework facade.
+     * {@link #wired(BcX509StatusObjectGenerator)}. Credential issuance is not
+     * exposed by the framework facade.
      * </p>
      */
     public BcX509CredentialFramework() {
@@ -277,7 +277,7 @@ public final class BcX509CredentialFramework implements CredentialFramework {
          * Always rejects status-object generation because no concrete X.509
          * status-object generator has been wired.
          *
-         * @param command ignored command parameter
+         * @param command    ignored command parameter
          * @param crlEntries ignored structured CRL entries
          * @return never returns normally
          * @throws UnsupportedOperationException always

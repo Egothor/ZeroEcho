@@ -83,8 +83,8 @@ class EncryptorCekAllocationTest {
     void recipientLimitIsCheckedBeforeCekGeneration() {
         System.out.print("EncryptorCekAllocation/recipientLimitIsCheckedBeforeCekGeneration...");
         RecordingRandomFactory randomFactory = new RecordingRandomFactory();
-        Encryptor encryptor = newEncryptor(List.of(new CapturingRecipient(false), new CapturingRecipient(false)),
-                1, randomFactory);
+        Encryptor encryptor = newEncryptor(List.of(new CapturingRecipient(false), new CapturingRecipient(false)), 1,
+                randomFactory);
         encryptor.setInput(() -> new ByteArrayInputStream(new byte[0]));
 
         assertThrows(IOException.class, encryptor::getStream);
@@ -97,8 +97,8 @@ class EncryptorCekAllocationTest {
     void recipientFailureClearsGenuineAndDecoyCeks() {
         System.out.print("EncryptorCekAllocation/recipientFailureClearsGenuineAndDecoyCeks...");
         RecordingRandomFactory randomFactory = new RecordingRandomFactory();
-        Encryptor encryptor = newEncryptor(List.of(new CapturingRecipient(false), new FailingRecipient(true)),
-                8, randomFactory);
+        Encryptor encryptor = newEncryptor(List.of(new CapturingRecipient(false), new FailingRecipient(true)), 8,
+                randomFactory);
         encryptor.setInput(() -> new ByteArrayInputStream(new byte[0]));
 
         assertThrows(IOException.class, encryptor::getStream);
@@ -124,8 +124,8 @@ class EncryptorCekAllocationTest {
     void failedRecipientProcessingDestroysOwnedPassword() {
         System.out.print("EncryptorCekAllocation/failedRecipientProcessingDestroysOwnedPassword...");
         PasswordRecipient passwordRecipient = passwordRecipient();
-        Encryptor encryptor = newEncryptor(List.of(passwordRecipient, new FailingRecipient(false)),
-                8, new RecordingRandomFactory());
+        Encryptor encryptor = newEncryptor(List.of(passwordRecipient, new FailingRecipient(false)), 8,
+                new RecordingRandomFactory());
         encryptor.setInput(() -> new ByteArrayInputStream(new byte[0]));
 
         assertThrows(IOException.class, encryptor::getStream);
@@ -143,8 +143,8 @@ class EncryptorCekAllocationTest {
 
     private static Encryptor newEncryptor(List<Recipient> recipients, int maxRecipients,
             IntFunction<byte[]> randomFactory) {
-        return new Encryptor(recipients, AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128), null, KEY_BYTES,
-                maxRecipients, 1024, randomFactory);
+        return new Encryptor(recipients, AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128),
+                null, KEY_BYTES, maxRecipients, 1024, randomFactory);
     }
 
     private static byte[] repeated(byte value) {

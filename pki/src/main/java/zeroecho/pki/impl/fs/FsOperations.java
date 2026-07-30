@@ -161,16 +161,18 @@ final class FsOperations {
     /**
      * Strictly persists one authoritative revocation journal image.
      *
-     * <p>The namespace commit point is an {@link StandardCopyOption#ATOMIC_MOVE}
-     * in the target directory. No non-atomic fallback is permitted. A directory
-     * force failure after that move is reported distinctly because the durable
-     * authoritative image is then uncertain.</p>
+     * <p>
+     * The namespace commit point is an {@link StandardCopyOption#ATOMIC_MOVE} in
+     * the target directory. No non-atomic fallback is permitted. A directory force
+     * failure after that move is reported distinctly because the durable
+     * authoritative image is then uncertain.
+     * </p>
      *
      * @param target journal target
-     * @param data complete encoded journal
-     * @throws IOException on a pre-commit persistence failure
+     * @param data   complete encoded journal
+     * @throws IOException                  on a pre-commit persistence failure
      * @throws DurabilityUncertainException after a committed move whose directory
-     *                                     force failed
+     *                                      force failed
      */
     // The original directory-force cause is replaced by a marker that cannot expose
     // a filesystem path or operating-system diagnostic.
@@ -210,10 +212,10 @@ final class FsOperations {
      * Atomically creates one immutable file and fails when the target exists.
      *
      * @param target immutable target
-     * @param data complete encoded image
-     * @throws IOException on persistence failure
+     * @param data   complete encoded image
+     * @throws IOException                  on persistence failure
      * @throws DurabilityUncertainException after an atomic move whose directory
-     *                                     force failed
+     *                                      force failed
      */
     // The OS failure is deliberately replaced by the cause-free durability state.
     @SuppressWarnings("PMD.PreserveStackTrace")

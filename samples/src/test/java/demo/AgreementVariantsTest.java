@@ -140,8 +140,7 @@ class AgreementVariantsTest {
     void kemAdapter_mlKem_roundTrip() throws Exception {
         LOG.info("kemAdapter_mlKem_roundTrip - KEM_ADAPTER (ML-KEM)");
 
-        KeyPair recipient = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
+        KeyPair recipient = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
 
         MessageAgreementContext initiator = null;
         MessageAgreementContext responder = null;
@@ -150,8 +149,7 @@ class AgreementVariantsTest {
             initiator = session.createContext("ML-KEM", KeyUsage.AGREEMENT, recipient.getPublic(), VoidSpec.INSTANCE);
 
             // Responder: constructed with recipient's private key (decapsulation side).
-            responder = session.createContext("ML-KEM", KeyUsage.AGREEMENT, recipient.getPrivate(),
-                    VoidSpec.INSTANCE);
+            responder = session.createContext("ML-KEM", KeyUsage.AGREEMENT, recipient.getPrivate(), VoidSpec.INSTANCE);
 
             // One-shot outbound message: KEM ciphertext / encapsulation payload.
             byte[] enc = initiator.getPeerMessage();

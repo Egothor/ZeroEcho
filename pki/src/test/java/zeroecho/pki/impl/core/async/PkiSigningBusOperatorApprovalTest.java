@@ -77,10 +77,9 @@ public final class PkiSigningBusOperatorApprovalTest {
                 Map.of(keyRef.value(), pair.getPrivate()))) {
             AccessContext access = new AccessContext(new Principal("USER", "late"), new Purpose("ISSUANCE"),
                     Optional.empty(), Optional.empty());
-            SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(
-                    new PkiId("late-approval"), "test", 1L, access, keyRef, "SHA256withRSA",
-                    new EncodedObject(Encoding.BINARY, new byte[] { 1 }), Optional.of(Encoding.BINARY),
-                    Optional.of(Instant.EPOCH));
+            SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(new PkiId("late-approval"),
+                    "test", 1L, access, keyRef, "SHA256withRSA", new EncodedObject(Encoding.BINARY, new byte[] { 1 }),
+                    Optional.of(Encoding.BINARY), Optional.of(Instant.EPOCH));
 
             PkiId operationId = signer.submitSign(request);
             signer.approve(operationId);

@@ -49,27 +49,23 @@ class KemRecipientLifecycleTest {
     void constructorsAndBuilderRejectUnsupportedKekBeforeOwnershipTransfer() throws Exception {
         System.out.println("constructorsAndBuilderRejectUnsupportedKekBeforeOwnershipTransfer");
         int[] invalidValues = { -1, 0, 1, 15, 17, 24, 31, 33, Integer.MAX_VALUE };
-        ZeroEchoSession session = new ZeroEchoSession()
-                .withPbkdf2Limits(new Pbkdf2Limits(20_000, 30_000));
+        ZeroEchoSession session = new ZeroEchoSession().withPbkdf2Limits(new Pbkdf2Limits(20_000, 30_000));
         MultiRecipientDataSourceBuilder builder = MultiRecipientDataSourceBuilder.builder(session)
                 .withAes(AesDataContentBuilder.builder(session).modeGcm(128).withHeader());
         for (int kekBytes : invalidValues) {
             ControlledKemContext direct = new ControlledKemContext(filled(32, (byte) 0x11));
-            assertThrows(IllegalArgumentException.class,
-                    () -> new KemCtxRecipient(direct, kekBytes, 16));
+            assertThrows(IllegalArgumentException.class, () -> new KemCtxRecipient(direct, kekBytes, 16));
             assertFalse(direct.closed);
             direct.close();
 
             ControlledKemContext normal = new ControlledKemContext(filled(32, (byte) 0x22));
-            assertThrows(IllegalArgumentException.class,
-                    () -> builder.addRecipient(normal, kekBytes, 16));
+            assertThrows(IllegalArgumentException.class, () -> builder.addRecipient(normal, kekBytes, 16));
             assertEquals(0, recipients(builder).size());
             assertFalse(normal.closed);
             normal.close();
 
             ControlledKemContext decoy = new ControlledKemContext(filled(32, (byte) 0x33));
-            assertThrows(IllegalArgumentException.class,
-                    () -> builder.addRecipientDecoy(decoy, kekBytes, 16));
+            assertThrows(IllegalArgumentException.class, () -> builder.addRecipientDecoy(decoy, kekBytes, 16));
             assertEquals(0, recipients(builder).size());
             assertFalse(decoy.closed);
             decoy.close();

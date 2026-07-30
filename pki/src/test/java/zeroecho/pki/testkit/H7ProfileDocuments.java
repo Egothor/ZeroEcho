@@ -10,34 +10,28 @@ import java.util.List;
 /**
  * Explicit strict JSON documents used by H7 issuance tests.
  *
- * <p>These fixtures deliberately contain document syntax and never construct a
+ * <p>
+ * These fixtures deliberately contain document syntax and never construct a
  * runtime profile or profile definition before entering the production import
- * boundary.</p>
+ * boundary.
+ * </p>
  */
 public final class H7ProfileDocuments {
-    private static final String CN =
-            "{\"oid\":\"2.5.4.3\",\"source\":\"REQUESTER\",\"minimumOccurrences\":1,"
-                    + "\"maximumOccurrences\":1,\"maximumUtf8Bytes\":256}";
-    private static final String SUBJECT_EMAIL =
-            "{\"oid\":\"1.2.840.113549.1.9.1\",\"source\":\"REQUESTER\",\"minimumOccurrences\":1,"
-                    + "\"maximumOccurrences\":1,\"maximumUtf8Bytes\":256}";
-    private static final String DNS_ONE =
-            "{\"type\":\"DNS_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
-                    + "\"wildcardAllowed\":false}";
-    private static final String IPV4_ONE =
-            "{\"type\":\"IP_ADDRESS\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
-                    + "\"ipv4Allowed\":true,\"ipv6Allowed\":false}";
-    private static final String IPV6_ONE =
-            "{\"type\":\"IP_ADDRESS\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
-                    + "\"ipv4Allowed\":false,\"ipv6Allowed\":true}";
-    private static final String IP_BOTH_ONE =
-            "{\"type\":\"IP_ADDRESS\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
-                    + "\"ipv4Allowed\":true,\"ipv6Allowed\":true}";
-    private static final String URI_ONE =
-            "{\"type\":\"URI\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
-                    + "\"allowedSchemes\":[\"https\"]}";
-    private static final String RFC822_ONE =
-            "{\"type\":\"RFC822_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":1}";
+    private static final String CN = "{\"oid\":\"2.5.4.3\",\"source\":\"REQUESTER\",\"minimumOccurrences\":1,"
+            + "\"maximumOccurrences\":1,\"maximumUtf8Bytes\":256}";
+    private static final String SUBJECT_EMAIL = "{\"oid\":\"1.2.840.113549.1.9.1\",\"source\":\"REQUESTER\",\"minimumOccurrences\":1,"
+            + "\"maximumOccurrences\":1,\"maximumUtf8Bytes\":256}";
+    private static final String DNS_ONE = "{\"type\":\"DNS_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
+            + "\"wildcardAllowed\":false}";
+    private static final String IPV4_ONE = "{\"type\":\"IP_ADDRESS\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
+            + "\"ipv4Allowed\":true,\"ipv6Allowed\":false}";
+    private static final String IPV6_ONE = "{\"type\":\"IP_ADDRESS\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
+            + "\"ipv4Allowed\":false,\"ipv6Allowed\":true}";
+    private static final String IP_BOTH_ONE = "{\"type\":\"IP_ADDRESS\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
+            + "\"ipv4Allowed\":true,\"ipv6Allowed\":true}";
+    private static final String URI_ONE = "{\"type\":\"URI\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
+            + "\"allowedSchemes\":[\"https\"]}";
+    private static final String RFC822_ONE = "{\"type\":\"RFC822_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":1}";
 
     private H7ProfileDocuments() {
     }
@@ -50,40 +44,39 @@ public final class H7ProfileDocuments {
 
     /** @return imported but intentionally inactive profile document */
     public static byte[] inactiveProfile() {
-        return profile("inactive", false, List.of(CN), 0, 0, false, false, false, List.of(), false,
-                serverAuth());
+        return profile("inactive", false, List.of(CN), 0, 0, false, false, false, List.of(), false, serverAuth());
     }
 
     /** @return profile document using a deliberately mismatched format */
     public static byte[] wrongFormatProfile() {
-        return profile("wrong-format", "wrong", false, List.of(CN), 0, 0, false, false, false, List.of(),
-                false, serverAuth());
+        return profile("wrong-format", "wrong", false, List.of(CN), 0, 0, false, false, false, List.of(), false,
+                serverAuth());
     }
 
     /** @return profile document used to reject an excessive validity request */
     public static byte[] excessiveValidityProfile() {
-        return profile("too-long", false, List.of(CN), 0, 0, false, false, false, List.of(), false,
-                serverAuth());
+        return profile("too-long", false, List.of(CN), 0, 0, false, false, false, List.of(), false, serverAuth());
     }
 
     /** @return one-DNS profile document */
     public static byte[] dnsProfile() {
-        return profile("h7-dns", false, List.of(CN), 1, 1, true, false, false, List.of(DNS_ONE), false,
-                serverAuth());
+        return profile("h7-dns", false, List.of(CN), 1, 1, true, false, false, List.of(DNS_ONE), false, serverAuth());
     }
 
     /** @return multiple-DNS profile document */
     public static byte[] multipleDnsProfile() {
         return profile("h7-dns-multiple", false, List.of(CN), 1, 3, true, false, false,
                 List.of("{\"type\":\"DNS_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":3,"
-                        + "\"wildcardAllowed\":false}"), false, serverAuth());
+                        + "\"wildcardAllowed\":false}"),
+                false, serverAuth());
     }
 
     /** @return wildcard-DNS profile document */
     public static byte[] wildcardDnsProfile() {
         return profile("h7-wildcard", false, List.of(CN), 1, 1, true, false, false,
                 List.of("{\"type\":\"DNS_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
-                        + "\"wildcardAllowed\":true}"), false, serverAuth());
+                        + "\"wildcardAllowed\":true}"),
+                false, serverAuth());
     }
 
     /** @return empty-subject DNS profile document */
@@ -108,8 +101,7 @@ public final class H7ProfileDocuments {
     public static byte[] mixedIpProfile() {
         String rule = "{\"type\":\"IP_ADDRESS\",\"minimumOccurrences\":2,\"maximumOccurrences\":2,"
                 + "\"ipv4Allowed\":true,\"ipv6Allowed\":true}";
-        return profile("h7-ip-mixed", false, List.of(CN), 2, 2, true, false, false, List.of(rule), false,
-                serverAuth());
+        return profile("h7-ip-mixed", false, List.of(CN), 2, 2, true, false, false, List.of(rule), false, serverAuth());
     }
 
     /** @return empty-subject IP profile document */
@@ -120,20 +112,17 @@ public final class H7ProfileDocuments {
 
     /** @return IPv4-only profile document */
     public static byte[] ipv4Profile() {
-        return profile("h7-ipv4", false, List.of(CN), 1, 1, true, false, false, List.of(IPV4_ONE), false,
-                serverAuth());
+        return profile("h7-ipv4", false, List.of(CN), 1, 1, true, false, false, List.of(IPV4_ONE), false, serverAuth());
     }
 
     /** @return IPv6-only profile document */
     public static byte[] ipv6Profile() {
-        return profile("h7-ipv6", false, List.of(CN), 1, 1, true, false, false, List.of(IPV6_ONE), false,
-                serverAuth());
+        return profile("h7-ipv6", false, List.of(CN), 1, 1, true, false, false, List.of(IPV6_ONE), false, serverAuth());
     }
 
     /** @return one-URI profile document */
     public static byte[] uriProfile() {
-        return profile("h7-uri", false, List.of(CN), 1, 1, true, false, false, List.of(URI_ONE), false,
-                serverAuth());
+        return profile("h7-uri", false, List.of(CN), 1, 1, true, false, false, List.of(URI_ONE), false, serverAuth());
     }
 
     /** @return multiple-URI profile document */
@@ -192,45 +181,39 @@ public final class H7ProfileDocuments {
 
     /** @return CN-only profile forbidding SAN and EKU */
     public static byte[] noSanOrEkuProfile() {
-        return profile("h7-no-san-eku", false, List.of(CN), 0, 0, false, false, false, List.of(), false,
-                List.of());
+        return profile("h7-no-san-eku", false, List.of(CN), 0, 0, false, false, false, List.of(), false, List.of());
     }
 
     private static List<String> serverAuth() {
         return List.of("1.3.6.1.5.5.7.3.1");
     }
 
-    private static byte[] profile(String id, boolean allowEmpty, List<String> subjectRules,
-            int minimumTotal, int maximumTotal, boolean serviceIdentity, boolean emailIdentity,
-            boolean critical, List<String> sanRules, boolean noKeyEncipherment, List<String> eku) {
-        return profile(id, "x509", allowEmpty, subjectRules, minimumTotal, maximumTotal, serviceIdentity,
-                emailIdentity, critical, sanRules, noKeyEncipherment, eku);
+    private static byte[] profile(String id, boolean allowEmpty, List<String> subjectRules, int minimumTotal,
+            int maximumTotal, boolean serviceIdentity, boolean emailIdentity, boolean critical, List<String> sanRules,
+            boolean noKeyEncipherment, List<String> eku) {
+        return profile(id, "x509", allowEmpty, subjectRules, minimumTotal, maximumTotal, serviceIdentity, emailIdentity,
+                critical, sanRules, noKeyEncipherment, eku);
     }
 
     private static byte[] profile(String id, String formatId, boolean allowEmpty, List<String> subjectRules,
-            int minimumTotal, int maximumTotal, boolean serviceIdentity, boolean emailIdentity,
-            boolean critical, List<String> sanRules, boolean noKeyEncipherment, List<String> eku) {
-        String keyUsage = noKeyEncipherment
-                ? "[\"DIGITAL_SIGNATURE\"]" : "[\"DIGITAL_SIGNATURE\",\"KEY_ENCIPHERMENT\"]";
+            int minimumTotal, int maximumTotal, boolean serviceIdentity, boolean emailIdentity, boolean critical,
+            List<String> sanRules, boolean noKeyEncipherment, List<String> eku) {
+        String keyUsage = noKeyEncipherment ? "[\"DIGITAL_SIGNATURE\"]"
+                : "[\"DIGITAL_SIGNATURE\",\"KEY_ENCIPHERMENT\"]";
         String json = "{\"schemaVersion\":2,\"certificateType\":\"END_ENTITY\",\"profileId\":\"" + id
-                + "\",\"profileVersion\":1,\"formatId\":\"" + formatId
-                + "\",\"displayName\":\"H7 Test Profile\","
-                + "\"maxValidity\":\"PT8760H\",\"subject\":{\"allowEmpty\":" + allowEmpty
-                + ",\"rules\":[" + String.join(",", subjectRules) + "]},"
-                + "\"subjectAlternativeNames\":{\"minimumTotal\":" + minimumTotal
-                + ",\"maximumTotal\":" + maximumTotal
-                + ",\"serviceIdentityRequired\":" + serviceIdentity
-                + ",\"emailIdentityRequired\":" + emailIdentity
-                + ",\"criticalWhenSubjectNonEmpty\":" + critical
+                + "\",\"profileVersion\":1,\"formatId\":\"" + formatId + "\",\"displayName\":\"H7 Test Profile\","
+                + "\"maxValidity\":\"PT8760H\",\"subject\":{\"allowEmpty\":" + allowEmpty + ",\"rules\":["
+                + String.join(",", subjectRules) + "]}," + "\"subjectAlternativeNames\":{\"minimumTotal\":"
+                + minimumTotal + ",\"maximumTotal\":" + maximumTotal + ",\"serviceIdentityRequired\":" + serviceIdentity
+                + ",\"emailIdentityRequired\":" + emailIdentity + ",\"criticalWhenSubjectNonEmpty\":" + critical
                 + ",\"rules\":[" + String.join(",", sanRules) + "]},"
-                + "\"leafCertificate\":{\"basicConstraintsCritical\":true,\"keyUsageCritical\":true,"
-                + "\"keyUsage\":" + keyUsage + ",\"extendedKeyUsageCritical\":false,"
-                + "\"extendedKeyUsage\":[" + quoted(eku) + "],\"allowedKeyAlgorithms\":[\"RSA\"]}}";
+                + "\"leafCertificate\":{\"basicConstraintsCritical\":true,\"keyUsageCritical\":true," + "\"keyUsage\":"
+                + keyUsage + ",\"extendedKeyUsageCritical\":false," + "\"extendedKeyUsage\":[" + quoted(eku)
+                + "],\"allowedKeyAlgorithms\":[\"RSA\"]}}";
         return json.getBytes(StandardCharsets.UTF_8);
     }
 
     private static String quoted(List<String> values) {
-        return values.stream().map(value -> "\"" + value + "\"")
-                .collect(java.util.stream.Collectors.joining(","));
+        return values.stream().map(value -> "\"" + value + "\"").collect(java.util.stream.Collectors.joining(","));
     }
 }

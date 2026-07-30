@@ -135,6 +135,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     private static final int MAXIMUM_SAN_DER_BYTES = 32 * 1024;
     private static final int MAXIMUM_SUBJECT_RDNS = 32;
     private static final int SINGLE_ATTRIBUTE_VALUE = 1;
+
     /**
      * Parses a PKCS#10 certification request into the normalized PKI request
      * representation.
@@ -321,8 +322,8 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
     private static SubjectAlternativeName parseGeneralName(GeneralName name) {
         return switch (name.getTagNo()) {
             case GeneralName.dNSName -> new SubjectAlternativeName.DnsName(asAsciiString(name.getName()));
-            case GeneralName.iPAddress -> new SubjectAlternativeName.IpAddress(
-                    ASN1OctetString.getInstance(name.getName()).getOctets());
+            case GeneralName.iPAddress ->
+                new SubjectAlternativeName.IpAddress(ASN1OctetString.getInstance(name.getName()).getOctets());
             case GeneralName.uniformResourceIdentifier ->
                 new SubjectAlternativeName.UriName(asAsciiString(name.getName()));
             case GeneralName.rfc822Name -> new SubjectAlternativeName.Rfc822Name(asAsciiString(name.getName()));

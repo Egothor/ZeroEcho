@@ -8,7 +8,8 @@ package zeroecho.core.storage;
  * Operational limits applied while opening an encrypted software keyring.
  *
  * @param operationalIterationMaximum maximum accepted PBKDF2 iteration count;
- *        it may restrict but never exceed the absolute decoded maximum
+ *                                    it may restrict but never exceed the
+ *                                    absolute decoded maximum
  */
 public record KeyringProtection(int operationalIterationMaximum) {
     /** Iterations used when a new keyring is created. */
@@ -21,8 +22,8 @@ public record KeyringProtection(int operationalIterationMaximum) {
     /**
      * Validates the operational limit.
      *
-     * @throws IllegalArgumentException if the limit is below the creation
-     *         setting or above the absolute operational maximum
+     * @throws IllegalArgumentException if the limit is below the creation setting
+     *                                  or above the absolute operational maximum
      */
     public KeyringProtection {
         if (operationalIterationMaximum < CREATION_ITERATIONS

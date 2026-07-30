@@ -48,15 +48,15 @@ import zeroecho.pki.api.audit.Principal;
  *
  * <p>
  * Implementations must provide atomic per-operation compare-and-set behavior.
- * External signer, callback, and audit code must never run while an implementation
- * holds its coordination lock. Different submission identifiers must not share a
- * permanent global mutation lock.
+ * External signer, callback, and audit code must never run while an
+ * implementation holds its coordination lock. Different submission identifiers
+ * must not share a permanent global mutation lock.
  * </p>
  *
  * <p>
  * Retained records are the source of truth through {@link #signingHorizon()}.
- * Purging a record does not make its stable identifier reusable because creation
- * validates the identifier timestamp against the same horizon.
+ * Purging a record does not make its stable identifier reusable because
+ * creation validates the identifier timestamp against the same horizon.
  * </p>
  */
 public interface SignWorkflowStore {
@@ -72,14 +72,7 @@ public interface SignWorkflowStore {
      * </p>
      */
     enum State {
-        INTENT(10),
-        DISPATCHED(20),
-        SUCCEEDED(40),
-        FAILED(50),
-        CANCELLED(60),
-        RETIRED(70),
-        EXPIRED(80),
-        CANCELLING(30);
+        INTENT(10), DISPATCHED(20), SUCCEEDED(40), FAILED(50), CANCELLED(60), RETIRED(70), EXPIRED(80), CANCELLING(30);
 
         private final int persistentCode;
 
@@ -121,19 +114,19 @@ public interface SignWorkflowStore {
     /**
      * Complete durable signing state.
      *
-     * @param submissionId stable submission identifier
-     * @param namespace provider/store namespace
-     * @param fingerprint versioned semantic request fingerprint
-     * @param owner request owner
-     * @param createdAt store-validated creation time
-     * @param deadline request deadline
-     * @param request versioned request continuation
-     * @param state lifecycle state
-     * @param revision monotonic record revision
-     * @param fence monotonic claim fencing token
-     * @param leaseUntil optional active claim lease
-     * @param detailCode optional non-sensitive detail code
-     * @param result optional terminal signature result
+     * @param submissionId      stable submission identifier
+     * @param namespace         provider/store namespace
+     * @param fingerprint       versioned semantic request fingerprint
+     * @param owner             request owner
+     * @param createdAt         store-validated creation time
+     * @param deadline          request deadline
+     * @param request           versioned request continuation
+     * @param state             lifecycle state
+     * @param revision          monotonic record revision
+     * @param fence             monotonic claim fencing token
+     * @param leaseUntil        optional active claim lease
+     * @param detailCode        optional non-sensitive detail code
+     * @param result            optional terminal signature result
      * @param providerUpdatedAt optional durable provider terminal-transition time;
      *                          the provider clock may be independent of the store
      *                          clock, but successful completion must be strictly
@@ -227,9 +220,9 @@ public interface SignWorkflowStore {
     /**
      * Atomically claims an intent and increments its revision and fencing token.
      *
-     * @param submissionId stable submission identifier
+     * @param submissionId     stable submission identifier
      * @param expectedRevision caller-observed revision
-     * @param lease positive claim duration
+     * @param lease            positive claim duration
      * @return claimed record, or empty when compare-and-set loses
      */
     Optional<Record> tryClaimSign(PkiId submissionId, long expectedRevision, Duration lease);
@@ -237,10 +230,10 @@ public interface SignWorkflowStore {
     /**
      * Atomically renews an owned lease.
      *
-     * @param submissionId stable submission identifier
+     * @param submissionId     stable submission identifier
      * @param expectedRevision caller-observed revision
-     * @param fence current fencing token
-     * @param lease positive renewal duration
+     * @param fence            current fencing token
+     * @param lease            positive renewal duration
      * @return renewed record, or empty when compare-and-set loses
      */
     Optional<Record> renewSignClaim(PkiId submissionId, long expectedRevision, long fence, Duration lease);
@@ -256,12 +249,12 @@ public interface SignWorkflowStore {
      * without treating provider acceptance as terminal.
      * </p>
      *
-     * @param submissionId stable submission identifier
-     * @param expectedRevision caller-observed revision
-     * @param fence current fencing token
-     * @param target allowed target state
-     * @param detailCode optional non-sensitive detail
-     * @param result signature result, required only for success
+     * @param submissionId      stable submission identifier
+     * @param expectedRevision  caller-observed revision
+     * @param fence             current fencing token
+     * @param target            allowed target state
+     * @param detailCode        optional non-sensitive detail
+     * @param result            signature result, required only for success
      * @param providerUpdatedAt durable provider terminal-transition time from the
      *                          provider clock domain; required for success and
      *                          required to be strictly before the request deadline
@@ -271,13 +264,13 @@ public interface SignWorkflowStore {
             Optional<String> detailCode, Optional<EncodedObject> result, Optional<Instant> providerUpdatedAt);
 
     /**
-     * Atomically retires a terminal current record while retaining its identity
-     * and any successful result. Non-terminal records, including
+     * Atomically retires a terminal current record while retaining its identity and
+     * any successful result. Non-terminal records, including
      * {@link State#CANCELLING}, are not retirable.
      *
-     * @param submissionId stable submission identifier
+     * @param submissionId     stable submission identifier
      * @param expectedRevision caller-observed revision
-     * @param fence current fencing token
+     * @param fence            current fencing token
      * @return retired record, or empty when compare-and-set loses
      */
     Optional<Record> retireSign(PkiId submissionId, long expectedRevision, long fence);

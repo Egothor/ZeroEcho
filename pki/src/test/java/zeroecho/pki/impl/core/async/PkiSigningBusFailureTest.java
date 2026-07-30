@@ -87,8 +87,7 @@ final class PkiSigningBusFailureTest {
     @Test
     void acceptedCancellationWaitsForObservedTerminalProviderState(@TempDir Path tempDir) throws Exception {
         AcceptedDelayedCancellationWorkflow signer = new AcceptedDelayedCancellationWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
             PkiId id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
@@ -110,14 +109,12 @@ final class PkiSigningBusFailureTest {
     }
 
     @Test
-    void deadlineAdvisoryStillRequiresProviderCancellationBeforeRetirement(@TempDir Path tempDir)
-            throws Exception {
+    void deadlineAdvisoryStillRequiresProviderCancellationBeforeRetirement(@TempDir Path tempDir) throws Exception {
         Instant createdAt = Instant.parse("2026-06-07T08:09:10Z");
         MutableClock clock = new MutableClock(createdAt);
         ControlledWorkflow signer = new ControlledWorkflow(clock);
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults(), clock);
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults(),
+                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
             PkiId id = submit(bus, Duration.ofSeconds(10));
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
             clock.set(createdAt.plusSeconds(10));
@@ -201,8 +198,7 @@ final class PkiSigningBusFailureTest {
     @Test
     void providerCallbackReturnsWhileSameOperationSubmissionIsBlocked(@TempDir Path tempDir) throws Exception {
         BlockingWorkflow signer = new BlockingWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId id = submit(bus);
@@ -228,10 +224,8 @@ final class PkiSigningBusFailureTest {
             id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
             SignWorkflowStore.Record dispatched = store.getSignRecord(id).orElseThrow();
-            store.transitionSign(id, dispatched.revision(), dispatched.fence(),
-                    SignWorkflowStore.State.CANCELLING, Optional.of("CANCEL_REQUESTED"), Optional.empty(),
-                    Optional.empty())
-                    .orElseThrow();
+            store.transitionSign(id, dispatched.revision(), dispatched.fence(), SignWorkflowStore.State.CANCELLING,
+                    Optional.of("CANCEL_REQUESTED"), Optional.empty(), Optional.empty()).orElseThrow();
         }
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
                 PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog)) {
@@ -245,8 +239,7 @@ final class PkiSigningBusFailureTest {
     @Test
     void retirementReconcilesCompletionAndAdvisoryCallbackWithoutResultLoss(@TempDir Path tempDir) throws Exception {
         RetirementRaceWorkflow signer = new RetirementRaceWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId id = submit(bus);
@@ -271,8 +264,7 @@ final class PkiSigningBusFailureTest {
     @Test
     void pollAndRetirementSerializeAndPreserveProviderCompletion(@TempDir Path tempDir) throws Exception {
         RetirementRaceWorkflow signer = new RetirementRaceWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId id = submit(bus);
@@ -295,8 +287,7 @@ final class PkiSigningBusFailureTest {
     @Test
     void consumeAndRetirementShareCoordinatorWithoutResultLoss(@TempDir Path tempDir) throws Exception {
         RetirementRaceWorkflow signer = new RetirementRaceWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId id = submit(bus);
@@ -322,14 +313,12 @@ final class PkiSigningBusFailureTest {
     }
 
     @Test
-    void preDispatchExpiryMakesNoProviderCallAndPurgesOnlyAfterRetirement(@TempDir Path tempDir)
-            throws Exception {
+    void preDispatchExpiryMakesNoProviderCallAndPurgesOnlyAfterRetirement(@TempDir Path tempDir) throws Exception {
         Instant createdAt = Instant.parse("2026-05-06T07:08:09Z");
         MutableClock clock = new MutableClock(createdAt);
         ControlledWorkflow signer = new ControlledWorkflow(clock);
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults(), clock);
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults(),
+                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
             PkiId id = submit(bus, Duration.ofSeconds(10));
             assertEquals(1, store.listWorkflowStates().size());
             clock.set(createdAt.plusSeconds(10));
@@ -347,14 +336,12 @@ final class PkiSigningBusFailureTest {
     }
 
     @Test
-    void postDispatchExpiryRetainsAuthorityUntilProviderTerminalReconciliation(@TempDir Path tempDir)
-            throws Exception {
+    void postDispatchExpiryRetainsAuthorityUntilProviderTerminalReconciliation(@TempDir Path tempDir) throws Exception {
         Instant createdAt = Instant.parse("2026-05-06T07:08:09Z");
         MutableClock clock = new MutableClock(createdAt);
         AcceptedDelayedCancellationWorkflow signer = new AcceptedDelayedCancellationWorkflow(clock);
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults(), clock);
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults(),
+                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
             PkiId id = submit(bus, Duration.ofSeconds(10));
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
             assertEquals(1, signer.submissions.get());
@@ -362,8 +349,7 @@ final class PkiSigningBusFailureTest {
             clock.set(createdAt.plusSeconds(10));
             bus.sweep(clock.instant());
             assertEquals(SignWorkflowStore.State.CANCELLING, store.getSignRecord(id).orElseThrow().state());
-            assertEquals("CANCEL_SUBMITTED",
-                    store.getSignRecord(id).orElseThrow().detailCode().orElseThrow());
+            assertEquals("CANCEL_SUBMITTED", store.getSignRecord(id).orElseThrow().detailCode().orElseThrow());
             assertEquals(1, signer.cancellations.get());
             assertEquals(1, store.listWorkflowStates().size());
             assertTrue(bus.consumeResult(id).isEmpty());
@@ -388,16 +374,16 @@ final class PkiSigningBusFailureTest {
     void blockedProviderCannotRedispatchAfterLeaseExpiry(@TempDir Path tempDir) throws Exception {
         MutableClock clock = new MutableClock(Instant.parse("2026-05-06T07:08:09Z"));
         BlockingWorkflow signer = new BlockingWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults(), clock);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults(),
+                clock);
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Principal owner = new Principal("TEST", "owner");
             PkiId id = bus.newSubmissionId();
             EncodedObject payload = new EncodedObject(Encoding.BINARY, new byte[] { 1 });
             AccessContext access = new AccessContext(owner, new Purpose("TEST"), Optional.empty(), Optional.empty());
-            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access,
-                    "SHA256withRSA", payload, new KeyRef("test"), Encoding.BINARY, Optional.empty());
+            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access, "SHA256withRSA",
+                    payload, new KeyRef("test"), Encoding.BINARY, Optional.empty());
             bus.submitSign(id, owner, new KeyRef("test"), "SHA256withRSA", payload, Duration.ofMinutes(5),
                     Optional.of(continuation.encode()));
             Future<?> first = executor.submit(() -> bus.status(id));
@@ -420,8 +406,7 @@ final class PkiSigningBusFailureTest {
     @Test
     void providerCallsPermitCrossThreadReentryOutsideOperationLock(@TempDir Path tempDir) throws Exception {
         CrossThreadReentrantWorkflow signer = new CrossThreadReentrantWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
             signer.attach(bus);
             PkiId id = submit(bus);
@@ -439,8 +424,7 @@ final class PkiSigningBusFailureTest {
     @Test
     void blockedSubmissionDoesNotBlockAnotherOperation(@TempDir Path tempDir) throws Exception {
         SelectiveBlockingWorkflow signer = new SelectiveBlockingWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId blocked = submit(bus);
@@ -448,8 +432,8 @@ final class PkiSigningBusFailureTest {
             assertTrue(signer.blockedEntered.await(5, TimeUnit.SECONDS));
 
             PkiId independent = submit(bus);
-            Future<Optional<zeroecho.pki.util.async.AsyncStatus>> second =
-                    executor.submit(() -> bus.status(independent));
+            Future<Optional<zeroecho.pki.util.async.AsyncStatus>> second = executor
+                    .submit(() -> bus.status(independent));
             assertEquals(AsyncState.RUNNING, second.get(5, TimeUnit.SECONDS).orElseThrow().state());
             assertEquals(2, signer.submissions.get());
 
@@ -461,8 +445,7 @@ final class PkiSigningBusFailureTest {
     @Test
     void providerStatusExceptionReleasesSingleFlightReservation(@TempDir Path tempDir) throws Exception {
         ThrowOnceStatusWorkflow signer = new ThrowOnceStatusWorkflow();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
             PkiId id = submit(bus);
             PkiException sanitized = assertThrows(PkiException.class, () -> bus.status(id));
@@ -482,10 +465,9 @@ final class PkiSigningBusFailureTest {
             Principal owner = new Principal("SYSTEM", "pki");
             Instant now = Instant.now();
             EncodedObject unsupported = new EncodedObject(Encoding.BINARY, new byte[] { 99 });
-            store.putWorkflowState(new WorkflowStateRecord(new PkiId("unsupported-sign"),
-                    PkiSigningBus.TYPE_SIGN, owner,
-                    OrchestrationDurabilityPolicy.DURABLE_MIN_STATE, now, now, now.plusSeconds(60), Encoding.BINARY,
-                    Optional.of(unsupported)));
+            store.putWorkflowState(new WorkflowStateRecord(new PkiId("unsupported-sign"), PkiSigningBus.TYPE_SIGN,
+                    owner, OrchestrationDurabilityPolicy.DURABLE_MIN_STATE, now, now, now.plusSeconds(60),
+                    Encoding.BINARY, Optional.of(unsupported)));
             InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false);
             try {
                 assertThrows(PkiException.class,
@@ -522,8 +504,8 @@ final class PkiSigningBusFailureTest {
             operationId = bus.canonicalizeOperationId(new PkiId("sign:failure"), owner);
             EncodedObject payload = new EncodedObject(Encoding.BINARY, new byte[] { 1, 2, 3 });
             AccessContext access = new AccessContext(owner, new Purpose("TEST"), Optional.empty(), Optional.empty());
-            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access,
-                    "SHA256withRSA", payload, keyRef, Encoding.BINARY, Optional.empty());
+            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access, "SHA256withRSA",
+                    payload, keyRef, Encoding.BINARY, Optional.empty());
             bus.submitSign(operationId, owner, keyRef, "SHA256withRSA", payload, Duration.ofSeconds(5),
                     Optional.of(continuation.encode()));
             bus.sweep(java.time.Instant.now());
@@ -552,8 +534,8 @@ final class PkiSigningBusFailureTest {
         PkiId id = bus.newSubmissionId();
         EncodedObject payload = new EncodedObject(Encoding.BINARY, new byte[] { 1 });
         AccessContext access = new AccessContext(owner, new Purpose("TEST"), Optional.empty(), Optional.empty());
-        PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access,
-                "SHA256withRSA", payload, new KeyRef("test"), Encoding.BINARY, Optional.empty());
+        PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access, "SHA256withRSA",
+                payload, new KeyRef("test"), Encoding.BINARY, Optional.empty());
         bus.submitSign(id, owner, new KeyRef("test"), "SHA256withRSA", payload, ttl,
                 Optional.of(continuation.encode()));
         return id;
@@ -581,8 +563,8 @@ final class PkiSigningBusFailureTest {
         @Override
         public PkiId submitSign(SignRequest request) {
             submissions.incrementAndGet();
-            statuses.put(request.submissionId(), new OperationStatus(State.RUNNING, clock.instant(),
-                    Optional.of("RUNNING"), Optional.empty()));
+            statuses.put(request.submissionId(),
+                    new OperationStatus(State.RUNNING, clock.instant(), Optional.of("RUNNING"), Optional.empty()));
             return request.submissionId();
         }
 
@@ -622,13 +604,13 @@ final class PkiSigningBusFailureTest {
         private void completeSuccessfully(PkiId operationId) {
             OperationResult result = new OperationResult(
                     Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 21 })), Optional.empty());
-            statuses.put(operationId, new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"),
-                    Optional.of(result)));
+            statuses.put(operationId,
+                    new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"), Optional.of(result)));
         }
 
         private void completeCancelled(PkiId operationId, Instant completedAt) {
-            statuses.put(operationId, new OperationStatus(State.CANCELLED, completedAt,
-                    Optional.of("CANCELLED"), Optional.empty()));
+            statuses.put(operationId,
+                    new OperationStatus(State.CANCELLED, completedAt, Optional.of("CANCELLED"), Optional.empty()));
         }
     }
 
@@ -650,8 +632,8 @@ final class PkiSigningBusFailureTest {
         @Override
         public PkiId submitSign(SignRequest request) {
             submissions.incrementAndGet();
-            statuses.put(request.submissionId(), new OperationStatus(State.RUNNING, clock.instant(),
-                    Optional.of("RUNNING"), Optional.empty()));
+            statuses.put(request.submissionId(),
+                    new OperationStatus(State.RUNNING, clock.instant(), Optional.of("RUNNING"), Optional.empty()));
             return request.submissionId();
         }
 
@@ -668,8 +650,8 @@ final class PkiSigningBusFailureTest {
         @Override
         public boolean cancel(PkiId operationId, long fencingToken, String reason) {
             cancellations.incrementAndGet();
-            statuses.put(operationId, new OperationStatus(State.CANCELLED, clock.instant(),
-                    Optional.of("CANCELLED"), Optional.empty()));
+            statuses.put(operationId,
+                    new OperationStatus(State.CANCELLED, clock.instant(), Optional.of("CANCELLED"), Optional.empty()));
             return true;
         }
 
@@ -693,8 +675,8 @@ final class PkiSigningBusFailureTest {
         private void succeedAt(PkiId operationId, Instant completedAt, byte value) {
             OperationResult result = new OperationResult(
                     Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { value })), Optional.empty());
-            statuses.put(operationId, new OperationStatus(State.SUCCEEDED, completedAt, Optional.of("SIGNED"),
-                    Optional.of(result)));
+            statuses.put(operationId,
+                    new OperationStatus(State.SUCCEEDED, completedAt, Optional.of("SIGNED"), Optional.of(result)));
         }
     }
 
@@ -748,8 +730,7 @@ final class PkiSigningBusFailureTest {
                 return false;
             }
             cancellations.incrementAndGet();
-            status.set(new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"),
-                    Optional.empty()));
+            status.set(new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"), Optional.empty()));
             return true;
         }
 
@@ -776,8 +757,7 @@ final class PkiSigningBusFailureTest {
         private void completeWithoutNotification() {
             OperationResult result = new OperationResult(
                     Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 7 })), Optional.empty());
-            status.set(new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"),
-                    Optional.of(result)));
+            status.set(new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"), Optional.of(result)));
             statusRelease.countDown();
         }
 
@@ -822,8 +802,7 @@ final class PkiSigningBusFailureTest {
             cancellations.incrementAndGet();
             OperationResult result = new OperationResult(
                     Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 11, 12 })), Optional.empty());
-            status.set(new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"),
-                    Optional.of(result)));
+            status.set(new OperationStatus(State.SUCCEEDED, Instant.now(), Optional.of("SIGNED"), Optional.of(result)));
             return false;
         }
 
@@ -860,8 +839,8 @@ final class PkiSigningBusFailureTest {
         @Override
         public PkiId submitSign(SignRequest request) {
             submissions.incrementAndGet();
-            statuses.put(request.submissionId(), new OperationStatus(State.RUNNING, Instant.now(),
-                    Optional.of("RUNNING"), Optional.empty()));
+            statuses.put(request.submissionId(),
+                    new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
             entered.countDown();
             try {
                 release.await();
@@ -936,8 +915,7 @@ final class PkiSigningBusFailureTest {
         @Override
         public PkiId submitSign(SignRequest request) {
             submissions.incrementAndGet();
-            status.set(new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"),
-                    Optional.empty()));
+            status.set(new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
             reenterStatus(request.submissionId());
             return request.submissionId();
         }
@@ -958,8 +936,7 @@ final class PkiSigningBusFailureTest {
         public boolean cancel(PkiId requested, long fencingToken, String reason) {
             cancellations.incrementAndGet();
             reenterStatus(requested);
-            status.set(new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"),
-                    Optional.empty()));
+            status.set(new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"), Optional.empty()));
             return true;
         }
 
@@ -1004,8 +981,8 @@ final class PkiSigningBusFailureTest {
         @Override
         public PkiId submitSign(SignRequest request) {
             submissions.incrementAndGet();
-            statuses.put(request.submissionId(), new OperationStatus(State.RUNNING, Instant.now(),
-                    Optional.of("RUNNING"), Optional.empty()));
+            statuses.put(request.submissionId(),
+                    new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
             if (blockedOperation.compareAndSet(null, request.submissionId())
                     || blockedOperation.get().equals(request.submissionId())) {
                 blockedEntered.countDown();
@@ -1031,8 +1008,8 @@ final class PkiSigningBusFailureTest {
 
         @Override
         public boolean cancel(PkiId operationId, long fencingToken, String reason) {
-            statuses.put(operationId, new OperationStatus(State.CANCELLED, Instant.now(),
-                    Optional.of("CANCELLED"), Optional.empty()));
+            statuses.put(operationId,
+                    new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"), Optional.empty()));
             return true;
         }
 
@@ -1084,8 +1061,7 @@ final class PkiSigningBusFailureTest {
 
         @Override
         public boolean cancel(PkiId operationId, long fencingToken, String reason) {
-            status.set(new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"),
-                    Optional.empty()));
+            status.set(new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"), Optional.empty()));
             return true;
         }
 

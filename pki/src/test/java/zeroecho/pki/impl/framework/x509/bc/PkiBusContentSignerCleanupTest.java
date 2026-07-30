@@ -80,9 +80,8 @@ final class PkiBusContentSignerCleanupTest {
                 PkiSigningBus bus = new PkiSigningBus(store, signer, busLog)) {
             PkiBusContentSigner contentSigner = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
                     Duration.ofSeconds(5));
-            contentSigner.getOutputStream().write(intermediate
-                    ? subjectKey.getPublic().getEncoded()
-                    : new byte[] { 1, 2, 3 });
+            contentSigner.getOutputStream()
+                    .write(intermediate ? subjectKey.getPublic().getEncoded() : new byte[] { 1, 2, 3 });
             assertThrows(PkiException.class, contentSigner::getSignature);
 
             assertEquals(1, signer.submittedSignCount());

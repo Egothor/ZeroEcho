@@ -23,15 +23,13 @@ final class CredentialProfileBindings {
 
     /* default */ static void requireEndEntityBinding(CredentialProfileBinding binding,
             CertificateProfileRef expected) {
-        if (!(binding instanceof EndEntityProfileBinding endEntity)
-                || !endEntity.reference().equals(expected)) {
+        if (!(binding instanceof EndEntityProfileBinding endEntity) || !endEntity.reference().equals(expected)) {
             throw mismatch();
         }
     }
 
     /* default */ static void requireCaBinding(CredentialProfileBinding binding, CertificateProfileRef expected) {
-        if (!(binding instanceof CaProfileBinding ca)
-                || !ca.reference().equals(expected)) {
+        if (!(binding instanceof CaProfileBinding ca) || !ca.reference().equals(expected)) {
             throw mismatch();
         }
     }
@@ -41,7 +39,8 @@ final class CredentialProfileBindings {
     }
 
     /**
-     * Internal typed mismatch used to preserve stable caller-specific audit mapping.
+     * Internal typed mismatch used to preserve stable caller-specific audit
+     * mapping.
      */
     // Construction and use are restricted to trusted profile-binding callers.
     /* default */ static final class Mismatch extends PkiException {

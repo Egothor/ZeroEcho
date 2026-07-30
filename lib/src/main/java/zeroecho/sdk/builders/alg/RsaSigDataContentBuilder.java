@@ -109,6 +109,7 @@ import zeroecho.sdk.content.api.PlainContent;
 public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainContent> {
     private static final String ALGORITHM_ID = "RSA";
     private final ZeroEchoSession session;
+
     /**
      * Mode selects whether the builder signs or verifies.
      */

@@ -199,7 +199,7 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
      * <li>the original command attributes unchanged.</li>
      * </ul>
      *
-     * @param command status object generation command; must not be {@code null}
+     * @param command    status object generation command; must not be {@code null}
      * @param crlEntries structured current CRL entries; must not be {@code null}
      * @return generated CRL status object
      * @throws IllegalArgumentException if {@code command} is {@code null}, if the
@@ -334,8 +334,7 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
             case SUPERSEDED -> CRLReason.superseded;
             case CESSATION_OF_OPERATION -> CRLReason.cessationOfOperation;
             case CERTIFICATE_HOLD -> CRLReason.certificateHold;
-            case REMOVE_FROM_CRL -> throw new IllegalArgumentException(
-                    "REMOVE_FROM_CRL is not an active CRL entry");
+            case REMOVE_FROM_CRL -> throw new IllegalArgumentException("REMOVE_FROM_CRL is not an active CRL entry");
             case PRIVILEGE_WITHDRAWN -> CRLReason.privilegeWithdrawn;
             case AA_COMPROMISE -> CRLReason.aACompromise;
         };

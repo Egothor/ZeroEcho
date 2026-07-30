@@ -44,9 +44,9 @@ import zeroecho.core.context.AgreementContext;
  * <h2>Generic JCA-based Key Agreement Context</h2>
  *
  * An {@link AgreementContext} backed by the standard JCA key-agreement API.
- * This class supports elliptic-curve and modern Diffie-Hellman variants
- * such as ECDH, XDH (X25519, X448), and others provided by the runtime or
- * configured provider.
+ * This class supports elliptic-curve and modern Diffie-Hellman variants such as
+ * ECDH, XDH (X25519, X448), and others provided by the runtime or configured
+ * provider.
  *
  * <p>
  * Instances of this context are created with a local {@link PrivateKey}, and

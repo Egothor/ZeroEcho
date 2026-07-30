@@ -8,7 +8,6 @@ public final class TestKeyringUnlocks {
     }
 
     public static KeyringUnlockProvider provider() {
-        return () -> new KeyringPassword(
-                new char[] { 'p', 'k', 'i', '-', 't', 'e', 's', 't', '-', 'k', 'e', 'y' });
+        return () -> new KeyringPassword(new char[] { 'p', 'k', 'i', '-', 't', 'e', 's', 't', '-', 'k', 'e', 'y' });
     }
 }

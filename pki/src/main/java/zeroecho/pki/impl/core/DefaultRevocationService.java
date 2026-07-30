@@ -31,10 +31,10 @@ public final class DefaultRevocationService implements RevocationService {
     private static final Instant UNKNOWN_AUDIT_TIME = Instant.EPOCH;
     private static final Principal SYSTEM_PKI = new Principal("SYSTEM", "pki");
     private static final Purpose REVOCATION_PURPOSE = new Purpose("REVOCATION");
-    private static final List<String> SAFE_STORE_CODES = List.of(
-            "REVOCATION_CREDENTIAL_NOT_FOUND", "REVOCATION_TRANSITION_ILLEGAL", "REVOCATION_TERMINAL",
-            "REVOCATION_TRANSITION_CONFLICT", "REVOCATION_STATE_CORRUPT", "REVOCATION_PERSIST_FAILED",
-            "REVOCATION_DURABILITY_UNCONFIRMED", "STORE_DURABILITY_UNCONFIRMED");
+    private static final List<String> SAFE_STORE_CODES = List.of("REVOCATION_CREDENTIAL_NOT_FOUND",
+            "REVOCATION_TRANSITION_ILLEGAL", "REVOCATION_TERMINAL", "REVOCATION_TRANSITION_CONFLICT",
+            "REVOCATION_STATE_CORRUPT", "REVOCATION_PERSIST_FAILED", "REVOCATION_DURABILITY_UNCONFIRMED",
+            "STORE_DURABILITY_UNCONFIRMED");
 
     private final PkiStore store;
     private final Clock clock;
@@ -43,8 +43,8 @@ public final class DefaultRevocationService implements RevocationService {
     /**
      * Creates the service with one authoritative clock.
      *
-     * @param store authoritative store
-     * @param clock authoritative clock
+     * @param store     authoritative store
+     * @param clock     authoritative clock
      * @param auditSink best-effort audit sink
      */
     public DefaultRevocationService(PkiStore store, Clock clock, AuditSink auditSink) {

@@ -77,11 +77,9 @@ import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
  */
 public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWorkflowProvider {
     /** Stable failure code for a missing explicit keyring unlock provider. */
-    public static final String DC_KEYRING_UNLOCK_PROVIDER_REQUIRED =
-            "KEYRING_UNLOCK_PROVIDER_REQUIRED";
+    public static final String DC_KEYRING_UNLOCK_PROVIDER_REQUIRED = "KEYRING_UNLOCK_PROVIDER_REQUIRED";
     /** Stable failure code for an unlock-provider acquisition failure. */
-    public static final String DC_KEYRING_UNLOCK_PROVIDER_FAILED =
-            "KEYRING_UNLOCK_PROVIDER_FAILED";
+    public static final String DC_KEYRING_UNLOCK_PROVIDER_FAILED = "KEYRING_UNLOCK_PROVIDER_FAILED";
     /** Stable failure code for an I/O failure while opening the keyring. */
     public static final String DC_KEYRING_OPEN_FAILED = "KEYRING_OPEN_FAILED";
 
@@ -97,9 +95,11 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
     /**
      * Creates a service-loadable provider without unlock material.
      *
-     * <p>{@link #allocate(ProviderConfig)} fails until an explicitly injected
-     * provider instance is used. Service configuration text can never contain
-     * an unlock secret.</p>
+     * <p>
+     * {@link #allocate(ProviderConfig)} fails until an explicitly injected provider
+     * instance is used. Service configuration text can never contain an unlock
+     * secret.
+     * </p>
      */
     public ZeroEchoLibSignatureWorkflowProvider() {
         this.keyringUnlockProvider = null;
@@ -108,12 +108,12 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
     /**
      * Creates a provider with an explicit headless unlock source.
      *
-     * @param keyringUnlockProvider provider returning a fresh destroyable
-     *        password for each keyring open
+     * @param keyringUnlockProvider provider returning a fresh destroyable password
+     *                              for each keyring open
      */
     public ZeroEchoLibSignatureWorkflowProvider(KeyringUnlockProvider keyringUnlockProvider) {
-        this.keyringUnlockProvider = java.util.Objects.requireNonNull(
-                keyringUnlockProvider, "keyringUnlockProvider must not be null");
+        this.keyringUnlockProvider = java.util.Objects.requireNonNull(keyringUnlockProvider,
+                "keyringUnlockProvider must not be null");
     }
 
     @Override
@@ -143,7 +143,8 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
         config.get(KEY_OPERATION_HORIZON).ifPresent(value -> {
             Duration horizon = Duration.parse(value);
             if (horizon.isZero() || horizon.isNegative()) {
-                throw new IllegalArgumentException("Configuration key '" + KEY_OPERATION_HORIZON + "' must be positive.");
+                throw new IllegalArgumentException(
+                        "Configuration key '" + KEY_OPERATION_HORIZON + "' must be positive.");
             }
         });
         config.get(KEY_KEYREF_PREFIX).ifPresent(value -> {
@@ -176,18 +177,16 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
     /**
      * Allocates a workflow using explicit runtime dependencies.
      *
-     * @param config structural provider configuration
+     * @param config       structural provider configuration
      * @param dependencies explicit process-local runtime dependencies
      * @return opened workflow owning an unlocked keyring
-     * @throws PkiException if the keyring unlock provider is absent or fails
+     * @throws PkiException     if the keyring unlock provider is absent or fails
      * @throws RuntimeException if workflow allocation otherwise fails
      */
     @Override
-    public SignatureWorkflow allocate(final ProviderConfig config,
-            SignatureWorkflowRuntimeDependencies dependencies) {
+    public SignatureWorkflow allocate(final ProviderConfig config, SignatureWorkflowRuntimeDependencies dependencies) {
         java.util.Objects.requireNonNull(dependencies, "dependencies must not be null");
-        KeyringUnlockProvider provider = dependencies.keyringUnlockProvider()
-                .orElse(keyringUnlockProvider);
+        KeyringUnlockProvider provider = dependencies.keyringUnlockProvider().orElse(keyringUnlockProvider);
         if (provider == null) {
             throw new PkiException(DC_KEYRING_UNLOCK_PROVIDER_REQUIRED);
         }
@@ -196,8 +195,7 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
 
     // Cleanup must cover every constructor failure, including unchecked failures.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    private SignatureWorkflow allocate(final ProviderConfig config,
-            KeyringUnlockProvider unlockProvider) {
+    private SignatureWorkflow allocate(final ProviderConfig config, KeyringUnlockProvider unlockProvider) {
         validateConfig(config);
         String keyringPath = config.require(KEY_KEYRING_PATH);
         Path operationRoot = Path.of(config.require(KEY_OPERATION_ROOT));
@@ -207,9 +205,8 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
 
         KeyringStore keyring = openKeyring(Path.of(keyringPath), unlockProvider);
         try {
-            return new ZeroEchoLibSignatureWorkflow(id(), Path.of(keyringPath), operationRoot,
-                    Clock.systemUTC(), operationHorizon, prefix, requireSuffix,
-                    unlockProvider, keyring);
+            return new ZeroEchoLibSignatureWorkflow(id(), Path.of(keyringPath), operationRoot, Clock.systemUTC(),
+                    operationHorizon, prefix, requireSuffix, unlockProvider, keyring);
         } catch (RuntimeException | Error failure) {
             keyring.close();
             throw failure;
@@ -217,15 +214,11 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
     }
 
     /*
-     * The unlock provider is arbitrary application code. Its throwable message
-     * and cause are intentionally removed at this security boundary.
+     * The unlock provider is arbitrary application code. Its throwable message and
+     * cause are intentionally removed at this security boundary.
      */
-    @SuppressWarnings({
-            "PMD.AvoidCatchingGenericException",
-            "PMD.PreserveStackTrace"
-    })
-    private static KeyringStore openKeyring(Path keyringPath,
-            KeyringUnlockProvider unlockProvider) {
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    private static KeyringStore openKeyring(Path keyringPath, KeyringUnlockProvider unlockProvider) {
         KeyringPassword password;
         try {
             password = unlockProvider.acquire();

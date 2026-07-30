@@ -69,8 +69,7 @@ public final class HybridSignatureContexts {
      * @since 1.0
      */
     public static SignatureContext sign(ZeroEchoSession session, HybridSignatureProfile profile,
-            PrivateKey classicPrivate,
-            PrivateKey pqcPrivate, int maxBufferedBytes) {
+            PrivateKey classicPrivate, PrivateKey pqcPrivate, int maxBufferedBytes) {
         Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(classicPrivate, "classicPrivate");

@@ -102,8 +102,8 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
             }
             fingerprints.put(opId, request.semanticFingerprint());
             fences.put(opId, request.fencingToken());
-            status.put(opId, new OperationStatus(State.RUNNING, Instant.now(), Optional.of("PENDING"),
-                    Optional.empty()));
+            status.put(opId,
+                    new OperationStatus(State.RUNNING, Instant.now(), Optional.of("PENDING"), Optional.empty()));
             submittedSignCount.incrementAndGet();
         }
         if (!completeImmediately) {
@@ -202,8 +202,8 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
                 return false;
             }
             fences.put(operationId, fencingToken);
-            status.put(operationId, new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"),
-                    Optional.empty()));
+            status.put(operationId,
+                    new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"), Optional.empty()));
             return true;
         }
     }

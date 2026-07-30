@@ -47,9 +47,9 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * Specification wrapper for a Kyber (ML-KEM) private key encoded in PKCS#8.
  *
  * <p>
- * Instances of this class carry an owned copy of the PKCS#8-encoded private
- * key bytes. They are used with {@link zeroecho.core.CryptoAlgorithm} key
- * builders to import keys into the provider’s native representation.
+ * Instances of this class carry an owned copy of the PKCS#8-encoded private key
+ * bytes. They are used with {@link zeroecho.core.CryptoAlgorithm} key builders
+ * to import keys into the provider’s native representation.
  * </p>
  *
  * <h2>Encoding</h2>

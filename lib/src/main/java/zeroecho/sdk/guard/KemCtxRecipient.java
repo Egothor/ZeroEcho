@@ -82,8 +82,7 @@ public final class KemCtxRecipient implements Recipient, AutoCloseable {
      * @param kekBytes KEK length; exactly 16 or 32 bytes
      * @param saltLen  length of the random salt to apply during HKDF
      * @throws NullPointerException     if {@code ctx} is {@code null}
-     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or
-     *                                  32
+     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or 32
      */
     public KemCtxRecipient(KemContext ctx, int kekBytes, int saltLen) {
         this(ctx, kekBytes, saltLen, false);
@@ -107,8 +106,7 @@ public final class KemCtxRecipient implements Recipient, AutoCloseable {
      * @param decoy    {@code true} if this recipient is a decoy (fake entry that
      *                 cannot unwrap a CEK); {@code false} if it is a real recipient
      * @throws NullPointerException     if {@code ctx} is {@code null}
-     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or
-     *                                  32
+     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or 32
      */
     public KemCtxRecipient(KemContext ctx, int kekBytes, int saltLen, boolean decoy) {
         int validatedKekBytes = RecipientKekSizes.requireSupported(kekBytes);

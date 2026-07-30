@@ -567,8 +567,7 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
      * <p>
      * The actual cipher work is delegated to an
      * {@link zeroecho.core.context.EncryptionContext} created through
-     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
-     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}.
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}.
      * If the created context implements {@code ContextAware}, the configured
      * context is injected before the stream is attached.
      * </p>
@@ -638,8 +637,7 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
      * <p>
      * The actual cipher work is delegated to an
      * {@link zeroecho.core.context.EncryptionContext} created through
-     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
-     * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}.
+     * {@link zeroecho.sdk.ZeroEchoSession#createContext(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}.
      * If the created context implements {@code ContextAware}, the configured
      * context is injected before the stream is attached.
      * </p>

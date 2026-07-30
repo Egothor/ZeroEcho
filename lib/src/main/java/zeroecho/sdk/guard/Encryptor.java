@@ -84,8 +84,7 @@ final class Encryptor implements EncryptedContent, MultiRecipientContent {
         this.keyBytes = keyBytes;
         this.maxRecipients = maxRecipients;
         this.maxEntryLen = maxEntryLen;
-        this.randomBytesFactory = Objects.requireNonNull(randomBytesFactory,
-                "randomBytesFactory must not be null");
+        this.randomBytesFactory = Objects.requireNonNull(randomBytesFactory, "randomBytesFactory must not be null");
     }
 
     /**
@@ -232,8 +231,7 @@ final class Encryptor implements EncryptedContent, MultiRecipientContent {
         return key;
     }
 
-    /* default */ static void closeRecipients(List<Recipient> ownedRecipients, Throwable primary)
-            throws IOException {
+    /* default */ static void closeRecipients(List<Recipient> ownedRecipients, Throwable primary) throws IOException {
         IOException cleanupFailure = null;
         for (Recipient recipient : ownedRecipients) {
             try {

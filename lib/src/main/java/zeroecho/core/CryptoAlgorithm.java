@@ -106,8 +106,8 @@ import zeroecho.core.spi.SymmetricKeyImporter;
  * <p>
  * <b>Security note:</b> Algorithms must enforce strong validation of keys and
  * specs during registration and
- * {@link #createContext(KeyUsage, Key, ContextSpec)} to
- * prevent downgrade or misuse attacks.
+ * {@link #createContext(KeyUsage, Key, ContextSpec)} to prevent downgrade or
+ * misuse attacks.
  * </p>
  *
  * @since 1.0
@@ -123,16 +123,11 @@ public abstract class CryptoAlgorithm { // NOPMD
 
     private final List<Capability> capabilities = new ArrayList<>();
     private final Map<KeyUsage, List<RoleBinding<?, ?, ?>>> ctxBindings = new EnumMap<>(KeyUsage.class);
-    private final Map<Class<? extends AlgorithmKeySpec>, AsymmetricKeyPairGenerator<?>> keyPairGenerators =
-            new LinkedHashMap<>();
-    private final Map<Class<? extends AlgorithmKeySpec>, PublicKeyImporter<?>> publicKeyImporters =
-            new LinkedHashMap<>();
-    private final Map<Class<? extends AlgorithmKeySpec>, PrivateKeyImporter<?>> privateKeyImporters =
-            new LinkedHashMap<>();
-    private final Map<Class<? extends AlgorithmKeySpec>, SymmetricKeyGenerator<?>> symmetricKeyGenerators =
-            new LinkedHashMap<>();
-    private final Map<Class<? extends AlgorithmKeySpec>, SymmetricKeyImporter<?>> symmetricKeyImporters =
-            new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, AsymmetricKeyPairGenerator<?>> keyPairGenerators = new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, PublicKeyImporter<?>> publicKeyImporters = new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, PrivateKeyImporter<?>> privateKeyImporters = new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, SymmetricKeyGenerator<?>> symmetricKeyGenerators = new LinkedHashMap<>();
+    private final Map<Class<? extends AlgorithmKeySpec>, SymmetricKeyImporter<?>> symmetricKeyImporters = new LinkedHashMap<>();
     private final Map<Class<? extends AlgorithmKeySpec>, AlgorithmKeySpec> asymmetricDefaults = new LinkedHashMap<>();
     private final Map<Class<? extends AlgorithmKeySpec>, AlgorithmKeySpec> symmetricDefaults = new LinkedHashMap<>();
 
@@ -296,8 +291,9 @@ public abstract class CryptoAlgorithm { // NOPMD
      * <p>
      * Concrete algorithms call this during construction to declare support for
      * specific roles (e.g., {@code ENCRYPT}, {@code VERIFY}). When
-     * {@link #createContext(KeyUsage, Key, ContextSpec)} is later invoked, the provided
-     * {@code key} and optional {@code spec} are matched against these bindings.
+     * {@link #createContext(KeyUsage, Key, ContextSpec)} is later invoked, the
+     * provided {@code key} and optional {@code spec} are matched against these
+     * bindings.
      * </p>
      *
      * @param role        supported {@link KeyUsage} role
@@ -397,8 +393,7 @@ public abstract class CryptoAlgorithm { // NOPMD
             if (rb.accepts(key, spec)) {
                 S resolved = (spec != null) ? spec
                         : Objects.requireNonNull(rb.defaultSpec.get(), "defaultSpec value must not be null");
-                C ctx = Objects.requireNonNull(rb.factory.createContext(key, resolved),
-                        _id + " factory returned null");
+                C ctx = Objects.requireNonNull(rb.factory.createContext(key, resolved), _id + " factory returned null");
                 // Enforce the declared context type contract:
                 if (!rb.ctxType.isInstance(ctx)) {
                     throw new IllegalStateException(_id + " factory returned " + ctx.getClass().getName()
@@ -411,8 +406,7 @@ public abstract class CryptoAlgorithm { // NOPMD
                 + (spec == null ? " (default spec)" : " and spec=" + spec.getClass().getName()));
     }
 
-    private <S extends AlgorithmKeySpec> S resolveDefault(Class<S> specType,
-            Supplier<? extends S> defaultSpecOrNull) {
+    private <S extends AlgorithmKeySpec> S resolveDefault(Class<S> specType, Supplier<? extends S> defaultSpecOrNull) {
         if (defaultSpecOrNull == null) {
             return null;
         }
@@ -426,16 +420,18 @@ public abstract class CryptoAlgorithm { // NOPMD
     /**
      * Registers asymmetric key-pair generation for one exact specification class.
      *
-     * <p>The optional default is resolved and validated during registration.
+     * <p>
+     * The optional default is resolved and validated during registration.
      * Registered generators must be safe for concurrent invocation after the
-     * algorithm is published.</p>
+     * algorithm is published.
+     * </p>
      *
-     * @param specType exact specification class
-     * @param generator non-null generator
+     * @param specType          exact specification class
+     * @param generator         non-null generator
      * @param defaultSpecOrNull optional default supplier, evaluated once
-     * @param <S> specification type
-     * @throws NullPointerException if a required argument or supplied default is
-     *                              {@code null}
+     * @param <S>               specification type
+     * @throws NullPointerException     if a required argument or supplied default
+     *                                  is {@code null}
      * @throws IllegalArgumentException if the supplied default has the wrong type
      */
     protected final <S extends AlgorithmKeySpec> void registerAsymmetricKeyPairGenerator(Class<S> specType,
@@ -450,7 +446,7 @@ public abstract class CryptoAlgorithm { // NOPMD
      *
      * @param specType exact specification class
      * @param importer non-null importer safe for concurrent invocation
-     * @param <S> specification type
+     * @param <S>      specification type
      * @throws NullPointerException if an argument is {@code null}
      */
     protected final <S extends AlgorithmKeySpec> void registerPublicKeyImporter(Class<S> specType,
@@ -464,7 +460,7 @@ public abstract class CryptoAlgorithm { // NOPMD
      *
      * @param specType exact specification class
      * @param importer non-null importer safe for concurrent invocation
-     * @param <S> specification type
+     * @param <S>      specification type
      * @throws NullPointerException if an argument is {@code null}
      */
     protected final <S extends AlgorithmKeySpec> void registerPrivateKeyImporter(Class<S> specType,
@@ -476,14 +472,16 @@ public abstract class CryptoAlgorithm { // NOPMD
     /**
      * Registers symmetric-key generation for one exact specification class.
      *
-     * <p>The optional default is resolved and validated during registration.</p>
+     * <p>
+     * The optional default is resolved and validated during registration.
+     * </p>
      *
-     * @param specType exact specification class
-     * @param generator non-null generator safe for concurrent invocation
+     * @param specType          exact specification class
+     * @param generator         non-null generator safe for concurrent invocation
      * @param defaultSpecOrNull optional default supplier, evaluated once
-     * @param <S> specification type
-     * @throws NullPointerException if a required argument or supplied default is
-     *                              {@code null}
+     * @param <S>               specification type
+     * @throws NullPointerException     if a required argument or supplied default
+     *                                  is {@code null}
      * @throws IllegalArgumentException if the supplied default has the wrong type
      */
     protected final <S extends AlgorithmKeySpec> void registerSymmetricKeyGenerator(Class<S> specType,
@@ -498,7 +496,7 @@ public abstract class CryptoAlgorithm { // NOPMD
      *
      * @param specType exact specification class
      * @param importer non-null importer safe for concurrent invocation
-     * @param <S> specification type
+     * @param <S>      specification type
      * @throws NullPointerException if an argument is {@code null}
      */
     protected final <S extends AlgorithmKeySpec> void registerSymmetricKeyImporter(Class<S> specType,
@@ -515,12 +513,14 @@ public abstract class CryptoAlgorithm { // NOPMD
      * Returns the asymmetric key-pair generator registered for an exact
      * specification class.
      *
-     * <p>The returned implementation may be shared and invoked concurrently.</p>
+     * <p>
+     * The returned implementation may be shared and invoked concurrently.
+     * </p>
      *
      * @param specType exact specification class; subclasses are not matched
-     * @param <S> specification type
+     * @param <S>      specification type
      * @return registered generator
-     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws NullPointerException     if {@code specType} is {@code null}
      * @throws IllegalArgumentException if no generator is registered
      */
     @SuppressWarnings("unchecked")
@@ -537,12 +537,14 @@ public abstract class CryptoAlgorithm { // NOPMD
     /**
      * Returns the public-key importer registered for an exact specification class.
      *
-     * <p>The returned implementation may be shared and invoked concurrently.</p>
+     * <p>
+     * The returned implementation may be shared and invoked concurrently.
+     * </p>
      *
      * @param specType exact specification class; subclasses are not matched
-     * @param <S> specification type
+     * @param <S>      specification type
      * @return registered importer
-     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws NullPointerException     if {@code specType} is {@code null}
      * @throws IllegalArgumentException if no importer is registered
      */
     @SuppressWarnings("unchecked")
@@ -556,15 +558,16 @@ public abstract class CryptoAlgorithm { // NOPMD
     }
 
     /**
-     * Returns the private-key importer registered for an exact specification
-     * class.
+     * Returns the private-key importer registered for an exact specification class.
      *
-     * <p>The returned implementation may be shared and invoked concurrently.</p>
+     * <p>
+     * The returned implementation may be shared and invoked concurrently.
+     * </p>
      *
      * @param specType exact specification class; subclasses are not matched
-     * @param <S> specification type
+     * @param <S>      specification type
      * @return registered importer
-     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws NullPointerException     if {@code specType} is {@code null}
      * @throws IllegalArgumentException if no importer is registered
      */
     @SuppressWarnings("unchecked")
@@ -581,12 +584,14 @@ public abstract class CryptoAlgorithm { // NOPMD
      * Returns the symmetric-key generator registered for an exact specification
      * class.
      *
-     * <p>The returned implementation may be shared and invoked concurrently.</p>
+     * <p>
+     * The returned implementation may be shared and invoked concurrently.
+     * </p>
      *
      * @param specType exact specification class; subclasses are not matched
-     * @param <S> specification type
+     * @param <S>      specification type
      * @return registered generator
-     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws NullPointerException     if {@code specType} is {@code null}
      * @throws IllegalArgumentException if no generator is registered
      */
     @SuppressWarnings("unchecked")
@@ -603,12 +608,14 @@ public abstract class CryptoAlgorithm { // NOPMD
      * Returns the symmetric-key importer registered for an exact specification
      * class.
      *
-     * <p>The returned implementation may be shared and invoked concurrently.</p>
+     * <p>
+     * The returned implementation may be shared and invoked concurrently.
+     * </p>
      *
      * @param specType exact specification class; subclasses are not matched
-     * @param <S> specification type
+     * @param <S>      specification type
      * @return registered importer
-     * @throws NullPointerException if {@code specType} is {@code null}
+     * @throws NullPointerException     if {@code specType} is {@code null}
      * @throws IllegalArgumentException if no importer is registered
      */
     @SuppressWarnings("unchecked")
@@ -628,14 +635,12 @@ public abstract class CryptoAlgorithm { // NOPMD
      */
     public final List<KeyOperationInfo> keyOperations() {
         List<KeyOperationInfo> result = new ArrayList<>();
-        addOperationInfo(result, KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE, keyPairGenerators,
-                asymmetricDefaults);
+        addOperationInfo(result, KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE, keyPairGenerators, asymmetricDefaults);
         addOperationInfo(result, KeyOperation.ASYMMETRIC_PUBLIC_IMPORT, publicKeyImporters, Map.of());
         addOperationInfo(result, KeyOperation.ASYMMETRIC_PRIVATE_IMPORT, privateKeyImporters, Map.of());
         addOperationInfo(result, KeyOperation.SYMMETRIC_GENERATE, symmetricKeyGenerators, symmetricDefaults);
         addOperationInfo(result, KeyOperation.SYMMETRIC_IMPORT, symmetricKeyImporters, Map.of());
-        result.sort(Comparator.comparing(KeyOperationInfo::operation)
-                .thenComparing(info -> info.specType().getName()));
+        result.sort(Comparator.comparing(KeyOperationInfo::operation).thenComparing(info -> info.specType().getName()));
         return List.copyOf(result);
     }
 

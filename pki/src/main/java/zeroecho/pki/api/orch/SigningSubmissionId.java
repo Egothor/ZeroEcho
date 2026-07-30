@@ -44,11 +44,14 @@ import zeroecho.pki.api.PkiId;
 /**
  * Versioned ZeroEcho signing-submission identifier.
  *
- * <p>The format is {@code zsign:v1:<namespace>:<epoch-millisecond>:<128-bit-random>}.
- * Creation time remains store-authoritative: stores must validate the embedded
- * time against their own clock and persist it with the intent.</p>
+ * <p>
+ * The format is
+ * {@code zsign:v1:<namespace>:<epoch-millisecond>:<128-bit-random>}. Creation
+ * time remains store-authoritative: stores must validate the embedded time
+ * against their own clock and persist it with the intent.
+ * </p>
  *
- * @param id identifier value
+ * @param id        identifier value
  * @param namespace provider/store namespace
  * @param createdAt embedded creation time with millisecond precision
  */
@@ -67,8 +70,8 @@ public record SigningSubmissionId(PkiId id, String namespace, Instant createdAt)
      * Creates a new identifier using a cryptographically strong random source.
      *
      * @param namespace provider/store namespace
-     * @param now trusted caller creation time
-     * @param random secure random source
+     * @param now       trusted caller creation time
+     * @param random    secure random source
      * @return new identifier
      */
     public static SigningSubmissionId create(String namespace, Instant now, SecureRandom random) {
@@ -117,9 +120,9 @@ public record SigningSubmissionId(PkiId id, String namespace, Instant createdAt)
      * Validates namespace and lifetime against store-authoritative time.
      *
      * @param requiredNamespace expected namespace
-     * @param now store-authoritative time
-     * @param horizon maximum accepted age
-     * @param permittedSkew allowed future clock skew
+     * @param now               store-authoritative time
+     * @param horizon           maximum accepted age
+     * @param permittedSkew     allowed future clock skew
      * @throws IllegalArgumentException if namespace or lifetime is invalid
      */
     public void validate(String requiredNamespace, Instant now, Duration horizon, Duration permittedSkew) {
@@ -147,8 +150,8 @@ public record SigningSubmissionId(PkiId id, String namespace, Instant createdAt)
         }
         for (int index = 0; index < namespace.length(); index++) {
             char value = namespace.charAt(index);
-            boolean valid = value >= 'a' && value <= 'z' || value >= '0' && value <= '9'
-                    || value == '.' || value == '_' || value == '-';
+            boolean valid = value >= 'a' && value <= 'z' || value >= '0' && value <= '9' || value == '.' || value == '_'
+                    || value == '-';
             if (!valid) {
                 throw new IllegalArgumentException("namespace contains an unsupported character");
             }

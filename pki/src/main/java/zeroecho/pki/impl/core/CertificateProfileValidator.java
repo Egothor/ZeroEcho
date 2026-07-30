@@ -58,8 +58,8 @@ final class CertificateProfileValidator {
     }
 
     /* package */ static ValidatedCertificateRequest validate(VerifiedIssuanceCandidate candidate,
-            CertificateProfile profile, CertificateProfileRef profileReference,
-            Credential issuerCredential, Instant evaluationTime) {
+            CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
+            Instant evaluationTime) {
         ParsedCertificationRequest request = candidate.request();
         LeafCertificatePolicy policy = profile.leafPolicy();
         requireCanonicalRequestAttributes(request);
@@ -69,8 +69,8 @@ final class CertificateProfileValidator {
         Validity validity = approvedValidity(candidate, request, profile, issuerCredential, evaluationTime);
         boolean sanCritical = approvedSubject.isEmpty()
                 || policy.subjectAlternativeNamePolicy().criticalWithNonemptySubject();
-        SubjectRef approvedSubjectRef = new SubjectRef(approvedSubject.isEmpty()
-                ? "x509:empty-subject" : BcX509ProfileSupport.subject(approvedSubject).toString());
+        SubjectRef approvedSubjectRef = new SubjectRef(approvedSubject.isEmpty() ? "x509:empty-subject"
+                : BcX509ProfileSupport.subject(approvedSubject).toString());
         return new ValidatedCertificateRequest(candidate.issuerCaId(), profileReference, approvedSubjectRef,
                 approvedSubject, approvedSans, sanCritical, candidate.exactPublicKey(), validity, policy.keyUsages(),
                 policy.extendedKeyUsages(), policy.keyUsageCritical(), policy.extendedKeyUsageCritical(),
@@ -78,16 +78,15 @@ final class CertificateProfileValidator {
     }
 
     private static void requireCanonicalRequestAttributes(ParsedCertificationRequest request) {
-        if (request.attributes().ids().size() != 1
-                || !request.attributes().ids().contains(BcX509Attributes.CSR_DER)
-                || request.attributes().getAll(BcX509Attributes.CSR_DER).size() != 1
-                || !(request.attributes().get(BcX509Attributes.CSR_DER).orElse(null)
-                        instanceof AttributeValue.BytesValue)) {
+        if (request.attributes().ids().size() != 1 || !request.attributes().ids().contains(BcX509Attributes.CSR_DER)
+                || request.attributes().getAll(BcX509Attributes.CSR_DER).size() != 1 || !(request.attributes()
+                        .get(BcX509Attributes.CSR_DER).orElse(null) instanceof AttributeValue.BytesValue)) {
             throw reject("REQUEST_ATTRIBUTE_UNSUPPORTED");
         }
     }
 
-    // The branches preserve the deny-by-default RDN ownership and cardinality rules.
+    // The branches preserve the deny-by-default RDN ownership and cardinality
+    // rules.
     @SuppressWarnings("PMD.CyclomaticComplexity")
     private static List<SubjectRdn> validateSubject(ParsedCertificationRequest request, CertificateProfile profile) {
         Map<SubjectRdnType, SubjectRdnRule> rules = new EnumMap<>(SubjectRdnType.class);
@@ -140,8 +139,8 @@ final class CertificateProfileValidator {
         if (sans.size() < sanPolicy.minimumTotal() || sans.size() > sanPolicy.maximumTotal()) {
             throw reject("SAN_COUNT_INVALID");
         }
-        Map<SubjectAlternativeNameType, SubjectAlternativeNameRule> rules =
-                new EnumMap<>(SubjectAlternativeNameType.class);
+        Map<SubjectAlternativeNameType, SubjectAlternativeNameRule> rules = new EnumMap<>(
+                SubjectAlternativeNameType.class);
         for (SubjectAlternativeNameRule rule : sanPolicy.rules()) {
             rules.put(rule.type(), rule);
         }
@@ -263,8 +262,8 @@ final class CertificateProfileValidator {
     @SuppressWarnings("PMD.PreserveStackTrace")
     private static Validity approvedValidity(VerifiedIssuanceCandidate candidate, ParsedCertificationRequest request,
             CertificateProfile profile, Credential issuerCredential, Instant evaluationTime) {
-        Optional<Validity> supplied = candidate.validityOverride().isPresent()
-                ? candidate.validityOverride() : request.requestedValidity();
+        Optional<Validity> supplied = candidate.validityOverride().isPresent() ? candidate.validityOverride()
+                : request.requestedValidity();
         Duration duration = supplied.map(value -> Duration.between(value.notBefore(), value.notAfter()))
                 .orElse(profile.maximumValidity());
         if (duration.isZero() || duration.isNegative() || duration.compareTo(profile.maximumValidity()) > 0) {

@@ -157,8 +157,8 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
      * @param outChunkSize size of output chunks produced by the transform (must be
      *                     > 0)
      * @param chunks       number of chunks buffered at once (must be > 0)
-     * @throws IllegalArgumentException if a size is outside its documented range
-     *                                  or a buffer size overflows
+     * @throws IllegalArgumentException if a size is outside its documented range or
+     *                                  a buffer size overflows
      */
     protected AbstractChunkTransformInputStream(InputStream upstream, int inChunkSize, int outChunkSize, int chunks) {
         super(upstream);
@@ -190,8 +190,8 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
      *                                 steady-state (must be > 0)
      * @param finalizationOutputChunks number of extra output chunks reserved for
      *                                 finalization (must be >= 0)
-     * @throws IllegalArgumentException if a size is outside its documented range
-     *                                  or a buffer size overflows
+     * @throws IllegalArgumentException if a size is outside its documented range or
+     *                                  a buffer size overflows
      */
     protected AbstractChunkTransformInputStream(InputStream upstream, int inChunkSize, int outChunkSize, int chunks,
             int finalizationOutputChunks) {
@@ -261,8 +261,7 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
             // EOF: run finalization exactly once, even if there's no remainder,
             // and surface any produced bytes (e.g., padding block, GCM tag).
             if (!eofSeen) {
-                int finalOut = validateOutputCount(doFinal(inBuf, 0, 0, outBuf, 0), outBuf.length,
-                        "finalization");
+                int finalOut = validateOutputCount(doFinal(inBuf, 0, 0, outBuf, 0), outBuf.length, "finalization");
                 outPtr = 0;
                 outLen = finalOut;
                 eofSeen = true;
@@ -273,8 +272,7 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
 
         // all chunks are aligned to the specified boundary (inChunkSize) -> transform
         // can be simply invoked
-        outLen = validateOutputCount(transform(inBuf, 0, inLen / inChunkSize, outBuf), outBuf.length,
-                "transformation");
+        outLen = validateOutputCount(transform(inBuf, 0, inLen / inChunkSize, outBuf), outBuf.length, "transformation");
         outPtr = 0;
 
         int left = inLen % inChunkSize;
@@ -291,8 +289,7 @@ public abstract class AbstractChunkTransformInputStream extends FilterInputStrea
         return true;
     }
 
-    private static void validateGeometry(int inChunkSize, int outChunkSize, int chunks,
-            int finalizationOutputChunks) {
+    private static void validateGeometry(int inChunkSize, int outChunkSize, int chunks, int finalizationOutputChunks) {
         if (inChunkSize < MIN_INPUT_CHUNK_SIZE) {
             throw new IllegalArgumentException("inChunkSize must be greater than 1");
         }

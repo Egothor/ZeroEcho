@@ -39,8 +39,8 @@ class KeyringStoreTest {
         KeyPair pair = generator.generateKeyPair();
 
         try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password,
-                        KeyringProtection.standard(), deterministicRandom())) {
+                KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
+                        deterministicRandom())) {
             store.putPublic("rsa", "RSA", pair.getPublic());
             store.putPrivate("rsa", "RSA", pair.getPrivate());
             store.putSecret("aes", "AES", aes);
@@ -64,13 +64,11 @@ class KeyringStoreTest {
     void wrongPasswordAndCorruptionFailUniformly() throws Exception {
         start("wrongPasswordAndCorruptionFailUniformly");
         Path path = temporaryDirectory.resolve("wrong.zek");
-        try (KeyringPassword password = password();
-                KeyringStore ignored = KeyringStore.create(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore ignored = KeyringStore.create(path, password)) {
             // empty current-format store
         }
         try (KeyringPassword wrong = new KeyringPassword(new char[] { 'w', 'r', 'o', 'n', 'g' })) {
-            KeyringException exception = assertThrows(KeyringException.class,
-                    () -> KeyringStore.open(path, wrong));
+            KeyringException exception = assertThrows(KeyringException.class, () -> KeyringStore.open(path, wrong));
             assertEquals(KeyringException.Code.KEYRING_UNLOCK_FAILED, exception.code());
         }
         byte[] bytes = Files.readAllBytes(path);
@@ -78,8 +76,7 @@ class KeyringStoreTest {
         Files.write(path, bytes);
         Arrays.fill(bytes, (byte) 0);
         try (KeyringPassword password = password()) {
-            KeyringException exception = assertThrows(KeyringException.class,
-                    () -> KeyringStore.open(path, password));
+            KeyringException exception = assertThrows(KeyringException.class, () -> KeyringStore.open(path, password));
             assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID, exception.code());
         }
         ok();
@@ -90,13 +87,11 @@ class KeyringStoreTest {
         start("plaintextV1AndDuplicateOwnerAreRejected");
         Path old = temporaryDirectory.resolve("old.txt");
         Files.writeString(old, "# KeyringStore v1\n", StandardCharsets.UTF_8);
-        Files.setPosixFilePermissions(old, java.util.Set.of(
-                java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+        Files.setPosixFilePermissions(old, java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,
                 java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
         try (KeyringPassword password = password()) {
             assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID,
-                    assertThrows(KeyringException.class,
-                            () -> KeyringStore.open(old, password)).code());
+                    assertThrows(KeyringException.class, () -> KeyringStore.open(old, password)).code());
         }
 
         Path path = temporaryDirectory.resolve("owned.zek");
@@ -104,12 +99,10 @@ class KeyringStoreTest {
                 KeyringStore first = KeyringStore.create(path, password);
                 KeyringPassword secondPassword = password()) {
             assertEquals(KeyringException.Code.KEYRING_ALREADY_OPEN,
-                    assertThrows(KeyringException.class,
-                            () -> KeyringStore.open(path, secondPassword)).code());
+                    assertThrows(KeyringException.class, () -> KeyringStore.open(path, secondPassword)).code());
             assertTrue(first.aliases().isEmpty());
         }
-        try (KeyringPassword password = password();
-                KeyringStore reopened = KeyringStore.open(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore reopened = KeyringStore.open(path, password)) {
             assertTrue(reopened.aliases().isEmpty());
         }
         ok();
@@ -134,8 +127,7 @@ class KeyringStoreTest {
     void trailingDataAndNonExportableKeysAreRejected() throws Exception {
         start("trailingDataAndNonExportableKeysAreRejected");
         Path path = temporaryDirectory.resolve("strict.zek");
-        try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore store = KeyringStore.create(path, password)) {
             SecretKey nonExportable = new SecretKey() {
                 private static final long serialVersionUID = 1L;
 
@@ -162,8 +154,7 @@ class KeyringStoreTest {
 
         Files.write(path, new byte[] { 1 }, java.nio.file.StandardOpenOption.APPEND);
         try (KeyringPassword password = password()) {
-            KeyringException exception = assertThrows(KeyringException.class,
-                    () -> KeyringStore.open(path, password));
+            KeyringException exception = assertThrows(KeyringException.class, () -> KeyringStore.open(path, password));
             assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID, exception.code());
         }
         ok();
@@ -175,8 +166,8 @@ class KeyringStoreTest {
         Path path = temporaryDirectory.resolve("hmac.zek");
         List<String> accepted = List.of("HmacSHA256", "HmacSHA384", "HmacSHA512");
         try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password,
-                        KeyringProtection.standard(), deterministicRandom())) {
+                KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
+                        deterministicRandom())) {
             for (String variant : accepted) {
                 byte[] material = new byte[64];
                 Arrays.fill(material, (byte) variant.length());
@@ -190,23 +181,19 @@ class KeyringStoreTest {
             }
             byte[] before = Files.readAllBytes(path);
             try {
-                for (String rejected : List.of("HmacMD5", "HmacSHA1", "HmacSHA224",
-                        "hmacsha256", "HmacSha384", " HmacSHA512", "HmacSHA512 ",
-                        "BC:HmacSHA256", "", "X".repeat(4097))) {
+                for (String rejected : List.of("HmacMD5", "HmacSHA1", "HmacSHA224", "hmacsha256", "HmacSha384",
+                        " HmacSHA512", "HmacSHA512 ", "BC:HmacSHA256", "", "X".repeat(4097))) {
                     SecretKey key = controlledSecret(rejected, new byte[32]);
                     KeyringException exception = assertThrows(KeyringException.class,
                             () -> store.putSecret("rejected", "HMAC", key));
-                    assertEquals(KeyringException.Code.KEYRING_IMPORT_METADATA_INVALID,
-                            exception.code());
-                    assertEquals(KeyringException.Code.KEYRING_IMPORT_METADATA_INVALID.name(),
-                            exception.getMessage());
+                    assertEquals(KeyringException.Code.KEYRING_IMPORT_METADATA_INVALID, exception.code());
+                    assertEquals(KeyringException.Code.KEYRING_IMPORT_METADATA_INVALID.name(), exception.getMessage());
                     assertArrayEquals(before, Files.readAllBytes(path));
                     assertFalse(store.contains("rejected"));
                 }
                 SecretKey mismatched = controlledSecret("HmacSHA256", new byte[32]);
                 assertEquals(KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE,
-                        assertThrows(KeyringException.class,
-                                () -> store.putSecret("wrong", "AES", mismatched)).code());
+                        assertThrows(KeyringException.class, () -> store.putSecret("wrong", "AES", mismatched)).code());
                 assertArrayEquals(before, Files.readAllBytes(path));
             } finally {
                 Arrays.fill(before, (byte) 0);
@@ -219,19 +206,16 @@ class KeyringStoreTest {
     void providerDraftAndUnknownHmacVariantAreRejectedStructurally() throws Exception {
         start("providerDraftAndUnknownHmacVariantAreRejectedStructurally");
         assertEquals(KeyringException.Code.KEYRING_IMPORT_METADATA_INVALID,
-                assertThrows(KeyringException.class,
-                        () -> KeyringImportRegistry.HmacVariant.fromCode(99)).code());
+                assertThrows(KeyringException.class, () -> KeyringImportRegistry.HmacVariant.fromCode(99)).code());
         byte[] staleDraft = staleProviderEntryPlaintext();
         try {
-            java.lang.reflect.Method decoder = KeyringStore.class.getDeclaredMethod(
-                    "decodeEntryPlaintext", byte[].class);
+            java.lang.reflect.Method decoder = KeyringStore.class.getDeclaredMethod("decodeEntryPlaintext",
+                    byte[].class);
             decoder.setAccessible(true);
-            java.lang.reflect.InvocationTargetException failure =
-                    assertThrows(java.lang.reflect.InvocationTargetException.class,
-                            () -> decoder.invoke(null, (Object) staleDraft));
+            java.lang.reflect.InvocationTargetException failure = assertThrows(
+                    java.lang.reflect.InvocationTargetException.class, () -> decoder.invoke(null, (Object) staleDraft));
             assertTrue(failure.getCause() instanceof KeyringException);
-            assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID,
-                    ((KeyringException) failure.getCause()).code());
+            assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID, ((KeyringException) failure.getCause()).code());
         } finally {
             Arrays.fill(staleDraft, (byte) 0);
         }
@@ -242,15 +226,13 @@ class KeyringStoreTest {
     void providerBoundOrNoncanonicalKeysFailBeforeMutation() throws Exception {
         start("providerBoundOrNoncanonicalKeysFailBeforeMutation");
         Path path = temporaryDirectory.resolve("provider-bound.zek");
-        try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore store = KeyringStore.create(path, password)) {
             byte[] before = Files.readAllBytes(path);
             try {
                 SecretKey unsupported = controlledSecret("ProviderAES", new byte[32]);
                 KeyringException failure = assertThrows(KeyringException.class,
                         () -> store.putSecret("bad", "AES", unsupported));
-                assertEquals(KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE,
-                        failure.code());
+                assertEquals(KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE, failure.code());
                 assertArrayEquals(before, Files.readAllBytes(path));
                 assertFalse(store.contains("bad"));
             } finally {
@@ -310,8 +292,7 @@ class KeyringStoreTest {
         return bytes.toByteArray();
     }
 
-    private static void writeString(java.io.DataOutputStream out, String value)
-            throws java.io.IOException {
+    private static void writeString(java.io.DataOutputStream out, String value) throws java.io.IOException {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         try {
             out.writeInt(bytes.length);
@@ -322,8 +303,7 @@ class KeyringStoreTest {
     }
 
     private static int indexOf(byte[] haystack, byte[] needle) {
-        outer:
-        for (int index = 0; index <= haystack.length - needle.length; index++) {
+        outer: for (int index = 0; index <= haystack.length - needle.length; index++) {
             for (int offset = 0; offset < needle.length; offset++) {
                 if (haystack[index + offset] != needle[offset]) {
                     continue outer;

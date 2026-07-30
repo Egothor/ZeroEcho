@@ -54,12 +54,12 @@
  * then calls {@code onCompleted()} exactly once at EOF.</li>
  * <li>{@link CipherTransformInputStreamBuilder} - fluent builder that creates
  * cipher-backed streams for RSA/ElGamal independent-block processing,
- * left-zero-padded independent blocks, or
- * continuous {@code update}+{@code doFinal} streaming.</li>
+ * left-zero-padded independent blocks, or continuous
+ * {@code update}+{@code doFinal} streaming.</li>
  * <li>{@link SmartBlockStream}, {@link SmartPaddedBlockStream},
  * {@link SmartContinuousBlockStream} - internal cipher-backed stream variants;
- * the first two are restricted to independent RSA or ElGamal blocks
- * used by the builder.</li>
+ * the first two are restricted to independent RSA or ElGamal blocks used by the
+ * builder.</li>
  * <li>{@link TailStrippingInputStream} - withholds the last N bytes from the
  * payload and delivers them to a callback at EOF (useful for tags, checksums,
  * or footers).</li>

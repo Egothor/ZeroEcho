@@ -242,8 +242,7 @@ public class HybridSignatureTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         ZeroEchoSession session = new ZeroEchoSession();
-        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519",
-                Ed25519KeyGenSpec.defaultSpec());
+        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
         KeyPair spx = session.keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
                 SphincsPlusKeyGenSpec.defaultSpec());
 
@@ -256,15 +255,15 @@ public class HybridSignatureTest {
                 HybridSignatureProfile.VerifyRule.AND);
 
         byte[] sigAnd;
-        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), andProfile, ed.getPrivate(), spx.getPrivate(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), andProfile,
+                ed.getPrivate(), spx.getPrivate(), 2 * 1024 * 1024)) {
             sigAnd = signTrailer(signer, msg);
         }
         System.out.println("...sig(AND).len=" + sigAnd.length + ", head=" + hexShort(sigAnd));
 
         // verify OK
-        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(sigAnd);
             try (InputStream in = verifier.wrap(new ByteArrayInputStream(msg))) {
@@ -275,8 +274,8 @@ public class HybridSignatureTest {
 
         // corrupt classic => must fail
         byte[] badClassic = concat(flipOneBit(sub(sigAnd, 0, edLen), 0), sub(sigAnd, edLen, spxLen));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(badClassic);
             assertThrows(java.io.IOException.class, () -> {
@@ -289,8 +288,8 @@ public class HybridSignatureTest {
 
         // corrupt pqc => must fail
         byte[] badPqc = concat(sub(sigAnd, 0, edLen), flipOneBit(sub(sigAnd, edLen, spxLen), 0));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), andProfile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(badPqc);
             assertThrows(java.io.IOException.class, () -> {
@@ -306,16 +305,16 @@ public class HybridSignatureTest {
                 HybridSignatureProfile.VerifyRule.OR);
 
         byte[] sigOr;
-        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), orProfile, ed.getPrivate(), spx.getPrivate(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), orProfile,
+                ed.getPrivate(), spx.getPrivate(), 2 * 1024 * 1024)) {
             sigOr = signTrailer(signer, msg);
         }
         System.out.println("...sig(OR).len=" + sigOr.length + ", head=" + hexShort(sigOr));
 
         // corrupt classic => OR must pass
         byte[] orBadClassic = concat(flipOneBit(sub(sigOr, 0, edLen), 0), sub(sigOr, edLen, spxLen));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(orBadClassic);
             try (InputStream in = verifier.wrap(new ByteArrayInputStream(msg))) {
@@ -326,8 +325,8 @@ public class HybridSignatureTest {
 
         // corrupt pqc => OR must pass
         byte[] orBadPqc = concat(sub(sigOr, 0, edLen), flipOneBit(sub(sigOr, edLen, spxLen), 0));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(orBadPqc);
             try (InputStream in = verifier.wrap(new ByteArrayInputStream(msg))) {
@@ -338,8 +337,8 @@ public class HybridSignatureTest {
 
         // corrupt both => OR must fail
         byte[] orBadBoth = concat(flipOneBit(sub(sigOr, 0, edLen), 0), flipOneBit(sub(sigOr, edLen, spxLen), 0));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), orProfile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(orBadBoth);
             assertThrows(java.io.IOException.class, () -> {
@@ -377,14 +376,14 @@ public class HybridSignatureTest {
                 HybridSignatureProfile.VerifyRule.AND);
 
         byte[] sig;
-        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPrivate(), spx.getPrivate(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext signer = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile,
+                rsa.getPrivate(), spx.getPrivate(), 2 * 1024 * 1024)) {
             sig = signTrailer(signer, msg);
         }
         System.out.println("...sig.len=" + sig.length + ", head=" + hexShort(sig));
 
-        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile,
+                rsa.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(sig);
             try (InputStream in = verifier.wrap(new ByteArrayInputStream(msg))) {
@@ -395,8 +394,8 @@ public class HybridSignatureTest {
 
         // negative sanity: corrupt classic => must fail (AND)
         byte[] badClassic = concat(flipOneBit(sub(sig, 0, rsaLen), 0), sub(sig, rsaLen, spxLen));
-        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext verifier = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile,
+                rsa.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
             verifier.setExpectedTag(badClassic);
             assertThrows(java.io.IOException.class, () -> {
@@ -426,8 +425,7 @@ public class HybridSignatureTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         ZeroEchoSession session = new ZeroEchoSession();
-        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519",
-                Ed25519KeyGenSpec.defaultSpec());
+        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
         KeyPair spx = session.keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
                 SphincsPlusKeyGenSpec.defaultSpec());
 
@@ -437,8 +435,8 @@ public class HybridSignatureTest {
         byte[] out;
         int tagLen;
 
-        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPrivate(), spx.getPrivate(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile,
+                ed.getPrivate(), spx.getPrivate(), 2 * 1024 * 1024)) {
 
             DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
                     .add(new TagTrailerDataContentBuilder<Signature>(tagEnc).bufferSize(8192)).build();
@@ -449,8 +447,8 @@ public class HybridSignatureTest {
 
         System.out.println("...out=" + out.length + " bytes");
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
             // IMPORTANT: TagTrailerDataContentBuilder supplies expectedTag internally
@@ -481,8 +479,7 @@ public class HybridSignatureTest {
         System.out.println("...msg=" + msg.length + " bytes");
 
         ZeroEchoSession session = new ZeroEchoSession();
-        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519",
-                Ed25519KeyGenSpec.defaultSpec());
+        KeyPair ed = session.keyBuilders().asymmetric().generateKeyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
         KeyPair spx = session.keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
                 SphincsPlusKeyGenSpec.defaultSpec());
 
@@ -496,8 +493,8 @@ public class HybridSignatureTest {
         byte[] out;
         int tagLen;
 
-        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPrivate(), spx.getPrivate(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile,
+                ed.getPrivate(), spx.getPrivate(), 2 * 1024 * 1024)) {
 
             DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
                     .add(new TagTrailerDataContentBuilder<Signature>(tagEnc).bufferSize(8192)).build();
@@ -515,8 +512,8 @@ public class HybridSignatureTest {
         byte[] badClassic = concat(flipOneBit(sub(tag, 0, edLen), 0), sub(tag, edLen, spxLen));
         byte[] outBadClassic = concat(body, badClassic);
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
             DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(outBadClassic))
@@ -533,8 +530,8 @@ public class HybridSignatureTest {
         byte[] badPqc = concat(sub(tag, 0, edLen), flipOneBit(sub(tag, edLen, spxLen), 0));
         byte[] outBadPqc = concat(body, badPqc);
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
             DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(outBadPqc))
@@ -551,8 +548,8 @@ public class HybridSignatureTest {
         byte[] badBoth = concat(flipOneBit(sub(tag, 0, edLen), 0), flipOneBit(sub(tag, edLen, spxLen), 0));
         byte[] outBadBoth = concat(body, badBoth);
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, ed.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile,
+                ed.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
             DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(outBadBoth))
@@ -589,8 +586,8 @@ public class HybridSignatureTest {
 
         byte[] out;
 
-        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPrivate(), spx.getPrivate(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext tagEnc = HybridSignatureContexts.sign(new zeroecho.sdk.ZeroEchoSession(), profile,
+                rsa.getPrivate(), spx.getPrivate(), 2 * 1024 * 1024)) {
 
             DataContent enc = DataContentChainBuilder.encrypt().add(BytesSourceBuilder.of(msg))
                     .add(new TagTrailerDataContentBuilder<Signature>(tagEnc).bufferSize(8192)).build();
@@ -600,8 +597,8 @@ public class HybridSignatureTest {
 
         System.out.println("...out=" + out.length + " bytes");
 
-        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile, rsa.getPublic(), spx.getPublic(),
-                2 * 1024 * 1024)) {
+        try (SignatureContext tagDec = HybridSignatureContexts.verify(new zeroecho.sdk.ZeroEchoSession(), profile,
+                rsa.getPublic(), spx.getPublic(), 2 * 1024 * 1024)) {
             tagDec.setVerificationApproach(tagDec.getVerificationCore().getThrowOnMismatch());
 
             DataContent dec = DataContentChainBuilder.decrypt().add(BytesSourceBuilder.of(out))

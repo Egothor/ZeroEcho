@@ -36,34 +36,31 @@ class KeyringImportRegistryTest {
     @Test
     void persistentImporterMatrixIsClosedUniqueAndExecutable() throws Exception {
         start("persistentImporterMatrixIsClosedUniqueAndExecutable");
-        List<KeyringImportRegistry.PersistentMapping> mappings =
-                KeyringImportRegistry.mappings();
+        List<KeyringImportRegistry.PersistentMapping> mappings = KeyringImportRegistry.mappings();
         assertEquals(19, count(mappings, KeyringStore.Kind.PUBLIC_KEY));
         assertEquals(19, count(mappings, KeyringStore.Kind.PRIVATE_KEY));
         assertEquals(6, count(mappings, KeyringStore.Kind.SECRET_KEY));
         assertEquals(mappings.size(), mappings.stream().distinct().count());
 
         for (KeyringImportRegistry.PersistentMapping mapping : mappings) {
-            KeyringImportRegistry.validateMapping(mapping.algorithmId(), mapping.kind(),
-                    mapping.encoding(), mapping.hmacVariant());
+            KeyringImportRegistry.validateMapping(mapping.algorithmId(), mapping.kind(), mapping.encoding(),
+                    mapping.hmacVariant());
         }
         roundTripAsymmetricMappings(mappings);
         roundTripSecretMappings(mappings);
         assertEquals(KeyringException.Code.KEYRING_IMPORT_MAPPING_INVALID,
                 assertThrows(KeyringException.class,
-                        () -> KeyringImportRegistry.validateMapping("RSA",
-                                KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW,
-                                KeyringImportRegistry.HmacVariant.NONE)).code());
+                        () -> KeyringImportRegistry.validateMapping("RSA", KeyringStore.Kind.SECRET_KEY,
+                                KeyringStore.Encoding.RAW, KeyringImportRegistry.HmacVariant.NONE))
+                        .code());
         System.out.println("...mapping-count=" + mappings.size());
         ok();
     }
 
     @Test
-    void alternateProviderStandardEncodingUsesCanonicalImporter(
-            @TempDir Path temporaryDirectory) throws Exception {
+    void alternateProviderStandardEncodingUsesCanonicalImporter(@TempDir Path temporaryDirectory) throws Exception {
         start("alternateProviderStandardEncodingUsesCanonicalImporter");
-        java.security.KeyPairGenerator generator =
-                java.security.KeyPairGenerator.getInstance("RSA", "BC");
+        java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA", "BC");
         generator.initialize(2048);
         KeyPair pair = generator.generateKeyPair();
         byte[] encoded = pair.getPublic().getEncoded();
@@ -72,20 +69,17 @@ class KeyringImportRegistryTest {
         byte[] importedEncoding = null;
         byte[] reopenedEncoding = null;
         try {
-            imported = KeyringImportRegistry.importKey("RSA",
-                    KeyringStore.Kind.PUBLIC_KEY, KeyringStore.Encoding.X509,
+            imported = KeyringImportRegistry.importKey("RSA", KeyringStore.Kind.PUBLIC_KEY, KeyringStore.Encoding.X509,
                     KeyringImportRegistry.HmacVariant.NONE, encoded);
             importedEncoding = imported.getEncoded();
             assertArrayEquals(encoded, importedEncoding);
             assertEquals("RSA", imported.getAlgorithm());
             assertNotEquals(pair.getPublic().getClass(), imported.getClass());
             Path path = temporaryDirectory.resolve("alternate-provider.zek");
-            try (KeyringPassword password = password();
-                    KeyringStore store = KeyringStore.create(path, password)) {
+            try (KeyringPassword password = password(); KeyringStore store = KeyringStore.create(path, password)) {
                 store.putPublic("alternate", "RSA", pair.getPublic());
             }
-            try (KeyringPassword password = password();
-                    KeyringStore store = KeyringStore.open(path, password)) {
+            try (KeyringPassword password = password(); KeyringStore store = KeyringStore.open(path, password)) {
                 reopened = store.getPublic("alternate");
                 reopenedEncoding = reopened.getEncoded();
                 assertArrayEquals(encoded, reopenedEncoding);
@@ -100,28 +94,23 @@ class KeyringImportRegistryTest {
         ok();
     }
 
-    private static long count(List<KeyringImportRegistry.PersistentMapping> mappings,
-            KeyringStore.Kind kind) {
+    private static long count(List<KeyringImportRegistry.PersistentMapping> mappings, KeyringStore.Kind kind) {
         return mappings.stream().filter(mapping -> mapping.kind() == kind).count();
     }
 
-    private static void roundTripAsymmetricMappings(
-            List<KeyringImportRegistry.PersistentMapping> mappings) throws Exception {
-        List<String> algorithms = mappings.stream()
-                .filter(mapping -> mapping.kind() == KeyringStore.Kind.PUBLIC_KEY)
-                .map(KeyringImportRegistry.PersistentMapping::algorithmId)
-                .toList();
+    private static void roundTripAsymmetricMappings(List<KeyringImportRegistry.PersistentMapping> mappings)
+            throws Exception {
+        List<String> algorithms = mappings.stream().filter(mapping -> mapping.kind() == KeyringStore.Kind.PUBLIC_KEY)
+                .map(KeyringImportRegistry.PersistentMapping::algorithmId).toList();
         for (String algorithmId : algorithms) {
             KeyPair pair = generatePair(algorithmId);
-            roundTrip(mapping(mappings, algorithmId, KeyringStore.Kind.PUBLIC_KEY),
-                    pair.getPublic());
-            roundTrip(mapping(mappings, algorithmId, KeyringStore.Kind.PRIVATE_KEY),
-                    pair.getPrivate());
+            roundTrip(mapping(mappings, algorithmId, KeyringStore.Kind.PUBLIC_KEY), pair.getPublic());
+            roundTrip(mapping(mappings, algorithmId, KeyringStore.Kind.PRIVATE_KEY), pair.getPrivate());
         }
     }
 
-    private static void roundTripSecretMappings(
-            List<KeyringImportRegistry.PersistentMapping> mappings) throws Exception {
+    private static void roundTripSecretMappings(List<KeyringImportRegistry.PersistentMapping> mappings)
+            throws Exception {
         for (KeyringImportRegistry.PersistentMapping mapping : mappings) {
             if (mapping.kind() != KeyringStore.Kind.SECRET_KEY) {
                 continue;
@@ -147,33 +136,26 @@ class KeyringImportRegistryTest {
         CryptoAlgorithm algorithm = CryptoAlgorithms.require(algorithmId);
         KeyOperationInfo generation = algorithm.keyOperations().stream()
                 .filter(info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE)
-                .filter(info -> info.defaultSpec() != null)
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(
-                        "No default key-pair generation mapping for " + algorithmId));
-        AsymmetricKeyPairGenerator generator =
-                algorithm.asymmetricKeyPairGenerator(generation.specType());
+                .filter(info -> info.defaultSpec() != null).findFirst()
+                .orElseThrow(() -> new AssertionError("No default key-pair generation mapping for " + algorithmId));
+        AsymmetricKeyPairGenerator generator = algorithm.asymmetricKeyPairGenerator(generation.specType());
         return generator.generateKeyPair((AlgorithmKeySpec) generation.defaultSpec());
     }
 
     private static KeyringImportRegistry.PersistentMapping mapping(
-            List<KeyringImportRegistry.PersistentMapping> mappings, String algorithmId,
-            KeyringStore.Kind kind) {
+            List<KeyringImportRegistry.PersistentMapping> mappings, String algorithmId, KeyringStore.Kind kind) {
         return mappings.stream()
-                .filter(candidate -> candidate.algorithmId().equals(algorithmId)
-                        && candidate.kind() == kind)
-                .findFirst()
-                .orElseThrow();
+                .filter(candidate -> candidate.algorithmId().equals(algorithmId) && candidate.kind() == kind)
+                .findFirst().orElseThrow();
     }
 
-    private static void roundTrip(KeyringImportRegistry.PersistentMapping mapping,
-            Key source) throws Exception {
+    private static void roundTrip(KeyringImportRegistry.PersistentMapping mapping, Key source) throws Exception {
         byte[] encoded = source.getEncoded();
         Key imported = null;
         byte[] reconstructed = null;
         try {
-            imported = KeyringImportRegistry.importKey(mapping.algorithmId(), mapping.kind(),
-                    mapping.encoding(), mapping.hmacVariant(), encoded);
+            imported = KeyringImportRegistry.importKey(mapping.algorithmId(), mapping.kind(), mapping.encoding(),
+                    mapping.hmacVariant(), encoded);
             reconstructed = imported.getEncoded();
             assertArrayEquals(encoded, reconstructed);
         } finally {

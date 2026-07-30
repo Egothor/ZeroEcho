@@ -84,8 +84,7 @@ import zeroecho.pki.util.async.impl.DurableAsyncBus;
  */
 // The collaborators counted here form one durable signing lifecycle; splitting
 // them would obscure the coordinator/reservation boundary that protects it.
-@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity",
-        "PMD.PreserveStackTrace" })
+@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace" })
 public final class PkiSigningBus implements AutoCloseable {
 
     private static final Logger LOG = Logger.getLogger(PkiSigningBus.class.getName());
@@ -200,8 +199,7 @@ public final class PkiSigningBus implements AutoCloseable {
         this.bus.registerEndpoint(ENDPOINT_SIGNER, endpoint);
         this.signerRegistration = signer.register(endpoint::onProviderStatusChanged);
         for (SignWorkflowStore.Record record : store.listSignRecords()) {
-            if (record.state() == SignWorkflowStore.State.INTENT
-                    || record.state() == SignWorkflowStore.State.DISPATCHED
+            if (record.state() == SignWorkflowStore.State.INTENT || record.state() == SignWorkflowStore.State.DISPATCHED
                     || record.state() == SignWorkflowStore.State.CANCELLING) {
                 project(record);
             }
@@ -334,8 +332,7 @@ public final class PkiSigningBus implements AutoCloseable {
             return store.getSignRecord(normalized)
                     .filter(record -> record.state() == SignWorkflowStore.State.SUCCEEDED
                             || record.state() == SignWorkflowStore.State.RETIRED && record.result().isPresent())
-                    .filter(PkiSigningBus::hasTrustworthyOnTimeCompletion)
-                    .flatMap(SignWorkflowStore.Record::result)
+                    .filter(PkiSigningBus::hasTrustworthyOnTimeCompletion).flatMap(SignWorkflowStore.Record::result)
                     .map(result -> new EncodedObject(result.encoding(), result.bytes()));
         }
     }
@@ -366,17 +363,17 @@ public final class PkiSigningBus implements AutoCloseable {
      * The operation is first reconciled with the provider. If it remains active,
      * the store durably enters non-terminal
      * {@link SignWorkflowStore.State#CANCELLING} before the provider is called.
-     * Regardless of whether cancellation is accepted, the provider is read again.
-     * A still-running operation remains durably {@code CANCELLING} for a later
-     * retry. Only an observed immutable provider terminal state is changed to
+     * Regardless of whether cancellation is accepted, the provider is read again. A
+     * still-running operation remains durably {@code CANCELLING} for a later retry.
+     * Only an observed immutable provider terminal state is changed to
      * {@code RETIRED}, and an on-time successful result is preserved.
      * </p>
      *
-     * @param opId  operation identifier; must not be {@code null}
+     * @param opId   operation identifier; must not be {@code null}
      * @param reason non-sensitive cancellation reason; must not be blank
-     * @throws NullPointerException if {@code opId} is {@code null}
+     * @throws NullPointerException     if {@code opId} is {@code null}
      * @throws IllegalArgumentException if {@code reason} is {@code null} or blank
-     * @throws PkiException if locally owned cleanup fails
+     * @throws PkiException             if locally owned cleanup fails
      */
     public void retireSignOperation(PkiId opId, String reason) {
         PkiId baseOpId = normalizeBaseOperationId(opId);
@@ -474,8 +471,8 @@ public final class PkiSigningBus implements AutoCloseable {
                 return;
             }
             SignWorkflowStore.Record current = currentOptional.get();
-            if (current.state() == SignWorkflowStore.State.CANCELLING
-                    && current.revision() == expected.revision() && current.fence() == expected.fence()) {
+            if (current.state() == SignWorkflowStore.State.CANCELLING && current.revision() == expected.revision()
+                    && current.fence() == expected.fence()) {
                 store.transitionSign(operationId, current.revision(), current.fence(),
                         SignWorkflowStore.State.CANCELLING, Optional.of("CANCEL_SUBMITTED"), Optional.empty(),
                         Optional.empty());
@@ -539,8 +536,7 @@ public final class PkiSigningBus implements AutoCloseable {
 
     private SignWorkflowStore.Record requireSignRecordDuringCancellation(PkiId operationId) {
         return store.getSignRecord(operationId)
-                .orElseThrow(() -> new PkiException(
-                        "Authoritative signing record disappeared during cancellation"));
+                .orElseThrow(() -> new PkiException("Authoritative signing record disappeared during cancellation"));
     }
 
     private static boolean isTerminalSignState(SignWorkflowStore.State state) {
@@ -550,8 +546,7 @@ public final class PkiSigningBus implements AutoCloseable {
     }
 
     private static boolean hasTrustworthyOnTimeCompletion(SignWorkflowStore.Record record) {
-        return record.providerUpdatedAt().isPresent()
-                && record.providerUpdatedAt().get().isBefore(record.deadline());
+        return record.providerUpdatedAt().isPresent() && record.providerUpdatedAt().get().isBefore(record.deadline());
     }
 
     private SignWorkflowStore.Record confirmRetirement(PkiId operationId, SignWorkflowStore.Record initial) {
@@ -716,14 +711,14 @@ public final class PkiSigningBus implements AutoCloseable {
     }
 
     /**
-     * Lifecycle-bounded, non-blocking single-flight reservations for provider calls.
+     * Lifecycle-bounded, non-blocking single-flight reservations for provider
+     * calls.
      */
     private static final class ExternalActionCoordinator {
         private final ConcurrentMap<PkiId, ExternalAction> actions = new ConcurrentHashMap<>();
 
         private Optional<Reservation> tryReserve(PkiId operationId, ExternalAction action) {
-            return actions.putIfAbsent(operationId, action) == null
-                    ? Optional.of(new Reservation(operationId, action))
+            return actions.putIfAbsent(operationId, action) == null ? Optional.of(new Reservation(operationId, action))
                     : Optional.empty();
         }
 
@@ -795,9 +790,9 @@ public final class PkiSigningBus implements AutoCloseable {
      * state is internally inconsistent.</li>
      * <li>Downstream signer failure is reported through the mapped async status
      * returned by {@link #status(PkiId)}.</li>
-     * <li>If downstream submission succeeds but continuation persistence fails,
-     * the downstream handle is cancelled, the stale continuation is deleted, and
-     * the endpoint reports a terminal local failure.</li>
+     * <li>If downstream submission succeeds but continuation persistence fails, the
+     * downstream handle is cancelled, the stale continuation is deleted, and the
+     * endpoint reports a terminal local failure.</li>
      * </ul>
      *
      * <h2>Thread-safety</h2>
@@ -830,8 +825,8 @@ public final class PkiSigningBus implements AutoCloseable {
          * @param signer downstream signature workflow used to execute the actual sign
          *               operation and to query its status; must not be {@code null}
          */
-        private SignatureWorkflowEndpoint(PkiStore store, SignatureWorkflow signer,
-                OperationCoordinator coordinator, ExternalActionCoordinator externalActions) {
+        private SignatureWorkflowEndpoint(PkiStore store, SignatureWorkflow signer, OperationCoordinator coordinator,
+                ExternalActionCoordinator externalActions) {
             this.store = store;
             this.signer = signer;
             this.coordinator = coordinator;
@@ -902,9 +897,8 @@ public final class PkiSigningBus implements AutoCloseable {
                 SignWorkflowStore.Record current = currentOptional.get();
                 if (!current.deadline().isAfter(store.signingNow())) {
                     if (current.fence() == INITIAL_FENCE) {
-                        store.transitionSign(opId, current.revision(), current.fence(),
-                                SignWorkflowStore.State.EXPIRED, Optional.of("EXPIRED"), Optional.empty(),
-                                Optional.empty());
+                        store.transitionSign(opId, current.revision(), current.fence(), SignWorkflowStore.State.EXPIRED,
+                                Optional.of("EXPIRED"), Optional.empty(), Optional.empty());
                     }
                     return Optional.empty();
                 }
@@ -929,9 +923,8 @@ public final class PkiSigningBus implements AutoCloseable {
                             continuation.algorithmId, continuation.payload,
                             Optional.of(continuation.preferredSignatureEncoding), Optional.of(claimed.deadline()));
                     if (!constantTimeAsciiEquals(claimed.fingerprint(), request.semanticFingerprint())) {
-                        store.transitionSign(opId, claimed.revision(), claimed.fence(),
-                                SignWorkflowStore.State.FAILED, Optional.of("REQUEST_INTEGRITY_FAILURE"),
-                                Optional.empty(), Optional.empty());
+                        store.transitionSign(opId, claimed.revision(), claimed.fence(), SignWorkflowStore.State.FAILED,
+                                Optional.of("REQUEST_INTEGRITY_FAILURE"), Optional.empty(), Optional.empty());
                         return Optional.empty();
                     }
                     SubmissionCall call = new SubmissionCall(claimed, request, reservation);
@@ -965,9 +958,9 @@ public final class PkiSigningBus implements AutoCloseable {
                     return;
                 }
                 if (!call.record().submissionId().equals(returned)) {
-                    store.transitionSign(call.record().submissionId(), call.record().revision(),
-                            call.record().fence(), SignWorkflowStore.State.FAILED,
-                            Optional.of("PROVIDER_ID_MISMATCH"), Optional.empty(), Optional.empty());
+                    store.transitionSign(call.record().submissionId(), call.record().revision(), call.record().fence(),
+                            SignWorkflowStore.State.FAILED, Optional.of("PROVIDER_ID_MISMATCH"), Optional.empty(),
+                            Optional.empty());
                     return;
                 }
                 store.transitionSign(call.record().submissionId(), call.record().revision(), call.record().fence(),
@@ -1050,9 +1043,8 @@ public final class PkiSigningBus implements AutoCloseable {
                 reconcileProviderStatus(opId);
                 record = store.getSignRecord(opId).orElse(record);
             }
-            if (!record.deadline().isAfter(now)
-                    && (record.state() == SignWorkflowStore.State.DISPATCHED
-                            || record.state() == SignWorkflowStore.State.CANCELLING)) {
+            if (!record.deadline().isAfter(now) && (record.state() == SignWorkflowStore.State.DISPATCHED
+                    || record.state() == SignWorkflowStore.State.CANCELLING)) {
                 return Optional.of(new AsyncStatus(AsyncState.EXPIRED, now, Optional.of("EXPIRED"), Map.of()));
             }
             return Optional.of(mapStoreStatus(record));
@@ -1084,7 +1076,8 @@ public final class PkiSigningBus implements AutoCloseable {
             }
         }
 
-        // Provider implementations are an untrusted boundary and may throw any runtime failure.
+        // Provider implementations are an untrusted boundary and may throw any runtime
+        // failure.
         @SuppressWarnings("PMD.AvoidCatchingGenericException")
         private void reconcileProviderStatus(PkiId operationId) {
             removeAdvisory(operationId);
@@ -1143,14 +1136,12 @@ public final class PkiSigningBus implements AutoCloseable {
                     detail = Optional.of("LATE_PROVIDER_SUCCESS");
                     result = Optional.empty();
                 }
-                store.transitionSign(call.record().submissionId(),
-                        current.revision(), current.fence(), target, detail, result,
-                        Optional.of(providerStatus.updatedAt()));
+                store.transitionSign(call.record().submissionId(), current.revision(), current.fence(), target, detail,
+                        result, Optional.of(providerStatus.updatedAt()));
             }
         }
 
-        private record StatusCall(SignWorkflowStore.Record record,
-                ExternalActionCoordinator.Reservation reservation) {
+        private record StatusCall(SignWorkflowStore.Record record, ExternalActionCoordinator.Reservation reservation) {
         }
 
         private void removeAdvisory(PkiId operationId) {
@@ -1203,8 +1194,7 @@ public final class PkiSigningBus implements AutoCloseable {
             try (OperationCoordinator.Lease ignored = coordinator.acquire(opId)) {
                 return store.getSignRecord(opId)
                         .filter(record -> record.state() == SignWorkflowStore.State.SUCCEEDED
-                                || record.state() == SignWorkflowStore.State.RETIRED
-                                        && record.result().isPresent())
+                                || record.state() == SignWorkflowStore.State.RETIRED && record.result().isPresent())
                         .flatMap(SignWorkflowStore.Record::result);
             }
         }
@@ -1384,7 +1374,7 @@ public final class PkiSigningBus implements AutoCloseable {
          *
          * @param namespace authoritative provider/store namespace; must not be
          *                  {@code null}
-         * @param deadline authoritative signing deadline; must not be {@code null}
+         * @param deadline  authoritative signing deadline; must not be {@code null}
          * @return canonical versioned semantic fingerprint
          * @throws NullPointerException if either argument is {@code null}
          */
@@ -1399,7 +1389,7 @@ public final class PkiSigningBus implements AutoCloseable {
          *
          * @param submissionId authoritative submission identifier; must not be
          *                     {@code null}
-         * @param owner authoritative request owner; must not be {@code null}
+         * @param owner        authoritative request owner; must not be {@code null}
          * @return {@code true} only when the stored provider operation identifier and
          *         access principal exactly match the supplied identity
          * @throws NullPointerException if either argument is {@code null}

@@ -53,8 +53,7 @@ final class KeyringUnlocks {
         }
     }
 
-    private static KeyringPassword acquire(KeyringUnlockProvider provider)
-            throws IOException {
+    private static KeyringPassword acquire(KeyringUnlockProvider provider) throws IOException {
         KeyringPassword password = provider.acquire();
         if (password == null) {
             throw new IOException("Keyring unlock provider returned no password");

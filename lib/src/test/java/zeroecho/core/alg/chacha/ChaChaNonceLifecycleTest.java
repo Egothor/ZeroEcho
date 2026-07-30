@@ -177,8 +177,8 @@ class ChaChaNonceLifecycleTest {
 
     private static ChaCha20Poly1305CipherContext encryptingContext(ChaCha20Poly1305Spec spec, SecureRandom random,
             CtxInterface operation) {
-        ChaCha20Poly1305CipherContext context = new ChaCha20Poly1305CipherContext(
-                new ChaCha20Poly1305Algorithm(), KEY, true, spec, random);
+        ChaCha20Poly1305CipherContext context = new ChaCha20Poly1305CipherContext(new ChaCha20Poly1305Algorithm(), KEY,
+                true, spec, random);
         ((ContextAware) context).setContext(operation);
         return context;
     }
@@ -190,8 +190,8 @@ class ChaChaNonceLifecycleTest {
     }
 
     private static byte[] decryptHeader(byte[] ciphertext) throws Exception {
-        ChaCha20Poly1305CipherContext context = new ChaCha20Poly1305CipherContext(
-                new ChaCha20Poly1305Algorithm(), KEY, false, HEADER_SPEC, null);
+        ChaCha20Poly1305CipherContext context = new ChaCha20Poly1305CipherContext(new ChaCha20Poly1305Algorithm(), KEY,
+                false, HEADER_SPEC, null);
         ((ContextAware) context).setContext(Ctx.INSTANCE.getContext("chacha-header-decrypt-" + System.nanoTime()));
         try (InputStream stream = context.attach(new ByteArrayInputStream(ciphertext))) {
             return stream.readAllBytes();

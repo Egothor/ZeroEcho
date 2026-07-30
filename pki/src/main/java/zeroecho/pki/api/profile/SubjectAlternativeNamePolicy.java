@@ -11,18 +11,20 @@ import java.util.Set;
 /**
  * Deny-by-default Subject Alternative Name policy.
  *
- * @param minimumTotal                  minimum total SAN count
- * @param maximumTotal                  maximum total SAN count
- * @param rules                         permitted SAN type rules
- * @param allowDnsWildcard              whether a complete leftmost DNS wildcard is permitted
- * @param allowedUriSchemes             exact lowercase allowed URI schemes
- * @param criticalWithNonemptySubject   SAN criticality for a nonempty subject
- * @param requireServiceIdentity        whether DNS, IP, or URI identity is required
- * @param requireEmailIdentity          whether an RFC822 identity is required
+ * @param minimumTotal                minimum total SAN count
+ * @param maximumTotal                maximum total SAN count
+ * @param rules                       permitted SAN type rules
+ * @param allowDnsWildcard            whether a complete leftmost DNS wildcard
+ *                                    is permitted
+ * @param allowedUriSchemes           exact lowercase allowed URI schemes
+ * @param criticalWithNonemptySubject SAN criticality for a nonempty subject
+ * @param requireServiceIdentity      whether DNS, IP, or URI identity is
+ *                                    required
+ * @param requireEmailIdentity        whether an RFC822 identity is required
  */
-public record SubjectAlternativeNamePolicy(int minimumTotal, int maximumTotal,
-        List<SubjectAlternativeNameRule> rules, boolean allowDnsWildcard, Set<String> allowedUriSchemes,
-        boolean criticalWithNonemptySubject, boolean requireServiceIdentity, boolean requireEmailIdentity) {
+public record SubjectAlternativeNamePolicy(int minimumTotal, int maximumTotal, List<SubjectAlternativeNameRule> rules,
+        boolean allowDnsWildcard, Set<String> allowedUriSchemes, boolean criticalWithNonemptySubject,
+        boolean requireServiceIdentity, boolean requireEmailIdentity) {
 
     /** Maximum number of SAN entries. */
     public static final int HARD_MAXIMUM_COUNT = 64;
@@ -53,8 +55,7 @@ public record SubjectAlternativeNamePolicy(int minimumTotal, int maximumTotal,
             serviceIdentityPossible |= rule.maximum() > 0 && (rule.type() == SubjectAlternativeNameType.DNS_NAME
                     || rule.type() == SubjectAlternativeNameType.IP_ADDRESS
                     || rule.type() == SubjectAlternativeNameType.URI);
-            emailIdentityPossible |= rule.maximum() > 0
-                    && rule.type() == SubjectAlternativeNameType.RFC822_NAME;
+            emailIdentityPossible |= rule.maximum() > 0 && rule.type() == SubjectAlternativeNameType.RFC822_NAME;
             uriPossible |= rule.maximum() > 0 && rule.type() == SubjectAlternativeNameType.URI;
         }
         Set<String> schemes = new java.util.LinkedHashSet<>();
@@ -69,8 +70,7 @@ public record SubjectAlternativeNamePolicy(int minimumTotal, int maximumTotal,
         }
         allowedUriSchemes = Set.copyOf(schemes);
         if (configuredMinimum > maximumTotal || configuredMaximum < minimumTotal
-                || requireServiceIdentity && !serviceIdentityPossible
-                || requireEmailIdentity && !emailIdentityPossible
+                || requireServiceIdentity && !serviceIdentityPossible || requireEmailIdentity && !emailIdentityPossible
                 || uriPossible != !allowedUriSchemes.isEmpty()) {
             throw new IllegalArgumentException("SAN policy requirements are not satisfiable");
         }

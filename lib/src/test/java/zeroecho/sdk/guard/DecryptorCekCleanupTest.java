@@ -58,8 +58,8 @@ class DecryptorCekCleanupTest {
         System.out.println("acceptedCekIsClearedWhenPayloadSetupFails");
         byte[] accepted = new byte[16];
         RecipientOpener opener = (entryId, entryBlob, material) -> accepted;
-        Decryptor decryptor = new Decryptor(List.of(opener), new UnlockMaterial.Password(new char[] { 'p' }),
-                null, null, 16, 4, 128);
+        Decryptor decryptor = new Decryptor(List.of(opener), new UnlockMaterial.Password(new char[] { 'p' }), null,
+                null, 16, 4, 128);
         decryptor.setInput(() -> new ByteArrayInputStream(envelopeHeader()));
 
         assertThrows(NullPointerException.class, decryptor::getStream);
@@ -104,8 +104,7 @@ class DecryptorCekCleanupTest {
 
     private static Decryptor decryptor(RecipientOpener opener) {
         AesDataContentBuilder aes = AesDataContentBuilder.builder(new ZeroEchoSession()).withHeader().modeGcm(128);
-        return new Decryptor(List.of(opener), new UnlockMaterial.Password(new char[] { 'p' }),
-                aes, null, 16, 4, 128);
+        return new Decryptor(List.of(opener), new UnlockMaterial.Password(new char[] { 'p' }), aes, null, 16, 4, 128);
     }
 
     private static byte[] envelopeHeader() throws IOException {

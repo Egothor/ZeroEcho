@@ -198,7 +198,8 @@ class AesRandomSupportTest {
     @Test
     void publicBuilderExposesOnlyDecryptionIvConfiguration() throws Exception {
         System.out.print("AesRandomSupport/publicBuilderExposesOnlyDecryptionIvConfiguration...");
-        List<String> methodNames = Arrays.stream(AesDataContentBuilder.class.getMethods()).map(Method::getName).toList();
+        List<String> methodNames = Arrays.stream(AesDataContentBuilder.class.getMethods()).map(Method::getName)
+                .toList();
 
         assertFalse(methodNames.contains("withIv"));
         assertTrue(methodNames.contains("withDecryptionIv"));

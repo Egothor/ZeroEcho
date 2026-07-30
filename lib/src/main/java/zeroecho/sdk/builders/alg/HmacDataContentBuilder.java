@@ -91,6 +91,7 @@ import zeroecho.sdk.content.api.PlainContent;
 public final class HmacDataContentBuilder implements DataContentBuilder<PlainContent> {
     private static final String ALGORITHM_ID = "HMAC";
     private final ZeroEchoSession session;
+
     /**
      * Mode selects whether the pipeline computes an HMAC tag or verifies one.
      *
@@ -622,8 +623,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
         final String mac = spec.macName(); // e.g., "HmacSHA256"
         try {
             if (genKeyBits != null) {
-                return session.keyBuilders().symmetric().generate(ALGORITHM_ID,
-                        new HmacKeyGenSpec(mac, genKeyBits));
+                return session.keyBuilders().symmetric().generate(ALGORITHM_ID, new HmacKeyGenSpec(mac, genKeyBits));
             }
             if (importRaw != null || importHex != null || importBase64 != null) {
                 HmacKeyImportSpec ispec;

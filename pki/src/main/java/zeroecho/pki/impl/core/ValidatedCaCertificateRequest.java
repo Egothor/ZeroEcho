@@ -19,11 +19,14 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.request.SubjectRdn;
 
 /**
- * Immutable gate-produced CA certificate request accepted by the issuer backend.
+ * Immutable gate-produced CA certificate request accepted by the issuer
+ * backend.
  *
- * <p>The request contains only values approved against one exact active profile
+ * <p>
+ * The request contains only values approved against one exact active profile
  * version. It carries no generic attributes, raw profile document, or caller
- * selected extension material.</p>
+ * selected extension material.
+ * </p>
  */
 @SuppressWarnings("PMD.DataClass")
 public final class ValidatedCaCertificateRequest {
@@ -54,10 +57,10 @@ public final class ValidatedCaCertificateRequest {
 
     // The constructor is the single cohesive gate output boundary.
     @SuppressWarnings("PMD.ExcessiveParameterList")
-    /* package */ ValidatedCaCertificateRequest(Operation operation, FormatId formatId,
-            PkiId issuerCaId, PkiId subjectCaId, CertificateProfileRef profileReference,
-            CertificateProfileKind certificateType, SubjectRef subjectRef, List<SubjectRdn> subjectRdns,
-            EncodedObject exactPublicKey, Validity validity, BigInteger serial, CaCertificatePolicy policy) {
+    /* package */ ValidatedCaCertificateRequest(Operation operation, FormatId formatId, PkiId issuerCaId,
+            PkiId subjectCaId, CertificateProfileRef profileReference, CertificateProfileKind certificateType,
+            SubjectRef subjectRef, List<SubjectRdn> subjectRdns, EncodedObject exactPublicKey, Validity validity,
+            BigInteger serial, CaCertificatePolicy policy) {
         this.operation = Objects.requireNonNull(operation, "operation");
         this.formatId = Objects.requireNonNull(formatId, "formatId");
         this.issuerCaId = Objects.requireNonNull(issuerCaId, "issuerCaId");

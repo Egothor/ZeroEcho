@@ -215,8 +215,8 @@ public final class MultiRecipientDataSourceBuilder
         ensureOpen();
         RecipientKekSizes.requireSupported(kekBytes);
         session.pbkdf2Limits().validateTrusted(iterations);
-        this.recipients.add(new PasswordRecipient(password, iterations, saltLen, kekBytes, false,
-                session.pbkdf2Limits()));
+        this.recipients
+                .add(new PasswordRecipient(password, iterations, saltLen, kekBytes, false, session.pbkdf2Limits()));
         return this;
     }
 
@@ -236,8 +236,7 @@ public final class MultiRecipientDataSourceBuilder
      * @param saltLen  HKDF salt length in bytes
      * @return this builder
      * @throws NullPointerException     if {@code kem} is {@code null}
-     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or
-     *                                  32
+     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or 32
      */
     public MultiRecipientDataSourceBuilder addRecipient(KemContext kem, int kekBytes, int saltLen) {
         ensureOpen();
@@ -292,8 +291,8 @@ public final class MultiRecipientDataSourceBuilder
         ensureOpen();
         RecipientKekSizes.requireSupported(kekBytes);
         session.pbkdf2Limits().validateTrusted(iterations);
-        this.recipients.add(new PasswordRecipient(password, iterations, saltLen, kekBytes, true,
-                session.pbkdf2Limits()));
+        this.recipients
+                .add(new PasswordRecipient(password, iterations, saltLen, kekBytes, true, session.pbkdf2Limits()));
         return this;
     }
 
@@ -314,8 +313,7 @@ public final class MultiRecipientDataSourceBuilder
      * @param saltLen  HKDF salt length in bytes
      * @return this builder
      * @throws NullPointerException     if {@code kem} is {@code null}
-     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or
-     *                                  32
+     * @throws IllegalArgumentException if {@code kekBytes} is not exactly 16 or 32
      */
     public MultiRecipientDataSourceBuilder addRecipientDecoy(KemContext kem, int kekBytes, int saltLen) {
         ensureOpen();
@@ -384,9 +382,9 @@ public final class MultiRecipientDataSourceBuilder
      * </p>
      *
      * <p>
-     * The builder takes ownership of the opener. The opener must be reusable
-     * across all recipient entries and is closed after scanning or when the built
-     * content is abandoned.
+     * The builder takes ownership of the opener. The opener must be reusable across
+     * all recipient entries and is closed after scanning or when the built content
+     * is abandoned.
      * </p>
      *
      * @param opener reusable opener to add
@@ -479,8 +477,10 @@ public final class MultiRecipientDataSourceBuilder
     /**
      * Destroys recipient secrets still owned by this builder.
      *
-     * <p>Recipients transferred to a successfully built encrypting content object
-     * are owned and destroyed by that object instead.</p>
+     * <p>
+     * Recipients transferred to a successfully built encrypting content object are
+     * owned and destroyed by that object instead.
+     * </p>
      *
      * @throws DestroyFailedException if recipient cleanup fails
      */

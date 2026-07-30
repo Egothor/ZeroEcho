@@ -105,8 +105,8 @@ import zeroecho.core.spec.ContextSpec;
  * <li>Counting is performed by decorating the returned {@code InputStream}s; no
  * buffering beyond normal {@code FilterInputStream} forwarding is
  * introduced.</li>
- * <li>Idempotent wrapping: contexts already wrapped by this utility are returned
- * unchanged. Unrelated JDK proxies are wrapped normally.</li>
+ * <li>Idempotent wrapping: contexts already wrapped by this utility are
+ * returned unchanged. Unrelated JDK proxies are wrapped normally.</li>
  * </ul>
  *
  * <h2>Usage example</h2> <pre>{@code
@@ -190,8 +190,7 @@ public final class AuditedContexts {
     }
 
     private static boolean isAuditedProxy(CryptoContext context) {
-        return Proxy.isProxyClass(context.getClass())
-                && Proxy.getInvocationHandler(context) instanceof AuditingHandler;
+        return Proxy.isProxyClass(context.getClass()) && Proxy.getInvocationHandler(context) instanceof AuditingHandler;
     }
 
     @SuppressWarnings("unchecked")
@@ -242,8 +241,7 @@ public final class AuditedContexts {
             }
 
             safeAudit.onContextCreatedMeta(ctxId, algoId == null ? UNKNOWN : algoId,
-                    provider == null ? UNKNOWN : provider,
-                    role, keyFp, specMeta);
+                    provider == null ? UNKNOWN : provider, role, keyFp, specMeta);
         }
 
         ClassLoader cl = ctx.getClass().getClassLoader(); // NOPMD
@@ -720,8 +718,7 @@ public final class AuditedContexts {
             StringBuilder fingerprint = new StringBuilder(16);
             for (int index = 0; index < Math.min(8, digest.length); index++) {
                 int value = digest[index] & 0xff;
-                fingerprint.append(Character.forDigit(value >>> 4, 16))
-                        .append(Character.forDigit(value & 0x0f, 16));
+                fingerprint.append(Character.forDigit(value >>> 4, 16)).append(Character.forDigit(value & 0x0f, 16));
             }
             return key.getAlgorithm() + ":" + fingerprint;
         } catch (NoSuchAlgorithmException exception) {

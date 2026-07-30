@@ -19,8 +19,7 @@ final class KeyringNonceReservationKdf {
     private static final int STORE_ID_BYTES = 16;
     private static final int OUTPUT_BYTES = 32;
     private static final String HMAC_SHA256 = "HmacSHA256";
-    private static final String DOMAIN_LABEL =
-            "zeroecho:keyring:nonce-reservation-mac:v1";
+    private static final String DOMAIN_LABEL = "zeroecho:keyring:nonce-reservation-mac:v1";
 
     private KeyringNonceReservationKdf() {
     }
@@ -29,14 +28,13 @@ final class KeyringNonceReservationKdf {
      * Derives the store-specific nonce-reservation MAC key.
      *
      * @param masterKey borrowed 256-bit store master key
-     * @param storeId borrowed canonical 128-bit binary store UUID
+     * @param storeId   borrowed canonical 128-bit binary store UUID
      * @return newly owned 256-bit derived key
      * @throws GeneralSecurityException if HMAC-SHA-256 is unavailable
      */
-    /* default */ static byte[] derive(byte[] masterKey, byte[] storeId)
-            throws GeneralSecurityException {
-        if (masterKey == null || masterKey.length != MASTER_KEY_BYTES
-                || storeId == null || storeId.length != STORE_ID_BYTES) {
+    /* default */ static byte[] derive(byte[] masterKey, byte[] storeId) throws GeneralSecurityException {
+        if (masterKey == null || masterKey.length != MASTER_KEY_BYTES || storeId == null
+                || storeId.length != STORE_ID_BYTES) {
             throw new IllegalArgumentException("Invalid keyring derivation input");
         }
         byte[] salt = storeId.clone();
@@ -61,8 +59,7 @@ final class KeyringNonceReservationKdf {
         }
     }
 
-    private static byte[] hmac(byte[] key, byte[] input)
-            throws GeneralSecurityException {
+    private static byte[] hmac(byte[] key, byte[] input) throws GeneralSecurityException {
         Mac mac = Mac.getInstance(HMAC_SHA256);
         mac.init(new SecretKeySpec(key, HMAC_SHA256));
         return mac.doFinal(input);

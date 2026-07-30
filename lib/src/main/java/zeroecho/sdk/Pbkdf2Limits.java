@@ -8,10 +8,11 @@
 package zeroecho.sdk;
 
 /**
- * Explicit PBKDF2 work-factor limits for trusted configuration and decoded data.
+ * Explicit PBKDF2 work-factor limits for trusted configuration and decoded
+ * data.
  *
- * @param operationalMaximum largest iteration count accepted from trusted local
- *                           configuration
+ * @param operationalMaximum     largest iteration count accepted from trusted
+ *                               local configuration
  * @param absoluteDecodedMaximum hard safety ceiling for untrusted decoded data
  * @since 1.0
  */
@@ -41,8 +42,8 @@ public record Pbkdf2Limits(int operationalMaximum, int absoluteDecodedMaximum) {
      */
     public void validateTrusted(int iterations) {
         if (iterations < MINIMUM || iterations > operationalMaximum) {
-            throw new IllegalArgumentException("PBKDF2 iterations must be in range " + MINIMUM + ".."
-                    + operationalMaximum + ": " + iterations);
+            throw new IllegalArgumentException(
+                    "PBKDF2 iterations must be in range " + MINIMUM + ".." + operationalMaximum + ": " + iterations);
         }
     }
 

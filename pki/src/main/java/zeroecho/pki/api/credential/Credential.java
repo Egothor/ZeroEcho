@@ -66,17 +66,16 @@ import zeroecho.pki.api.attr.AttributeSet;
  * @param publicKeyId      stable identifier derived from the subject public key
  * @param profileBinding   closed profile identity governing issuance
  * @param status           persisted issuance and inventory metadata; this value
- *                         is not sufficient for a trust decision because current
- *                         revocation state and evaluation time are external
- *                         runtime inputs. Security-sensitive callers must use
- *                         {@link EffectiveCredentialStatusResolver}.
+ *                         is not sufficient for a trust decision because
+ *                         current revocation state and evaluation time are
+ *                         external runtime inputs. Security-sensitive callers
+ *                         must use {@link EffectiveCredentialStatusResolver}.
  * @param encoded          encoded credential bytes
  * @param attributes       universal attribute set
  */
 public record Credential(PkiId credentialId, FormatId formatId, IssuerRef issuerRef, SubjectRef subjectRef,
         Validity validity, String serialOrUniqueId, PkiId publicKeyId, CredentialProfileBinding profileBinding,
-        CredentialStatus status,
-        EncodedObject encoded, AttributeSet attributes) {
+        CredentialStatus status, EncodedObject encoded, AttributeSet attributes) {
 
     /**
      * Creates a credential record.

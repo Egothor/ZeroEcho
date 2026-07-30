@@ -81,12 +81,10 @@ public final class BuiltInCertificateProfileTemplate {
 
     @Override
     public boolean equals(Object other) {
-        return this == other
-                || other instanceof BuiltInCertificateProfileTemplate template
-                        && definition.equals(template.definition)
-                        && Arrays.equals(canonicalJson, template.canonicalJson)
-                        && Arrays.equals(canonicalSha256, template.canonicalSha256)
-                        && resourceName.equals(template.resourceName);
+        return this == other || other instanceof BuiltInCertificateProfileTemplate template
+                && definition.equals(template.definition) && Arrays.equals(canonicalJson, template.canonicalJson)
+                && Arrays.equals(canonicalSha256, template.canonicalSha256)
+                && resourceName.equals(template.resourceName);
     }
 
     @Override
@@ -98,8 +96,7 @@ public final class BuiltInCertificateProfileTemplate {
 
     @Override
     public String toString() {
-        return "BuiltInCertificateProfileTemplate[profileId=" + definition.profileId()
-                + ", profileVersion=" + definition.profileVersion()
-                + ", resourceName=" + resourceName + "]";
+        return "BuiltInCertificateProfileTemplate[profileId=" + definition.profileId() + ", profileVersion="
+                + definition.profileVersion() + ", resourceName=" + resourceName + "]";
     }
 }

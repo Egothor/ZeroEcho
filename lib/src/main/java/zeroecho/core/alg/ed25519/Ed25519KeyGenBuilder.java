@@ -38,8 +38,8 @@ import zeroecho.core.alg.common.eddsa.AbstractEdDSAKeyGenBuilder;
 /**
  * <h2>Key-pair builder for Ed25519</h2>
  *
- * Concrete {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} implementation for
- * generating Ed25519 key pairs.
+ * Concrete {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} implementation
+ * for generating Ed25519 key pairs.
  *
  * <p>
  * This builder delegates to the JCA provider under the canonical algorithm name

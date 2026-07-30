@@ -88,8 +88,7 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         Instant now = Instant.parse("2026-02-03T04:05:06.789Z");
         Path keyring = root.resolve("keyring.txt");
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
-        try (zeroecho.core.storage.KeyringPassword password =
-                TestKeyringUnlocks.provider().acquire();
+        try (zeroecho.core.storage.KeyringPassword password = TestKeyringUnlocks.provider().acquire();
                 KeyringStore keyringStore = KeyringStore.create(keyring, password)) {
             keyringStore.putPrivate("test.prv", "RSA", pair.getPrivate());
             keyringStore.putPublic("test.pub", "RSA", pair.getPublic());
@@ -120,7 +119,8 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         logger.addHandler(handler);
         try (ZeroEchoLibSignatureWorkflow workflow = new ZeroEchoLibSignatureWorkflow("zeroecho-lib", keyring,
                 root.resolve("cleanup-operations"), Clock.fixed(now, ZoneOffset.UTC), Duration.ofDays(90),
-                "zeroecho-lib:", true, TestKeyringUnlocks.provider(), (category, bytes) -> cleared.add(new ObservedBuffer(category, bytes)));
+                "zeroecho-lib:", true, TestKeyringUnlocks.provider(),
+                (category, bytes) -> cleared.add(new ObservedBuffer(category, bytes)));
                 SignatureWorkflow.Registration registration = workflow.register((operationId, status) -> {
                     throw new IllegalStateException("DO_NOT_LOG_SIGNATURE_SENTINEL");
                 })) {
@@ -133,22 +133,20 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
             assertTrue(signature.bytes().length > 0);
 
             AccessContext access = signRequest.accessContext();
-            SignatureWorkflow.VerifyRequest verifyRequest = new SignatureWorkflow.VerifyRequest(access,
-                    "SHA256withRSA", new EncodedObject(Encoding.BINARY, message), signature,
+            SignatureWorkflow.VerifyRequest verifyRequest = new SignatureWorkflow.VerifyRequest(access, "SHA256withRSA",
+                    new EncodedObject(Encoding.BINARY, message), signature,
                     Optional.of(new KeyRef("zeroecho-lib:test.pub")), Optional.empty(), Optional.empty());
             PkiId verifyId = workflow.submitVerify(verifyRequest);
-            assertEquals(Optional.of(true),
-                    workflow.status(verifyId).result().orElseThrow().verified());
+            assertEquals(Optional.of(true), workflow.status(verifyId).result().orElseThrow().verified());
 
             byte[] invalidBytes = signature.bytes();
             invalidBytes[0] ^= 0x01;
             SignatureWorkflow.VerifyRequest invalidRequest = new SignatureWorkflow.VerifyRequest(access,
                     "SHA256withRSA", new EncodedObject(Encoding.BINARY, message),
-                    new EncodedObject(Encoding.BINARY, invalidBytes),
-                    Optional.of(new KeyRef("zeroecho-lib:test.pub")), Optional.empty(), Optional.empty());
+                    new EncodedObject(Encoding.BINARY, invalidBytes), Optional.of(new KeyRef("zeroecho-lib:test.pub")),
+                    Optional.empty(), Optional.empty());
             PkiId invalidId = workflow.submitVerify(invalidRequest);
-            assertEquals(Optional.of(false),
-                    workflow.status(invalidId).result().orElseThrow().verified());
+            assertEquals(Optional.of(false), workflow.status(invalidId).result().orElseThrow().verified());
 
             assertTrue(cleared.stream().anyMatch(value -> "sign-payload".equals(value.category())));
             assertTrue(cleared.stream().anyMatch(value -> "sign-result-copy".equals(value.category())));
@@ -157,8 +155,8 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
             assertTrue(cleared.stream().anyMatch(value -> "persisted-operation-buffer".equals(value.category())));
             assertTrue(cleared.stream().allMatch(value -> isCleared(value.bytes())));
             assertTrue(records.stream().allMatch(record -> record.getThrown() == null));
-            assertTrue(records.stream().noneMatch(record -> String.valueOf(record.getMessage())
-                    .contains("DO_NOT_LOG_SIGNATURE_SENTINEL")));
+            assertTrue(records.stream().noneMatch(
+                    record -> String.valueOf(record.getMessage()).contains("DO_NOT_LOG_SIGNATURE_SENTINEL")));
             System.out.println("...clearedBuffers=" + cleared.size());
         } finally {
             logger.removeHandler(handler);
@@ -194,8 +192,7 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         Instant base = Instant.parse("2026-02-03T04:05:06Z");
         Path keyring = root.resolve("keyring.txt");
         KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
-        try (zeroecho.core.storage.KeyringPassword password =
-                TestKeyringUnlocks.provider().acquire();
+        try (zeroecho.core.storage.KeyringPassword password = TestKeyringUnlocks.provider().acquire();
                 KeyringStore keyringStore = KeyringStore.create(keyring, password)) {
             keyringStore.putPrivate("test.prv", "RSA", pair.getPrivate());
             keyringStore.putPublic("test.pub", "RSA", pair.getPublic());
@@ -248,15 +245,16 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         assertEquals(1, encoded.bytes()[0]);
         assertEquals(2, encoded.bytes()[1]);
 
-        PkiId id = SigningSubmissionId.create(NAMESPACE, Instant.parse("2026-02-03T04:05:06Z"),
-                new SecureRandom()).id();
+        PkiId id = SigningSubmissionId.create(NAMESPACE, Instant.parse("2026-02-03T04:05:06Z"), new SecureRandom())
+                .id();
         SignatureWorkflow.SignRequest request = request(id, 1L, encoded.bytes());
         byte[] requestBytes = request.payload().bytes();
         requestBytes[2] = 9;
         assertEquals(3, request.payload().bytes()[2]);
-        assertEquals(request.semanticFingerprint(), SignatureWorkflow.SignRequest.fingerprint(NAMESPACE,
-                request.accessContext(), request.keyRef(), request.algorithmId(), request.payload(),
-                request.preferredSignatureEncoding(), request.deadline()));
+        assertEquals(request.semanticFingerprint(),
+                SignatureWorkflow.SignRequest.fingerprint(NAMESPACE, request.accessContext(), request.keyRef(),
+                        request.algorithmId(), request.payload(), request.preferredSignatureEncoding(),
+                        request.deadline()));
     }
 
     @Test
@@ -345,14 +343,14 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
             clock.release.countDown();
             highRead.get(5, TimeUnit.SECONDS);
             rollbackRead.get(5, TimeUnit.SECONDS);
-            assertEquals(high.toEpochMilli(), Long.parseLong(Files.readString(
-                    operations.resolve("TIME_WATERMARK")).trim()));
+            assertEquals(high.toEpochMilli(),
+                    Long.parseLong(Files.readString(operations.resolve("TIME_WATERMARK")).trim()));
         }
         clock.set(base.minusSeconds(120));
         try (ZeroEchoLibSignatureWorkflow restarted = workflow(root, operations, clock)) {
             restarted.status(new PkiId("unknown-restart"));
-            assertEquals(high.toEpochMilli(), Long.parseLong(Files.readString(
-                    operations.resolve("TIME_WATERMARK")).trim()));
+            assertEquals(high.toEpochMilli(),
+                    Long.parseLong(Files.readString(operations.resolve("TIME_WATERMARK")).trim()));
         }
     }
 
@@ -361,8 +359,8 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
     }
 
     private static ZeroEchoLibSignatureWorkflow workflow(Path root, Path operations, Path keyring, Clock clock) {
-        return new ZeroEchoLibSignatureWorkflow("zeroecho-lib", keyring, operations, clock,
-                Duration.ofDays(90), "zeroecho-lib:", true, TestKeyringUnlocks.provider());
+        return new ZeroEchoLibSignatureWorkflow("zeroecho-lib", keyring, operations, clock, Duration.ofDays(90),
+                "zeroecho-lib:", true, TestKeyringUnlocks.provider());
     }
 
     private static SignatureWorkflow.SignRequest request(PkiId id, long fence, byte[] payload) {
@@ -371,11 +369,10 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
 
     private static SignatureWorkflow.SignRequest request(PkiId id, long fence, byte[] payload, KeyRef keyRef,
             Optional<Instant> deadline) {
-        AccessContext access = new AccessContext(new Principal("TEST", "owner"), new Purpose("TEST"),
-                Optional.empty(), Optional.empty());
-        return SignatureWorkflow.SignRequest.create(id, NAMESPACE, fence, access,
-                keyRef, "SHA256withRSA", new EncodedObject(Encoding.BINARY, payload),
-                Optional.of(Encoding.BINARY), deadline);
+        AccessContext access = new AccessContext(new Principal("TEST", "owner"), new Purpose("TEST"), Optional.empty(),
+                Optional.empty());
+        return SignatureWorkflow.SignRequest.create(id, NAMESPACE, fence, access, keyRef, "SHA256withRSA",
+                new EncodedObject(Encoding.BINARY, payload), Optional.of(Encoding.BINARY), deadline);
     }
 
     private static void forcePersistedStateCode(Path operations, int from, int to) {

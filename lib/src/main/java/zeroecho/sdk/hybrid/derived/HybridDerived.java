@@ -196,8 +196,8 @@ public final class HybridDerived {
      * construction.
      * </p>
      *
-     * @param aes        AES builder to configure (must not be null)
-     * @param keyBits    AES key size in bits (128/192/256)
+     * @param aes     AES builder to configure (must not be null)
+     * @param keyBits AES key size in bits (128/192/256)
      * @return the provided builder instance
      * @throws NullPointerException     if aes is null
      * @throws IllegalArgumentException if keyBits is invalid
@@ -225,16 +225,16 @@ public final class HybridDerived {
     }
 
     /**
-     * Derives a ChaCha key and applies it with optional AAD to the provided
-     * ChaCha builder.
+     * Derives a ChaCha key and applies it with optional AAD to the provided ChaCha
+     * builder.
      *
      * <p>
      * The returned value is the same builder instance to preserve fluent pipeline
      * construction.
      * </p>
      *
-     * @param chacha        ChaCha builder to configure (must not be null)
-     * @param keyBits       key size in bits (typically 256)
+     * @param chacha  ChaCha builder to configure (must not be null)
+     * @param keyBits key size in bits (typically 256)
      * @return the provided builder instance
      * @throws NullPointerException     if chacha is null
      * @throws IllegalArgumentException if keyBits is invalid

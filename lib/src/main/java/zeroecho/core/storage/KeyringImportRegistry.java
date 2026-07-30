@@ -71,18 +71,18 @@ import zeroecho.core.spi.SymmetricKeyImporter;
  * Closed trusted mapping from persistent key identities to canonical registered
  * import operations.
  *
- * <p>Provider identity is deliberately absent. Standard encoded key material
- * is reconstructed by the current runtime's canonical ZeroEcho importer. The
- * original JCA provider is neither persisted nor reproduced.</p>
+ * <p>
+ * Provider identity is deliberately absent. Standard encoded key material is
+ * reconstructed by the current runtime's canonical ZeroEcho importer. The
+ * original JCA provider is neither persisted nor reproduced.
+ * </p>
  */
 final class KeyringImportRegistry {
     private static final String ALGORITHM_AES = "AES";
     private static final String ALGORITHM_HMAC = "HMAC";
     private static final String ALGORITHM_CHACHA20 = "CHACHA20";
     private static final String ALGORITHM_CHACHA20_POLY1305 = "CHACHA20-POLY1305";
-    private static final Map<Class<? extends AlgorithmKeySpec>,
-            Function<byte[], ? extends AlgorithmKeySpec>> SPEC_FACTORIES =
-            createSpecFactories();
+    private static final Map<Class<? extends AlgorithmKeySpec>, Function<byte[], ? extends AlgorithmKeySpec>> SPEC_FACTORIES = createSpecFactories();
     private static final Map<Tuple, PersistentMapping> MAPPINGS = createMappings();
 
     private KeyringImportRegistry() {
@@ -93,10 +93,7 @@ final class KeyringImportRegistry {
      */
     /* default */
     enum HmacVariant {
-        NONE(0, null),
-        SHA256(1, "HmacSHA256"),
-        SHA384(2, "HmacSHA384"),
-        SHA512(3, "HmacSHA512");
+        NONE(0, null), SHA256(1, "HmacSHA256"), SHA384(2, "HmacSHA384"), SHA512(3, "HmacSHA512");
 
         private final int code;
         private final String jcaName;
@@ -123,8 +120,7 @@ final class KeyringImportRegistry {
             throw new KeyringException(KeyringException.Code.KEYRING_IMPORT_METADATA_INVALID);
         }
 
-        /* default */ static HmacVariant forStoredKey(String algorithmId, Key key)
-                throws KeyringException {
+        /* default */ static HmacVariant forStoredKey(String algorithmId, Key key) throws KeyringException {
             if (!ALGORITHM_HMAC.equals(algorithmId)) {
                 return NONE;
             }
@@ -142,21 +138,19 @@ final class KeyringImportRegistry {
      * Immutable description used by the finite importer-matrix test.
      *
      * @param algorithmId canonical ZeroEcho algorithm identifier
-     * @param kind key kind
-     * @param encoding standard encoding
+     * @param kind        key kind
+     * @param encoding    standard encoding
      * @param hmacVariant closed HMAC variant, or {@link HmacVariant#NONE}
-     * @param specType exact registered importer specification type
+     * @param specType    exact registered importer specification type
      */
     /* default */
-    record PersistentMapping(String algorithmId, KeyringStore.Kind kind,
-            KeyringStore.Encoding encoding, HmacVariant hmacVariant,
-            Class<? extends AlgorithmKeySpec> specType) {
+    record PersistentMapping(String algorithmId, KeyringStore.Kind kind, KeyringStore.Encoding encoding,
+            HmacVariant hmacVariant, Class<? extends AlgorithmKeySpec> specType) {
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    /* default */ static Key importKey(String algorithmId, KeyringStore.Kind kind,
-            KeyringStore.Encoding encoding, HmacVariant hmacVariant, byte[] encoded)
-            throws GeneralSecurityException, KeyringException {
+    /* default */ static Key importKey(String algorithmId, KeyringStore.Kind kind, KeyringStore.Encoding encoding,
+            HmacVariant hmacVariant, byte[] encoded) throws GeneralSecurityException, KeyringException {
         PersistentMapping mapping = requireMapping(algorithmId, kind, encoding, hmacVariant);
         CryptoAlgorithm algorithm = requireAlgorithm(mapping.algorithmId);
         AlgorithmKeySpec spec = createSpec(mapping, encoded);
@@ -172,8 +166,7 @@ final class KeyringImportRegistry {
     }
 
     /* default */ static void validateMapping(String algorithmId, KeyringStore.Kind kind,
-            KeyringStore.Encoding encoding, HmacVariant hmacVariant)
-            throws KeyringException {
+            KeyringStore.Encoding encoding, HmacVariant hmacVariant) throws KeyringException {
         PersistentMapping mapping = requireMapping(algorithmId, kind, encoding, hmacVariant);
         CryptoAlgorithm algorithm = requireAlgorithm(mapping.algorithmId);
         List<KeyOperationInfo> operations = matchingOperations(algorithm, kind);
@@ -184,27 +177,23 @@ final class KeyringImportRegistry {
 
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException" })
     /* default */ static void validateCanonical(String algorithmId, KeyringStore.Kind kind,
-            KeyringStore.Encoding encoding, HmacVariant hmacVariant, Key source,
-            byte[] encoded)
+            KeyringStore.Encoding encoding, HmacVariant hmacVariant, Key source, byte[] encoded)
             throws KeyringException {
         Key imported = null;
         byte[] canonical = null;
         try {
             if (!matchesSourceAlgorithm(source, algorithmId, hmacVariant)) {
-                throw new KeyringException(
-                        KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE);
+                throw new KeyringException(KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE);
             }
             imported = importKey(algorithmId, kind, encoding, hmacVariant, encoded);
             canonical = imported.getEncoded();
             if (canonical == null || !matchesFormat(imported.getFormat(), encoding)
                     || !MessageDigest.isEqual(encoded, canonical)
                     || !matchesAlgorithm(imported, algorithmId, hmacVariant)) {
-                throw new KeyringException(
-                        KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE);
+                throw new KeyringException(KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE);
             }
         } catch (GeneralSecurityException | RuntimeException exception) {
-            throw new KeyringException(
-                    KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE);
+            throw new KeyringException(KeyringException.Code.KEYRING_KEY_NOT_CANONICALIZABLE);
         } finally {
             if (canonical != null) {
                 Arrays.fill(canonical, (byte) 0);
@@ -217,11 +206,9 @@ final class KeyringImportRegistry {
         return List.copyOf(MAPPINGS.values());
     }
 
-    private static PersistentMapping requireMapping(String algorithmId,
-            KeyringStore.Kind kind, KeyringStore.Encoding encoding,
-            HmacVariant hmacVariant) throws KeyringException {
-        PersistentMapping mapping = MAPPINGS.get(
-                new Tuple(algorithmId, kind, encoding, hmacVariant));
+    private static PersistentMapping requireMapping(String algorithmId, KeyringStore.Kind kind,
+            KeyringStore.Encoding encoding, HmacVariant hmacVariant) throws KeyringException {
+        PersistentMapping mapping = MAPPINGS.get(new Tuple(algorithmId, kind, encoding, hmacVariant));
         if (mapping == null) {
             throw new KeyringException(KeyringException.Code.KEYRING_IMPORT_MAPPING_INVALID);
         }
@@ -229,8 +216,7 @@ final class KeyringImportRegistry {
     }
 
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private static CryptoAlgorithm requireAlgorithm(String algorithmId)
-            throws KeyringException {
+    private static CryptoAlgorithm requireAlgorithm(String algorithmId) throws KeyringException {
         try {
             return CryptoAlgorithms.require(algorithmId);
         } catch (IllegalArgumentException exception) {
@@ -238,11 +224,8 @@ final class KeyringImportRegistry {
         }
     }
 
-    private static List<KeyOperationInfo> matchingOperations(CryptoAlgorithm algorithm,
-            KeyringStore.Kind kind) {
-        return algorithm.keyOperations().stream()
-                .filter(info -> info.operation() == operation(kind))
-                .toList();
+    private static List<KeyOperationInfo> matchingOperations(CryptoAlgorithm algorithm, KeyringStore.Kind kind) {
+        return algorithm.keyOperations().stream().filter(info -> info.operation() == operation(kind)).toList();
     }
 
     private static KeyOperation operation(KeyringStore.Kind kind) {
@@ -254,25 +237,22 @@ final class KeyringImportRegistry {
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    private static Key invokeImporter(CryptoAlgorithm algorithm, KeyringStore.Kind kind,
-            AlgorithmKeySpec spec) throws GeneralSecurityException {
+    private static Key invokeImporter(CryptoAlgorithm algorithm, KeyringStore.Kind kind, AlgorithmKeySpec spec)
+            throws GeneralSecurityException {
         return switch (kind) {
-            case PUBLIC_KEY -> ((PublicKeyImporter) algorithm.publicKeyImporter(spec.getClass()))
-                    .importPublic(spec);
-            case PRIVATE_KEY -> ((PrivateKeyImporter) algorithm.privateKeyImporter(spec.getClass()))
-                    .importPrivate(spec);
-            case SECRET_KEY -> ((SymmetricKeyImporter) algorithm.symmetricKeyImporter(spec.getClass()))
-                    .importSecret(spec);
+            case PUBLIC_KEY -> ((PublicKeyImporter) algorithm.publicKeyImporter(spec.getClass())).importPublic(spec);
+            case PRIVATE_KEY ->
+                ((PrivateKeyImporter) algorithm.privateKeyImporter(spec.getClass())).importPrivate(spec);
+            case SECRET_KEY ->
+                ((SymmetricKeyImporter) algorithm.symmetricKeyImporter(spec.getClass())).importSecret(spec);
         };
     }
 
-    private static AlgorithmKeySpec createSpec(PersistentMapping mapping, byte[] encoded)
-            throws KeyringException {
+    private static AlgorithmKeySpec createSpec(PersistentMapping mapping, byte[] encoded) throws KeyringException {
         if (mapping.specType == HmacKeyImportSpec.class) {
             return new HmacKeyImportSpec(mapping.hmacVariant.jcaName, encoded);
         }
-        Function<byte[], ? extends AlgorithmKeySpec> factory =
-                SPEC_FACTORIES.get(mapping.specType);
+        Function<byte[], ? extends AlgorithmKeySpec> factory = SPEC_FACTORIES.get(mapping.specType);
         AlgorithmKeySpec result = factory == null ? null : factory.apply(encoded);
         if (result == null) {
             throw new KeyringException(KeyringException.Code.KEYRING_IMPORT_MAPPING_INVALID);
@@ -288,31 +268,27 @@ final class KeyringImportRegistry {
         };
     }
 
-    private static boolean matchesAlgorithm(Key imported, String algorithmId,
-            HmacVariant hmacVariant) {
+    private static boolean matchesAlgorithm(Key imported, String algorithmId, HmacVariant hmacVariant) {
         if (ALGORITHM_HMAC.equals(algorithmId)) {
             return hmacVariant.jcaName.equals(imported.getAlgorithm());
         }
         if (ALGORITHM_AES.equals(algorithmId)) {
             return ALGORITHM_AES.equals(imported.getAlgorithm());
         }
-        if (ALGORITHM_CHACHA20.equals(algorithmId)
-                || ALGORITHM_CHACHA20_POLY1305.equals(algorithmId)) {
+        if (ALGORITHM_CHACHA20.equals(algorithmId) || ALGORITHM_CHACHA20_POLY1305.equals(algorithmId)) {
             return "ChaCha20".equals(imported.getAlgorithm());
         }
         return true;
     }
 
-    private static boolean matchesSourceAlgorithm(Key source, String algorithmId,
-            HmacVariant hmacVariant) {
+    private static boolean matchesSourceAlgorithm(Key source, String algorithmId, HmacVariant hmacVariant) {
         if (ALGORITHM_HMAC.equals(algorithmId)) {
             return hmacVariant.jcaName.equals(source.getAlgorithm());
         }
         if (ALGORITHM_AES.equals(algorithmId)) {
             return ALGORITHM_AES.equals(source.getAlgorithm());
         }
-        if (ALGORITHM_CHACHA20.equals(algorithmId)
-                || ALGORITHM_CHACHA20_POLY1305.equals(algorithmId)) {
+        if (ALGORITHM_CHACHA20.equals(algorithmId) || ALGORITHM_CHACHA20_POLY1305.equals(algorithmId)) {
             return "ChaCha20".equals(source.getAlgorithm());
         }
         return true;
@@ -329,10 +305,8 @@ final class KeyringImportRegistry {
         }
     }
 
-    private static Map<Class<? extends AlgorithmKeySpec>,
-            Function<byte[], ? extends AlgorithmKeySpec>> createSpecFactories() {
-        return Map.ofEntries(
-                Map.entry(AesKeyImportSpec.class, AesKeyImportSpec::fromRaw),
+    private static Map<Class<? extends AlgorithmKeySpec>, Function<byte[], ? extends AlgorithmKeySpec>> createSpecFactories() {
+        return Map.ofEntries(Map.entry(AesKeyImportSpec.class, AesKeyImportSpec::fromRaw),
                 Map.entry(ChaChaKeyImportSpec.class, ChaChaKeyImportSpec::fromRaw),
                 Map.entry(BikePublicKeySpec.class, BikePublicKeySpec::new),
                 Map.entry(BikePrivateKeySpec.class, BikePrivateKeySpec::new),
@@ -380,73 +354,54 @@ final class KeyringImportRegistry {
         addAsymmetric(mappings, "CMCE", CmcePublicKeySpec.class, CmcePrivateKeySpec.class);
         addAsymmetric(mappings, "DH", DhPublicKeySpec.class, DhPrivateKeySpec.class);
         addAsymmetric(mappings, "ECDSA", EcdsaPublicKeySpec.class, EcdsaPrivateKeySpec.class);
-        addAsymmetric(mappings, "Ed25519", Ed25519PublicKeySpec.class,
-                Ed25519PrivateKeySpec.class);
-        addAsymmetric(mappings, "Ed448", Ed448PublicKeySpec.class,
-                Ed448PrivateKeySpec.class);
-        addAsymmetric(mappings, "ElGamal", ElgamalPublicKeySpec.class,
-                ElgamalPrivateKeySpec.class);
-        addAsymmetric(mappings, "Frodo", FrodoPublicKeySpec.class,
-                FrodoPrivateKeySpec.class);
+        addAsymmetric(mappings, "Ed25519", Ed25519PublicKeySpec.class, Ed25519PrivateKeySpec.class);
+        addAsymmetric(mappings, "Ed448", Ed448PublicKeySpec.class, Ed448PrivateKeySpec.class);
+        addAsymmetric(mappings, "ElGamal", ElgamalPublicKeySpec.class, ElgamalPrivateKeySpec.class);
+        addAsymmetric(mappings, "Frodo", FrodoPublicKeySpec.class, FrodoPrivateKeySpec.class);
         addAsymmetric(mappings, "HQC", HqcPublicKeySpec.class, HqcPrivateKeySpec.class);
-        addAsymmetric(mappings, "ML-KEM", KyberPublicKeySpec.class,
-                KyberPrivateKeySpec.class);
-        addAsymmetric(mappings, "ML-DSA", MldsaPublicKeySpec.class,
-                MldsaPrivateKeySpec.class);
+        addAsymmetric(mappings, "ML-KEM", KyberPublicKeySpec.class, KyberPrivateKeySpec.class);
+        addAsymmetric(mappings, "ML-DSA", MldsaPublicKeySpec.class, MldsaPrivateKeySpec.class);
         addAsymmetric(mappings, "NTRU", NtruPublicKeySpec.class, NtruPrivateKeySpec.class);
-        addAsymmetric(mappings, "NTRULPRime", NtrulPrimePublicKeySpec.class,
-                NtrulPrimePrivateKeySpec.class);
-        addAsymmetric(mappings, "SNTRUPrime", SntruPrimePublicKeySpec.class,
-                SntruPrimePrivateKeySpec.class);
+        addAsymmetric(mappings, "NTRULPRime", NtrulPrimePublicKeySpec.class, NtrulPrimePrivateKeySpec.class);
+        addAsymmetric(mappings, "SNTRUPrime", SntruPrimePublicKeySpec.class, SntruPrimePrivateKeySpec.class);
         addAsymmetric(mappings, "RSA", RsaPublicKeySpec.class, RsaPrivateKeySpec.class);
-        addAsymmetric(mappings, "SABER", SaberPublicKeySpec.class,
-                SaberPrivateKeySpec.class);
-        addAsymmetric(mappings, "SLH-DSA", SlhDsaPublicKeySpec.class,
-                SlhDsaPrivateKeySpec.class);
-        addAsymmetric(mappings, "SPHINCS+", SphincsPlusPublicKeySpec.class,
-                SphincsPlusPrivateKeySpec.class);
+        addAsymmetric(mappings, "SABER", SaberPublicKeySpec.class, SaberPrivateKeySpec.class);
+        addAsymmetric(mappings, "SLH-DSA", SlhDsaPublicKeySpec.class, SlhDsaPrivateKeySpec.class);
+        addAsymmetric(mappings, "SPHINCS+", SphincsPlusPublicKeySpec.class, SphincsPlusPrivateKeySpec.class);
         addAsymmetric(mappings, "Xdh", XdhPublicKeySpec.class, XdhPrivateKeySpec.class);
-        add(mappings, ALGORITHM_AES, KeyringStore.Kind.SECRET_KEY,
-                KeyringStore.Encoding.RAW,
-                HmacVariant.NONE, AesKeyImportSpec.class);
-        add(mappings, ALGORITHM_CHACHA20, KeyringStore.Kind.SECRET_KEY,
-                KeyringStore.Encoding.RAW,
+        add(mappings, ALGORITHM_AES, KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW, HmacVariant.NONE,
+                AesKeyImportSpec.class);
+        add(mappings, ALGORITHM_CHACHA20, KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW, HmacVariant.NONE,
+                ChaChaKeyImportSpec.class);
+        add(mappings, ALGORITHM_CHACHA20_POLY1305, KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW,
                 HmacVariant.NONE, ChaChaKeyImportSpec.class);
-        add(mappings, ALGORITHM_CHACHA20_POLY1305, KeyringStore.Kind.SECRET_KEY,
-                KeyringStore.Encoding.RAW, HmacVariant.NONE, ChaChaKeyImportSpec.class);
-        add(mappings, ALGORITHM_HMAC, KeyringStore.Kind.SECRET_KEY,
-                KeyringStore.Encoding.RAW,
-                HmacVariant.SHA256, HmacKeyImportSpec.class);
-        add(mappings, ALGORITHM_HMAC, KeyringStore.Kind.SECRET_KEY,
-                KeyringStore.Encoding.RAW,
-                HmacVariant.SHA384, HmacKeyImportSpec.class);
-        add(mappings, ALGORITHM_HMAC, KeyringStore.Kind.SECRET_KEY,
-                KeyringStore.Encoding.RAW,
-                HmacVariant.SHA512, HmacKeyImportSpec.class);
+        add(mappings, ALGORITHM_HMAC, KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW, HmacVariant.SHA256,
+                HmacKeyImportSpec.class);
+        add(mappings, ALGORITHM_HMAC, KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW, HmacVariant.SHA384,
+                HmacKeyImportSpec.class);
+        add(mappings, ALGORITHM_HMAC, KeyringStore.Kind.SECRET_KEY, KeyringStore.Encoding.RAW, HmacVariant.SHA512,
+                HmacKeyImportSpec.class);
         return Collections.unmodifiableMap(mappings);
     }
 
-    private static void addAsymmetric(Map<Tuple, PersistentMapping> mappings,
-            String algorithmId, Class<? extends AlgorithmKeySpec> publicSpec,
-            Class<? extends AlgorithmKeySpec> privateSpec) {
-        add(mappings, algorithmId, KeyringStore.Kind.PUBLIC_KEY,
-                KeyringStore.Encoding.X509, HmacVariant.NONE, publicSpec);
-        add(mappings, algorithmId, KeyringStore.Kind.PRIVATE_KEY,
-                KeyringStore.Encoding.PKCS8, HmacVariant.NONE, privateSpec);
+    private static void addAsymmetric(Map<Tuple, PersistentMapping> mappings, String algorithmId,
+            Class<? extends AlgorithmKeySpec> publicSpec, Class<? extends AlgorithmKeySpec> privateSpec) {
+        add(mappings, algorithmId, KeyringStore.Kind.PUBLIC_KEY, KeyringStore.Encoding.X509, HmacVariant.NONE,
+                publicSpec);
+        add(mappings, algorithmId, KeyringStore.Kind.PRIVATE_KEY, KeyringStore.Encoding.PKCS8, HmacVariant.NONE,
+                privateSpec);
     }
 
-    private static void add(Map<Tuple, PersistentMapping> mappings, String algorithmId,
-            KeyringStore.Kind kind, KeyringStore.Encoding encoding,
-            HmacVariant hmacVariant, Class<? extends AlgorithmKeySpec> specType) {
+    private static void add(Map<Tuple, PersistentMapping> mappings, String algorithmId, KeyringStore.Kind kind,
+            KeyringStore.Encoding encoding, HmacVariant hmacVariant, Class<? extends AlgorithmKeySpec> specType) {
         Tuple tuple = new Tuple(algorithmId, kind, encoding, hmacVariant);
-        PersistentMapping mapping = new PersistentMapping(algorithmId, kind,
-                encoding, hmacVariant, specType);
+        PersistentMapping mapping = new PersistentMapping(algorithmId, kind, encoding, hmacVariant, specType);
         if (mappings.put(tuple, mapping) != null) {
             throw new IllegalStateException("Duplicate persistent key importer tuple");
         }
     }
 
-    private record Tuple(String algorithmId, KeyringStore.Kind kind,
-            KeyringStore.Encoding encoding, HmacVariant hmacVariant) {
+    private record Tuple(String algorithmId, KeyringStore.Kind kind, KeyringStore.Encoding encoding,
+            HmacVariant hmacVariant) {
     }
 }

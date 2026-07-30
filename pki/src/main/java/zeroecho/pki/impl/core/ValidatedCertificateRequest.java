@@ -44,8 +44,7 @@ public final class ValidatedCertificateRequest {
     private final boolean basicConstraintsCritical;
 
     /* default */ ValidatedCertificateRequest(PkiId issuerCaId, CertificateProfileRef profileReference,
-            SubjectRef subjectRef,
-            List<SubjectRdn> subjectRdns, List<SubjectAlternativeName> subjectAlternativeNames,
+            SubjectRef subjectRef, List<SubjectRdn> subjectRdns, List<SubjectAlternativeName> subjectAlternativeNames,
             boolean subjectAlternativeNameCritical, EncodedObject exactPublicKey, Validity validity,
             Set<LeafKeyUsage> keyUsages, Set<ExtendedKeyUsageId> extendedKeyUsages, boolean keyUsageCritical,
             boolean extendedKeyUsageCritical, boolean basicConstraintsCritical) {

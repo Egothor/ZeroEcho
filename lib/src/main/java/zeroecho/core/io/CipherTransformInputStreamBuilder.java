@@ -53,13 +53,12 @@ import javax.crypto.Cipher;
  * block; a final partial block (if any) is processed by a single
  * {@code doFinal}. This mode is restricted to RSA and ElGamal.</li>
  * <li><b>Left-padded independent block stream</b> - like the independent block
- * stream, but
- * left-pads each transformed output block with zeros up to
+ * stream, but left-pads each transformed output block with zeros up to
  * {@code outChunkSize}. Final blocks must be complete; otherwise an
  * {@link IllegalStateException} is thrown.</li>
- * <li><b>Continuous stream</b> - uses
- * {@code Cipher.update(...)} for bulk bytes and a single {@code doFinal()} at
- * end of stream. This is suitable for CTR/CFB/OFB/GCM and padding modes.</li>
+ * <li><b>Continuous stream</b> - uses {@code Cipher.update(...)} for bulk bytes
+ * and a single {@code doFinal()} at end of stream. This is suitable for
+ * CTR/CFB/OFB/GCM and padding modes.</li>
  * </ul>
  *
  * <h2>Block sizing</h2>
@@ -344,7 +343,8 @@ public final class CipherTransformInputStreamBuilder {
      * </p>
      *
      * @return a new InputStream that transforms bytes on the fly
-     * @throws NullPointerException if {@code upstream} or {@code cipher} is null
+     * @throws NullPointerException     if {@code upstream} or {@code cipher} is
+     *                                  null
      * @throws IllegalArgumentException if independent-block processing is selected
      *                                  for an unsupported algorithm or buffer
      *                                  geometry is invalid

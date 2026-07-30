@@ -41,8 +41,8 @@ class AesDecryptionSecurityTest {
         byte[] plaintext = repeated((byte) 0x5a, 96);
         Encrypted encrypted = encrypt(AesSpec.gcm128(null), plaintext);
 
-        FailureResult modifiedBody = failedDecryption(
-                encrypted.spec, KEY, encrypted.iv, changed(encrypted.ciphertext, 0));
+        FailureResult modifiedBody = failedDecryption(encrypted.spec, KEY, encrypted.iv,
+                changed(encrypted.ciphertext, 0));
         FailureResult modifiedTag = failedDecryption(encrypted.spec, KEY, encrypted.iv,
                 changed(encrypted.ciphertext, encrypted.ciphertext.length - 1));
         FailureResult truncatedBody = failedDecryption(encrypted.spec, KEY, encrypted.iv,
@@ -52,19 +52,17 @@ class AesDecryptionSecurityTest {
         FailureResult trailing = failedDecryption(encrypted.spec, KEY, encrypted.iv,
                 Arrays.copyOf(encrypted.ciphertext, encrypted.ciphertext.length + 1));
         FailureResult wrongKey = failedDecryption(encrypted.spec, WRONG_KEY, encrypted.iv, encrypted.ciphertext);
-        FailureResult wrongIv = failedDecryption(
-                encrypted.spec, KEY, changed(encrypted.iv, 0), encrypted.ciphertext);
+        FailureResult wrongIv = failedDecryption(encrypted.spec, KEY, changed(encrypted.iv, 0), encrypted.ciphertext);
         FailureResult empty = failedDecryption(encrypted.spec, KEY, encrypted.iv, new byte[0]);
 
-        for (FailureResult result : List.of(
-                modifiedBody, modifiedTag, truncatedBody, truncatedTag, trailing, wrongKey, wrongIv, empty)) {
+        for (FailureResult result : List.of(modifiedBody, modifiedTag, truncatedBody, truncatedTag, trailing, wrongKey,
+                wrongIv, empty)) {
             assertEquals(0, result.outputBytes());
             assertAuthenticationFailure(result.failure());
         }
         assertThrows(IOException.class, () -> decrypt(encrypted.spec, KEY,
                 Arrays.copyOf(encrypted.iv, encrypted.iv.length - 1), encrypted.ciphertext));
-        assertThrows(IOException.class,
-                () -> decrypt(encrypted.spec, KEY, null, encrypted.ciphertext));
+        assertThrows(IOException.class, () -> decrypt(encrypted.spec, KEY, null, encrypted.ciphertext));
         System.out.println("...cases=10");
         System.out.println("gcmTamperMatrix...ok");
     }
@@ -102,18 +100,15 @@ class AesDecryptionSecurityTest {
         byte[] plaintext = repeated((byte) 0x44, 32);
         Encrypted encrypted = encrypt(spec, plaintext);
 
-        assertFalse(Arrays.equals(plaintext,
-                decrypt(spec, KEY, changed(encrypted.iv, 0), encrypted.ciphertext)));
-        assertFalse(Arrays.equals(plaintext,
-                decrypt(spec, WRONG_KEY, encrypted.iv, encrypted.ciphertext)));
-        assertFalse(Arrays.equals(plaintext,
-                decrypt(spec, KEY, encrypted.iv, changed(encrypted.ciphertext, 0))));
+        assertFalse(Arrays.equals(plaintext, decrypt(spec, KEY, changed(encrypted.iv, 0), encrypted.ciphertext)));
+        assertFalse(Arrays.equals(plaintext, decrypt(spec, WRONG_KEY, encrypted.iv, encrypted.ciphertext)));
+        assertFalse(Arrays.equals(plaintext, decrypt(spec, KEY, encrypted.iv, changed(encrypted.ciphertext, 0))));
         assertThrows(IOException.class, () -> decrypt(spec, KEY, encrypted.iv,
                 Arrays.copyOf(encrypted.ciphertext, encrypted.ciphertext.length - 1)));
         assertThrows(IOException.class, () -> decrypt(spec, KEY, encrypted.iv,
                 Arrays.copyOf(encrypted.ciphertext, encrypted.ciphertext.length + 1)));
-        assertThrows(IOException.class, () -> decrypt(spec, KEY,
-                Arrays.copyOf(encrypted.iv, encrypted.iv.length - 1), encrypted.ciphertext));
+        assertThrows(IOException.class,
+                () -> decrypt(spec, KEY, Arrays.copyOf(encrypted.iv, encrypted.iv.length - 1), encrypted.ciphertext));
         assertThrows(IOException.class, () -> decrypt(spec, KEY, null, encrypted.ciphertext));
         System.out.println("...cases=7");
         System.out.println("cbcNoPaddingMatrix...ok");
@@ -132,8 +127,8 @@ class AesDecryptionSecurityTest {
         // authentication.
         assertThrows(IOException.class, () -> decrypt(spec, KEY, encrypted.iv,
                 changed(encrypted.ciphertext, encrypted.ciphertext.length - 17)));
-        assertThrows(IOException.class, () -> decrypt(spec, KEY,
-                Arrays.copyOf(encrypted.iv, encrypted.iv.length - 1), encrypted.ciphertext));
+        assertThrows(IOException.class,
+                () -> decrypt(spec, KEY, Arrays.copyOf(encrypted.iv, encrypted.iv.length - 1), encrypted.ciphertext));
         assertThrows(IOException.class, () -> decrypt(spec, KEY, null, encrypted.ciphertext));
         System.out.println("...cases=4");
         System.out.println("cbcPkcsPaddingMatrix...ok");
@@ -141,7 +136,8 @@ class AesDecryptionSecurityTest {
 
     private static Encrypted encrypt(AesSpec spec, byte[] plaintext) throws Exception {
         CtxInterface context = newContext("aes-security-enc-");
-        EncryptionContext encryption = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.ENCRYPT, KEY, spec);
+        EncryptionContext encryption = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.ENCRYPT, KEY,
+                spec);
         ((ContextAware) encryption).setContext(context);
         byte[] ciphertext;
         try (InputStream stream = encryption.attach(new ByteArrayInputStream(plaintext))) {
@@ -157,7 +153,8 @@ class AesDecryptionSecurityTest {
         if (iv != null) {
             context.put(ConfluxKeys.iv("AES"), iv);
         }
-        EncryptionContext decryption = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext decryption = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.DECRYPT, key,
+                spec);
         ((ContextAware) decryption).setContext(context);
         try (InputStream stream = decryption.attach(new ByteArrayInputStream(ciphertext))) {
             return stream.readAllBytes();
@@ -170,7 +167,8 @@ class AesDecryptionSecurityTest {
             throws Exception {
         CtxInterface context = newContext("aes-security-fail-");
         context.put(ConfluxKeys.iv("AES"), iv);
-        EncryptionContext decryption = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.DECRYPT, key, spec);
+        EncryptionContext decryption = new zeroecho.sdk.ZeroEchoSession().createContext("AES", KeyUsage.DECRYPT, key,
+                spec);
         ((ContextAware) decryption).setContext(context);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         try (InputStream stream = decryption.attach(new ByteArrayInputStream(ciphertext))) {
@@ -226,7 +224,9 @@ class AesDecryptionSecurityTest {
         return result;
     }
 
-    private record Encrypted(AesSpec spec, byte[] iv, byte[] ciphertext) {}
+    private record Encrypted(AesSpec spec, byte[] iv, byte[] ciphertext) {
+    }
 
-    private record FailureResult(int outputBytes, IOException failure) {}
+    private record FailureResult(int outputBytes, IOException failure) {
+    }
 }

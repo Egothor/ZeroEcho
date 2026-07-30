@@ -16,29 +16,31 @@ import zeroecho.core.spec.ContextSpec;
 /**
  * Immutable value descriptor of one algorithm context capability.
  *
- * <p>The default specification is resolved once during provider construction.
- * All components therefore have stable value semantics and are safe for
- * concurrent reads.</p>
+ * <p>
+ * The default specification is resolved once during provider construction. All
+ * components therefore have stable value semantics and are safe for concurrent
+ * reads.
+ * </p>
  *
  * @param algorithmId canonical algorithm identifier
- * @param family algorithm family
- * @param role supported key usage
+ * @param family      algorithm family
+ * @param role        supported key usage
  * @param contextType produced context type
- * @param keyType accepted key type
- * @param specType accepted specification type
+ * @param keyType     accepted key type
+ * @param specType    accepted specification type
  * @param defaultSpec non-null resolved default specification
  * @since 1.0
  */
 public record Capability(String algorithmId, AlgorithmFamily family, KeyUsage role,
-        Class<? extends CryptoContext> contextType, Class<? extends Key> keyType,
-        Class<? extends ContextSpec> specType, ContextSpec defaultSpec) {
+        Class<? extends CryptoContext> contextType, Class<? extends Key> keyType, Class<? extends ContextSpec> specType,
+        ContextSpec defaultSpec) {
 
     /**
      * Validates the capability metadata.
      *
-     * @throws NullPointerException if a component is {@code null}
-     * @throws IllegalArgumentException if {@code defaultSpec} is incompatible
-     *                                  with {@code specType}
+     * @throws NullPointerException     if a component is {@code null}
+     * @throws IllegalArgumentException if {@code defaultSpec} is incompatible with
+     *                                  {@code specType}
      */
     public Capability {
         Objects.requireNonNull(algorithmId, "algorithmId must not be null");

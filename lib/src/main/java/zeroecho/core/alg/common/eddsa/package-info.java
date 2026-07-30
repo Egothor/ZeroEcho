@@ -99,9 +99,9 @@
  * reconstructs public keys from X.509 encodings via
  * {@link java.security.KeyFactory}.</li>
  * <li><b>Signature contexts:</b>
- * {@link zeroecho.core.alg.common.eddsa.CommonEdDSASignatureContext}
- * delegates all operations to a generic JCA-backed signature adapter, enforcing
- * a fixed tag length for the selected EdDSA variant.</li>
+ * {@link zeroecho.core.alg.common.eddsa.CommonEdDSASignatureContext} delegates
+ * all operations to a generic JCA-backed signature adapter, enforcing a fixed
+ * tag length for the selected EdDSA variant.</li>
  * </ul>
  *
  * <h2>Design notes</h2>

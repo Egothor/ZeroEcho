@@ -63,9 +63,10 @@ import zeroecho.core.util.RandomSupport;
  *
  * <p>
  * IV and optional AAD are exchanged via a {@link conflux.CtxInterface} set with
- * {@link #setContext(conflux.CtxInterface)}. Encryption always generates a fresh
- * IV after atomically claiming the context; a caller-provided IV is never used
- * for encryption. Decryption requires the IV from the context or encoded header.
+ * {@link #setContext(conflux.CtxInterface)}. Encryption always generates a
+ * fresh IV after atomically claiming the context; a caller-provided IV is never
+ * used for encryption. Decryption requires the IV from the context or encoded
+ * header.
  * </p>
  *
  * <p>
@@ -311,10 +312,7 @@ public final class AesCipherContext implements EncryptionContext, ContextAware {
 
     /** Single-use encryption lifecycle states. */
     private enum OperationState {
-        NEW,
-        ENCRYPTING,
-        COMPLETED,
-        FAILED
+        NEW, ENCRYPTING, COMPLETED, FAILED
     }
 
     /** Marks the owning encryption context terminal as its stream is consumed. */

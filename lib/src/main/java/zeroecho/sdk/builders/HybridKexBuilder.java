@@ -342,10 +342,8 @@ public final class HybridKexBuilder {
         if (pqcAlgId == null) {
             throw new IllegalStateException("pqc algorithm id must be set");
         }
-        if (classicMode == ClassicMode.CLASSIC_AGREEMENT
-                && (classicPrivate == null || classicPeerPublic == null)) {
-            throw new IllegalStateException(
-                    "classic private key and peer public must be set for CLASSIC_AGREEMENT");
+        if (classicMode == ClassicMode.CLASSIC_AGREEMENT && (classicPrivate == null || classicPeerPublic == null)) {
+            throw new IllegalStateException("classic private key and peer public must be set for CLASSIC_AGREEMENT");
         }
         if (classicMode == ClassicMode.PAIR_MESSAGE && classicKeyPair == null) {
             throw new IllegalStateException("classic key pair must be set for PAIR_MESSAGE");

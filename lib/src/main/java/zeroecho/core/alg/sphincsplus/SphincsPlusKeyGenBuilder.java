@@ -54,10 +54,12 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * Reflection is used to avoid a hard dependency on all parameter variants.
  * </p>
  *
- * <p>The exact supported operation is
- * {@link #generateKeyPair(SphincsPlusKeyGenSpec)}. Public and private import are
- * registered separately for {@link SphincsPlusPublicKeySpec} and
- * {@link SphincsPlusPrivateKeySpec}.</p>
+ * <p>
+ * The exact supported operation is
+ * {@link #generateKeyPair(SphincsPlusKeyGenSpec)}. Public and private import
+ * are registered separately for {@link SphincsPlusPublicKeySpec} and
+ * {@link SphincsPlusPrivateKeySpec}.
+ * </p>
  *
  * <h2>Example</h2> <pre>{@code
  * SphincsPlusKeyGenSpec spec =

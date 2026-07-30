@@ -165,8 +165,7 @@ public class KemTest {
                 KeyAliases aliases = generateKemIntoKeyStore(ring, kemId, "alias-" + shortId(kemId));
 
                 // Sanity: re-open to ensure the file is valid
-                try (zeroecho.core.storage.KeyringPassword password =
-                        TestKeyringUnlocks.provider().acquire();
+                try (zeroecho.core.storage.KeyringPassword password = TestKeyringUnlocks.provider().acquire();
                         KeyringStore ks = KeyringStore.open(ring, password)) {
                     if (!(ks.contains(aliases.pub) && ks.contains(aliases.prv))) {
                         throw new IllegalStateException("Keyring does not contain expected aliases for " + kemId);
@@ -210,15 +209,15 @@ public class KemTest {
                     Files.write(plain, content);
                     System.out.println("...[" + kemId + "] ChaCha encrypt");
                     int e = Kem.main(new String[] { "--encrypt", plain.toString(), "--output", enc.toString(),
-                            "--keyring", ring.toString(), "--pub", aliases.pub, "--kem", kemId, "--chacha",
-                            "--aad", aadChaCha, "--header" }, new Options(), TestKeyringUnlocks.provider());
+                            "--keyring", ring.toString(), "--pub", aliases.pub, "--kem", kemId, "--chacha", "--aad",
+                            aadChaCha, "--header" }, new Options(), TestKeyringUnlocks.provider());
                     if (e != 0) {
                         throw new IllegalStateException("ChaCha encrypt rc=" + e);
                     }
                     System.out.println("...[" + kemId + "] ChaCha decrypt");
                     int d = Kem.main(new String[] { "--decrypt", enc.toString(), "--output", dec.toString(),
-                            "--keyring", ring.toString(), "--priv", aliases.prv, "--kem", kemId, "--chacha",
-                            "--aad", aadChaCha, "--header" }, new Options(), TestKeyringUnlocks.provider());
+                            "--keyring", ring.toString(), "--priv", aliases.prv, "--kem", kemId, "--chacha", "--aad",
+                            aadChaCha, "--header" }, new Options(), TestKeyringUnlocks.provider());
                     if (d != 0) {
                         throw new IllegalStateException("ChaCha decrypt rc=" + d);
                     }

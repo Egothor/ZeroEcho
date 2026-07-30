@@ -160,8 +160,7 @@ public final class EcdhAlgorithm extends AbstractCryptoAlgorithm {
                 () -> EcdsaCurveSpec.P256);
 
         // Reuse EC builders/importers
-        registerAsymmetricKeyPairGenerator(EcdhCurveSpec.class, new EcdhKeyGenBuilder(),
-                () -> EcdhCurveSpec.P256);
+        registerAsymmetricKeyPairGenerator(EcdhCurveSpec.class, new EcdhKeyGenBuilder(), () -> EcdhCurveSpec.P256);
         registerPublicKeyImporter(EcdsaPublicKeySpec.class, new EcdsaPublicKeyBuilder());
         registerPrivateKeyImporter(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder());
     }

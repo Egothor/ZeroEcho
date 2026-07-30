@@ -88,8 +88,8 @@ import zeroecho.pki.spi.framework.CredentialIssuerBackend;
  *
  * <p>
  * End-entity issuance derives all requester-influenced certificate material
- * exclusively from a profile-gated {@link ValidatedCertificateRequest}.
- * CA issuance derives certificate content exclusively from a proof-bound,
+ * exclusively from a profile-gated {@link ValidatedCertificateRequest}. CA
+ * issuance derives certificate content exclusively from a proof-bound,
  * active-profile-validated request and separately supplied trusted issuer
  * material.
  * </p>
@@ -217,8 +217,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
             Credential credential = new Credential(credId, BcX509CredentialFramework.FORMAT_ID,
                     new IssuerRef(request.issuerCaId()), request.subjectRef(), request.validity(), serial.toString(),
                     publicKeyId, new EndEntityProfileBinding(request.profileReference()), CredentialStatus.ISSUED,
-                    new EncodedObject(Encoding.DER, certDer),
-                    SimpleAttributeSet.builder().build());
+                    new EncodedObject(Encoding.DER, certDer), SimpleAttributeSet.builder().build());
             return new CredentialBundle(credential, java.util.List.of(issuerCertificate));
         } finally {
             java.util.Arrays.fill(certDer, (byte) 0);
@@ -274,8 +273,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
                 new GeneralName(GeneralName.iPAddress, new DEROctetString(ip.bytes()));
             case SubjectAlternativeName.UriName uri ->
                 new GeneralName(GeneralName.uniformResourceIdentifier, uri.value());
-            case SubjectAlternativeName.Rfc822Name email ->
-                new GeneralName(GeneralName.rfc822Name, email.value());
+            case SubjectAlternativeName.Rfc822Name email -> new GeneralName(GeneralName.rfc822Name, email.value());
         };
     }
 
@@ -289,8 +287,8 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      * resulting credential.
      * </p>
      *
-     * @param request           gate-produced validated CA certificate request;
-     *                          must not be {@code null}
+     * @param request           gate-produced validated CA certificate request; must
+     *                          not be {@code null}
      * @param issuerCertificate trusted issuer certificate; must not be {@code null}
      * @param issuerKeyRef      trusted issuer signing-key reference; must not be
      *                          {@code null}
@@ -363,10 +361,10 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
 
         try {
-            return new Credential(credId, request.formatId(), new IssuerRef(request.issuerCaId()), subjectRef,
-                    validity, serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
-                    CredentialStatus.ISSUED,
-                    new EncodedObject(Encoding.DER, certDer), SimpleAttributeSet.builder().build());
+            return new Credential(credId, request.formatId(), new IssuerRef(request.issuerCaId()), subjectRef, validity,
+                    serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
+                    CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, certDer),
+                    SimpleAttributeSet.builder().build());
         } finally {
             java.util.Arrays.fill(certDer, (byte) 0);
         }

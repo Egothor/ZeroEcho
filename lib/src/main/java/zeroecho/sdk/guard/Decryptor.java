@@ -148,8 +148,7 @@ final class Decryptor implements PlainContent, MultiRecipientContent {
                     } catch (AEADBadTagException ex) {
                         // wrong key/password for that entry, continue scanning
                         if (LOG.isLoggable(Level.FINE)) {
-                            LOG.log(Level.FINE, "recipient authentication failed: {0}",
-                                    ex.getClass().getSimpleName());
+                            LOG.log(Level.FINE, "recipient authentication failed: {0}", ex.getClass().getSimpleName());
                         }
                     } catch (GeneralSecurityException | IOException | IllegalArgumentException ex) {
                         // entry not applicable to this opener/material; ignore and continue
@@ -198,8 +197,7 @@ final class Decryptor implements PlainContent, MultiRecipientContent {
         }
     }
 
-    private void closeAfterAttempt(InputStream input, boolean transferred, Throwable primary)
-            throws IOException {
+    private void closeAfterAttempt(InputStream input, boolean transferred, Throwable primary) throws IOException {
         IOException cleanupFailure = null;
         if (!transferred) {
             try {
@@ -282,8 +280,7 @@ final class Decryptor implements PlainContent, MultiRecipientContent {
         closeOpeners(openers, primary);
     }
 
-    /* default */ static void closeOpeners(List<RecipientOpener> ownedOpeners, Throwable primary)
-            throws IOException {
+    /* default */ static void closeOpeners(List<RecipientOpener> ownedOpeners, Throwable primary) throws IOException {
         IOException cleanupFailure = null;
         for (RecipientOpener opener : ownedOpeners) { // NOPMD - each opener is closed in this loop
             try {
@@ -309,14 +306,13 @@ final class Decryptor implements PlainContent, MultiRecipientContent {
         }
     }
 
-    private void rejectOversizedCek(byte[] candidate, int fieldIndex, String recipientId,
-            RecipientOpener opener) {
+    private void rejectOversizedCek(byte[] candidate, int fieldIndex, String recipientId, RecipientOpener opener) {
         try {
             if (LOG.isLoggable(Level.WARNING)) {
                 LOG.log(Level.WARNING,
                         "Suspicious material in field {0}: {1}/{2} returned length {3}, while {4} is the limit. Ignoring.",
-                        new Object[] { fieldIndex, recipientId, opener.getClass().getName(),
-                                candidate.length, keyBytes });
+                        new Object[] { fieldIndex, recipientId, opener.getClass().getName(), candidate.length,
+                                keyBytes });
             }
         } finally {
             Arrays.fill(candidate, (byte) 0);

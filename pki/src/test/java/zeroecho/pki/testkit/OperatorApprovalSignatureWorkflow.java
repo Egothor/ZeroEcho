@@ -285,8 +285,7 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
                         p.setProperty(K_UPDATED_AT, startedAt.toString());
                         writePropsSafe(dir.resolve(FILE_META), p);
                         notifySink(operationId);
-                        return new OperationStatus(State.EXPIRED, startedAt, Optional.of("EXPIRED"),
-                                Optional.empty());
+                        return new OperationStatus(State.EXPIRED, startedAt, Optional.of("EXPIRED"), Optional.empty());
                     }
                     try {
                         byte[] payload = Files.readAllBytes(dir.resolve(FILE_REQUEST));

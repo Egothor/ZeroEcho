@@ -45,8 +45,8 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 /**
  * <h2>ECDH Key Pair Generator</h2>
  *
- * Implementation of {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} for elliptic curve
- * Diffie-Hellman (ECDH) key pairs.
+ * Implementation of {@link zeroecho.core.spi.AsymmetricKeyPairGenerator} for
+ * elliptic curve Diffie-Hellman (ECDH) key pairs.
  *
  * <p>
  * This builder generates fresh EC key pairs suitable for ECDH key agreement. It

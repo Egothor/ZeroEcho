@@ -50,8 +50,7 @@ import zeroecho.sdk.util.BouncyCastleActivator;
  * then proves that the reconstructed key remains operational.
  */
 class KeyringAlgorithmCoverageTest {
-    private static final byte[] MESSAGE = "keyring-algorithm-matrix".getBytes(
-            java.nio.charset.StandardCharsets.UTF_8);
+    private static final byte[] MESSAGE = "keyring-algorithm-matrix".getBytes(java.nio.charset.StandardCharsets.UTF_8);
     @TempDir
     Path temporaryDirectory;
 
@@ -62,8 +61,7 @@ class KeyringAlgorithmCoverageTest {
 
     @Test
     void persistentImporterUniverseHasAcceptedCardinality() {
-        List<KeyringImportRegistry.PersistentMapping> mappings =
-                KeyringImportRegistry.mappings();
+        List<KeyringImportRegistry.PersistentMapping> mappings = KeyringImportRegistry.mappings();
         assertEquals(19, count(mappings, KeyringStore.Kind.PUBLIC_KEY));
         assertEquals(19, count(mappings, KeyringStore.Kind.PRIVATE_KEY));
         assertEquals(6, count(mappings, KeyringStore.Kind.SECRET_KEY));
@@ -72,49 +70,39 @@ class KeyringAlgorithmCoverageTest {
     @Test
     void publicApiRequiresUnlockMaterialAndExposesNoPlaintextStorePath() {
         List<Method> publicMethods = Arrays.stream(KeyringStore.class.getDeclaredMethods())
-                .filter(method -> Modifier.isPublic(method.getModifiers()))
-                .toList();
-        publicMethods.stream()
-                .filter(method -> "create".equals(method.getName())
-                        || "open".equals(method.getName()))
+                .filter(method -> Modifier.isPublic(method.getModifiers())).toList();
+        publicMethods.stream().filter(method -> "create".equals(method.getName()) || "open".equals(method.getName()))
                 .forEach(method -> {
-                    assertTrue(Arrays.asList(method.getParameterTypes())
-                            .contains(KeyringPassword.class));
-                    assertTrue(Arrays.stream(method.getParameterTypes())
-                            .noneMatch(String.class::equals));
+                    assertTrue(Arrays.asList(method.getParameterTypes()).contains(KeyringPassword.class));
+                    assertTrue(Arrays.stream(method.getParameterTypes()).noneMatch(String.class::equals));
                 });
         assertTrue(publicMethods.stream().noneMatch(method -> switch (method.getName()) {
             case "exportText", "importText", "save", "load" -> true;
             default -> false;
         }));
-        assertTrue(Arrays.stream(KeyringStore.class.getFields())
-                .noneMatch(field -> field.getType() == byte[].class));
+        assertTrue(Arrays.stream(KeyringStore.class.getFields()).noneMatch(field -> field.getType() == byte[].class));
     }
 
     @TestFactory
     Stream<DynamicTest> asymmetricEncryptedStoreRoundTrips() {
         List<String> algorithms = KeyringImportRegistry.mappings().stream()
                 .filter(mapping -> mapping.kind() == KeyringStore.Kind.PUBLIC_KEY)
-                .map(KeyringImportRegistry.PersistentMapping::algorithmId)
-                .toList();
-        return algorithms.stream().map(algorithmId -> DynamicTest.dynamicTest(
-                algorithmId + " PUBLIC/X.509 + PRIVATE/PKCS#8",
-                () -> roundTripAsymmetric(algorithmId)));
+                .map(KeyringImportRegistry.PersistentMapping::algorithmId).toList();
+        return algorithms.stream().map(algorithmId -> DynamicTest
+                .dynamicTest(algorithmId + " PUBLIC/X.509 + PRIVATE/PKCS#8", () -> roundTripAsymmetric(algorithmId)));
     }
 
     @TestFactory
     Stream<DynamicTest> secretEncryptedStoreRoundTrips() {
         return KeyringImportRegistry.mappings().stream()
                 .filter(mapping -> mapping.kind() == KeyringStore.Kind.SECRET_KEY)
-                .map(mapping -> DynamicTest.dynamicTest(secretDisplayName(mapping),
-                        () -> roundTripSecret(mapping)));
+                .map(mapping -> DynamicTest.dynamicTest(secretDisplayName(mapping), () -> roundTripSecret(mapping)));
     }
 
     private void roundTripAsymmetric(String algorithmId) throws Exception {
         KeyPair original = generatePair(algorithmId);
         Path path = temporaryDirectory.resolve("asymmetric-" + safeName(algorithmId) + ".zek");
-        try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore store = KeyringStore.create(path, password)) {
             store.putPublic("matrix", algorithmId, original.getPublic());
             store.putPrivate("matrix", algorithmId, original.getPrivate());
         }
@@ -123,8 +111,7 @@ class KeyringAlgorithmCoverageTest {
         PrivateKey reconstructedPrivate = null;
         byte[] originalPublic = null;
         byte[] reconstructedPublicBytes = null;
-        try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.open(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore store = KeyringStore.open(path, password)) {
             KeyringStore.PublicWithId publicWithId = store.getPublicWithId("matrix");
             KeyringStore.PrivateWithId privateWithId = store.getPrivateWithId("matrix");
             assertEquals(algorithmId, publicWithId.algorithm());
@@ -134,8 +121,7 @@ class KeyringAlgorithmCoverageTest {
             originalPublic = original.getPublic().getEncoded();
             reconstructedPublicBytes = reconstructedPublic.getEncoded();
             assertArrayEquals(originalPublic, reconstructedPublicBytes);
-            proveAsymmetricOperation(algorithmId, reconstructedPublic,
-                    reconstructedPrivate);
+            proveAsymmetricOperation(algorithmId, reconstructedPublic, reconstructedPrivate);
         } finally {
             wipe(originalPublic);
             wipe(reconstructedPublicBytes);
@@ -146,23 +132,19 @@ class KeyringAlgorithmCoverageTest {
         }
     }
 
-    private void roundTripSecret(KeyringImportRegistry.PersistentMapping mapping)
-            throws Exception {
+    private void roundTripSecret(KeyringImportRegistry.PersistentMapping mapping) throws Exception {
         byte[] material = new byte[32];
         Arrays.fill(material, secretFill(mapping));
         String jcaName = secretJcaName(mapping);
         SecretKey original = new SecretKeySpec(material, jcaName);
-        Path path = temporaryDirectory.resolve("secret-" + safeName(secretDisplayName(mapping))
-                + ".zek");
+        Path path = temporaryDirectory.resolve("secret-" + safeName(secretDisplayName(mapping)) + ".zek");
         SecretKey reconstructed = null;
         byte[] reconstructedBytes = null;
         try {
-            try (KeyringPassword password = password();
-                    KeyringStore store = KeyringStore.create(path, password)) {
+            try (KeyringPassword password = password(); KeyringStore store = KeyringStore.create(path, password)) {
                 store.putSecret("matrix", mapping.algorithmId(), original);
             }
-            try (KeyringPassword password = password();
-                    KeyringStore store = KeyringStore.open(path, password)) {
+            try (KeyringPassword password = password(); KeyringStore store = KeyringStore.open(path, password)) {
                 KeyringStore.SecretWithId withId = store.getSecretWithId("matrix");
                 assertEquals(mapping.algorithmId(), withId.algorithm());
                 reconstructed = withId.key();
@@ -179,11 +161,10 @@ class KeyringAlgorithmCoverageTest {
         }
     }
 
-    private static void proveAsymmetricOperation(String algorithmId,
-            PublicKey publicKey, PrivateKey privateKey) throws Exception {
+    private static void proveAsymmetricOperation(String algorithmId, PublicKey publicKey, PrivateKey privateKey)
+            throws Exception {
         CryptoAlgorithm algorithm = CryptoAlgorithms.require(algorithmId);
-        if (algorithm.roles().contains(KeyUsage.SIGN)
-                && algorithm.roles().contains(KeyUsage.VERIFY)) {
+        if (algorithm.roles().contains(KeyUsage.SIGN) && algorithm.roles().contains(KeyUsage.VERIFY)) {
             proveSignature(algorithmId, publicKey, privateKey);
         } else if (algorithm.roles().contains(KeyUsage.ENCAPSULATE)
                 && algorithm.roles().contains(KeyUsage.DECAPSULATE)) {
@@ -191,21 +172,18 @@ class KeyringAlgorithmCoverageTest {
         } else if (algorithm.roles().contains(KeyUsage.AGREEMENT)) {
             proveAgreement(algorithmId, publicKey, privateKey);
         } else {
-            assertTrue(algorithm.roles().contains(KeyUsage.ENCRYPT)
-                    && algorithm.roles().contains(KeyUsage.DECRYPT));
+            assertTrue(algorithm.roles().contains(KeyUsage.ENCRYPT) && algorithm.roles().contains(KeyUsage.DECRYPT));
             proveEncryption(algorithmId, publicKey, privateKey);
         }
     }
 
-    private static void proveSignature(String algorithmId, PublicKey publicKey,
-            PrivateKey privateKey) throws Exception {
+    private static void proveSignature(String algorithmId, PublicKey publicKey, PrivateKey privateKey)
+            throws Exception {
         ZeroEchoSession session = new ZeroEchoSession();
         AtomicReference<byte[]> signatureHolder = new AtomicReference<>();
         byte[] signature = null;
-        try (SignatureContext signer = session.createContext(
-                algorithmId, KeyUsage.SIGN, privateKey);
-                InputStream signed = new TailStrippingInputStream(
-                        signer.wrap(new ByteArrayInputStream(MESSAGE)),
+        try (SignatureContext signer = session.createContext(algorithmId, KeyUsage.SIGN, privateKey);
+                InputStream signed = new TailStrippingInputStream(signer.wrap(new ByteArrayInputStream(MESSAGE)),
                         signer.tagLength(), 512) {
                     @Override
                     protected void processTail(byte[] tail) {
@@ -217,8 +195,7 @@ class KeyringAlgorithmCoverageTest {
         }
         try {
             assertTrue(signature != null && signature.length > 0);
-            try (SignatureContext verifier = session.createContext(
-                    algorithmId, KeyUsage.VERIFY, publicKey);
+            try (SignatureContext verifier = session.createContext(algorithmId, KeyUsage.VERIFY, publicKey);
                     InputStream verified = verificationStream(verifier, signature)) {
                 assertArrayEquals(MESSAGE, verified.readAllBytes());
             }
@@ -227,23 +204,19 @@ class KeyringAlgorithmCoverageTest {
         }
     }
 
-    private static InputStream verificationStream(SignatureContext verifier,
-            byte[] signature) throws IOException {
+    private static InputStream verificationStream(SignatureContext verifier, byte[] signature) throws IOException {
         verifier.setVerificationApproach(verifier.getVerificationCore().getThrowOnMismatch());
         verifier.setExpectedTag(signature);
         return verifier.wrap(new ByteArrayInputStream(MESSAGE));
     }
 
-    private static void proveKem(String algorithmId, PublicKey publicKey,
-            PrivateKey privateKey) throws Exception {
+    private static void proveKem(String algorithmId, PublicKey publicKey, PrivateKey privateKey) throws Exception {
         ZeroEchoSession session = new ZeroEchoSession();
         byte[] encapsulated = null;
         byte[] senderSecret = null;
         byte[] recipientSecret = null;
-        try (KemContext sender = session.createContext(
-                algorithmId, KeyUsage.ENCAPSULATE, publicKey);
-                KemContext recipient = session.createContext(
-                        algorithmId, KeyUsage.DECAPSULATE, privateKey)) {
+        try (KemContext sender = session.createContext(algorithmId, KeyUsage.ENCAPSULATE, publicKey);
+                KemContext recipient = session.createContext(algorithmId, KeyUsage.DECAPSULATE, privateKey)) {
             KemContext.KemResult result = sender.encapsulate();
             encapsulated = result.ciphertext();
             senderSecret = result.sharedSecret();
@@ -256,16 +229,14 @@ class KeyringAlgorithmCoverageTest {
         }
     }
 
-    private static void proveAgreement(String algorithmId, PublicKey publicKey,
-            PrivateKey privateKey) throws Exception {
+    private static void proveAgreement(String algorithmId, PublicKey publicKey, PrivateKey privateKey)
+            throws Exception {
         KeyPair peer = generatePair(algorithmId);
         ZeroEchoSession session = new ZeroEchoSession();
         byte[] firstSecret = null;
         byte[] secondSecret = null;
-        try (AgreementContext first = session.createContext(
-                algorithmId, KeyUsage.AGREEMENT, privateKey);
-                AgreementContext second = session.createContext(
-                        algorithmId, KeyUsage.AGREEMENT, peer.getPrivate())) {
+        try (AgreementContext first = session.createContext(algorithmId, KeyUsage.AGREEMENT, privateKey);
+                AgreementContext second = session.createContext(algorithmId, KeyUsage.AGREEMENT, peer.getPrivate())) {
             first.setPeerPublic(peer.getPublic());
             second.setPeerPublic(publicKey);
             firstSecret = first.deriveSecret();
@@ -279,32 +250,26 @@ class KeyringAlgorithmCoverageTest {
         }
     }
 
-    private static void proveEncryption(String algorithmId, Key encryptionKey,
-            Key decryptionKey) throws Exception {
+    private static void proveEncryption(String algorithmId, Key encryptionKey, Key decryptionKey) throws Exception {
         ZeroEchoSession session = new ZeroEchoSession();
-        conflux.CtxInterface operationContext =
-                conflux.Ctx.INSTANCE.getContext("keyring-matrix-" + algorithmId);
+        conflux.CtxInterface operationContext = conflux.Ctx.INSTANCE.getContext("keyring-matrix-" + algorithmId);
         byte[] ciphertext = null;
         byte[] plaintext = null;
         try {
-            try (EncryptionContext encryption = session.createContext(
-                    algorithmId, KeyUsage.ENCRYPT, encryptionKey)) {
+            try (EncryptionContext encryption = session.createContext(algorithmId, KeyUsage.ENCRYPT, encryptionKey)) {
                 if (encryption instanceof zeroecho.core.spi.ContextAware contextAware) {
                     contextAware.setContext(operationContext);
                 }
-                try (InputStream encrypted = encryption.attach(
-                        new ByteArrayInputStream(MESSAGE))) {
+                try (InputStream encrypted = encryption.attach(new ByteArrayInputStream(MESSAGE))) {
                     ciphertext = encrypted.readAllBytes();
                 }
             }
-            try (EncryptionContext decryption = session.createContext(
-                    algorithmId, KeyUsage.DECRYPT, decryptionKey)) {
+            try (EncryptionContext decryption = session.createContext(algorithmId, KeyUsage.DECRYPT, decryptionKey)) {
                 if (decryption instanceof zeroecho.core.spi.ContextAware contextAware) {
                     contextAware.setContext(operationContext);
                 }
-                try (InputStream decrypted = decryption.attach(
-                        new ByteArrayInputStream(ciphertext))) {
-                plaintext = decrypted.readAllBytes();
+                try (InputStream decrypted = decryption.attach(new ByteArrayInputStream(ciphertext))) {
+                    plaintext = decrypted.readAllBytes();
                 }
             }
             assertArrayEquals(MESSAGE, plaintext);
@@ -314,8 +279,7 @@ class KeyringAlgorithmCoverageTest {
         }
     }
 
-    private static void proveSecretOperation(
-            KeyringImportRegistry.PersistentMapping mapping, SecretKey key)
+    private static void proveSecretOperation(KeyringImportRegistry.PersistentMapping mapping, SecretKey key)
             throws Exception {
         if ("HMAC".equals(mapping.algorithmId())) {
             proveMac(key);
@@ -345,30 +309,22 @@ class KeyringAlgorithmCoverageTest {
     private static KeyPair generatePair(String algorithmId) throws Exception {
         CryptoAlgorithm algorithm = CryptoAlgorithms.require(algorithmId);
         KeyOperationInfo generation = algorithm.keyOperations().stream()
-                .filter(info -> info.operation()
-                        == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE)
-                .filter(info -> info.defaultSpec() != null)
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(
-                        "No default key-pair generation mapping for " + algorithmId));
-        AsymmetricKeyPairGenerator generator =
-                algorithm.asymmetricKeyPairGenerator(generation.specType());
+                .filter(info -> info.operation() == KeyOperation.ASYMMETRIC_KEY_PAIR_GENERATE)
+                .filter(info -> info.defaultSpec() != null).findFirst()
+                .orElseThrow(() -> new AssertionError("No default key-pair generation mapping for " + algorithmId));
+        AsymmetricKeyPairGenerator generator = algorithm.asymmetricKeyPairGenerator(generation.specType());
         return generator.generateKeyPair((AlgorithmKeySpec) generation.defaultSpec());
     }
 
-    private static long count(List<KeyringImportRegistry.PersistentMapping> mappings,
-            KeyringStore.Kind kind) {
+    private static long count(List<KeyringImportRegistry.PersistentMapping> mappings, KeyringStore.Kind kind) {
         return mappings.stream().filter(mapping -> mapping.kind() == kind).count();
     }
 
-    private static String secretDisplayName(
-            KeyringImportRegistry.PersistentMapping mapping) {
-        return mapping.algorithmId() + "/" + mapping.hmacVariant().name()
-                + " SECRET/RAW";
+    private static String secretDisplayName(KeyringImportRegistry.PersistentMapping mapping) {
+        return mapping.algorithmId() + "/" + mapping.hmacVariant().name() + " SECRET/RAW";
     }
 
-    private static String secretJcaName(
-            KeyringImportRegistry.PersistentMapping mapping) {
+    private static String secretJcaName(KeyringImportRegistry.PersistentMapping mapping) {
         return switch (mapping.algorithmId()) {
             case "AES" -> "AES";
             case "CHACHA20", "CHACHA20-POLY1305" -> "ChaCha20";
@@ -377,8 +333,7 @@ class KeyringAlgorithmCoverageTest {
         };
     }
 
-    private static byte secretFill(
-            KeyringImportRegistry.PersistentMapping mapping) {
+    private static byte secretFill(KeyringImportRegistry.PersistentMapping mapping) {
         return (byte) (mapping.hmacVariant().code() + mapping.algorithmId().length() + 1);
     }
 

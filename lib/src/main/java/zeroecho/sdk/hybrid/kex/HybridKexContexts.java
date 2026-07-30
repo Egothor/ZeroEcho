@@ -83,9 +83,11 @@ import zeroecho.sdk.ZeroEchoSession;
  * </p>
  *
  * <h2>Error handling</h2>
- * <p>Context construction is in-memory and reports configuration or provider
- * failures through the security exception model of {@link ZeroEchoSession}.
- * I/O failures remain associated with later stream processing.</p>
+ * <p>
+ * Context construction is in-memory and reports configuration or provider
+ * failures through the security exception model of {@link ZeroEchoSession}. I/O
+ * failures remain associated with later stream processing.
+ * </p>
  *
  * <h2>Thread safety</h2>
  * <p>
@@ -158,8 +160,7 @@ public final class HybridKexContexts {
         AgreementContext classic = null;
         MessageAgreementContext pqc = null;
         try {
-            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicInitiatorPrivate,
-                    classicSpec);
+            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicInitiatorPrivate, classicSpec);
             classic.setPeerPublic(classicPeerPublic);
             pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcPeerPublic, pqcSpec);
             return new HybridKexContext(profile, classic, pqc);
@@ -222,8 +223,7 @@ public final class HybridKexContexts {
         AgreementContext classic = null;
         MessageAgreementContext pqc = null;
         try {
-            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicResponderPrivate,
-                    classicSpec);
+            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicResponderPrivate, classicSpec);
             classic.setPeerPublic(classicPeerPublic);
             pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcResponderPrivate, pqcSpec);
             return new HybridKexContext(profile, classic, pqc);
@@ -262,9 +262,8 @@ public final class HybridKexContexts {
      * @throws NullPointerException if any required argument is {@code null}
      */
     public static HybridKexContext initiatorPairMessage(ZeroEchoSession session, HybridKexProfile profile,
-            String classicAlgId,
-            zeroecho.core.alg.common.agreement.KeyPairKey classicInitiatorKeyPair, ContextSpec classicSpec,
-            String pqcAlgId, PublicKey pqcPeerPublic, ContextSpec pqcSpec) {
+            String classicAlgId, zeroecho.core.alg.common.agreement.KeyPairKey classicInitiatorKeyPair,
+            ContextSpec classicSpec, String pqcAlgId, PublicKey pqcPeerPublic, ContextSpec pqcSpec) {
 
         Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
@@ -276,8 +275,7 @@ public final class HybridKexContexts {
         MessageAgreementContext classic = null;
         MessageAgreementContext pqc = null;
         try {
-            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicInitiatorKeyPair,
-                    classicSpec);
+            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicInitiatorKeyPair, classicSpec);
             pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcPeerPublic, pqcSpec);
             return new HybridKexContext(profile, classic, pqc);
         } catch (RuntimeException | Error failure) { // NOPMD - close partial construction
@@ -312,9 +310,8 @@ public final class HybridKexContexts {
      * @throws NullPointerException if any required argument is {@code null}
      */
     public static HybridKexContext responderPairMessage(ZeroEchoSession session, HybridKexProfile profile,
-            String classicAlgId,
-            zeroecho.core.alg.common.agreement.KeyPairKey classicResponderKeyPair, ContextSpec classicSpec,
-            String pqcAlgId, PrivateKey pqcResponderPrivate, ContextSpec pqcSpec) {
+            String classicAlgId, zeroecho.core.alg.common.agreement.KeyPairKey classicResponderKeyPair,
+            ContextSpec classicSpec, String pqcAlgId, PrivateKey pqcResponderPrivate, ContextSpec pqcSpec) {
 
         Objects.requireNonNull(session, "session");
         Objects.requireNonNull(profile, "profile");
@@ -326,8 +323,7 @@ public final class HybridKexContexts {
         MessageAgreementContext classic = null;
         MessageAgreementContext pqc = null;
         try {
-            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicResponderKeyPair,
-                    classicSpec);
+            classic = session.createContext(classicAlgId, KeyUsage.AGREEMENT, classicResponderKeyPair, classicSpec);
             pqc = session.createContext(pqcAlgId, KeyUsage.AGREEMENT, pqcResponderPrivate, pqcSpec);
             return new HybridKexContext(profile, classic, pqc);
         } catch (RuntimeException | Error failure) { // NOPMD - close partial construction

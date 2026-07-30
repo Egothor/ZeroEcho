@@ -23,9 +23,9 @@ final class KemKeyDerivation {
      * Derives a KEK bound to the KEM algorithm identifier.
      *
      * @param sharedSecret KEM shared secret
-     * @param salt HKDF salt
-     * @param algorithmId canonical KEM algorithm identifier
-     * @param outputBytes requested KEK size
+     * @param salt         HKDF salt
+     * @param algorithmId  canonical KEM algorithm identifier
+     * @param outputBytes  requested KEK size
      * @return newly allocated KEK bytes
      * @throws GeneralSecurityException if HKDF fails
      */

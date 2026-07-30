@@ -25,15 +25,13 @@ import java.util.Set;
  * @param allowedSubjectKeyAlgorithmIds exact canonical ZeroEcho subject-key
  *                                      algorithm identifiers
  */
-public record CaCertificatePolicy(boolean basicConstraintsCritical, int pathLengthConstraint,
-        boolean keyUsageCritical, Set<CaKeyUsage> keyUsages,
-        Set<String> allowedSubjectKeyAlgorithmIds) implements CertificatePolicy {
+public record CaCertificatePolicy(boolean basicConstraintsCritical, int pathLengthConstraint, boolean keyUsageCritical,
+        Set<CaKeyUsage> keyUsages, Set<String> allowedSubjectKeyAlgorithmIds) implements CertificatePolicy {
 
     /** Maximum supported path-length constraint. */
     public static final int MAXIMUM_PATH_LENGTH = 32;
 
-    private static final Set<String> SUPPORTED_SUBJECT_KEY_ALGORITHMS =
-            Set.of("RSA", "ECDSA", "Ed25519", "Ed448");
+    private static final Set<String> SUPPORTED_SUBJECT_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448");
 
     /** Validates and constructs the CA policy. */
     public CaCertificatePolicy {
@@ -51,8 +49,7 @@ public record CaCertificatePolicy(boolean basicConstraintsCritical, int pathLeng
         }
         keyUsages = Set.copyOf(keyUsages);
         allowedSubjectKeyAlgorithmIds = Set.copyOf(allowedSubjectKeyAlgorithmIds);
-        if (!keyUsages.contains(CaKeyUsage.KEY_CERT_SIGN)
-                || !keyUsages.contains(CaKeyUsage.CRL_SIGN)) {
+        if (!keyUsages.contains(CaKeyUsage.KEY_CERT_SIGN) || !keyUsages.contains(CaKeyUsage.CRL_SIGN)) {
             throw new IllegalArgumentException("CA Key Usage must permit certificate and CRL signing");
         }
         if (allowedSubjectKeyAlgorithmIds.isEmpty()

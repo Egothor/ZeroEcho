@@ -70,8 +70,7 @@ class PostQuantumTest {
     }
 
     KeyPair generateKyberKeys() throws GeneralSecurityException {
-        KeyPair kp = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
+        KeyPair kp = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber1024());
 
         LOG.log(Level.INFO, "ML-KEM key public={0} private={1}",
                 new Object[] { Strings.toShortHexString(kp.getPublic().getEncoded()),

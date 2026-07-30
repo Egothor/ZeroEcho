@@ -103,8 +103,8 @@ public final class EcdsaAlgorithm extends AbstractCryptoAlgorithm {
      * <p>
      * On construction, the algorithm declares its supported roles and registers
      * builders with the {@link CryptoAlgorithm} infrastructure so they can be
-     * discovered by the {@link CryptoCatalog} or invoked through the
-     * session-bound {@link zeroecho.sdk.KeyBuilders} entry point.
+     * discovered by the {@link CryptoCatalog} or invoked through the session-bound
+     * {@link zeroecho.sdk.KeyBuilders} entry point.
      * </p>
      */
     public EcdsaAlgorithm() {
@@ -134,8 +134,7 @@ public final class EcdsaAlgorithm extends AbstractCryptoAlgorithm {
                     }
                 }, () -> EcdsaCurveSpec.P256);
 
-        registerAsymmetricKeyPairGenerator(EcdsaCurveSpec.class, new EcdsaKeyGenBuilder(),
-                () -> EcdsaCurveSpec.P256);
+        registerAsymmetricKeyPairGenerator(EcdsaCurveSpec.class, new EcdsaKeyGenBuilder(), () -> EcdsaCurveSpec.P256);
         registerPublicKeyImporter(EcdsaPublicKeySpec.class, new EcdsaPublicKeyBuilder());
         registerPrivateKeyImporter(EcdsaPrivateKeySpec.class, new EcdsaPrivateKeyBuilder());
     }

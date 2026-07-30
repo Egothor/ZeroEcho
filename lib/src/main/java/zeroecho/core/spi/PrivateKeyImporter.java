@@ -10,8 +10,8 @@ import java.security.PrivateKey;
 import zeroecho.core.spec.AlgorithmKeySpec;
 
 /**
- * Imports private keys for one exact specification type. Implementations must be
- * stateless or otherwise safe for concurrent invocation.
+ * Imports private keys for one exact specification type. Implementations must
+ * be stateless or otherwise safe for concurrent invocation.
  *
  * @param <S> specification type
  * @since 1.0

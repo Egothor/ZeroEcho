@@ -162,21 +162,22 @@ public final class DefaultIssuanceService implements IssuanceService {
      * Creates the issuance service bound to the supplied persistence and framework
      * collaborators.
      *
-     * @param store     PKI store used for issuer CA lookup and credential
-     *                  persistence; must not be {@code null}
-     * @param framework credential framework providing format-specific issuance
-     *                  parsing and proof verification; must not be {@code null}
-     * @param issuerBackend privileged issuer implementation that accepts only
-     *                      gate-produced candidates; must not be {@code null}
-     * @param auditSink required sink for safe rejection audit events; must not be
-     *                  {@code null}
+     * @param store          PKI store used for issuer CA lookup and credential
+     *                       persistence; must not be {@code null}
+     * @param framework      credential framework providing format-specific issuance
+     *                       parsing and proof verification; must not be
+     *                       {@code null}
+     * @param issuerBackend  privileged issuer implementation that accepts only
+     *                       gate-produced candidates; must not be {@code null}
+     * @param auditSink      required sink for safe rejection audit events; must not
+     *                       be {@code null}
      * @param statusResolver authoritative runtime credential-status resolver; must
      *                       not be {@code null}
      * @throws NullPointerException if an argument is {@code null}
      */
-    public DefaultIssuanceService(PkiStore store, CredentialFramework framework,
-            CredentialIssuerBackend issuerBackend, AuditSink auditSink,
-            EffectiveCredentialStatusResolver statusResolver, ProfileService profileService, Clock clock) {
+    public DefaultIssuanceService(PkiStore store, CredentialFramework framework, CredentialIssuerBackend issuerBackend,
+            AuditSink auditSink, EffectiveCredentialStatusResolver statusResolver, ProfileService profileService,
+            Clock clock) {
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
         this.issuerBackend = Objects.requireNonNull(issuerBackend, "issuerBackend");
@@ -257,8 +258,8 @@ public final class DefaultIssuanceService implements IssuanceService {
 
         CredentialBundle bundle;
         try {
-            bundle = CredentialSnapshots.copy(issuerBackend.issueEndEntity(validated, issuerCred.encoded(),
-                    issuer.issuerKeyRef(), serial));
+            bundle = CredentialSnapshots
+                    .copy(issuerBackend.issueEndEntity(validated, issuerCred.encoded(), issuer.issuerKeyRef(), serial));
         } catch (RuntimeException ex) { // NOPMD - framework output must cross the snapshot boundary
             throw rejection(candidate.request(), "BACKEND_CREDENTIAL_MISMATCH");
         }
@@ -272,10 +273,9 @@ public final class DefaultIssuanceService implements IssuanceService {
      * format.
      *
      * <p>
-     * The selected credential must match the requested {@link FormatId} and
-     * resolve as effectively usable against current revocation state and the
-     * operation's captured evaluation instant. Resolution failures abort
-     * selection.
+     * The selected credential must match the requested {@link FormatId} and resolve
+     * as effectively usable against current revocation state and the operation's
+     * captured evaluation instant. Resolution failures abort selection.
      * </p>
      *
      * @param issuer   issuer CA record containing candidate credentials; must not
@@ -425,8 +425,7 @@ public final class DefaultIssuanceService implements IssuanceService {
         PkiException rejection = new PkiException("End-entity issuance rejected: " + code);
         try {
             auditSink.record(new AuditEvent(clock.instant(), "ISSUANCE", "ISSUE_END_ENTITY_REJECTED", SYSTEM_PKI,
-                    ISSUANCE_PURPOSE, Optional.empty(), Optional.of(request.formatId()),
-                    Map.of("code", code)));
+                    ISSUANCE_PURPOSE, Optional.empty(), Optional.of(request.formatId()), Map.of("code", code)));
         } catch (RuntimeException auditFailure) { // NOPMD - preserve stable rejection and fail closed
             // Best-effort auditing must not expose listener-controlled diagnostics.
         }
@@ -442,8 +441,7 @@ public final class DefaultIssuanceService implements IssuanceService {
         try {
             CredentialProfileBindings.requireEndEntityBinding(credential.profileBinding(),
                     validated.profileReference());
-            if (!framework.formatId().equals(credential.formatId())
-                    || credential.encoded().encoding() != Encoding.DER
+            if (!framework.formatId().equals(credential.formatId()) || credential.encoded().encoding() != Encoding.DER
                     || !credential.subjectRef().equals(validated.subjectRef())
                     || !credential.issuerRef().equals(new zeroecho.pki.api.IssuerRef(validated.issuerCaId()))
                     || credential.status() != CredentialStatus.ISSUED) {
@@ -459,8 +457,7 @@ public final class DefaultIssuanceService implements IssuanceService {
                             new JcaContentVerifierProviderBuilder().build(issuerHolder.getSubjectPublicKeyInfo()))
                     || !holder.getSerialNumber().equals(allocatedSerial)
                     || !credential.publicKeyId().equals(new PkiId("spki:" + sha256Hex(actualSpki)))
-                    || !credential.credentialId()
-                            .equals(new PkiId("x509:" + sha256Hex(credential.encoded().bytes())))
+                    || !credential.credentialId().equals(new PkiId("x509:" + sha256Hex(credential.encoded().bytes())))
                     || !credential.serialOrUniqueId().equals(holder.getSerialNumber().toString())
                     || !credential.validity().equals(validated.validity())
                     || validated.validity().notBefore().getEpochSecond() != holder.getNotBefore().toInstant()
@@ -591,17 +588,15 @@ public final class DefaultIssuanceService implements IssuanceService {
         try {
             status = evaluation.resolve(leaf);
         } catch (PkiException exception) {
-            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), leaf,
-                    CredentialUse.BUNDLE_DELIVERY,
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), leaf, CredentialUse.BUNDLE_DELIVERY,
                     StoreBackedEffectiveCredentialStatusResolver.RESOLUTION_FAILED_CODE, null);
             throw exception;
         }
         if (status != EffectiveCredentialStatus.USABLE) {
-            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), leaf,
-                    CredentialUse.BUNDLE_DELIVERY,
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), leaf, CredentialUse.BUNDLE_DELIVERY,
                     StoreBackedEffectiveCredentialStatusResolver.NOT_USABLE_CODE, status);
-            throw new PkiException("Credential trust rejected: code="
-                    + StoreBackedEffectiveCredentialStatusResolver.NOT_USABLE_CODE);
+            throw new PkiException(
+                    "Credential trust rejected: code=" + StoreBackedEffectiveCredentialStatusResolver.NOT_USABLE_CODE);
         }
         // Minimal bundle: leaf only. Chain selection and publication are higher-layer
         // concerns.

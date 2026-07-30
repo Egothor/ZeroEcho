@@ -25,10 +25,8 @@ class CipherTransformInputStreamBuilderTest {
         assertThrows(IllegalArgumentException.class, () -> new TestStream(2, 1, 0, 0));
         assertThrows(IllegalArgumentException.class, () -> new TestStream(2, 1, 1, -1));
         assertThrows(IllegalArgumentException.class, () -> new TestStream(Integer.MAX_VALUE, 1, 2, 0));
-        assertThrows(IllegalArgumentException.class,
-                () -> new TestStream(2, 1, Integer.MAX_VALUE, 1));
-        assertThrows(IllegalArgumentException.class,
-                () -> new TestStream(2, Integer.MAX_VALUE, 1, 1));
+        assertThrows(IllegalArgumentException.class, () -> new TestStream(2, 1, Integer.MAX_VALUE, 1));
+        assertThrows(IllegalArgumentException.class, () -> new TestStream(2, Integer.MAX_VALUE, 1, 1));
 
         new TestStream(2, 1, 1, 0);
         new TestStream(2, 1, 1, 1);
@@ -57,16 +55,14 @@ class CipherTransformInputStreamBuilderTest {
         System.out.print("CipherBuilder/algorithm-guard...");
         CountingInputStream gcmInput = new CountingInputStream();
         Cipher gcm = Cipher.getInstance("AES/GCM/NoPadding");
-        assertThrows(IllegalArgumentException.class,
-                () -> CipherTransformInputStreamBuilder.builder().withUpstream(gcmInput).withCipher(gcm)
-                        .withIndependentBlocks().build());
+        assertThrows(IllegalArgumentException.class, () -> CipherTransformInputStreamBuilder.builder()
+                .withUpstream(gcmInput).withCipher(gcm).withIndependentBlocks().build());
         assertEquals(0, gcmInput.reads);
 
         CountingInputStream cbcInput = new CountingInputStream();
         Cipher cbc = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        assertThrows(IllegalArgumentException.class,
-                () -> CipherTransformInputStreamBuilder.builder().withUpstream(cbcInput).withCipher(cbc)
-                        .withLeftZeroPadding(true).withIndependentBlocks().build());
+        assertThrows(IllegalArgumentException.class, () -> CipherTransformInputStreamBuilder.builder()
+                .withUpstream(cbcInput).withCipher(cbc).withLeftZeroPadding(true).withIndependentBlocks().build());
         assertEquals(0, cbcInput.reads);
         System.out.println("ok");
     }

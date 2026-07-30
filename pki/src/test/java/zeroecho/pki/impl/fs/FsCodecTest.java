@@ -138,8 +138,7 @@ final class FsCodecTest {
     void attackerClassNamesCannotSelectOrInitializeRuntimeTypes() {
         System.out.println("attackerClassNamesCannotSelectOrInitializeRuntimeTypes");
         List<String> classNames = List.of("java.io.File", "org.bouncycastle.asn1.ASN1ObjectIdentifier",
-                "zeroecho.pki.impl.fs.FsCodecTest$ArbitraryRecord",
-                "zeroecho.pki.impl.fs.FsCodecTest$ArbitraryEnum",
+                "zeroecho.pki.impl.fs.FsCodecTest$ArbitraryRecord", "zeroecho.pki.impl.fs.FsCodecTest$ArbitraryEnum",
                 "zeroecho.pki.impl.fs.FsCodecTest$StaticInitializerSentinel");
 
         for (String className : classNames) {
@@ -189,8 +188,7 @@ final class FsCodecTest {
 
         Arrays.fill(source, (byte) 0);
         ParsedCertificationRequest decoded = FsCodec.decode(FsCodec.PARSED_REQUEST, encoded);
-        AttributeValue.BytesValue decodedValue =
-                (AttributeValue.BytesValue) decoded.attributes().getAll(id).get(0);
+        AttributeValue.BytesValue decodedValue = (AttributeValue.BytesValue) decoded.attributes().getAll(id).get(0);
         byte[] second = decodedValue.value();
 
         System.out.println("...decoded byte count=" + second.length);
@@ -228,9 +226,8 @@ final class FsCodecTest {
 
     @Test
     void obsoleteBareStringCaBindingFailsStrictDecode() {
-        byte[] encoded = FsCodec.encode(FsCodec.CREDENTIAL,
-                credential(new CaProfileBinding(new CertificateProfileRef("profile-a", 1,
-                        new byte[CertificateProfileRef.HASH_BYTES]))));
+        byte[] encoded = FsCodec.encode(FsCodec.CREDENTIAL, credential(new CaProfileBinding(
+                new CertificateProfileRef("profile-a", 1, new byte[CertificateProfileRef.HASH_BYTES]))));
         int binding = indexOf(encoded, new byte[] { 73, 2, 72 });
         assertTrue(binding >= 0);
         encoded[binding + 2] = 1;
@@ -259,30 +256,28 @@ final class FsCodecTest {
     }
 
     private static ParsedCertificationRequest request(AttributeSet attributes) {
-        return new ParsedCertificationRequest(new PkiId("request-1"), new FormatId("x509"),
-                new SubjectRef("subject-1"), new EncodedObject(Encoding.DER, new byte[] { 4, 5, 6 }),
-                Optional.of(new Validity(Instant.parse("2026-01-02T03:04:05Z"),
-                        Instant.parse("2027-01-02T03:04:05Z"))),
+        return new ParsedCertificationRequest(new PkiId("request-1"), new FormatId("x509"), new SubjectRef("subject-1"),
+                new EncodedObject(Encoding.DER, new byte[] { 4, 5, 6 }),
+                Optional.of(new Validity(Instant.parse("2026-01-02T03:04:05Z"), Instant.parse("2027-01-02T03:04:05Z"))),
                 Optional.of("profile-1"), attributes);
     }
 
     private static CertificateProfile profile() {
-        SubjectPolicy subject = new SubjectPolicy(false, List.of(new SubjectRdnRule(
-                SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true)));
-        SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(0, 0,
-                List.of(), false, java.util.Set.of(), false, false, false);
+        SubjectPolicy subject = new SubjectPolicy(false,
+                List.of(new SubjectRdnRule(SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true)));
+        SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(0, 0, List.of(), false, java.util.Set.of(),
+                false, false, false);
         LeafCertificatePolicy leaf = new LeafCertificatePolicy(sans,
                 java.util.Set.of(LeafKeyUsage.DIGITAL_SIGNATURE, LeafKeyUsage.KEY_ENCIPHERMENT),
                 java.util.Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1")), true, false, true,
                 java.util.Set.of("RSA"));
-        return new CertificateProfile("profile-a", new FormatId("x509"), "Test leaf profile",
-                Duration.ofDays(365), subject, leaf);
+        return new CertificateProfile("profile-a", new FormatId("x509"), "Test leaf profile", Duration.ofDays(365),
+                subject, leaf);
     }
 
     private static Credential credential(CredentialProfileBinding binding) {
-        return new Credential(new PkiId("credential-1"), new FormatId("x509"),
-                new IssuerRef(new PkiId("ca-1")), new SubjectRef("subject-1"),
-                new Validity(Instant.EPOCH, Instant.EPOCH.plusSeconds(1)), "1",
+        return new Credential(new PkiId("credential-1"), new FormatId("x509"), new IssuerRef(new PkiId("ca-1")),
+                new SubjectRef("subject-1"), new Validity(Instant.EPOCH, Instant.EPOCH.plusSeconds(1)), "1",
                 new PkiId("spki-1"), binding, CredentialStatus.ISSUED,
                 new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
     }
@@ -292,13 +287,12 @@ final class FsCodecTest {
             CertificateProfile profile = profile();
             CertificateProfileDefinition definition = new CertificateProfileDefinition(
                     CertificateProfileKind.END_ENTITY, profile.profileId(), 1, profile.formatId(),
-                    profile.displayName(), profile.maximumValidity(), profile.subjectPolicy(),
-                    profile.leafPolicy());
+                    profile.displayName(), profile.maximumValidity(), profile.subjectPolicy(), profile.leafPolicy());
             byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
             CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1,
                     MessageDigest.getInstance("SHA-256").digest(canonical));
-            return new ImportedCertificateProfileVersion(reference,
-                    CertificateProfileDefinition.SCHEMA_VERSION, definition, canonical, Instant.EPOCH);
+            return new ImportedCertificateProfileVersion(reference, CertificateProfileDefinition.SCHEMA_VERSION,
+                    definition, canonical, Instant.EPOCH);
         } catch (java.security.NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
         }

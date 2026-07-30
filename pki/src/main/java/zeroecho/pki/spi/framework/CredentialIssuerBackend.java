@@ -65,8 +65,8 @@ import zeroecho.pki.impl.core.ValidatedCertificateRequest;
  * <ul>
  * <li>PKI runtime wiring injects the concrete backend into authoritative core
  * services without publishing it through {@link CredentialFramework}.</li>
- * <li>PKI core services prepare opaque proof-gated issuance authorities and call this
- * backend to obtain framework-specific credentials.</li>
+ * <li>PKI core services prepare opaque proof-gated issuance authorities and
+ * call this backend to obtain framework-specific credentials.</li>
  * <li>The backend is a privileged post-gate component whose method signatures
  * cannot accept raw issuance commands.</li>
  * <li>This backend performs format-specific credential assembly, not CA policy
@@ -109,11 +109,11 @@ public interface CredentialIssuerBackend {
      *
      * <p>
      * This operation produces a credential for a non-CA subject, typically from a
-     * cryptographically verified and profile-authorized request carried by the opaque
-     * {@link ValidatedCertificateRequest}. The returned {@link CredentialBundle} may
-     * contain the issued leaf credential together with any additional runtime
-     * bundle material defined by the concrete framework, such as chain elements or
-     * accompanying metadata.
+     * cryptographically verified and profile-authorized request carried by the
+     * opaque {@link ValidatedCertificateRequest}. The returned
+     * {@link CredentialBundle} may contain the issued leaf credential together with
+     * any additional runtime bundle material defined by the concrete framework,
+     * such as chain elements or accompanying metadata.
      * </p>
      *
      * <p>
@@ -127,10 +127,11 @@ public interface CredentialIssuerBackend {
      * by the trusted core issuance service.
      * </p>
      *
-     * @param request gate-produced validated request; must not be {@code null}
+     * @param request           gate-produced validated request; must not be
+     *                          {@code null}
      * @param issuerCertificate trusted encoded issuer certificate
-     * @param issuerKeyRef trusted issuer signing-key reference
-     * @param serial trusted positive issuer-controlled serial
+     * @param issuerKeyRef      trusted issuer signing-key reference
+     * @param serial            trusted positive issuer-controlled serial
      * @return issued credential bundle, never {@code null}
      * @throws IllegalArgumentException if {@code command} is {@code null} or
      *                                  structurally invalid for the concrete
@@ -158,9 +159,10 @@ public interface CredentialIssuerBackend {
      * key, subject, profile version, policy, validity, and serial.
      * </p>
      *
-     * @param request gate-produced validated CA request; must not be {@code null}
+     * @param request           gate-produced validated CA request; must not be
+     *                          {@code null}
      * @param issuerCertificate trusted encoded issuer certificate
-     * @param issuerKeyRef trusted issuer signing-key reference
+     * @param issuerKeyRef      trusted issuer signing-key reference
      * @return issued CA credential, never {@code null}
      * @throws IllegalArgumentException if {@code command} is {@code null} or
      *                                  structurally invalid for the concrete
@@ -169,6 +171,6 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
-            EncodedObject issuerCertificate, KeyRef issuerKeyRef);
+    Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request, EncodedObject issuerCertificate,
+            KeyRef issuerKeyRef);
 }

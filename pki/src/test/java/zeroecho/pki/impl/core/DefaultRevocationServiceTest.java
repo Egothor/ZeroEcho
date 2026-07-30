@@ -38,9 +38,8 @@ final class DefaultRevocationServiceTest {
 
     @Test
     void successAuditsCommittedStateAndRevisionOnce() {
-        RevocationJournal committed = new RevocationJournal(CREDENTIAL_ID,
-                List.of(new RevocationTransition(1L, RevocationState.HELD, NOW, Optional.empty(),
-                        new SimpleAttributeSet())));
+        RevocationJournal committed = new RevocationJournal(CREDENTIAL_ID, List.of(
+                new RevocationTransition(1L, RevocationState.HELD, NOW, Optional.empty(), new SimpleAttributeSet())));
         List<AuditEvent> events = new ArrayList<>();
         DefaultRevocationService service = new DefaultRevocationService(store((method, arguments) -> {
             if ("transitionRevocation".equals(method)) {
@@ -49,8 +48,7 @@ final class DefaultRevocationServiceTest {
             throw new UnsupportedOperationException(method);
         }), Clock.fixed(NOW, ZoneOffset.UTC), events::add);
 
-        assertEquals(committed,
-                service.hold(new RevocationCommand.Hold(CREDENTIAL_ID, new SimpleAttributeSet())));
+        assertEquals(committed, service.hold(new RevocationCommand.Hold(CREDENTIAL_ID, new SimpleAttributeSet())));
         assertEquals(1, events.size());
         assertEquals("COMMITTED", events.get(0).details().get("result"));
         assertEquals("HELD", events.get(0).details().get("state"));

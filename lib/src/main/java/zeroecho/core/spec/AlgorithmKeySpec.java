@@ -33,7 +33,6 @@
  ******************************************************************************/
 package zeroecho.core.spec;
 
-
 /**
  * Marker interface for algorithm-specific key specifications.
  * <p>

@@ -124,16 +124,16 @@ public class GuardTest {
 
         // Encrypt
         String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--to-psw", password,
-                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
-                "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aadHex };
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg", "aes-gcm",
+                "--tag-bits", Integer.toString(tagBits), "--aad-hex", aadHex };
         System.out.println("...encrypt: " + Arrays.toString(encArgs));
         int e = Guard.main(encArgs, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, e, "... encrypt expected exit code 0");
 
         // Decrypt (using password)
         String[] decArgs = { "--decrypt", enc.toString(), "--output", dec.toString(), "--password", password,
-                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
-                "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aadHex };
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg", "aes-gcm",
+                "--tag-bits", Integer.toString(tagBits), "--aad-hex", aadHex };
         System.out.println("...decrypt: " + Arrays.toString(decArgs));
         int d = Guard.main(decArgs, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, d, "... decrypt expected exit code 0");
@@ -163,10 +163,8 @@ public class GuardTest {
         System.out.println(method);
         Path input = writeRandom(tmp.resolve("invalid-kek.bin"), 32, 0x4B454B);
         Path output = tmp.resolve("invalid-kek.enc");
-        String[] arguments = { "--encrypt", input.toString(), "--output", output.toString(),
-                "--to-psw", "controlled", "--to-kek-bytes", "24",
-                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM,
-                "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM,
+        String[] arguments = { "--encrypt", input.toString(), "--output", output.toString(), "--to-psw", "controlled",
+                "--to-kek-bytes", "24", "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM,
                 "--alg", "aes-gcm" };
 
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
@@ -290,8 +288,8 @@ public class GuardTest {
         // plus 2 random password decoys. Recipients are shuffled by default.
         String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--keyring", ring.toString(),
                 "--to-alias", rsa.pub, "--to-psw", password, "--decoy-alias", elg.pub, "--decoy-psw-rand", "2",
-                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
-                "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aad };
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg", "aes-gcm",
+                "--tag-bits", Integer.toString(tagBits), "--aad-hex", aad };
         System.out.println("...encrypt: " + Arrays.toString(encArgs));
         int e = Guard.main(encArgs, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, e, "... encrypt rc");
@@ -308,8 +306,8 @@ public class GuardTest {
 
         // Decrypt via password instead of key
         String[] decPwd = { "--decrypt", enc.toString(), "--output", dec2.toString(), "--password", password,
-                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
-                "aes-gcm", "--tag-bits", Integer.toString(tagBits), "--aad-hex", aad };
+                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg", "aes-gcm",
+                "--tag-bits", Integer.toString(tagBits), "--aad-hex", aad };
         System.out.println("...decrypt(password): " + Arrays.toString(decPwd));
         int d2 = Guard.main(decPwd, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, d2, "... decrypt(password) rc");
@@ -334,9 +332,9 @@ public class GuardTest {
         Path enc = tmp.resolve("pt-neg.bin.enc");
         String pwd = "x";
 
-        String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--to-psw", pwd,
-                "--pbkdf2-max", TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg",
-                "aes-gcm", "--tag-bits", "128" };
+        String[] encArgs = { "--encrypt", in.toString(), "--output", enc.toString(), "--to-psw", pwd, "--pbkdf2-max",
+                TEST_PBKDF2_MAXIMUM, "--pbkdf2-hard-max", TEST_PBKDF2_MAXIMUM, "--alg", "aes-gcm", "--tag-bits",
+                "128" };
         int e = Guard.main(encArgs, new Options(), TestKeyringUnlocks.provider());
         assertEquals(0, e, "... encrypt rc");
 

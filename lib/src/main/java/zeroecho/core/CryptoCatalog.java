@@ -93,9 +93,9 @@ public final class CryptoCatalog {
      * {@link CryptoAlgorithms}.
      *
      * <p>
-     * Provider discovery, deterministic ordering, and duplicate checking occur
-     * once in {@code CryptoAlgorithms}. This method neither scans providers nor
-     * copies their collection.
+     * Provider discovery, deterministic ordering, and duplicate checking occur once
+     * in {@code CryptoAlgorithms}. This method neither scans providers nor copies
+     * their collection.
      * </p>
      *
      * @return an immutable {@code CryptoCatalog} with all discovered algorithms
@@ -158,40 +158,16 @@ public final class CryptoCatalog {
     /**
      * Serializes the catalog to a compact JSON document.
      *
-     * <p>
-     * The schema is:
-     * </p>
-     * <pre>{@code
-     * {
-     *   "algorithms": [
-     *     {
-     *       "id": "AES/GCM",
-     *       "displayName": "AES-GCM",
-     *       "capabilities": [
-     *         {
-     *           "family": "SYMMETRIC",
-     *           "role": "ENCRYPT",
-     *           "contextType": "AeadEncryptContext",
-     *           "keyType": "SecretKey",
-     *           "specType": "AeadSpec",
-     *           "defaultSpec": "Random nonce, 128-bit tag"
-     *         }
-     *       ],
-     *       "asymmetricKeyBuilders": [
-     *         { "specType": "Ed25519Spec", "defaultKeySpec": "Ed25519 default" }
-     *       ],
-     *       "symmetricKeyBuilders": [
-     *         { "specType": "AesKeySpec", "defaultKeySpec": "AES-256" }
-     *       ]
-     *     }
-     *   ]
-     * }
-     * }</pre>
+     * <p> The schema is: </p> <pre>{@code { "algorithms": [ { "id": "AES/GCM",
+     * "displayName": "AES-GCM", "capabilities": [ { "family": "SYMMETRIC", "role":
+     * "ENCRYPT", "contextType": "AeadEncryptContext", "keyType": "SecretKey",
+     * "specType": "AeadSpec", "defaultSpec": "Random nonce, 128-bit tag" } ],
+     * "asymmetricKeyBuilders": [ { "specType": "Ed25519Spec", "defaultKeySpec":
+     * "Ed25519 default" } ], "symmetricKeyBuilders": [ { "specType": "AesKeySpec",
+     * "defaultKeySpec": "AES-256" } ] } ] } }</pre>
      *
-     * <p>
-     * String values are escaped for quotes and backslashes. The method does not
-     * attempt to pretty-print; callers can format the output if needed.
-     * </p>
+     * <p> String values are escaped for quotes and backslashes. The method does not
+     * attempt to pretty-print; callers can format the output if needed. </p>
      *
      * @return a JSON string describing algorithms, capabilities, and key builders
      */
@@ -230,8 +206,7 @@ public final class CryptoCatalog {
                 }
                 firstOperation = false;
                 sb.append('{').append(jsonField("operation", operation.operation().name())).append(',')
-                        .append(jsonField("specType", operation.specType().getSimpleName()))
-                        .append(",\"defaultSpec\":")
+                        .append(jsonField("specType", operation.specType().getSimpleName())).append(",\"defaultSpec\":")
                         .append(operation.defaultSpec() == null ? "null" : jsonString(labelOf(operation.defaultSpec())))
                         .append('}');
             }
@@ -273,9 +248,8 @@ public final class CryptoCatalog {
             }
             sb.append("</capabilities><keyOperations>");
             for (KeyOperationInfo operation : a.keyOperations()) {
-                sb.append("<keyOperation operation=\"").append(operation.operation().name())
-                        .append("\" specType=\"").append(esc(operation.specType().getSimpleName()))
-                        .append("\"><defaultSpec>")
+                sb.append("<keyOperation operation=\"").append(operation.operation().name()).append("\" specType=\"")
+                        .append(esc(operation.specType().getSimpleName())).append("\"><defaultSpec>")
                         .append(operation.defaultSpec() == null ? "" : esc(labelOf(operation.defaultSpec())))
                         .append("</defaultSpec></keyOperation>");
             }

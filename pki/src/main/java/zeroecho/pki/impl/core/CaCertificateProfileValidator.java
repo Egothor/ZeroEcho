@@ -38,8 +38,8 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport;
  */
 // The closed gate deliberately keeps cohesive profile inputs together and
 // redacts attacker-controlled parser failures rather than retaining their causes.
-@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.ExcessiveParameterList",
-        "PMD.PreserveStackTrace", "PMD.AvoidRethrowingException" })
+@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.ExcessiveParameterList", "PMD.PreserveStackTrace",
+        "PMD.AvoidRethrowingException" })
 final class CaCertificateProfileValidator {
     private static final int MAXIMUM_SUBJECT_DER_BYTES = 16 * 1024;
     private static final int SINGLE_VALUE = 1;
@@ -47,11 +47,11 @@ final class CaCertificateProfileValidator {
     private CaCertificateProfileValidator() {
     }
 
-    /* package */ static ValidatedCaCertificateRequest validate(
-            ValidatedCaCertificateRequest.Operation operation, ActiveCertificateProfile activeProfile,
-            CertificateProfileKind expectedKind, FormatId formatId, PkiId issuerCaId, PkiId subjectCaId,
-            SubjectRef requestedSubject, EncodedObject exactPublicKey, Optional<Validity> requestedValidity,
-            Instant evaluationTime, Optional<Instant> issuerNotAfter, BigInteger serial) {
+    /* package */ static ValidatedCaCertificateRequest validate(ValidatedCaCertificateRequest.Operation operation,
+            ActiveCertificateProfile activeProfile, CertificateProfileKind expectedKind, FormatId formatId,
+            PkiId issuerCaId, PkiId subjectCaId, SubjectRef requestedSubject, EncodedObject exactPublicKey,
+            Optional<Validity> requestedValidity, Instant evaluationTime, Optional<Instant> issuerNotAfter,
+            BigInteger serial) {
         CertificateProfileDefinition definition = activeProfile.definition();
         requireProfileShape(definition, expectedKind, formatId);
         List<SubjectRdn> approvedSubject = validateSubject(requestedSubject, definition);
@@ -78,8 +78,8 @@ final class CaCertificateProfileValidator {
                 operation == ValidatedCaCertificateRequest.Operation.IMPORT_ROOT);
         SubjectRef canonicalSubject = new SubjectRef(BcX509ProfileSupport.subject(subjectSnapshot).toString());
         return new ValidatedCaCertificateRequest(operation, formatId, issuerCaId, subjectCaId,
-                activeProfile.reference(), expectedKind, canonicalSubject, subjectSnapshot, exactPublicKey,
-                validity, serial, definition.caPolicy());
+                activeProfile.reference(), expectedKind, canonicalSubject, subjectSnapshot, exactPublicKey, validity,
+                serial, definition.caPolicy());
     }
 
     /* package */ static void requireProfileShape(ActiveCertificateProfile activeProfile,
@@ -175,8 +175,7 @@ final class CaCertificateProfileValidator {
             counts.put(rdn.type(), count);
             if (rule.requesterSupplied()) {
                 requesterValues.add(rdn);
-            } else if (rule.fixedValue().isEmpty()
-                    || !rule.fixedValue().orElseThrow().equals(rdn.value())) {
+            } else if (rule.fixedValue().isEmpty() || !rule.fixedValue().orElseThrow().equals(rdn.value())) {
                 throw reject("CA_SUBJECT_FIXED_VALUE_MISMATCH");
             }
         }
@@ -230,16 +229,14 @@ final class CaCertificateProfileValidator {
         }
     }
 
-    private static Validity approvedValidity(Optional<Validity> requested,
-            CertificateProfileDefinition definition, Instant evaluationTime, Optional<Instant> issuerNotAfter,
-            boolean imported) {
+    private static Validity approvedValidity(Optional<Validity> requested, CertificateProfileDefinition definition,
+            Instant evaluationTime, Optional<Instant> issuerNotAfter, boolean imported) {
         try {
             Instant ceiling = evaluationTime.plus(definition.maximumValidity());
             if (issuerNotAfter.isPresent() && issuerNotAfter.orElseThrow().isBefore(ceiling)) {
                 ceiling = issuerNotAfter.orElseThrow();
             }
-            Validity validity = requested.isPresent() ? requested.orElseThrow()
-                    : new Validity(evaluationTime, ceiling);
+            Validity validity = requested.isPresent() ? requested.orElseThrow() : new Validity(evaluationTime, ceiling);
             boolean invalidStart = imported ? validity.notBefore().isAfter(evaluationTime)
                     : !validity.notBefore().equals(evaluationTime);
             if (invalidStart || !validity.notAfter().isAfter(evaluationTime)

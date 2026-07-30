@@ -19,8 +19,8 @@ import zeroecho.pki.api.profile.SubjectAlternativeNameType;
 /**
  * Closed immutable canonical Subject Alternative Name representation.
  */
-public sealed interface SubjectAlternativeName permits SubjectAlternativeName.DnsName,
-        SubjectAlternativeName.IpAddress, SubjectAlternativeName.UriName, SubjectAlternativeName.Rfc822Name {
+public sealed interface SubjectAlternativeName permits SubjectAlternativeName.DnsName, SubjectAlternativeName.IpAddress,
+        SubjectAlternativeName.UriName, SubjectAlternativeName.Rfc822Name {
     /** IPv4 octet count. */
     int IPV4_OCTET_COUNT = 4;
     /** Maximum IPv4 octet value. */
@@ -36,7 +36,8 @@ public sealed interface SubjectAlternativeName permits SubjectAlternativeName.Dn
     /**
      * Canonical DNS A-label name.
      *
-     * @param value lowercase ASCII DNS name, optionally with a complete leftmost wildcard
+     * @param value lowercase ASCII DNS name, optionally with a complete leftmost
+     *              wildcard
      */
     record DnsName(String value) implements SubjectAlternativeName {
         /** Maximum encoded DNS name length. */

@@ -108,8 +108,8 @@ public final class ZeroEchoSession {
         this(CryptoPolicy.permissive(), AuditListener.noop(), AuditMode.OFF, null);
     }
 
-    private ZeroEchoSession(CryptoPolicy<ContextSpec, Key> policy, AuditListener auditListener,
-            AuditMode auditMode, Pbkdf2Limits pbkdf2Limits) {
+    private ZeroEchoSession(CryptoPolicy<ContextSpec, Key> policy, AuditListener auditListener, AuditMode auditMode,
+            Pbkdf2Limits pbkdf2Limits) {
         this.policy = Objects.requireNonNull(policy, "policy must not be null");
         this.auditListener = Objects.requireNonNull(auditListener, "auditListener must not be null");
         this.auditSink = AuditListeners.bestEffort(auditListener);
@@ -143,8 +143,7 @@ public final class ZeroEchoSession {
      */
     public ZeroEchoSession withAuditListener(AuditListener newAuditListener) {
         return new ZeroEchoSession(policy,
-                Objects.requireNonNull(newAuditListener, "newAuditListener must not be null"), auditMode,
-                pbkdf2Limits);
+                Objects.requireNonNull(newAuditListener, "newAuditListener must not be null"), auditMode, pbkdf2Limits);
     }
 
     /**
@@ -198,8 +197,8 @@ public final class ZeroEchoSession {
      * Returns the audit listener owned by this session.
      *
      * <p>
-     * The returned listener is the configured strategy, not mutable session
-     * state. It is exposed to support manual audit mode.
+     * The returned listener is the configured strategy, not mutable session state.
+     * It is exposed to support manual audit mode.
      * </p>
      *
      * @return the non-null audit listener
@@ -254,8 +253,8 @@ public final class ZeroEchoSession {
      * @param id   canonical algorithm identifier
      * @param role intended key usage
      * @param key  key compatible with the selected algorithm and role
-     * @param spec optional context specification, or {@code null} for the
-     *             algorithm default
+     * @param spec optional context specification, or {@code null} for the algorithm
+     *             default
      * @param <C>  context type
      * @param <K>  key type
      * @param <S>  context specification type
@@ -275,8 +274,8 @@ public final class ZeroEchoSession {
         return finishContext(algorithm, context, role, spec);
     }
 
-    private <C extends CryptoContext, S extends ContextSpec> C finishContext(CryptoAlgorithm algorithm,
-            C context, KeyUsage role, S spec) {
+    private <C extends CryptoContext, S extends ContextSpec> C finishContext(CryptoAlgorithm algorithm, C context,
+            KeyUsage role, S spec) {
         if (auditMode == AuditMode.OFF) {
             notifyContextCreated(algorithm, role, spec);
             return context;
@@ -321,14 +320,15 @@ public final class ZeroEchoSession {
      * Destroys a key and verifies that it entered the destroyed state.
      *
      * @param algorithmId algorithm identifier used as audit metadata
-     * @param provider provider name used as audit metadata
-     * @param key key to destroy; must not be {@code null}
+     * @param provider    provider name used as audit metadata
+     * @param key         key to destroy; must not be {@code null}
      * @return {@code true} only when this call transitions the key to destroyed;
      *         {@code false} for a non-destroyable or already destroyed key
-     * @throws NullPointerException if {@code key} is {@code null}
+     * @throws NullPointerException   if {@code key} is {@code null}
      * @throws DestroyFailedException if destruction fails or the key does not
      *                                report itself destroyed afterward
-     * @throws RuntimeException if the key's lifecycle implementation throws one
+     * @throws RuntimeException       if the key's lifecycle implementation throws
+     *                                one
      */
     public boolean destroyKey(String algorithmId, String provider, Key key) throws DestroyFailedException {
         Objects.requireNonNull(key, "key must not be null");
@@ -352,12 +352,10 @@ public final class ZeroEchoSession {
         return true;
     }
 
-    private <S extends ContextSpec> void notifyContextCreated(CryptoAlgorithm algorithm,
-            KeyUsage role, S spec) {
-        Map<String, Object> metadata = spec == null ? Map.of()
-                : Map.of("specType", spec.getClass().getName());
-        auditSink.onContextCreatedMeta(UUID.randomUUID().toString(), algorithm.id(), algorithm.providerName(),
-                role, "n/a", metadata);
+    private <S extends ContextSpec> void notifyContextCreated(CryptoAlgorithm algorithm, KeyUsage role, S spec) {
+        Map<String, Object> metadata = spec == null ? Map.of() : Map.of("specType", spec.getClass().getName());
+        auditSink.onContextCreatedMeta(UUID.randomUUID().toString(), algorithm.id(), algorithm.providerName(), role,
+                "n/a", metadata);
     }
 
     /* default */ void notifyKeyPairGenerated(CryptoAlgorithm algorithm, AlgorithmKeySpec spec, KeyPair keyPair) {

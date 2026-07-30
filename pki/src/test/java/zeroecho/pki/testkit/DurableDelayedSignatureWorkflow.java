@@ -296,8 +296,8 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
             String keyRef = parts[0];
             String alg = parts[1];
             byte[] payload = Base64.getDecoder().decode(parts[2]);
-            Optional<Instant> deadline = parts.length == 4 && !parts[3].isBlank()
-                    ? Optional.of(Instant.parse(parts[3])) : Optional.empty();
+            Optional<Instant> deadline = parts.length == 4 && !parts[3].isBlank() ? Optional.of(Instant.parse(parts[3]))
+                    : Optional.empty();
             return new PersistedSignRequest(keyRef, alg, payload, deadline);
         } catch (IOException ex) {
             return new PersistedSignRequest("", "", new byte[0], Optional.empty());

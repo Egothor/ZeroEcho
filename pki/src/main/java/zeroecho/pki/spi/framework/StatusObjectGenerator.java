@@ -48,11 +48,11 @@ public interface StatusObjectGenerator {
     /**
      * Generates a status object.
      *
-     * @param command generation command
+     * @param command    generation command
      * @param crlEntries structured CRL entries; empty for non-CRL objects
      * @return generated status object
-     * @throws IllegalArgumentException if {@code command} or {@code crlEntries}
-     *                                  is invalid
+     * @throws IllegalArgumentException if {@code command} or {@code crlEntries} is
+     *                                  invalid
      * @throws RuntimeException         if generation fails
      */
     StatusObject generate(StatusObjectGenerateCommand command, List<CrlEntry> crlEntries);

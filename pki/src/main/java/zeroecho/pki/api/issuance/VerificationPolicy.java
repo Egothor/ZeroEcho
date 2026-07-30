@@ -44,9 +44,10 @@ import java.util.Optional;
  * </p>
  *
  * <p>
- * Setting {@code requireProofOfPossession} to {@code false} is suitable only for
- * diagnostic or policy-evaluation workflows. It cannot authorize credential
- * issuance; the issuance boundary always applies its own mandatory proof policy.
+ * Setting {@code requireProofOfPossession} to {@code false} is suitable only
+ * for diagnostic or policy-evaluation workflows. It cannot authorize credential
+ * issuance; the issuance boundary always applies its own mandatory proof
+ * policy.
  * </p>
  *
  * @param requireProofOfPossession whether proof-of-possession is required

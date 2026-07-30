@@ -10,9 +10,11 @@ import java.util.Objects;
 /**
  * Redacted checked failure raised by encrypted keyring operations.
  *
- * <p>The public message contains only the stable error code. Filesystem paths,
+ * <p>
+ * The public message contains only the stable error code. Filesystem paths,
  * aliases, key material, ciphertext, and provider-controlled messages are
- * deliberately excluded.</p>
+ * deliberately excluded.
+ * </p>
  */
 public final class KeyringException extends IOException {
     private static final long serialVersionUID = 1L;
@@ -21,17 +23,9 @@ public final class KeyringException extends IOException {
      * Stable keyring failure categories.
      */
     public enum Code {
-        KEYRING_ALREADY_OPEN,
-        KEYRING_FILESYSTEM_UNSUPPORTED,
-        KEYRING_FORMAT_INVALID,
-        KEYRING_LIMIT_EXCEEDED,
-        KEYRING_UNLOCK_FAILED,
-        KEYRING_IO_FAILED,
-        KEYRING_DURABILITY_UNCONFIRMED,
-        KEYRING_CLOSED,
-        KEYRING_NON_EXPORTABLE_KEY,
-        KEYRING_IMPORT_MAPPING_INVALID,
-        KEYRING_IMPORT_METADATA_INVALID,
+        KEYRING_ALREADY_OPEN, KEYRING_FILESYSTEM_UNSUPPORTED, KEYRING_FORMAT_INVALID, KEYRING_LIMIT_EXCEEDED,
+        KEYRING_UNLOCK_FAILED, KEYRING_IO_FAILED, KEYRING_DURABILITY_UNCONFIRMED, KEYRING_CLOSED,
+        KEYRING_NON_EXPORTABLE_KEY, KEYRING_IMPORT_MAPPING_INVALID, KEYRING_IMPORT_METADATA_INVALID,
         KEYRING_KEY_NOT_CANONICALIZABLE
     }
 

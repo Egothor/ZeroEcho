@@ -65,8 +65,8 @@ class JulAuditListenerStdSecurityTest {
     }
 
     private static JulAuditListenerStd listener(RecordingHandler handler) {
-        Logger logger = Logger.getLogger(
-                JulAuditListenerStdSecurityTest.class.getName() + "." + LOGGER_IDS.incrementAndGet());
+        Logger logger = Logger
+                .getLogger(JulAuditListenerStdSecurityTest.class.getName() + "." + LOGGER_IDS.incrementAndGet());
         logger.setUseParentHandlers(false);
         logger.setLevel(Level.ALL);
         handler.setLevel(Level.ALL);

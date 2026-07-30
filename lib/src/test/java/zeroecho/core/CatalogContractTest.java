@@ -105,9 +105,10 @@ public class CatalogContractTest {
         Logger jul = Logger.getLogger("zeroecho.audit");
         jul.setLevel(Level.FINE); // see PROGRESS at FINE
 
-        session = new ZeroEchoSession().withAuditListener(JulAuditListenerStd.builder().logger(jul)
-                .infoLevel(Level.INFO).warnLevel(Level.WARNING).progressLevel(Level.FINE)
-                .includeStackTraces(true).build()).withAuditMode(AuditMode.WRAP);
+        session = new ZeroEchoSession()
+                .withAuditListener(JulAuditListenerStd.builder().logger(jul).infoLevel(Level.INFO)
+                        .warnLevel(Level.WARNING).progressLevel(Level.FINE).includeStackTraces(true).build())
+                .withAuditMode(AuditMode.WRAP);
 
         dump("");
         dump("zeroecho.core.audit");
@@ -178,8 +179,7 @@ public class CatalogContractTest {
                     .anyMatch(info -> info.operation() == KeyOperation.SYMMETRIC_GENERATE);
 
             // SIGN/VERIFY (asymmetric)
-            if (alg.roles().contains(KeyUsage.SIGN) && alg.roles().contains(KeyUsage.VERIFY)
-                    && hasAsym) {
+            if (alg.roles().contains(KeyUsage.SIGN) && alg.roles().contains(KeyUsage.VERIFY) && hasAsym) {
                 trySignVerify(id, msg);
                 System.out.println();
             }
@@ -193,8 +193,7 @@ public class CatalogContractTest {
             }
 
             // KEM
-            if (alg.roles().contains(KeyUsage.ENCAPSULATE) && alg.roles().contains(KeyUsage.DECAPSULATE)
-                    && hasAsym) {
+            if (alg.roles().contains(KeyUsage.ENCAPSULATE) && alg.roles().contains(KeyUsage.DECAPSULATE) && hasAsym) {
                 tryKem(id, msg);
                 System.out.println();
             }

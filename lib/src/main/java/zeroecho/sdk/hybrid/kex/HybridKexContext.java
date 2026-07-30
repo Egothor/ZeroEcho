@@ -150,8 +150,8 @@ public final class HybridKexContext implements MessageAgreementContext {
         this(profile, classic, pqc, Kdf::hkdfSha256);
     }
 
-    /* default */ HybridKexContext(HybridKexProfile profile, AgreementContext classic,
-            MessageAgreementContext pqc, SecretDeriver secretDeriver) {
+    /* default */ HybridKexContext(HybridKexProfile profile, AgreementContext classic, MessageAgreementContext pqc,
+            SecretDeriver secretDeriver) {
         this.profile = Objects.requireNonNull(profile, "profile");
         this.classic = Objects.requireNonNull(classic, "classic");
         this.pqc = Objects.requireNonNull(pqc, "pqc");
@@ -358,15 +358,14 @@ public final class HybridKexContext implements MessageAgreementContext {
         /**
          * Derives the final output from owned temporary hybrid input.
          *
-         * @param ikm combined component secrets
-         * @param salt HKDF salt
-         * @param info HKDF context information
+         * @param ikm          combined component secrets
+         * @param salt         HKDF salt
+         * @param info         HKDF context information
          * @param outputLength requested output length
          * @return derived output transferred to the caller
          * @throws GeneralSecurityException if derivation fails
          */
-        byte[] derive(byte[] ikm, byte[] salt, byte[] info, int outputLength)
-                throws GeneralSecurityException;
+        byte[] derive(byte[] ikm, byte[] salt, byte[] info, int outputLength) throws GeneralSecurityException;
     }
 
     /**

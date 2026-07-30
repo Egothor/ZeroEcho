@@ -65,35 +65,44 @@ import zeroecho.core.util.RandomSupport;
 /**
  * Path-bound encrypted local software keystore.
  *
- * <p>A keyring uses PBKDF2-HMAC-SHA-256 to unwrap one random 256-bit store
- * master key. Every entry and the ordered manifest are independently protected
- * by AES-256-GCM. Java class names are neither persisted nor resolved. Import
+ * <p>
+ * A keyring uses PBKDF2-HMAC-SHA-256 to unwrap one random 256-bit store master
+ * key. Every entry and the ordered manifest are independently protected by
+ * AES-256-GCM. Java class names are neither persisted nor resolved. Import
  * mappings come exclusively from a closed mapping to the immutable algorithm
  * registry. Provider names are not persisted: standard key encodings are
  * reconstructed by the current runtime's canonical importer. HMAC persistence
- * admits only HmacSHA256, HmacSHA384, and HmacSHA512.</p>
+ * admits only HmacSHA256, HmacSHA384, and HmacSHA512.
+ * </p>
  *
- * <p>The keyring exclusively owns its filesystem path from successful
+ * <p>
+ * The keyring exclusively owns its filesystem path from successful
  * {@link #create(Path, KeyringPassword)} or
  * {@link #open(Path, KeyringPassword)} until {@link #close()}. Only POSIX
  * filesystems on which owner-only permissions and ownership can be verified are
- * supported. Mutations replace a complete encrypted image atomically.</p>
+ * supported. Mutations replace a complete encrypted image atomically.
+ * </p>
  *
- * <p>The nonce-reservation sidecar is authenticated independently from AES
- * entry and manifest encryption. Its 256-bit MAC key is derived from the store
- * master key and binary store UUID with HKDF-HMAC-SHA-256 and the fixed domain
- * label {@code zeroecho:keyring:nonce-reservation-mac:v1}. The derived key is
+ * <p>
+ * The nonce-reservation sidecar is authenticated independently from AES entry
+ * and manifest encryption. Its 256-bit MAC key is derived from the store master
+ * key and binary store UUID with HKDF-HMAC-SHA-256 and the fixed domain label
+ * {@code zeroecho:keyring:nonce-reservation-mac:v1}. The derived key is
  * retained only while the store is open and is cleared on close. Previous
- * sidecar versions are rejected.</p>
+ * sidecar versions are rejected.
+ * </p>
  *
- * <p>Instances are thread-safe. Reads may proceed concurrently; mutations and
+ * <p>
+ * Instances are thread-safe. Reads may proceed concurrently; mutations and
  * close are exclusive. Closing clears the master and sidecar MAC keys and makes
  * all subsequent operations fail. The pre-release plaintext format is rejected
- * and is not migrated.</p>
+ * and is not migrated.
+ * </p>
  */
 // The store intentionally centralizes its closed format, crypto, and lifecycle types.
 @SuppressWarnings("PMD.CouplingBetweenObjects")
-public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
+public final class KeyringStore implements AutoCloseable, Destroyable {
+    // NOPMD
     /* default */ static final byte[] MAGIC = { 'Z', 'E', 'K', 'R', 'I', 'N', 'G', '2' };
     /* default */ static final int FORMAT_VERSION = 2;
     /* default */ static final int ENTRY_FORMAT_VERSION = 1;
@@ -113,8 +122,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     /* default */ static final int SHA256_BYTES = 32;
     /* default */ static final byte KDF_PBKDF2_SHA256 = 1;
     /* default */ static final byte AEAD_AES_256_GCM = 1;
-    private static final byte[] NONCE_RESERVATION_MAGIC =
-            { 'Z', 'E', 'K', 'N', 'O', 'N', 'C', '2' };
+    private static final byte[] NONCE_RESERVATION_MAGIC = { 'Z', 'E', 'K', 'N', 'O', 'N', 'C', '2' };
     private static final int NONCE_RESERVATION_VERSION = 2;
     private static final int NONCE_RESERVATION_TAG_BYTES = 32;
     private static final byte MASTER_WRAP_NONCE_DOMAIN = 1;
@@ -123,17 +131,16 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     private static final String SUFFIX_PUBLIC = ".pub";
     private static final String SUFFIX_PRIVATE = ".priv";
     private static final long MIN_NONCE_HIGH_WATER = 1L;
-    private static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS =
-            EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
-                    PosixFilePermission.OWNER_EXECUTE);
-    private static final Set<PosixFilePermission> FILE_PERMISSIONS =
-            EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-    private static final FileAttribute<Set<PosixFilePermission>> DIRECTORY_ATTRIBUTE =
-            PosixFilePermissions.asFileAttribute(DIRECTORY_PERMISSIONS);
-    private static final FileAttribute<Set<PosixFilePermission>> FILE_ATTRIBUTE =
-            PosixFilePermissions.asFileAttribute(FILE_PERMISSIONS);
-    private static final KeyringRandomBytes SYSTEM_RANDOM = destination ->
-            RandomSupport.getRandom().nextBytes(destination);
+    private static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS = EnumSet.of(PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
+    private static final Set<PosixFilePermission> FILE_PERMISSIONS = EnumSet.of(PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE);
+    private static final FileAttribute<Set<PosixFilePermission>> DIRECTORY_ATTRIBUTE = PosixFilePermissions
+            .asFileAttribute(DIRECTORY_PERMISSIONS);
+    private static final FileAttribute<Set<PosixFilePermission>> FILE_ATTRIBUTE = PosixFilePermissions
+            .asFileAttribute(FILE_PERMISSIONS);
+    private static final KeyringRandomBytes SYSTEM_RANDOM = destination -> RandomSupport.getRandom()
+            .nextBytes(destination);
     private final Path path;
     private final Path nonceReservationPath;
     private final Ownership ownership;
@@ -157,9 +164,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Standard encoded key forms supported by the encrypted store.
      */
     public enum Encoding {
-        X509(1),
-        PKCS8(2),
-        RAW(3);
+        X509(1), PKCS8(2), RAW(3);
 
         private final int code;
 
@@ -181,9 +186,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Key classifications supported by the encrypted store.
      */
     public enum Kind {
-        PUBLIC_KEY(1),
-        PRIVATE_KEY(2),
-        SECRET_KEY(3);
+        PUBLIC_KEY(1), PRIVATE_KEY(2), SECRET_KEY(3);
 
         private final int code;
 
@@ -201,11 +204,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private KeyringStore(Path path, Ownership ownership,
-            KeyringRandomBytes random, KeyringFileOperations fileOperations,
-            Header header, byte[] masterKey,
-            byte[] nonceReservationMacKey, Manifest manifest,
-            Map<String, EncryptedEntry> entries) {
+    private KeyringStore(Path path, Ownership ownership, KeyringRandomBytes random,
+            KeyringFileOperations fileOperations, Header header, byte[] masterKey, byte[] nonceReservationMacKey,
+            Manifest manifest, Map<String, EncryptedEntry> entries) {
         this.path = path;
         this.nonceReservationPath = nonceReservationPath(path);
         this.ownership = ownership;
@@ -226,11 +227,12 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     /**
      * Creates a new encrypted keyring with the standard protection policy.
      *
-     * @param path new keyring file
-     * @param password borrowed unlock password; the caller remains responsible
-     *        for destroying it
+     * @param path     new keyring file
+     * @param password borrowed unlock password; the caller remains responsible for
+     *                 destroying it
      * @return open encrypted keyring
-     * @throws IOException if secure creation or durable persistence fails
+     * @throws IOException              if secure creation or durable persistence
+     *                                  fails
      * @throws GeneralSecurityException if cryptographic initialization fails
      */
     public static KeyringStore create(Path path, KeyringPassword password)
@@ -241,28 +243,27 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     /**
      * Creates a new encrypted keyring.
      *
-     * @param path new keyring file
-     * @param password borrowed unlock password
+     * @param path       new keyring file
+     * @param password   borrowed unlock password
      * @param protection operational protection policy
      * @return open encrypted keyring
-     * @throws IOException if secure creation or durable persistence fails
+     * @throws IOException              if secure creation or durable persistence
+     *                                  fails
      * @throws GeneralSecurityException if cryptographic initialization fails
      */
-    public static KeyringStore create(Path path, KeyringPassword password,
-            KeyringProtection protection) throws IOException, GeneralSecurityException {
+    public static KeyringStore create(Path path, KeyringPassword password, KeyringProtection protection)
+            throws IOException, GeneralSecurityException {
         return create(path, password, protection, SYSTEM_RANDOM);
     }
 
-    /* default */ static KeyringStore create(Path path, KeyringPassword password,
-            KeyringProtection protection, KeyringRandomBytes random)
-            throws IOException, GeneralSecurityException {
+    /* default */ static KeyringStore create(Path path, KeyringPassword password, KeyringProtection protection,
+            KeyringRandomBytes random) throws IOException, GeneralSecurityException {
         return create(path, password, protection, random, KeyringFileOperations.NIO);
     }
 
     @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
-    /* default */ static KeyringStore create(Path path, KeyringPassword password,
-            KeyringProtection protection, KeyringRandomBytes random,
-            KeyringFileOperations fileOperations)
+    /* default */ static KeyringStore create(Path path, KeyringPassword password, KeyringProtection protection,
+            KeyringRandomBytes random, KeyringFileOperations fileOperations)
             throws IOException, GeneralSecurityException {
         Objects.requireNonNull(password, "password must not be null");
         Objects.requireNonNull(protection, "protection must not be null");
@@ -287,19 +288,18 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             random.nextBytes(masterKey);
             random.nextBytes(salt);
             random.nextBytes(storeId);
-            nonceReservationMacKey =
-                    KeyringNonceReservationKdf.derive(masterKey, storeId);
+            nonceReservationMacKey = KeyringNonceReservationKdf.derive(masterKey, storeId);
             fillMasterWrapNonce(random, wrapNonce);
             int prefix = randomPrefix(random);
-            Header provisional = new Header(storeId, KeyringProtection.CREATION_ITERATIONS,
-                    salt, wrapNonce, new byte[0]);
+            Header provisional = new Header(storeId, KeyringProtection.CREATION_ITERATIONS, salt, wrapNonce,
+                    new byte[0]);
             aad = masterWrapAad(provisional);
             kek = deriveKek(password, salt, provisional.iterations);
             wrapped = crypt(Cipher.ENCRYPT_MODE, kek, wrapNonce, aad, masterKey);
             Header header = new Header(storeId, provisional.iterations, salt, wrapNonce, wrapped);
             Manifest initial = new Manifest(prefix, 0, List.of());
-            store = new KeyringStore(normalized, ownership, random, fileOperations, header,
-                    masterKey, nonceReservationMacKey, initial, new LinkedHashMap<>());
+            store = new KeyringStore(normalized, ownership, random, fileOperations, header, masterKey,
+                    nonceReservationMacKey, initial, new LinkedHashMap<>());
             store.persistSnapshot(new LinkedHashMap<>());
             success = true;
             return store;
@@ -325,44 +325,41 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     /**
      * Opens an encrypted keyring with the standard protection policy.
      *
-     * @param path keyring file
+     * @param path     keyring file
      * @param password borrowed unlock password
      * @return open encrypted keyring
-     * @throws IOException if the format, filesystem, or authentication check
-     *         fails
+     * @throws IOException              if the format, filesystem, or authentication
+     *                                  check fails
      * @throws GeneralSecurityException if cryptographic initialization fails
      */
-    public static KeyringStore open(Path path, KeyringPassword password)
-            throws IOException, GeneralSecurityException {
+    public static KeyringStore open(Path path, KeyringPassword password) throws IOException, GeneralSecurityException {
         return open(path, password, KeyringProtection.standard());
     }
 
     /**
      * Opens an encrypted keyring.
      *
-     * @param path keyring file
-     * @param password borrowed unlock password
+     * @param path       keyring file
+     * @param password   borrowed unlock password
      * @param protection operational protection policy
      * @return open encrypted keyring
-     * @throws IOException if the format, filesystem, or authentication check
-     *         fails
+     * @throws IOException              if the format, filesystem, or authentication
+     *                                  check fails
      * @throws GeneralSecurityException if cryptographic initialization fails
      */
-    public static KeyringStore open(Path path, KeyringPassword password,
-            KeyringProtection protection) throws IOException, GeneralSecurityException {
+    public static KeyringStore open(Path path, KeyringPassword password, KeyringProtection protection)
+            throws IOException, GeneralSecurityException {
         return open(path, password, protection, SYSTEM_RANDOM);
     }
 
-    /* default */ static KeyringStore open(Path path, KeyringPassword password,
-            KeyringProtection protection, KeyringRandomBytes random)
-            throws IOException, GeneralSecurityException {
+    /* default */ static KeyringStore open(Path path, KeyringPassword password, KeyringProtection protection,
+            KeyringRandomBytes random) throws IOException, GeneralSecurityException {
         return open(path, password, protection, random, KeyringFileOperations.NIO);
     }
 
     @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
-    /* default */ static KeyringStore open(Path path, KeyringPassword password,
-            KeyringProtection protection, KeyringRandomBytes random,
-            KeyringFileOperations fileOperations)
+    /* default */ static KeyringStore open(Path path, KeyringPassword password, KeyringProtection protection,
+            KeyringRandomBytes random, KeyringFileOperations fileOperations)
             throws IOException, GeneralSecurityException {
         Objects.requireNonNull(password, "password must not be null");
         Objects.requireNonNull(protection, "protection must not be null");
@@ -379,19 +376,16 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             image = readStoreImage(normalized);
             Decoded decoded = decodeImage(image, password, protection);
             masterKey = decoded.masterKey;
-            nonceReservationMacKey = KeyringNonceReservationKdf.derive(
-                    masterKey, decoded.header.storeId);
-            long reservedHighWater = readNonceReservation(normalized, ownership.owner(),
-                    decoded.header.storeId, decoded.manifest.noncePrefix,
-                    nonceReservationMacKey);
+            nonceReservationMacKey = KeyringNonceReservationKdf.derive(masterKey, decoded.header.storeId);
+            long reservedHighWater = readNonceReservation(normalized, ownership.owner(), decoded.header.storeId,
+                    decoded.manifest.noncePrefix, nonceReservationMacKey);
             if (reservedHighWater < decoded.manifest.highWater) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
             }
-            Manifest effectiveManifest = new Manifest(decoded.manifest.noncePrefix,
-                    reservedHighWater, decoded.manifest.entries);
-            KeyringStore store = new KeyringStore(normalized, ownership,
-                    random, fileOperations, decoded.header, masterKey, nonceReservationMacKey,
-                    effectiveManifest, decoded.entries);
+            Manifest effectiveManifest = new Manifest(decoded.manifest.noncePrefix, reservedHighWater,
+                    decoded.manifest.entries);
+            KeyringStore store = new KeyringStore(normalized, ownership, random, fileOperations, decoded.header,
+                    masterKey, nonceReservationMacKey, effectiveManifest, decoded.entries);
             success = true;
             return store;
         } finally {
@@ -407,10 +401,10 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     /**
      * Adds or replaces an encoded public key and persists the mutation.
      *
-     * @param alias logical alias
+     * @param alias       logical alias
      * @param algorithmId canonical registered algorithm identifier
-     * @param key exportable public key
-     * @throws IOException if validation or durable persistence fails
+     * @param key         exportable public key
+     * @throws IOException              if validation or durable persistence fails
      * @throws GeneralSecurityException if entry encryption fails
      */
     public void putPublic(String alias, String algorithmId, PublicKey key)
@@ -422,10 +416,10 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     /**
      * Adds or replaces an encoded private key and persists the mutation.
      *
-     * @param alias logical alias
+     * @param alias       logical alias
      * @param algorithmId canonical registered algorithm identifier
-     * @param key exportable private key
-     * @throws IOException if validation or durable persistence fails
+     * @param key         exportable private key
+     * @throws IOException              if validation or durable persistence fails
      * @throws GeneralSecurityException if entry encryption fails
      */
     public void putPrivate(String alias, String algorithmId, PrivateKey key)
@@ -437,17 +431,17 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     /**
      * Adds or replaces an encoded secret key and persists the mutation.
      *
-     * @param alias logical alias
+     * @param alias       logical alias
      * @param algorithmId canonical registered algorithm identifier
-     * @param key exportable secret key
-     * @throws IOException if validation or durable persistence fails
+     * @param key         exportable secret key
+     * @throws IOException              if validation or durable persistence fails
      * @throws GeneralSecurityException if entry encryption fails
      */
     public void putSecret(String alias, String algorithmId, SecretKey key)
             throws IOException, GeneralSecurityException {
         Objects.requireNonNull(key, "key must not be null");
-        KeyringImportRegistry.HmacVariant hmacVariant =
-                KeyringImportRegistry.HmacVariant.forStoredKey(algorithmId, key);
+        KeyringImportRegistry.HmacVariant hmacVariant = KeyringImportRegistry.HmacVariant.forStoredKey(algorithmId,
+                key);
         put(alias, algorithmId, Kind.SECRET_KEY, Encoding.RAW, key, hmacVariant);
     }
 
@@ -497,7 +491,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      *
      * @param alias logical alias
      * @return imported key and algorithm
-     * @throws IOException if the entry cannot be authenticated
+     * @throws IOException              if the entry cannot be authenticated
      * @throws GeneralSecurityException if decryption or import fails
      */
     public PublicWithId getPublicWithId(String alias) throws IOException, GeneralSecurityException {
@@ -510,7 +504,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      *
      * @param alias logical alias
      * @return imported key and algorithm
-     * @throws IOException if the entry cannot be authenticated
+     * @throws IOException              if the entry cannot be authenticated
      * @throws GeneralSecurityException if decryption or import fails
      */
     public PrivateWithId getPrivateWithId(String alias) throws IOException, GeneralSecurityException {
@@ -523,7 +517,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      *
      * @param alias logical alias
      * @return imported key and algorithm
-     * @throws IOException if the entry cannot be authenticated
+     * @throws IOException              if the entry cannot be authenticated
      * @throws GeneralSecurityException if decryption or import fails
      */
     public SecretWithId getSecretWithId(String alias) throws IOException, GeneralSecurityException {
@@ -536,7 +530,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      *
      * @param alias logical alias
      * @return imported public key
-     * @throws IOException if the entry cannot be authenticated
+     * @throws IOException              if the entry cannot be authenticated
      * @throws GeneralSecurityException if decryption or import fails
      */
     public PublicKey getPublic(String alias) throws IOException, GeneralSecurityException {
@@ -548,7 +542,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      *
      * @param alias logical alias
      * @return imported private key
-     * @throws IOException if the entry cannot be authenticated
+     * @throws IOException              if the entry cannot be authenticated
      * @throws GeneralSecurityException if decryption or import fails
      */
     public PrivateKey getPrivate(String alias) throws IOException, GeneralSecurityException {
@@ -560,7 +554,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      *
      * @param alias logical alias
      * @return imported secret key
-     * @throws IOException if the entry cannot be authenticated
+     * @throws IOException              if the entry cannot be authenticated
      * @throws GeneralSecurityException if decryption or import fails
      */
     public SecretKey getSecret(String alias) throws IOException, GeneralSecurityException {
@@ -571,7 +565,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Algorithm identifier paired with an imported public key.
      *
      * @param algorithm canonical algorithm identifier
-     * @param key imported key
+     * @param key       imported key
      */
     public record PublicWithId(String algorithm, PublicKey key) {
     }
@@ -580,7 +574,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Algorithm identifier paired with an imported private key.
      *
      * @param algorithm canonical algorithm identifier
-     * @param key imported key
+     * @param key       imported key
      */
     public record PrivateWithId(String algorithm, PrivateKey key) {
     }
@@ -589,7 +583,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Algorithm identifier paired with an imported secret key.
      *
      * @param algorithm canonical algorithm identifier
-     * @param key imported key
+     * @param key       imported key
      */
     public record SecretWithId(String algorithm, SecretKey key) {
     }
@@ -598,7 +592,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
      * Clears the master and nonce-reservation MAC keys and releases filesystem
      * ownership.
      *
-     * <p>Concurrent calls are safe and cleanup occurs exactly once.</p>
+     * <p>
+     * Concurrent calls are safe and cleanup occurs exactly once.
+     * </p>
      *
      * @throws DestroyFailedException if resource release fails
      */
@@ -647,9 +643,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private void put(String alias, String algorithmId, Kind kind, Encoding encoding,
-            Key key, KeyringImportRegistry.HmacVariant hmacVariant)
-            throws IOException, GeneralSecurityException {
+    private void put(String alias, String algorithmId, Kind kind, Encoding encoding, Key key,
+            KeyringImportRegistry.HmacVariant hmacVariant) throws IOException, GeneralSecurityException {
         Objects.requireNonNull(key, "key must not be null");
         validateString(alias, MAX_ALIAS_BYTES);
         validateString(algorithmId, MAX_METADATA_BYTES);
@@ -663,8 +658,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             throw new KeyringException(Code.KEYRING_NON_EXPORTABLE_KEY);
         }
         try {
-            KeyringImportRegistry.validateCanonical(algorithmId, kind, encoding,
-                    hmacVariant, key, encoded);
+            KeyringImportRegistry.validateCanonical(algorithmId, kind, encoding, hmacVariant, key, encoded);
             lifecycleLock.writeLock().lock();
             try {
                 ensureOpen();
@@ -680,16 +674,14 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
                 byte[] aad = null;
                 byte[] ciphertext = null;
                 try {
-                    plaintext = encodeEntryPlaintext(alias, algorithmId, kind, encoding,
-                            hmacVariant, encoded);
+                    plaintext = encodeEntryPlaintext(alias, algorithmId, kind, encoding, hmacVariant, encoded);
                     aad = entryAad(entryId, position);
                     ciphertext = crypt(Cipher.ENCRYPT_MODE, masterKey, nonce, aad, plaintext);
                     if (ciphertext.length > MAX_ENTRY_CIPHERTEXT_BYTES) {
                         throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
                     }
-                    EncryptedEntry entry = new EncryptedEntry(entryId, position, alias,
-                            algorithmId, kind, encoding, hmacVariant, nonce, ciphertext,
-                            digest(ciphertext));
+                    EncryptedEntry entry = new EncryptedEntry(entryId, position, alias, algorithmId, kind, encoding,
+                            hmacVariant, nonce, ciphertext, digest(ciphertext));
                     candidate.put(alias, entry);
                     persistSnapshot(candidate);
                     entries = candidate;
@@ -709,8 +701,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private Imported importEntry(String alias, Kind expected)
-            throws IOException, GeneralSecurityException {
+    private Imported importEntry(String alias, Kind expected) throws IOException, GeneralSecurityException {
         lifecycleLock.readLock().lock();
         try {
             ensureOpen();
@@ -726,8 +717,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
                 plaintext = crypt(Cipher.DECRYPT_MODE, masterKey, entry.nonce, aad, entry.ciphertext);
                 decoded = decodeEntryPlaintext(plaintext);
                 validateEntryBinding(entry, decoded);
-                Key key = KeyringImportRegistry.importKey(decoded.algorithm, decoded.kind,
-                        decoded.encoding, decoded.hmacVariant, decoded.encoded);
+                Key key = KeyringImportRegistry.importKey(decoded.algorithm, decoded.kind, decoded.encoding,
+                        decoded.hmacVariant, decoded.encoded);
                 return new Imported(decoded.algorithm, key);
             } catch (AEADBadTagException exception) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
@@ -743,8 +734,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private void persistSnapshot(Map<String, EncryptedEntry> candidate)
-            throws IOException, GeneralSecurityException {
+    private void persistSnapshot(Map<String, EncryptedEntry> candidate) throws IOException, GeneralSecurityException {
         byte[] manifestNonce = null;
         byte[] manifestPlain = null;
         byte[] manifestAad = null;
@@ -754,8 +744,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             manifestNonce = nextNonce();
             manifestPlain = encodeManifest(candidate);
             manifestAad = manifestAad(candidate.size());
-            manifestCipher = crypt(Cipher.ENCRYPT_MODE, masterKey, manifestNonce,
-                    manifestAad, manifestPlain);
+            manifestCipher = crypt(Cipher.ENCRYPT_MODE, masterKey, manifestNonce, manifestAad, manifestPlain);
             image = encodeImage(candidate, manifestNonce, manifestCipher);
             writeAtomically(image);
         } catch (IOException | GeneralSecurityException exception) {
@@ -780,15 +769,14 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.ExceptionAsFlowControl" })
-    private void writeAtomically(Target target, Path destination, byte[] image)
-            throws IOException {
+    private void writeAtomically(Target target, Path destination, byte[] image) throws IOException {
         Path parent = destination.getParent();
         Path temporary = null;
         boolean moved = false;
         IOException primary = null;
         try {
-            temporary = fileOperations.createTemporary(target, parent,
-                    "." + destination.getFileName() + ".", ".tmp", FILE_ATTRIBUTE);
+            temporary = fileOperations.createTemporary(target, parent, "." + destination.getFileName() + ".", ".tmp",
+                    FILE_ATTRIBUTE);
             validateOwnerOnly(temporary, false);
             fileOperations.writeTemporary(target, temporary, image);
             fileOperations.forceTemporary(target, temporary);
@@ -844,15 +832,13 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private void writeNonceReservation(long highWater)
-            throws IOException, GeneralSecurityException {
+    private void writeNonceReservation(long highWater) throws IOException, GeneralSecurityException {
         byte[] authenticated = encodeNonceReservation(storeId, noncePrefix, highWater);
         byte[] tag = null;
         byte[] image = null;
         try {
             tag = hmac(nonceReservationMacKey, authenticated);
-            image = ByteBuffer.allocate(authenticated.length + tag.length)
-                    .put(authenticated).put(tag).array();
+            image = ByteBuffer.allocate(authenticated.length + tag.length).put(authenticated).put(tag).array();
             writeSidecarAtomically(nonceReservationPath, image);
         } finally {
             wipe(authenticated);
@@ -861,19 +847,14 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private static long readNonceReservation(Path keyring, UserPrincipal owner,
-            byte[] expectedStoreId, int expectedPrefix,
-            byte[] nonceReservationMacKey)
-            throws IOException, GeneralSecurityException {
+    private static long readNonceReservation(Path keyring, UserPrincipal owner, byte[] expectedStoreId,
+            int expectedPrefix, byte[] nonceReservationMacKey) throws IOException, GeneralSecurityException {
         Path reservation = nonceReservationPath(keyring);
         validateExistingFile(reservation, owner);
-        byte[] image = readFixedImage(reservation,
-                NONCE_RESERVATION_MAGIC.length + Integer.BYTES + UUID_BYTES
-                        + Integer.BYTES + Long.BYTES + NONCE_RESERVATION_TAG_BYTES);
-        byte[] authenticated = Arrays.copyOf(image,
-                image.length - NONCE_RESERVATION_TAG_BYTES);
-        byte[] actualTag = Arrays.copyOfRange(image,
-                authenticated.length, image.length);
+        byte[] image = readFixedImage(reservation, NONCE_RESERVATION_MAGIC.length + Integer.BYTES + UUID_BYTES
+                + Integer.BYTES + Long.BYTES + NONCE_RESERVATION_TAG_BYTES);
+        byte[] authenticated = Arrays.copyOf(image, image.length - NONCE_RESERVATION_TAG_BYTES);
+        byte[] actualTag = Arrays.copyOfRange(image, authenticated.length, image.length);
         byte[] expectedTag = null;
         try {
             expectedTag = hmac(nonceReservationMacKey, authenticated);
@@ -889,11 +870,10 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             int prefix = buffer.getInt();
             long highWater = buffer.getLong();
             if (!MessageDigest.isEqual(magic, NONCE_RESERVATION_MAGIC)
-                    || ByteBuffer.wrap(authenticated,
-                            NONCE_RESERVATION_MAGIC.length, Integer.BYTES).getInt()
-                            != NONCE_RESERVATION_VERSION
-                    || !MessageDigest.isEqual(storeId, expectedStoreId)
-                    || prefix != expectedPrefix || highWater < MIN_NONCE_HIGH_WATER) {
+                    || ByteBuffer.wrap(authenticated, NONCE_RESERVATION_MAGIC.length, Integer.BYTES)
+                            .getInt() != NONCE_RESERVATION_VERSION
+                    || !MessageDigest.isEqual(storeId, expectedStoreId) || prefix != expectedPrefix
+                    || highWater < MIN_NONCE_HIGH_WATER) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
             }
             return highWater;
@@ -905,20 +885,14 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private static byte[] encodeNonceReservation(byte[] storeId, int prefix,
-            long highWater) {
-        return ByteBuffer.allocate(NONCE_RESERVATION_MAGIC.length + Integer.BYTES
-                + UUID_BYTES + Integer.BYTES + Long.BYTES)
-                .put(NONCE_RESERVATION_MAGIC)
-                .putInt(NONCE_RESERVATION_VERSION)
-                .put(storeId)
-                .putInt(prefix)
-                .putLong(highWater)
-                .array();
+    private static byte[] encodeNonceReservation(byte[] storeId, int prefix, long highWater) {
+        return ByteBuffer
+                .allocate(NONCE_RESERVATION_MAGIC.length + Integer.BYTES + UUID_BYTES + Integer.BYTES + Long.BYTES)
+                .put(NONCE_RESERVATION_MAGIC).putInt(NONCE_RESERVATION_VERSION).put(storeId).putInt(prefix)
+                .putLong(highWater).array();
     }
 
-    private static byte[] hmac(byte[] key, byte[] input)
-            throws GeneralSecurityException {
+    private static byte[] hmac(byte[] key, byte[] input) throws GeneralSecurityException {
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(key, "HmacSHA256"));
         return mac.doFinal(input);
@@ -928,8 +902,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         writeAtomically(Target.NONCE_RESERVATION, target, image);
     }
 
-    private byte[] encodeImage(Map<String, EncryptedEntry> candidate,
-            byte[] manifestNonce, byte[] manifestCipher) throws IOException, KeyringException {
+    private byte[] encodeImage(Map<String, EncryptedEntry> candidate, byte[] manifestNonce, byte[] manifestCipher)
+            throws IOException, KeyringException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream out = new DataOutputStream(bytes)) {
             out.write(MAGIC);
@@ -963,8 +937,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         return result;
     }
 
-    private byte[] encodeManifest(Map<String, EncryptedEntry> candidate)
-            throws IOException {
+    private byte[] encodeManifest(Map<String, EncryptedEntry> candidate) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream out = new DataOutputStream(bytes)) {
             out.writeInt(MANIFEST_FORMAT_VERSION);
@@ -987,11 +960,10 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         return bytes.toByteArray();
     }
 
-    @SuppressWarnings({ "PMD.NcssCount", "PMD.CyclomaticComplexity",
-            "PMD.PreserveStackTrace", "PMD.ExceptionAsFlowControl",
-            "PMD.AvoidCatchingGenericException" })
-    private static Decoded decodeImage(byte[] image, KeyringPassword password,
-            KeyringProtection protection) throws IOException, GeneralSecurityException {
+    @SuppressWarnings({ "PMD.NcssCount", "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace",
+            "PMD.ExceptionAsFlowControl", "PMD.AvoidCatchingGenericException" })
+    private static Decoded decodeImage(byte[] image, KeyringPassword password, KeyringProtection protection)
+            throws IOException, GeneralSecurityException {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(image))) {
             byte[] magic = readFixed(in, MAGIC.length);
             if (!MessageDigest.isEqual(MAGIC, magic)) {
@@ -1014,8 +986,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             if (wrapNonce[0] != MASTER_WRAP_NONCE_DOMAIN) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
             }
-            byte[] wrapped = readBoundedBytes(in, MASTER_KEY_BYTES + GCM_TAG_BYTES,
-                    MASTER_KEY_BYTES + GCM_TAG_BYTES);
+            byte[] wrapped = readBoundedBytes(in, MASTER_KEY_BYTES + GCM_TAG_BYTES, MASTER_KEY_BYTES + GCM_TAG_BYTES);
             if (wrapped.length != MASTER_KEY_BYTES + GCM_TAG_BYTES) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
             }
@@ -1047,8 +1018,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
                 for (int index = 0; index < count; index++) {
                     byte[] entryId = readFixed(in, UUID_BYTES);
                     byte[] nonce = readFixed(in, NONCE_BYTES);
-                    byte[] ciphertext = readBoundedBytes(in, MAX_ENTRY_CIPHERTEXT_BYTES,
-                            MAX_ENTRY_CIPHERTEXT_BYTES);
+                    byte[] ciphertext = readBoundedBytes(in, MAX_ENTRY_CIPHERTEXT_BYTES, MAX_ENTRY_CIPHERTEXT_BYTES);
                     wireEntries.add(new EncryptedWireEntry(entryId, nonce, ciphertext));
                 }
                 byte[] manifestNonce = readFixed(in, NONCE_BYTES);
@@ -1061,14 +1031,12 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
                 try {
                     aad = manifestAad(storeId, count);
                     try {
-                        manifestPlain = crypt(Cipher.DECRYPT_MODE, masterKey,
-                                manifestNonce, aad, manifestCipher);
+                        manifestPlain = crypt(Cipher.DECRYPT_MODE, masterKey, manifestNonce, aad, manifestCipher);
                     } catch (AEADBadTagException exception) {
                         throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
                     }
                     Manifest manifest = decodeManifest(manifestPlain, count);
-                    Map<String, EncryptedEntry> entries =
-                            bindManifest(manifest, wireEntries, manifestNonce);
+                    Map<String, EncryptedEntry> entries = bindManifest(manifest, wireEntries, manifestNonce);
                     return new Decoded(header, masterKey, manifest, entries);
                 } finally {
                     wipe(aad);
@@ -1086,8 +1054,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private static Manifest decodeManifest(byte[] plaintext, int expectedCount)
-            throws IOException {
+    private static Manifest decodeManifest(byte[] plaintext, int expectedCount) throws IOException {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(plaintext))) {
             if (in.readInt() != MANIFEST_FORMAT_VERSION) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
@@ -1109,16 +1076,16 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
                 String algorithm = readString(in, MAX_METADATA_BYTES);
                 Kind kind = Kind.fromCode(in.readUnsignedByte());
                 Encoding encoding = Encoding.fromCode(in.readUnsignedByte());
-                KeyringImportRegistry.HmacVariant hmacVariant =
-                        KeyringImportRegistry.HmacVariant.fromCode(in.readUnsignedByte());
+                KeyringImportRegistry.HmacVariant hmacVariant = KeyringImportRegistry.HmacVariant
+                        .fromCode(in.readUnsignedByte());
                 byte[] nonce = readFixed(in, NONCE_BYTES);
                 int length = in.readInt();
                 if (length < GCM_TAG_BYTES || length > MAX_ENTRY_CIPHERTEXT_BYTES) {
                     throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
                 }
                 byte[] digest = readFixed(in, SHA256_BYTES);
-                descriptors.add(new ManifestEntry(entryId, position, alias, algorithm,
-                        kind, encoding, hmacVariant, nonce, length, digest));
+                descriptors.add(new ManifestEntry(entryId, position, alias, algorithm, kind, encoding, hmacVariant,
+                        nonce, length, digest));
             }
             if (in.read() != -1) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
@@ -1130,9 +1097,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
-    private static Map<String, EncryptedEntry> bindManifest(Manifest manifest,
-            List<EncryptedWireEntry> wireEntries, byte[] manifestNonce)
-            throws KeyringException {
+    private static Map<String, EncryptedEntry> bindManifest(Manifest manifest, List<EncryptedWireEntry> wireEntries,
+            byte[] manifestNonce) throws KeyringException {
         if (manifest.entries.size() != wireEntries.size()) {
             throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
         }
@@ -1145,44 +1111,38 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         for (int index = 0; index < wireEntries.size(); index++) {
             ManifestEntry descriptor = manifest.entries.get(index);
             EncryptedWireEntry wire = wireEntries.get(index);
-            if (descriptor.position != index
-                    || !MessageDigest.isEqual(descriptor.entryId, wire.entryId)
+            if (descriptor.position != index || !MessageDigest.isEqual(descriptor.entryId, wire.entryId)
                     || !MessageDigest.isEqual(descriptor.nonce, wire.nonce)
                     || descriptor.ciphertextLength != wire.ciphertext.length
                     || !MessageDigest.isEqual(descriptor.digest, digest(wire.ciphertext))) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
             }
             validateNonce(wire.nonce, manifest.noncePrefix, manifest.highWater);
-            if (!aliases.add(descriptor.alias)
-                    || !ids.add(uuid(descriptor.entryId))
+            if (!aliases.add(descriptor.alias) || !ids.add(uuid(descriptor.entryId))
                     || !nonces.add(new Nonce(wire.nonce))) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
             }
-            KeyringImportRegistry.validateMapping(descriptor.algorithm,
-                    descriptor.kind, descriptor.encoding, descriptor.hmacVariant);
-            result.put(descriptor.alias, new EncryptedEntry(wire.entryId, index,
-                    descriptor.alias, descriptor.algorithm, descriptor.kind,
-                    descriptor.encoding, descriptor.hmacVariant, wire.nonce,
-                    wire.ciphertext, descriptor.digest));
+            KeyringImportRegistry.validateMapping(descriptor.algorithm, descriptor.kind, descriptor.encoding,
+                    descriptor.hmacVariant);
+            result.put(descriptor.alias,
+                    new EncryptedEntry(wire.entryId, index, descriptor.alias, descriptor.algorithm, descriptor.kind,
+                            descriptor.encoding, descriptor.hmacVariant, wire.nonce, wire.ciphertext,
+                            descriptor.digest));
         }
         return result;
     }
 
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private static byte[] encodeEntryPlaintext(String alias, String algorithm,
-            Kind kind, Encoding encoding, KeyringImportRegistry.HmacVariant hmacVariant,
-            byte[] encoded)
-            throws KeyringException {
+    private static byte[] encodeEntryPlaintext(String alias, String algorithm, Kind kind, Encoding encoding,
+            KeyringImportRegistry.HmacVariant hmacVariant, byte[] encoded) throws KeyringException {
         if (encoded.length <= 0 || encoded.length > MAX_ENTRY_CIPHERTEXT_BYTES - GCM_TAG_BYTES) {
             throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
         }
         byte[] aliasBytes = alias.getBytes(StandardCharsets.UTF_8);
         byte[] algorithmBytes = algorithm.getBytes(StandardCharsets.UTF_8);
         try {
-            int size = Math.addExact(Integer.BYTES + 3,
-                    Math.addExact(lengthPrefixedSize(aliasBytes),
-                            Math.addExact(lengthPrefixedSize(algorithmBytes),
-                                    lengthPrefixedSize(encoded))));
+            int size = Math.addExact(Integer.BYTES + 3, Math.addExact(lengthPrefixedSize(aliasBytes),
+                    Math.addExact(lengthPrefixedSize(algorithmBytes), lengthPrefixedSize(encoded))));
             if (size > MAX_ENTRY_CIPHERTEXT_BYTES - GCM_TAG_BYTES) {
                 throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
             }
@@ -1222,10 +1182,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
             String algorithm = readString(in, MAX_METADATA_BYTES);
             Kind kind = Kind.fromCode(in.readUnsignedByte());
             Encoding encoding = Encoding.fromCode(in.readUnsignedByte());
-            KeyringImportRegistry.HmacVariant hmacVariant =
-                    KeyringImportRegistry.HmacVariant.fromCode(in.readUnsignedByte());
-            byte[] encoded = readBoundedBytes(in,
-                    MAX_ENTRY_CIPHERTEXT_BYTES - GCM_TAG_BYTES,
+            KeyringImportRegistry.HmacVariant hmacVariant = KeyringImportRegistry.HmacVariant
+                    .fromCode(in.readUnsignedByte());
+            byte[] encoded = readBoundedBytes(in, MAX_ENTRY_CIPHERTEXT_BYTES - GCM_TAG_BYTES,
                     MAX_ENTRY_CIPHERTEXT_BYTES - GCM_TAG_BYTES);
             if (in.read() != -1) {
                 wipe(encoded);
@@ -1237,8 +1196,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private static void validateEntryBinding(EncryptedEntry entry, EntryPlain decoded)
-            throws KeyringException {
+    private static void validateEntryBinding(EncryptedEntry entry, EntryPlain decoded) throws KeyringException {
         if (!entry.alias.equals(decoded.alias) || !entry.algorithm.equals(decoded.algorithm)
                 || entry.kind != decoded.kind || entry.encoding != decoded.encoding
                 || entry.hmacVariant != decoded.hmacVariant) {
@@ -1305,8 +1263,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         return buffer.array();
     }
 
-    private static void validateNonce(byte[] nonce, int prefix, long highWater)
-            throws KeyringException {
+    private static void validateNonce(byte[] nonce, int prefix, long highWater) throws KeyringException {
         if (nonce.length != NONCE_BYTES) {
             throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
         }
@@ -1325,8 +1282,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         byte[] prefix = new byte[3];
         try {
             random.nextBytes(prefix);
-            return (Byte.toUnsignedInt(prefix[0]) << 16)
-                    | (Byte.toUnsignedInt(prefix[1]) << 8)
+            return (Byte.toUnsignedInt(prefix[0]) << 16) | (Byte.toUnsignedInt(prefix[1]) << 8)
                     | Byte.toUnsignedInt(prefix[2]);
         } finally {
             wipe(prefix);
@@ -1351,8 +1307,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     private static int readThreeBytePrefix(ByteBuffer buffer) {
-        return (Byte.toUnsignedInt(buffer.get()) << 16)
-                | (Byte.toUnsignedInt(buffer.get()) << 8)
+        return (Byte.toUnsignedInt(buffer.get()) << 16) | (Byte.toUnsignedInt(buffer.get()) << 8)
                 | Byte.toUnsignedInt(buffer.get());
     }
 
@@ -1362,18 +1317,16 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         PBEKeySpec spec = new PBEKeySpec(chars, salt, iterations, KEK_BYTES * Byte.SIZE);
         Arrays.fill(chars, '\0');
         try {
-            return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-                    .generateSecret(spec).getEncoded();
+            return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded();
         } finally {
             spec.clearPassword();
         }
     }
 
-    private static byte[] crypt(int mode, byte[] key, byte[] nonce, byte[] aad,
-            byte[] input) throws GeneralSecurityException {
+    private static byte[] crypt(int mode, byte[] key, byte[] nonce, byte[] aad, byte[] input)
+            throws GeneralSecurityException {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(mode, new SecretKeySpec(key, "AES"),
-                new GCMParameterSpec(GCM_TAG_BITS, nonce));
+        cipher.init(mode, new SecretKeySpec(key, "AES"), new GCMParameterSpec(GCM_TAG_BITS, nonce));
         cipher.updateAAD(aad);
         return cipher.doFinal(input);
     }
@@ -1387,10 +1340,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private static void validateIterations(int iterations, KeyringProtection protection)
-            throws KeyringException {
-        if (iterations < KeyringProtection.CREATION_ITERATIONS
-                || iterations > KeyringProtection.MAX_DECODED_ITERATIONS
+    private static void validateIterations(int iterations, KeyringProtection protection) throws KeyringException {
+        if (iterations < KeyringProtection.CREATION_ITERATIONS || iterations > KeyringProtection.MAX_DECODED_ITERATIONS
                 || iterations > protection.operationalIterationMaximum()) {
             throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
         }
@@ -1404,8 +1355,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         };
     }
 
-    private static int positionFor(Map<String, EncryptedEntry> values,
-            String alias) {
+    private static int positionFor(Map<String, EncryptedEntry> values, String alias) {
         int index = 0;
         for (String current : values.keySet()) {
             if (current.equals(alias)) {
@@ -1442,10 +1392,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private static void validateString(String value, int maximumBytes)
-            throws KeyringException {
-        if (value == null || value.isBlank()
-                || value.getBytes(StandardCharsets.UTF_8).length > maximumBytes) {
+    private static void validateString(String value, int maximumBytes) throws KeyringException {
+        if (value == null || value.isBlank() || value.getBytes(StandardCharsets.UTF_8).length > maximumBytes) {
             throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
         }
     }
@@ -1485,11 +1433,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         return value;
     }
 
-    private static byte[] readBoundedBytes(DataInputStream in, int maximum,
-            int exactOrMaximum) throws IOException {
+    private static byte[] readBoundedBytes(DataInputStream in, int maximum, int exactOrMaximum) throws IOException {
         int length = in.readInt();
-        if (length < 0 || length > maximum
-                || exactOrMaximum < maximum && length != exactOrMaximum) {
+        if (length < 0 || length > maximum || exactOrMaximum < maximum && length != exactOrMaximum) {
             throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
         }
         byte[] value = new byte[length];
@@ -1512,10 +1458,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         byte[] encoded = readBoundedBytes(in, maximum, maximum);
         try {
             try {
-                return StandardCharsets.UTF_8.newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(ByteBuffer.wrap(encoded)).toString();
+                return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(encoded)).toString();
             } catch (CharacterCodingException exception) {
                 throw new KeyringException(Code.KEYRING_FORMAT_INVALID);
             }
@@ -1541,8 +1485,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
 
     @SuppressWarnings("PMD.PreserveStackTrace")
     private static byte[] readStoreImage(Path source) throws IOException {
-        try (FileChannel channel = FileChannel.open(source,
-                StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+        try (FileChannel channel = FileChannel.open(source, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
             long size = channel.size();
             if (size <= 0 || size > MAX_FILE_BYTES) {
                 throw new KeyringException(Code.KEYRING_LIMIT_EXCEEDED);
@@ -1576,8 +1519,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private static Path securePath(Path requested, boolean createParent)
-            throws IOException {
+    private static Path securePath(Path requested, boolean createParent) throws IOException {
         Objects.requireNonNull(requested, "path must not be null");
         Path absolute = requested.toAbsolutePath().normalize();
         Path parent = absolute.getParent();
@@ -1609,15 +1551,13 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private static void validateExistingFile(Path file, UserPrincipal expectedOwner)
-            throws IOException {
-        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
-                || Files.isSymbolicLink(file)) {
+    private static void validateExistingFile(Path file, UserPrincipal expectedOwner) throws IOException {
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(file)) {
             throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
         }
         validateOwnerOnly(file, false);
-        PosixFileAttributes attributes = Files.readAttributes(file,
-                PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        PosixFileAttributes attributes = Files.readAttributes(file, PosixFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
         if (!attributes.owner().equals(expectedOwner)) {
             throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
         }
@@ -1631,10 +1571,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private static void validateOwnerOnly(Path path, boolean directory)
-            throws IOException {
-        PosixFileAttributes attributes = Files.readAttributes(path,
-                PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+    private static void validateOwnerOnly(Path path, boolean directory) throws IOException {
+        PosixFileAttributes attributes = Files.readAttributes(path, PosixFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
         Set<PosixFilePermission> expected = directory ? DIRECTORY_PERMISSIONS : FILE_PERMISSIONS;
         if (!attributes.permissions().equals(expected)) {
             throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
@@ -1642,8 +1581,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
     }
 
     @SuppressWarnings("PMD.PreserveStackTrace")
-    /* default */ static void destroyTemporarySpec(
-            zeroecho.core.spec.AlgorithmKeySpec spec, Throwable primary)
+    /* default */ static void destroyTemporarySpec(zeroecho.core.spec.AlgorithmKeySpec spec, Throwable primary)
             throws GeneralSecurityException {
         if (!(spec instanceof Destroyable destroyable)) {
             return;
@@ -1667,22 +1605,19 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private record Header(byte[] storeId, int iterations, byte[] salt,
-            byte[] masterWrapNonce, byte[] wrappedMasterKey) {
+    private record Header(byte[] storeId, int iterations, byte[] salt, byte[] masterWrapNonce,
+            byte[] wrappedMasterKey) {
     }
 
-    private record Manifest(int noncePrefix, long highWater,
-            List<ManifestEntry> entries) {
+    private record Manifest(int noncePrefix, long highWater, List<ManifestEntry> entries) {
     }
 
-    private record ManifestEntry(byte[] entryId, int position, String alias,
-            String algorithm, Kind kind, Encoding encoding,
-            KeyringImportRegistry.HmacVariant hmacVariant,
-            byte[] nonce, int ciphertextLength, byte[] digest) {
+    private record ManifestEntry(byte[] entryId, int position, String alias, String algorithm, Kind kind,
+            Encoding encoding, KeyringImportRegistry.HmacVariant hmacVariant, byte[] nonce, int ciphertextLength,
+            byte[] digest) {
     }
 
-    private record EncryptedWireEntry(byte[] entryId, byte[] nonce,
-            byte[] ciphertext) {
+    private record EncryptedWireEntry(byte[] entryId, byte[] nonce, byte[] ciphertext) {
     }
 
     /** Immutable encrypted entry retained while the store is open. */
@@ -1698,10 +1633,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         private final byte[] ciphertext;
         private final byte[] digest;
 
-        private EncryptedEntry(byte[] entryId, int position, String alias,
-                String algorithm, Kind kind, Encoding encoding,
-                KeyringImportRegistry.HmacVariant hmacVariant,
-                byte[] nonce, byte[] ciphertext, byte[] digest) {
+        private EncryptedEntry(byte[] entryId, int position, String alias, String algorithm, Kind kind,
+                Encoding encoding, KeyringImportRegistry.HmacVariant hmacVariant, byte[] nonce, byte[] ciphertext,
+                byte[] digest) {
             this.entryId = entryId.clone();
             this.position = position;
             this.alias = alias;
@@ -1715,16 +1649,14 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         }
     }
 
-    private record EntryPlain(String alias, String algorithm, Kind kind,
-            Encoding encoding, KeyringImportRegistry.HmacVariant hmacVariant,
-            byte[] encoded) {
+    private record EntryPlain(String alias, String algorithm, Kind kind, Encoding encoding,
+            KeyringImportRegistry.HmacVariant hmacVariant, byte[] encoded) {
     }
 
     private record Imported(String algorithm, Key key) {
     }
 
-    private record Decoded(Header header, byte[] masterKey, Manifest manifest,
-            Map<String, EncryptedEntry> entries) {
+    private record Decoded(Header header, byte[] masterKey, Manifest manifest, Map<String, EncryptedEntry> entries) {
     }
 
     /** Value-semantic nonce used only for duplicate detection. */
@@ -1764,8 +1696,9 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
         /* default */ static Ownership acquire(Path keyring) throws IOException {
             Path lockPath = keyring.resolveSibling(keyring.getFileName() + ".lock");
             try {
-                UserPrincipal expectedOwner = Files.readAttributes(lockPath.getParent(),
-                        PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS).owner();
+                UserPrincipal expectedOwner = Files
+                        .readAttributes(lockPath.getParent(), PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS)
+                        .owner();
                 if (!Files.exists(lockPath, LinkOption.NOFOLLOW_LINKS)) {
                     try {
                         Files.createFile(lockPath, FILE_ATTRIBUTE);
@@ -1774,8 +1707,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable { // NOPMD
                     }
                 }
                 validateExistingFile(lockPath, expectedOwner);
-                FileChannel channel = FileChannel.open(lockPath,
-                        StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+                FileChannel channel = FileChannel.open(lockPath, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
                 try {
                     FileLock lock;
                     try {

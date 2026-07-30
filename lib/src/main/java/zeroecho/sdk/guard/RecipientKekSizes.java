@@ -8,9 +8,11 @@ package zeroecho.sdk.guard;
  * Defines the KEK sizes supported by recipient entries without an encoded size
  * discriminator.
  *
- * <p>The current recipient format permits AES-128 and AES-256 wrapping only.
+ * <p>
+ * The current recipient format permits AES-128 and AES-256 wrapping only.
  * Validation must occur before an entry is registered so every emitted entry
- * remains openable by the corresponding recipient opener.</p>
+ * remains openable by the corresponding recipient opener.
+ * </p>
  *
  * @since 1.0
  */

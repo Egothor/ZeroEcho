@@ -33,7 +33,7 @@ public sealed interface RevocationCommand
      * Places a credential on hold.
      *
      * @param credentialId credential identifier
-     * @param attributes safe administrative metadata
+     * @param attributes   safe administrative metadata
      */
     record Hold(PkiId credentialId, AttributeSet attributes) implements RevocationCommand {
         /** Validates and snapshots the command. */
@@ -47,7 +47,7 @@ public sealed interface RevocationCommand
      * Removes an existing hold.
      *
      * @param credentialId credential identifier
-     * @param attributes safe administrative metadata
+     * @param attributes   safe administrative metadata
      */
     record Unhold(PkiId credentialId, AttributeSet attributes) implements RevocationCommand {
         /** Validates and snapshots the command. */
@@ -61,8 +61,8 @@ public sealed interface RevocationCommand
      * Permanently revokes a credential.
      *
      * @param credentialId credential identifier
-     * @param reason permanent revocation reason
-     * @param attributes safe administrative metadata
+     * @param reason       permanent revocation reason
+     * @param attributes   safe administrative metadata
      */
     record RevokePermanently(PkiId credentialId, RevocationReason reason, AttributeSet attributes)
             implements RevocationCommand {

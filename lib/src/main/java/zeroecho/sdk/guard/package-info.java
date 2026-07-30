@@ -108,8 +108,8 @@
  * generation and recipient entries; the symmetric builder manages algorithm
  * parameters and payload framing.</li>
  * <li><strong>Reusable opener strategies:</strong> recipients encode entries;
- * openers attempt every applicable entry and create fresh cryptographic contexts
- * per attempt. Neither carries long-lived secret state.</li>
+ * openers attempt every applicable entry and create fresh cryptographic
+ * contexts per attempt. Neither carries long-lived secret state.</li>
  * <li><strong>Defensive parsing:</strong> the builder applies limits to the
  * number of recipients and the size of each entry blob; the symmetric stage
  * applies its own limits to its header and payload.</li>

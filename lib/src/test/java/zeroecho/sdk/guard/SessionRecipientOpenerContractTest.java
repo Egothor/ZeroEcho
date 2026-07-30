@@ -32,8 +32,7 @@ class SessionRecipientOpenerContractTest {
         assertSessionOnlyConstructor(EncCtxOpener.class);
 
         List<Method> addOpenerMethods = Arrays.stream(MultiRecipientDataSourceBuilder.class.getMethods())
-                .filter(method -> method.getName().equals("addOpener"))
-                .toList();
+                .filter(method -> method.getName().equals("addOpener")).toList();
         assertEquals(1, addOpenerMethods.size());
         assertEquals(RecipientOpener.class, addOpenerMethods.get(0).getParameterTypes()[0]);
 
@@ -47,10 +46,8 @@ class SessionRecipientOpenerContractTest {
         ZeroEchoSession session = new ZeroEchoSession();
         UnlockMaterial.Password material = new UnlockMaterial.Password(new char[] { 'p' });
         try {
-            assertNull(new KemCtxOpener(session).tryOpen(
-                    "CTX-ENC:RSA", new byte[0], material));
-            assertNull(new EncCtxOpener(session).tryOpen(
-                    "KEM:ML-KEM:GCM-WRAP", new byte[0], material));
+            assertNull(new KemCtxOpener(session).tryOpen("CTX-ENC:RSA", new byte[0], material));
+            assertNull(new EncCtxOpener(session).tryOpen("KEM:ML-KEM:GCM-WRAP", new byte[0], material));
         } finally {
             material.destroy();
         }
@@ -61,15 +58,12 @@ class SessionRecipientOpenerContractTest {
     @Test
     void customReusableOpenerScansEveryEntryAndClosesOnce() throws Exception {
         System.out.println("customReusableOpenerScansEveryEntryAndClosesOnce");
-        ZeroEchoSession session = new ZeroEchoSession()
-                .withPbkdf2Limits(new Pbkdf2Limits(20_000, 30_000));
+        ZeroEchoSession session = new ZeroEchoSession().withPbkdf2Limits(new Pbkdf2Limits(20_000, 30_000));
         TrackingOpener opener = new TrackingOpener();
         UnlockMaterial.Password material = new UnlockMaterial.Password(new char[] { 'p' });
         try (MultiRecipientDataSourceBuilder builder = MultiRecipientDataSourceBuilder.builder(session)
-                .withAes(AesDataContentBuilder.builder(session).modeGcm(128).withHeader())
-                .unlockWith(material)
-                .addOpener(opener);
-                MultiRecipientContent content = builder.build(false)) {
+                .withAes(AesDataContentBuilder.builder(session).modeGcm(128).withHeader()).unlockWith(material)
+                .addOpener(opener); MultiRecipientContent content = builder.build(false)) {
             content.setInput(() -> new ByteArrayInputStream(twoEntryHeader()));
             assertThrows(IOException.class, content::getStream);
         } finally {

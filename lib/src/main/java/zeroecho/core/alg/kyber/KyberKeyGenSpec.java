@@ -63,7 +63,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * </p>
  *
  * @see KyberAlgorithm
- * @see zeroecho.sdk.KeyBuilders.Asymmetric#generateKeyPair(String, AlgorithmKeySpec)
+ * @see zeroecho.sdk.KeyBuilders.Asymmetric#generateKeyPair(String,
+ *      AlgorithmKeySpec)
  */
 public final class KyberKeyGenSpec implements AlgorithmKeySpec, Describable {
     /**

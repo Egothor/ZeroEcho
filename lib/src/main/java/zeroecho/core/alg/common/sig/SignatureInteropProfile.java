@@ -116,7 +116,8 @@ public final class SignatureInteropProfile { // NOPMD
      * @param keyAlgorithmId          ZeroEcho key algorithm identifier used for key
      *                                import and matching, such as {@code RSA}
      * @param contextAlgorithmId      ZeroEcho context algorithm identifier used
-     *                                with {@code ZeroEchoSession.createContext(...)}
+     *                                with
+     *                                {@code ZeroEchoSession.createContext(...)}
      * @param contextSpec             explicit ZeroEcho context specification
      * @param signatureRepresentation signature representation bridge between
      *                                external bytes and internal ZeroEcho bytes

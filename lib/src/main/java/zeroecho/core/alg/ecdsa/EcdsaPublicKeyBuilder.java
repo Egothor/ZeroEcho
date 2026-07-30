@@ -48,9 +48,11 @@ import zeroecho.core.spi.PublicKeyImporter;
  * {@link EcdsaPublicKeySpec}. This builder is responsible for importing ECDSA
  * public keys from X.509 SubjectPublicKeyInfo encodings.
  *
- * <p>The exact supported operation is
- * {@link #importPublic(EcdsaPublicKeySpec)}. Generation and private import are
- * registered through their own operation-specific implementations.</p>
+ * <p>
+ * The exact supported operation is {@link #importPublic(EcdsaPublicKeySpec)}.
+ * Generation and private import are registered through their own
+ * operation-specific implementations.
+ * </p>
  *
  * <h2>Encoding</h2> The {@link EcdsaPublicKeySpec} stores the public key in
  * standard X.509 DER format. This builder delegates to a JCA {@link KeyFactory}

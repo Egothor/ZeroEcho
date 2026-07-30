@@ -46,13 +46,11 @@ package zeroecho.core.err;
  * <h2>When it is thrown</h2>
  * <ul>
  * <li>During
- * {@link zeroecho.sdk.ZeroEchoSession#createContext(String,
- * zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}
+ * {@link zeroecho.sdk.ZeroEchoSession#createContext(String, zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}
  * after policy validation, if the resolved algorithm exposes no bindings for
  * the given role.</li>
  * <li>Directly from
- * {@link zeroecho.core.CryptoAlgorithm#createContext(zeroecho.core.KeyUsage,
- * java.security.Key, zeroecho.core.spec.ContextSpec)}
+ * {@link zeroecho.core.CryptoAlgorithm#createContext(zeroecho.core.KeyUsage, java.security.Key, zeroecho.core.spec.ContextSpec)}
  * when no binding exists for the role.</li>
  * </ul>
  *

@@ -21,11 +21,11 @@ public final class ImportedCertificateProfileVersion {
     /**
      * Creates an immutable imported version.
      *
-     * @param reference exact version reference
+     * @param reference     exact version reference
      * @param schemaVersion document schema version
-     * @param definition validated semantic definition
+     * @param definition    validated semantic definition
      * @param canonicalJson canonical JSON document
-     * @param importedAt authoritative import time
+     * @param importedAt    authoritative import time
      */
     public ImportedCertificateProfileVersion(CertificateProfileRef reference, int schemaVersion,
             CertificateProfileDefinition definition, byte[] canonicalJson, Instant importedAt) {
@@ -74,12 +74,10 @@ public final class ImportedCertificateProfileVersion {
 
     @Override
     public boolean equals(Object other) {
-        return this == other || other instanceof ImportedCertificateProfileVersion version
-                && schemaVersion == version.schemaVersion
-                && reference.equals(version.reference)
-                && definition.equals(version.definition)
-                && importedAt.equals(version.importedAt)
-                && Arrays.equals(canonicalJson, version.canonicalJson);
+        return this == other
+                || other instanceof ImportedCertificateProfileVersion version && schemaVersion == version.schemaVersion
+                        && reference.equals(version.reference) && definition.equals(version.definition)
+                        && importedAt.equals(version.importedAt) && Arrays.equals(canonicalJson, version.canonicalJson);
     }
 
     @Override

@@ -204,9 +204,9 @@ public final class JulAuditListenerStd implements AuditListener {
          * appends a stack trace in addition to the structured summary.
          *
          * <p>
-         * Stack traces may contain provider exception messages or application
-         * values. Enabling them is an explicit diagnostic opt-in and requires a
-         * suitably protected log destination.
+         * Stack traces may contain provider exception messages or application values.
+         * Enabling them is an explicit diagnostic opt-in and requires a suitably
+         * protected log destination.
          * </p>
          *
          * @param include true to include stack traces, false to omit them
@@ -600,8 +600,7 @@ public final class JulAuditListenerStd implements AuditListener {
             StringBuilder sb = new StringBuilder(key.getAlgorithm()).append(':');
             for (int i = 0; i < Math.min(8, digest.length); i++) {
                 int value = digest[i] & 0xff;
-                sb.append(Character.forDigit(value >>> 4, 16))
-                        .append(Character.forDigit(value & 0x0f, 16));
+                sb.append(Character.forDigit(value >>> 4, 16)).append(Character.forDigit(value & 0x0f, 16));
             }
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {

@@ -28,10 +28,8 @@ record ValidatedImportedProfile(ImportedCertificateProfileVersion version) {
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     /* default */ static ValidatedImportedProfile decode(byte[] artifact) {
         try {
-            ImportedCertificateProfileVersion decoded =
-                    FsCodec.decode(FsCodec.PROFILE_VERSION, artifact);
-            return validate(decoded, decoded.reference().profileId(),
-                    decoded.reference().profileVersion());
+            ImportedCertificateProfileVersion decoded = FsCodec.decode(FsCodec.PROFILE_VERSION, artifact);
+            return validate(decoded, decoded.reference().profileId(), decoded.reference().profileVersion());
         } catch (ProfileLifecycleFailure failure) {
             throw failure;
         } catch (RuntimeException failure) {
@@ -46,8 +44,7 @@ record ValidatedImportedProfile(ImportedCertificateProfileVersion version) {
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     /* default */ static ValidatedImportedProfile decode(byte[] artifact, String profileId, long profileVersion) {
         try {
-            ImportedCertificateProfileVersion decoded =
-                    FsCodec.decode(FsCodec.PROFILE_VERSION, artifact);
+            ImportedCertificateProfileVersion decoded = FsCodec.decode(FsCodec.PROFILE_VERSION, artifact);
             return validate(decoded, profileId, profileVersion);
         } catch (ProfileLifecycleFailure failure) {
             throw failure;
@@ -61,16 +58,15 @@ record ValidatedImportedProfile(ImportedCertificateProfileVersion version) {
      * failures, all deliberately normalized without input-bearing causes.
      */
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
-    /* default */ static ValidatedImportedProfile validate(ImportedCertificateProfileVersion version,
-            String profileId, long profileVersion) {
+    /* default */ static ValidatedImportedProfile validate(ImportedCertificateProfileVersion version, String profileId,
+            long profileVersion) {
         try {
             byte[] storedCanonical = version.canonicalJson();
             requireDocumentBounds(storedCanonical);
             CertificateProfileDefinition parsed = CertificateProfileDocumentCodec.parse(storedCanonical);
             byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(parsed);
             byte[] expectedHash = sha256(canonical);
-            requireCanonicalIdentity(version, profileId, profileVersion, storedCanonical,
-                    parsed, canonical);
+            requireCanonicalIdentity(version, profileId, profileVersion, storedCanonical, parsed, canonical);
             if (!MessageDigest.isEqual(expectedHash, version.reference().canonicalSha256())) {
                 throw hashMismatch();
             }
@@ -89,14 +85,11 @@ record ValidatedImportedProfile(ImportedCertificateProfileVersion version) {
         }
     }
 
-    private static void requireCanonicalIdentity(ImportedCertificateProfileVersion version,
-            String profileId, long profileVersion, byte[] storedCanonical,
-            CertificateProfileDefinition parsed, byte[] canonical) {
-        if (!Arrays.equals(canonical, storedCanonical)
-                || !parsed.equals(version.definition())
+    private static void requireCanonicalIdentity(ImportedCertificateProfileVersion version, String profileId,
+            long profileVersion, byte[] storedCanonical, CertificateProfileDefinition parsed, byte[] canonical) {
+        if (!Arrays.equals(canonical, storedCanonical) || !parsed.equals(version.definition())
                 || !profileId.equals(version.reference().profileId())
-                || profileVersion != version.reference().profileVersion()
-                || !profileId.equals(parsed.profileId())
+                || profileVersion != version.reference().profileVersion() || !profileId.equals(parsed.profileId())
                 || profileVersion != parsed.profileVersion()
                 || version.schemaVersion() != CertificateProfileDefinition.SCHEMA_VERSION) {
             throw versionCorrupt();

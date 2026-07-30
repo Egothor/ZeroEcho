@@ -14,14 +14,18 @@ import javax.security.auth.Destroyable;
 /**
  * Destroyable owner of a keyring password.
  *
- * <p>The constructor and {@link #copy()} use defensive copies. Callers retain
+ * <p>
+ * The constructor and {@link #copy()} use defensive copies. Callers retain
  * ownership of the array supplied to the constructor and must clear it. The
  * returned copy belongs to the receiver and must be cleared immediately after
  * key derivation. This object never creates an immutable password
- * {@link String}.</p>
+ * {@link String}.
+ * </p>
  *
- * <p>Instances are thread-safe. Destruction is idempotent and makes subsequent
- * access fail deterministically.</p>
+ * <p>
+ * Instances are thread-safe. Destruction is idempotent and makes subsequent
+ * access fail deterministically.
+ * </p>
  */
 public final class KeyringPassword implements Destroyable, AutoCloseable {
     private final ReentrantLock lifecycleLock = new ReentrantLock();
@@ -32,7 +36,7 @@ public final class KeyringPassword implements Destroyable, AutoCloseable {
      * Creates a password owner.
      *
      * @param password password characters, which are defensively copied
-     * @throws NullPointerException if {@code password} is {@code null}
+     * @throws NullPointerException     if {@code password} is {@code null}
      * @throws IllegalArgumentException if {@code password} is empty
      */
     @SuppressWarnings("PMD.UseVarargs")

@@ -54,12 +54,9 @@ class KeyringFilesystemSecurityTest {
     private static final char[] PASSWORD = { 'f', 'i', 'l', 'e', 's', 'y', 's' };
     private static final byte[] CHILD_PASSWORD = { 'f', 'i', 'l', 'e', 's', 'y', 's' };
     private static final long TIMEOUT_SECONDS = 15L;
-    private static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS = Set.of(
-            PosixFilePermission.OWNER_READ,
-            PosixFilePermission.OWNER_WRITE,
-            PosixFilePermission.OWNER_EXECUTE);
-    private static final Set<PosixFilePermission> FILE_PERMISSIONS = Set.of(
-            PosixFilePermission.OWNER_READ,
+    private static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS = Set.of(PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
+    private static final Set<PosixFilePermission> FILE_PERMISSIONS = Set.of(PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE);
 
     @TempDir
@@ -80,20 +77,15 @@ class KeyringFilesystemSecurityTest {
         }
         assertOpenSucceeds(path);
 
-        for (PosixFilePermission unsafe : List.of(
-                PosixFilePermission.GROUP_READ,
-                PosixFilePermission.GROUP_WRITE,
-                PosixFilePermission.OTHERS_READ,
-                PosixFilePermission.OTHERS_WRITE)) {
+        for (PosixFilePermission unsafe : List.of(PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_WRITE,
+                PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE)) {
             Path unsafeParent = temporaryDirectory.resolve("parent-" + unsafe.name());
             Path unsafeStore = unsafeParent.resolve("keys.zek");
             createPopulated(unsafeStore, unsafe.ordinal() + 10);
-            Set<PosixFilePermission> permissions = new java.util.HashSet<>(
-                    DIRECTORY_PERMISSIONS);
+            Set<PosixFilePermission> permissions = new java.util.HashSet<>(DIRECTORY_PERMISSIONS);
             permissions.add(unsafe);
             Files.setPosixFilePermissions(unsafeParent, permissions);
-            assertRedactedFailure(unsafeStore,
-                    KeyringException.Code.KEYRING_FILESYSTEM_UNSUPPORTED);
+            assertRedactedFailure(unsafeStore, KeyringException.Code.KEYRING_FILESYSTEM_UNSUPPORTED);
             Files.setPosixFilePermissions(unsafeParent, DIRECTORY_PERMISSIONS);
         }
 
@@ -119,8 +111,8 @@ class KeyringFilesystemSecurityTest {
 
         Path path = temporaryDirectory.resolve("owner-mismatch.zek");
         createPopulated(path, 31);
-        Method validator = KeyringStore.class.getDeclaredMethod("validateExistingFile",
-                Path.class, UserPrincipal.class);
+        Method validator = KeyringStore.class.getDeclaredMethod("validateExistingFile", Path.class,
+                UserPrincipal.class);
         validator.setAccessible(true);
         UserPrincipal other = () -> "controlled-other-owner";
         InvocationTargetException failure = assertThrows(InvocationTargetException.class,
@@ -151,15 +143,14 @@ class KeyringFilesystemSecurityTest {
         Path path = temporaryDirectory.resolve("shared.zek");
         byte[] material = material((byte) 0x41);
         try (KeyringPassword password = password();
-                KeyringStore first = KeyringStore.create(path, password,
-                        KeyringProtection.standard(), deterministicRandom(41));
+                KeyringStore first = KeyringStore.create(path, password, KeyringProtection.standard(),
+                        deterministicRandom(41));
                 KeyringPassword secondPassword = password()) {
             first.putSecret("shared", "AES", new SecretKeySpec(material, "AES"));
             KeyringException contention = assertThrows(KeyringException.class,
                     () -> KeyringStore.open(path, secondPassword));
             assertEquals(KeyringException.Code.KEYRING_ALREADY_OPEN, contention.code());
-            assertEquals(KeyringException.Code.KEYRING_ALREADY_OPEN.name(),
-                    contention.getMessage());
+            assertEquals(KeyringException.Code.KEYRING_ALREADY_OPEN.name(), contention.getMessage());
             assertNull(contention.getCause());
             assertArrayEquals(material, first.getSecret("shared").getEncoded());
         } finally {
@@ -216,8 +207,8 @@ class KeyringFilesystemSecurityTest {
         byte[] first = material((byte) 0x12);
         byte[] second = material((byte) 0x34);
         try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password,
-                        KeyringProtection.standard(), deterministicRandom(71))) {
+                KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
+                        deterministicRandom(71))) {
             store.putSecret("one", "AES", new SecretKeySpec(first, "AES"));
             store.putSecret("two", "AES", new SecretKeySpec(second, "AES"));
             runConcurrentReaders(store, first, second);
@@ -273,8 +264,7 @@ class KeyringFilesystemSecurityTest {
         BlockingRandom random = new BlockingRandom(81);
         KeyringStore store;
         try (KeyringPassword password = password()) {
-            store = KeyringStore.create(path, password,
-                    KeyringProtection.standard(), random);
+            store = KeyringStore.create(path, password, KeyringProtection.standard(), random);
         }
         byte[] material = material((byte) 0x5c);
         AtomicReference<Throwable> putFailure = new AtomicReference<>();
@@ -282,8 +272,7 @@ class KeyringFilesystemSecurityTest {
         random.arm();
         Thread mutation = new Thread(() -> {
             try {
-                store.putSecret("admitted", "AES",
-                        new SecretKeySpec(material, "AES"));
+                store.putSecret("admitted", "AES", new SecretKeySpec(material, "AES"));
             } catch (Throwable throwable) {
                 putFailure.set(throwable);
             }
@@ -305,11 +294,8 @@ class KeyringFilesystemSecurityTest {
         assertNull(putFailure.get());
         assertNull(closeFailure.get());
         assertTrue(store.isDestroyed());
-        assertThrows(KeyringException.class,
-                () -> store.putSecret("late", "AES",
-                        new SecretKeySpec(material, "AES")));
-        try (KeyringPassword password = password();
-                KeyringStore reopened = KeyringStore.open(path, password)) {
+        assertThrows(KeyringException.class, () -> store.putSecret("late", "AES", new SecretKeySpec(material, "AES")));
+        try (KeyringPassword password = password(); KeyringStore reopened = KeyringStore.open(path, password)) {
             assertArrayEquals(material, reopened.getSecret("admitted").getEncoded());
         } finally {
             wipe(material);
@@ -367,8 +353,7 @@ class KeyringFilesystemSecurityTest {
         createPopulated(path, 111);
         Path link = temporaryDirectory.resolve("linked-parent");
         Files.createSymbolicLink(link, real.getFileName());
-        assertRedactedFailure(link.resolve("keys.zek"),
-                KeyringException.Code.KEYRING_FILESYSTEM_UNSUPPORTED);
+        assertRedactedFailure(link.resolve("keys.zek"), KeyringException.Code.KEYRING_FILESYSTEM_UNSUPPORTED);
     }
 
     private void assertArtifactHardLinkRejected(Artifact artifact) throws Exception {
@@ -394,8 +379,7 @@ class KeyringFilesystemSecurityTest {
         Path malicious = temporaryDirectory.resolve(".temp-race.zek.precreated.tmp");
         Files.createSymbolicLink(malicious, target.getFileName());
         byte[] material = material((byte) 0x63);
-        try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.open(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore store = KeyringStore.open(path, password)) {
             store.putSecret("safe", "AES", new SecretKeySpec(material, "AES"));
             assertArrayEquals(before, Files.readAllBytes(target));
         } finally {
@@ -404,8 +388,7 @@ class KeyringFilesystemSecurityTest {
         }
     }
 
-    private void runConcurrentReaders(KeyringStore store, byte[] first, byte[] second)
-            throws Exception {
+    private void runConcurrentReaders(KeyringStore store, byte[] first, byte[] second) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(8);
         CountDownLatch start = new CountDownLatch(1);
         List<Future<Boolean>> results = new ArrayList<>();
@@ -415,8 +398,7 @@ class KeyringFilesystemSecurityTest {
                 results.add(executor.submit(() -> {
                     start.await();
                     if (selected == 7) {
-                        assertThrows(IllegalArgumentException.class,
-                                () -> store.getSecret("missing"));
+                        assertThrows(IllegalArgumentException.class, () -> store.getSecret("missing"));
                         return true;
                     }
                     String alias = selected % 2 == 0 ? "one" : "two";
@@ -472,8 +454,8 @@ class KeyringFilesystemSecurityTest {
     private void createPopulated(Path path, int seed) throws Exception {
         byte[] material = material((byte) seed);
         try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.create(path, password,
-                        KeyringProtection.standard(), deterministicRandom(seed))) {
+                KeyringStore store = KeyringStore.create(path, password, KeyringProtection.standard(),
+                        deterministicRandom(seed))) {
             store.putSecret("child", "AES", new SecretKeySpec(material, "AES"));
         } finally {
             wipe(material);
@@ -481,8 +463,7 @@ class KeyringFilesystemSecurityTest {
     }
 
     private static void assertOpenSucceeds(Path path) throws Exception {
-        try (KeyringPassword password = password();
-                KeyringStore store = KeyringStore.open(path, password)) {
+        try (KeyringPassword password = password(); KeyringStore store = KeyringStore.open(path, password)) {
             assertFalse(store.isDestroyed());
             store.aliases();
         }
@@ -490,19 +471,16 @@ class KeyringFilesystemSecurityTest {
 
     private static void assertAlreadyOpen(Path path) throws Exception {
         try (KeyringPassword password = password()) {
-            KeyringException failure = assertThrows(KeyringException.class,
-                    () -> KeyringStore.open(path, password));
+            KeyringException failure = assertThrows(KeyringException.class, () -> KeyringStore.open(path, password));
             assertEquals(KeyringException.Code.KEYRING_ALREADY_OPEN, failure.code());
             assertEquals(failure.code().name(), failure.getMessage());
             assertNull(failure.getCause());
         }
     }
 
-    private static void assertRedactedFailure(Path path, KeyringException.Code code)
-            throws Exception {
+    private static void assertRedactedFailure(Path path, KeyringException.Code code) throws Exception {
         try (KeyringPassword password = password()) {
-            KeyringException failure = assertThrows(KeyringException.class,
-                    () -> KeyringStore.open(path, password));
+            KeyringException failure = assertThrows(KeyringException.class, () -> KeyringStore.open(path, password));
             assertEquals(code, failure.code());
             assertEquals(code.name(), failure.getMessage());
             assertNull(failure.getCause());
@@ -511,8 +489,8 @@ class KeyringFilesystemSecurityTest {
         }
     }
 
-    private static Thread closeThread(KeyringStore store, CountDownLatch started,
-            AtomicReference<Throwable> failure, String name) {
+    private static Thread closeThread(KeyringStore store, CountDownLatch started, AtomicReference<Throwable> failure,
+            String name) {
         return new Thread(() -> {
             started.countDown();
             try {
@@ -523,8 +501,7 @@ class KeyringFilesystemSecurityTest {
         }, name);
     }
 
-    private static void awaitQueued(ReentrantReadWriteLock lock, int minimum)
-            throws Exception {
+    private static void awaitQueued(ReentrantReadWriteLock lock, int minimum) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TIMEOUT_SECONDS);
         while (lock.getQueueLength() < minimum && System.nanoTime() < deadline) {
             Thread.onSpinWait();
@@ -674,19 +651,17 @@ class KeyringFilesystemSecurityTest {
 
         private ChildOwner(Process process) {
             this.process = process;
-            output = new BufferedReader(new InputStreamReader(process.getInputStream(),
-                    StandardCharsets.UTF_8));
+            output = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
             input = process.getOutputStream();
         }
 
         private static ChildOwner start(Path path) throws Exception {
-            String executable = System.getProperty("os.name", "")
-                    .toLowerCase(java.util.Locale.ROOT).contains("win")
-                    ? "java.exe" : "java";
+            String executable = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")
+                    ? "java.exe"
+                    : "java";
             Path java = Path.of(System.getProperty("java.home"), "bin", executable);
             Process process = new ProcessBuilder(java.toString(), "-cp", childClasspath(),
-                    KeyringStoreLockProcess.class.getName(), path.toString())
-                    .redirectErrorStream(true).start();
+                    KeyringStoreLockProcess.class.getName(), path.toString()).redirectErrorStream(true).start();
             return new ChildOwner(process);
         }
 
@@ -777,8 +752,7 @@ class KeyringFilesystemSecurityTest {
     }
 
     private static String codeSource(Class<?> type) throws Exception {
-        return Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI())
-                .toString();
+        return Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
     }
 }
 
@@ -802,8 +776,8 @@ final class KeyringStoreLockProcess {
             }
             try (KeyringPassword password = new KeyringPassword(passwordChars);
                     KeyringStore store = KeyringStore.open(Path.of(args[0]), password);
-                    BufferedReader control = new BufferedReader(new InputStreamReader(
-                            System.in, StandardCharsets.US_ASCII))) {
+                    BufferedReader control = new BufferedReader(
+                            new InputStreamReader(System.in, StandardCharsets.US_ASCII))) {
                 Arrays.fill(passwordChars, '\0');
                 Arrays.fill(passwordBytes, (byte) 0);
                 System.out.println("KEYRING_OPEN");

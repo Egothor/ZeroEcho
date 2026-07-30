@@ -138,18 +138,16 @@ public final class Guard {
     /**
      * Executes Guard with an explicit keyring unlock source.
      *
-     * @param args command arguments
-     * @param options dispatcher options
+     * @param args                  command arguments
+     * @param options               dispatcher options
      * @param keyringUnlockProvider destroyable-password provider
      * @return process exit code
-     * @throws ParseException if parsing fails
-     * @throws IOException if I/O fails
+     * @throws ParseException           if parsing fails
+     * @throws IOException              if I/O fails
      * @throws GeneralSecurityException if cryptographic processing fails
      */
-    @SuppressWarnings({ "PMD.NcssCount", "PMD.CognitiveComplexity",
-            "PMD.CyclomaticComplexity", "PMD.NPathComplexity" })
-    public static int main(final String[] args, final Options options,
-            KeyringUnlockProvider keyringUnlockProvider)
+    @SuppressWarnings({ "PMD.NcssCount", "PMD.CognitiveComplexity", "PMD.CyclomaticComplexity", "PMD.NPathComplexity" })
+    public static int main(final String[] args, final Options options, KeyringUnlockProvider keyringUnlockProvider)
             throws ParseException, IOException, GeneralSecurityException {
         // ---- operation selection
         final Option OPT_ENCRYPT = Option.builder("e").longOpt("encrypt").hasArg().argName("in-file")
@@ -206,8 +204,7 @@ public final class Guard {
                 .desc("Recipient KEK length: exactly 16 or 32 bytes (default 32)").get();
         final Option OPT_PBKDF2_MAX = Option.builder().longOpt("pbkdf2-max").hasArg().argName("iterations")
                 .desc("Operational PBKDF2 ceiling; required for password operations").get();
-        final Option OPT_PBKDF2_HARD_MAX = Option.builder().longOpt("pbkdf2-hard-max").hasArg()
-                .argName("iterations")
+        final Option OPT_PBKDF2_HARD_MAX = Option.builder().longOpt("pbkdf2-hard-max").hasArg().argName("iterations")
                 .desc("Absolute decoded PBKDF2 safety ceiling; required for password operations").get();
 
         // ---- decoys (all types)
@@ -260,8 +257,7 @@ public final class Guard {
         final CommandLine cmd = parser.parse(options, args);
         final boolean passwordOperation = cmd.hasOption(OPT_TO_PSW) || cmd.hasOption(OPT_DECOY_PSW)
                 || cmd.hasOption(OPT_DECOY_PSW_RAND) || cmd.hasOption(OPT_PASSWORD);
-        final ZeroEchoSession session = createSession(cmd, OPT_PBKDF2_MAX, OPT_PBKDF2_HARD_MAX,
-                passwordOperation);
+        final ZeroEchoSession session = createSession(cmd, OPT_PBKDF2_MAX, OPT_PBKDF2_HARD_MAX, passwordOperation);
 
         final boolean encrypt = cmd.hasOption(OPT_ENCRYPT);
         final Path inPath = Paths.get(cmd.getOptionValue(encrypt ? OPT_ENCRYPT : OPT_DECRYPT));
@@ -359,8 +355,7 @@ public final class Guard {
 
         // envelope builder (new API)
         final MultiRecipientDataSourceBuilder env = MultiRecipientDataSourceBuilder.builder(session)
-                .payloadKeyBytes(cekBytes)
-                .headerLimits(maxRecipients, maxEntryLen);
+                .payloadKeyBytes(cekBytes).headerLimits(maxRecipients, maxEntryLen);
         UnlockMaterial borrowedUnlockMaterial = null;
         try (env) {
             if (aes != null) {
@@ -374,11 +369,10 @@ public final class Guard {
             if (encrypt) {
                 final int iter = Integer.parseInt(cmd.getOptionValue(OPT_PSW_ITER, "200000"));
                 final int saltLen = Integer.parseInt(cmd.getOptionValue(OPT_PSW_SALT, "16"));
-                final int kekLen = RecipientKekSizes.requireSupported(
-                        Integer.parseInt(cmd.getOptionValue(OPT_PSW_KEK, "32")));
+                final int kekLen = RecipientKekSizes
+                        .requireSupported(Integer.parseInt(cmd.getOptionValue(OPT_PSW_KEK, "32")));
 
-                KeyringStore ks = loadKeyringIfPresent(cmd, OPT_KEYRING,
-                        keyringUnlockProvider);
+                KeyringStore ks = loadKeyringIfPresent(cmd, OPT_KEYRING, keyringUnlockProvider);
                 try (ks) {
                     for (String alias : cmd.getOptionValues(OPT_TO_ALIAS) == null ? new String[0]
                             : cmd.getOptionValues(OPT_TO_ALIAS)) {
@@ -424,8 +418,7 @@ public final class Guard {
                     throw new ParseException("Specify exactly one of --priv-alias or --password for decryption");
                 }
                 if (privAlias != null) {
-                    try (KeyringStore ks = requireKeyring(cmd, OPT_KEYRING,
-                            keyringUnlockProvider)) {
+                    try (KeyringStore ks = requireKeyring(cmd, OPT_KEYRING, keyringUnlockProvider)) {
                         final KeyringStore.PrivateWithId pr = ks.getPrivateWithId(privAlias);
                         borrowedUnlockMaterial = new UnlockMaterial.Private(pr.key());
                     }
@@ -474,8 +467,7 @@ public final class Guard {
         boolean hasAbsoluteMaximum = cmd.hasOption(absoluteMaximumOption);
         if (!hasOperationalMaximum && !hasAbsoluteMaximum) {
             if (passwordOperation) {
-                throw new ParseException(
-                        "Password operations require --pbkdf2-max and --pbkdf2-hard-max");
+                throw new ParseException("Password operations require --pbkdf2-max and --pbkdf2-hard-max");
             }
             return new ZeroEchoSession();
         }
@@ -485,11 +477,9 @@ public final class Guard {
         try {
             int operationalMaximum = Integer.parseInt(cmd.getOptionValue(operationalMaximumOption));
             int absoluteMaximum = Integer.parseInt(cmd.getOptionValue(absoluteMaximumOption));
-            return new ZeroEchoSession().withPbkdf2Limits(
-                    new Pbkdf2Limits(operationalMaximum, absoluteMaximum));
+            return new ZeroEchoSession().withPbkdf2Limits(new Pbkdf2Limits(operationalMaximum, absoluteMaximum));
         } catch (IllegalArgumentException exception) {
-            ParseException parseException =
-                    new ParseException("Invalid PBKDF2 limits: " + exception.getMessage());
+            ParseException parseException = new ParseException("Invalid PBKDF2 limits: " + exception.getMessage());
             parseException.initCause(exception);
             throw parseException;
         }
@@ -524,9 +514,9 @@ public final class Guard {
      * </ul>
      *
      * <p>
-     * In both cases, the created context is consumed by
-     * the matching {@link MultiRecipientDataSourceBuilder} recipient method and is
-     * closed internally by the resulting content.
+     * In both cases, the created context is consumed by the matching
+     * {@link MultiRecipientDataSourceBuilder} recipient method and is closed
+     * internally by the resulting content.
      * </p>
      *
      * @param env      target builder to which the recipient is added
@@ -542,8 +532,8 @@ public final class Guard {
      */
     @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources" })
     private static void addRecipientFromAlias(ZeroEchoSession session, MultiRecipientDataSourceBuilder env,
-            KeyringStore ks, String alias,
-            int kekBytes, int saltLen, boolean decoy) throws GeneralSecurityException, IOException {
+            KeyringStore ks, String alias, int kekBytes, int saltLen, boolean decoy)
+            throws GeneralSecurityException, IOException {
         KeyringStore.PublicWithId r = ks.getPublicWithId(alias);
         final String algId = r.algorithm();
         final java.security.PublicKey pub = r.key();
@@ -602,16 +592,14 @@ public final class Guard {
     }
 
     private static KeyringStore loadKeyringIfPresent(CommandLine cmd, Option optKs,
-            KeyringUnlockProvider unlockProvider)
-            throws IOException, GeneralSecurityException {
+            KeyringUnlockProvider unlockProvider) throws IOException, GeneralSecurityException {
         if (!cmd.hasOption(optKs)) {
             return null;
         }
         return KeyringUnlocks.open(Paths.get(cmd.getOptionValue(optKs)), unlockProvider);
     }
 
-    private static KeyringStore requireKeyring(CommandLine cmd, Option optKs,
-            KeyringUnlockProvider unlockProvider)
+    private static KeyringStore requireKeyring(CommandLine cmd, Option optKs, KeyringUnlockProvider unlockProvider)
             throws IOException, ParseException, GeneralSecurityException {
         if (!cmd.hasOption(optKs)) {
             throw new ParseException("--keyring <file> is required when aliases are used");

@@ -210,30 +210,27 @@ public final class Kem { // NOPMD
      * @param args command arguments
      * @param opts command options
      * @return process exit code
-     * @throws ParseException if arguments are invalid
-     * @throws IOException if I/O fails
+     * @throws ParseException           if arguments are invalid
+     * @throws IOException              if I/O fails
      * @throws GeneralSecurityException if cryptographic processing fails
      */
-    public static int main(String[] args, Options opts)
-            throws ParseException, IOException, GeneralSecurityException {
+    public static int main(String[] args, Options opts) throws ParseException, IOException, GeneralSecurityException {
         return main(args, opts, KeyringUnlocks.console());
     }
 
     /**
      * Executes the KEM command with an explicit keyring unlock source.
      *
-     * @param args command arguments
-     * @param opts command options
+     * @param args           command arguments
+     * @param opts           command options
      * @param unlockProvider keyring password provider
      * @return process exit code
-     * @throws ParseException if arguments are invalid
-     * @throws IOException if I/O fails
+     * @throws ParseException           if arguments are invalid
+     * @throws IOException              if I/O fails
      * @throws GeneralSecurityException if cryptographic processing fails
      */
-    @SuppressWarnings({ "PMD.NcssCount", "PMD.CyclomaticComplexity",
-            "PMD.NPathComplexity" })
-    public static int main(String[] args, Options opts,
-            KeyringUnlockProvider unlockProvider)
+    @SuppressWarnings({ "PMD.NcssCount", "PMD.CyclomaticComplexity", "PMD.NPathComplexity" })
+    public static int main(String[] args, Options opts, KeyringUnlockProvider unlockProvider)
             throws ParseException, IOException, GeneralSecurityException {
         ZeroEchoSession session = new ZeroEchoSession();
         defineOptions(opts);
@@ -275,105 +272,105 @@ public final class Kem { // NOPMD
         final Path keyringPath = Path.of(cmd.getOptionValue(OPT_KEYRING.getLongOpt()));
         try (KeyringStore keyring = KeyringUnlocks.open(keyringPath, unlockProvider)) {
 
-        // Configure KEM envelope
-        KemDataContentBuilder kem = KemDataContentBuilder.builder(session).kem(kemId);
-        if (cmd.hasOption(OPT_DIRECT.getLongOpt())) {
-            kem = kem.directSecret();
-        } else {
-            byte[] info = parseOptionalHex(cmd, OPT_HKDF, "ZeroEcho-KEM".getBytes());
-            kem = kem.hkdfSha256(info);
-        }
-        // typed numeric options
-        Integer keyBytes = parsedIntOpt(cmd, OPT_KEY_BYTES);
-        if (keyBytes != null) {
-            kem = kem.derivedKeyBytes(keyBytes);
-        }
-        Integer maxKemCt = parsedIntOpt(cmd, OPT_MAX_KEM_CT);
-        if (maxKemCt != null) {
-            kem = kem.maxKemCiphertextLen(maxKemCt);
-        }
+            // Configure KEM envelope
+            KemDataContentBuilder kem = KemDataContentBuilder.builder(session).kem(kemId);
+            if (cmd.hasOption(OPT_DIRECT.getLongOpt())) {
+                kem = kem.directSecret();
+            } else {
+                byte[] info = parseOptionalHex(cmd, OPT_HKDF, "ZeroEcho-KEM".getBytes());
+                kem = kem.hkdfSha256(info);
+            }
+            // typed numeric options
+            Integer keyBytes = parsedIntOpt(cmd, OPT_KEY_BYTES);
+            if (keyBytes != null) {
+                kem = kem.derivedKeyBytes(keyBytes);
+            }
+            Integer maxKemCt = parsedIntOpt(cmd, OPT_MAX_KEM_CT);
+            if (maxKemCt != null) {
+                kem = kem.maxKemCiphertextLen(maxKemCt);
+            }
 
-        // Common symmetric knobs
-        final byte[] aad = parseHexOpt(cmd, OPT_AAD);
-        final boolean wantHeader = cmd.hasOption(OPT_HEADER.getLongOpt());
+            // Common symmetric knobs
+            final byte[] aad = parseHexOpt(cmd, OPT_AAD);
+            final boolean wantHeader = cmd.hasOption(OPT_HEADER.getLongOpt());
 
-        // AES payload
-        if (wantAes) {
-            String mode = cmd.getOptionValue(OPT_AES_CIPHER.getLongOpt(), "gcm").toLowerCase(Locale.ROOT);
-            AesDataContentBuilder aes = AesDataContentBuilder.builder(session);
-            switch (mode) {
-                case "gcm" -> {
-                    Integer tagBitsOpt = parsedIntOpt(cmd, OPT_AES_TAG_BITS);
-                    int tagBits = tagBitsOpt == null ? 128 : tagBitsOpt;
+            // AES payload
+            if (wantAes) {
+                String mode = cmd.getOptionValue(OPT_AES_CIPHER.getLongOpt(), "gcm").toLowerCase(Locale.ROOT);
+                AesDataContentBuilder aes = AesDataContentBuilder.builder(session);
+                switch (mode) {
+                    case "gcm" -> {
+                        Integer tagBitsOpt = parsedIntOpt(cmd, OPT_AES_TAG_BITS);
+                        int tagBits = tagBitsOpt == null ? 128 : tagBitsOpt;
 
-                    aes = aes.modeGcm(tagBits);
+                        aes = aes.modeGcm(tagBits);
+                    }
+                    case "ctr" -> aes = aes.modeCtr();
+                    case "cbc" -> aes = aes.modeCbcPkcs5();
+                    default -> throw new ParseException("Unsupported --aes-cipher: " + mode);
                 }
-                case "ctr" -> aes = aes.modeCtr();
-                case "cbc" -> aes = aes.modeCbcPkcs5();
-                default -> throw new ParseException("Unsupported --aes-cipher: " + mode);
+                byte[] iv = parseHexOpt(cmd, OPT_AES_IV);
+                if (iv != null) {
+                    aes = aes.withDecryptionIv(iv);
+                }
+                if (aad != null && aad.length > 0) {
+                    aes = aes.withAad(aad);
+                }
+                if (wantHeader) {
+                    aes = aes.withHeader();
+                }
+                kem = kem.withAes(aes);
             }
-            byte[] iv = parseHexOpt(cmd, OPT_AES_IV);
-            if (iv != null) {
-                aes = aes.withDecryptionIv(iv);
-            }
-            if (aad != null && aad.length > 0) {
-                aes = aes.withAad(aad);
-            }
-            if (wantHeader) {
-                aes = aes.withHeader();
-            }
-            kem = kem.withAes(aes);
-        }
 
-        // ChaCha payload
-        if (wantChaCha) {
-            ChaChaDataContentBuilder cc = ChaChaDataContentBuilder.builder(session);
-            byte[] nonce = parseHexOpt(cmd, OPT_CHACHA_NONCE);
-            if (nonce != null) {
-                cc = cc.withDecryptionNonce(nonce);
+            // ChaCha payload
+            if (wantChaCha) {
+                ChaChaDataContentBuilder cc = ChaChaDataContentBuilder.builder(session);
+                byte[] nonce = parseHexOpt(cmd, OPT_CHACHA_NONCE);
+                if (nonce != null) {
+                    cc = cc.withDecryptionNonce(nonce);
+                }
+                // counter is an integer, not bytes; use typed parsed option
+                Integer counter = parsedIntOpt(cmd, OPT_CHACHA_COUNTER);
+                if (counter != null) {
+                    cc = cc.withCounter(counter);
+                }
+                Integer initial = parsedIntOpt(cmd, OPT_CHACHA_INITIAL);
+                if (initial != null) {
+                    cc = cc.initialCounter(initial);
+                }
+                if (aad != null && aad.length > 0) {
+                    cc = cc.withAad(aad); // selects AEAD
+                }
+                if (wantHeader) {
+                    cc = cc.withHeader();
+                }
+                kem = kem.withChaCha(cc);
             }
-            // counter is an integer, not bytes; use typed parsed option
-            Integer counter = parsedIntOpt(cmd, OPT_CHACHA_COUNTER);
-            if (counter != null) {
-                cc = cc.withCounter(counter);
-            }
-            Integer initial = parsedIntOpt(cmd, OPT_CHACHA_INITIAL);
-            if (initial != null) {
-                cc = cc.initialCounter(initial);
-            }
-            if (aad != null && aad.length > 0) {
-                cc = cc.withAad(aad); // selects AEAD
-            }
-            if (wantHeader) {
-                cc = cc.withHeader();
-            }
-            kem = kem.withChaCha(cc);
-        }
 
-        // Pipeline: source -> kem payload stage
-        DataContent chain;
-        if (encrypt) {
-            String alias = require(cmd, OPT_PUB, "Missing --pub for encryption");
-            PublicKey recipient = keyring.getPublic(alias);
-            chain = DataContentChainBuilder.encrypt()
-                    .add(PlainFileBuilder.builder().url(Path.of(input).toUri().toURL()))
-                    .add(kem.recipientPublic(recipient)).build();
-        } else {
-            String alias = require(cmd, OPT_PRIV, "Missing --priv for decryption");
-            PrivateKey recipient = keyring.getPrivate(alias);
-            chain = DataContentChainBuilder.decrypt()
-                    .add(PlainFileBuilder.builder().url(Path.of(input).toUri().toURL()))
-                    .add(kem.recipientPrivate(recipient)).build();
-        }
-
-        try (InputStream in = chain.getStream(); OutputStream out = Files.newOutputStream(output)) {
-            in.transferTo(out);
-        } catch (IOException ex) {
-            if (LOG.isLoggable(Level.SEVERE)) {
-                LOG.log(Level.SEVERE, "I/O error", ex);
+            // Pipeline: source -> kem payload stage
+            DataContent chain;
+            if (encrypt) {
+                String alias = require(cmd, OPT_PUB, "Missing --pub for encryption");
+                PublicKey recipient = keyring.getPublic(alias);
+                chain = DataContentChainBuilder.encrypt()
+                        .add(PlainFileBuilder.builder().url(Path.of(input).toUri().toURL()))
+                        .add(kem.recipientPublic(recipient)).build();
+            } else {
+                String alias = require(cmd, OPT_PRIV, "Missing --priv for decryption");
+                PrivateKey recipient = keyring.getPrivate(alias);
+                chain = DataContentChainBuilder.decrypt()
+                        .add(PlainFileBuilder.builder().url(Path.of(input).toUri().toURL()))
+                        .add(kem.recipientPrivate(recipient)).build();
             }
-            return 1;
-        }
+
+            try (InputStream in = chain.getStream(); OutputStream out = Files.newOutputStream(output)) {
+                in.transferTo(out);
+            } catch (IOException ex) {
+                if (LOG.isLoggable(Level.SEVERE)) {
+                    LOG.log(Level.SEVERE, "I/O error", ex);
+                }
+                return 1;
+            }
             return 0;
         }
     }

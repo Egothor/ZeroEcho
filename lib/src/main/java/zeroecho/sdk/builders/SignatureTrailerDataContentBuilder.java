@@ -77,12 +77,13 @@ import zeroecho.sdk.hybrid.signature.HybridSignatureProfile;
  * <li>{@link #single(ZeroEchoSession)}: constructs a non-hybrid
  * {@code SignatureContext}.</li>
  * <li>{@link #hybrid(ZeroEchoSession)}: constructs a hybrid
- * {@code SignatureContext} via
- * {@link HybridSignatureContexts}.</li>
+ * {@code SignatureContext} via {@link HybridSignatureContexts}.</li>
  * </ul>
  *
- * <p>Context construction is in-memory. Checked I/O failures arise only when a
- * built stream is attached or processed.</p>
+ * <p>
+ * Context construction is in-memory. Checked I/O failures arise only when a
+ * built stream is attached or processed.
+ * </p>
  *
  * @since 1.0
  */
@@ -253,8 +254,8 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
             Objects.requireNonNull(algorithmId, "algorithmId");
             Objects.requireNonNull(privateKey, "privateKey");
 
-            Supplier<TagEngine<Signature>> factory = () -> session.createContext(algorithmId, KeyUsage.SIGN,
-                    privateKey, spec);
+            Supplier<TagEngine<Signature>> factory = () -> session.createContext(algorithmId, KeyUsage.SIGN, privateKey,
+                    spec);
 
             return core(factory);
         }
@@ -293,8 +294,8 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
             Objects.requireNonNull(algorithmId, "algorithmId");
             Objects.requireNonNull(publicKey, "publicKey");
 
-            Supplier<TagEngine<Signature>> factory = () -> session.createContext(algorithmId,
-                    KeyUsage.VERIFY, publicKey, spec);
+            Supplier<TagEngine<Signature>> factory = () -> session.createContext(algorithmId, KeyUsage.VERIFY,
+                    publicKey, spec);
 
             return core(factory);
         }

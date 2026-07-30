@@ -60,12 +60,9 @@ class TargetArchitectureTest {
     @Test
     void obsoleteArchitectureTypesAreAbsent() {
         String name = start("obsoleteArchitectureTypesAreAbsent");
-        assertThrows(ClassNotFoundException.class,
-                () -> Class.forName("zeroecho.core.spi.ContextConstructorKS"));
-        assertThrows(ClassNotFoundException.class,
-                () -> Class.forName("zeroecho.core.spi.SymmetricKeyBuilder"));
-        assertThrows(ClassNotFoundException.class,
-                () -> Class.forName("zeroecho.core.spi.AsymmetricKeyBuilder"));
+        assertThrows(ClassNotFoundException.class, () -> Class.forName("zeroecho.core.spi.ContextConstructorKS"));
+        assertThrows(ClassNotFoundException.class, () -> Class.forName("zeroecho.core.spi.SymmetricKeyBuilder"));
+        assertThrows(ClassNotFoundException.class, () -> Class.forName("zeroecho.core.spi.AsymmetricKeyBuilder"));
 
         for (Method method : CryptoAlgorithms.class.getDeclaredMethods()) {
             if (Modifier.isPublic(method.getModifiers()) && Modifier.isStatic(method.getModifiers())) {
@@ -76,8 +73,8 @@ class TargetArchitectureTest {
         for (Field field : CryptoAlgorithms.class.getDeclaredFields()) {
             assertTrue(Modifier.isFinal(field.getModifiers()), field.toString());
         }
-        Set<String> removedConveniences = Set.of("generateSecret", "importSecret", "generateKeyPair",
-                "importPublic", "importPrivate");
+        Set<String> removedConveniences = Set.of("generateSecret", "importSecret", "generateKeyPair", "importPublic",
+                "importPrivate");
         for (Method method : CryptoAlgorithm.class.getDeclaredMethods()) {
             assertFalse(removedConveniences.contains(method.getName()), method.toString());
         }
@@ -98,14 +95,13 @@ class TargetArchitectureTest {
         String name = start("auditListenerFailureCannotChangeOperationOutcome");
         AuditListener failing = new AuditListener() {
             @Override
-            public void onContextCreatedMeta(String contextId, String algorithmId, String provider,
-                    KeyUsage role, String keyFingerprint, Map<String, Object> metadata) {
+            public void onContextCreatedMeta(String contextId, String algorithmId, String provider, KeyUsage role,
+                    String keyFingerprint, Map<String, Object> metadata) {
                 throw new AssertionError("controlled listener failure");
             }
 
             @Override
-            public void onContextClosed(String contextId, long bodyBytes, long trailerBytes,
-                    long durationMillis) {
+            public void onContextClosed(String contextId, long bodyBytes, long trailerBytes, long durationMillis) {
                 throw new AssertionError("controlled listener failure");
             }
         };
@@ -127,14 +123,10 @@ class TargetArchitectureTest {
         switch (info.operation()) {
             case ASYMMETRIC_KEY_PAIR_GENERATE ->
                 assertDoesNotThrow(() -> algorithm.asymmetricKeyPairGenerator(specType));
-            case ASYMMETRIC_PUBLIC_IMPORT ->
-                assertDoesNotThrow(() -> algorithm.publicKeyImporter(specType));
-            case ASYMMETRIC_PRIVATE_IMPORT ->
-                assertDoesNotThrow(() -> algorithm.privateKeyImporter(specType));
-            case SYMMETRIC_GENERATE ->
-                assertDoesNotThrow(() -> algorithm.symmetricKeyGenerator(specType));
-            case SYMMETRIC_IMPORT ->
-                assertDoesNotThrow(() -> algorithm.symmetricKeyImporter(specType));
+            case ASYMMETRIC_PUBLIC_IMPORT -> assertDoesNotThrow(() -> algorithm.publicKeyImporter(specType));
+            case ASYMMETRIC_PRIVATE_IMPORT -> assertDoesNotThrow(() -> algorithm.privateKeyImporter(specType));
+            case SYMMETRIC_GENERATE -> assertDoesNotThrow(() -> algorithm.symmetricKeyGenerator(specType));
+            case SYMMETRIC_IMPORT -> assertDoesNotThrow(() -> algorithm.symmetricKeyImporter(specType));
         }
     }
 

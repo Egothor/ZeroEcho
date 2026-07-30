@@ -76,11 +76,10 @@ public final class DefaultProfileService implements ProfileService {
         return executeSanitized(() -> {
             CertificateProfileDefinition parsed = CertificateProfileDocumentCodec.parse(canonical);
             byte[] reserialized = CertificateProfileDocumentCodec.writeCanonical(parsed);
-            if (!Arrays.equals(canonical, reserialized)
-                    || !parsed.equals(template.definition())
+            if (!Arrays.equals(canonical, reserialized) || !parsed.equals(template.definition())
                     || parsed.profileVersion() != template.definition().profileVersion()
                     || !parsed.profileId().equals(template.definition().profileId())
-            || !MessageDigest.isEqual(sha256(canonical), template.canonicalSha256())) {
+                    || !MessageDigest.isEqual(sha256(canonical), template.canonicalSha256())) {
                 throw new ProfileLifecycleFailure(Code.BUILT_IN_PROFILE_INVALID);
             }
             return importProfile(canonical);
@@ -93,8 +92,7 @@ public final class DefaultProfileService implements ProfileService {
         if (profileVersion <= 0) {
             throw new IllegalArgumentException("profileVersion must be positive");
         }
-        return executeAudited("PROFILE_ACTIVATE", profileId, profileVersion,
-                Code.PROFILE_ACTIVATION_FAILED, () -> {
+        return executeAudited("PROFILE_ACTIVATE", profileId, profileVersion, Code.PROFILE_ACTIVATION_FAILED, () -> {
             CertificateProfileRef result = store.activateProfile(profileId, profileVersion);
             audit("PROFILE_ACTIVATE", result, "SUCCESS");
             return result;
@@ -104,8 +102,8 @@ public final class DefaultProfileService implements ProfileService {
     @Override
     public ActiveCertificateProfile requireActiveProfile(String profileId) {
         requireProfileId(profileId);
-        return executeAudited("PROFILE_RESOLVE", profileId, 0L,
-                Code.PROFILE_STORE_FAILURE, () -> store.requireActiveProfile(profileId));
+        return executeAudited("PROFILE_RESOLVE", profileId, 0L, Code.PROFILE_STORE_FAILURE,
+                () -> store.requireActiveProfile(profileId));
     }
 
     @Override
@@ -114,8 +112,7 @@ public final class DefaultProfileService implements ProfileService {
         if (profileVersion <= 0) {
             throw new IllegalArgumentException("profileVersion must be positive");
         }
-        return executeSanitized(() -> store.getProfileVersion(profileId, profileVersion),
-                Code.PROFILE_STORE_FAILURE);
+        return executeSanitized(() -> store.getProfileVersion(profileId, profileVersion), Code.PROFILE_STORE_FAILURE);
     }
 
     @Override
@@ -132,23 +129,23 @@ public final class DefaultProfileService implements ProfileService {
 
     private CertificateProfileRef importCanonical(CertificateProfileDefinition definition, byte[] canonical,
             Instant importedAt) {
-        CertificateProfileRef reference = new CertificateProfileRef(definition.profileId(),
-                definition.profileVersion(), sha256(canonical));
+        CertificateProfileRef reference = new CertificateProfileRef(definition.profileId(), definition.profileVersion(),
+                sha256(canonical));
         ImportedCertificateProfileVersion version = new ImportedCertificateProfileVersion(reference,
                 CertificateProfileDefinition.SCHEMA_VERSION, definition, canonical, importedAt);
-        return executeAudited("PROFILE_IMPORT", definition.profileId(),
-                definition.profileVersion(), Code.PROFILE_IMPORT_FAILED, () -> {
-            ImportedCertificateProfileVersion committed = store.importProfileVersion(version);
-            String result = committed.importedAt().equals(importedAt) ? "SUCCESS" : "UNCHANGED";
-            audit("PROFILE_IMPORT", committed.reference(), result);
-            return committed.reference();
-        });
+        return executeAudited("PROFILE_IMPORT", definition.profileId(), definition.profileVersion(),
+                Code.PROFILE_IMPORT_FAILED, () -> {
+                    ImportedCertificateProfileVersion committed = store.importProfileVersion(version);
+                    String result = committed.importedAt().equals(importedAt) ? "SUCCESS" : "UNCHANGED";
+                    audit("PROFILE_IMPORT", committed.reference(), result);
+                    return committed.reference();
+                });
     }
 
     private void audit(String operation, CertificateProfileRef reference, String result) {
-        auditSafe(new AuditEvent(clock.instant(), "PROFILE", operation, SYSTEM_PKI, PROFILE_PURPOSE,
-                Optional.empty(), Optional.empty(), Map.of("profileId", reference.profileId(),
-                        "profileVersion", Long.toString(reference.profileVersion()),
+        auditSafe(new AuditEvent(clock.instant(), "PROFILE", operation, SYSTEM_PKI, PROFILE_PURPOSE, Optional.empty(),
+                Optional.empty(),
+                Map.of("profileId", reference.profileId(), "profileVersion", Long.toString(reference.profileVersion()),
                         "fingerprint", reference.shortFingerprint(), "result", result)));
     }
 
@@ -205,12 +202,12 @@ public final class DefaultProfileService implements ProfileService {
     }
 
     /*
-     * This is the audited counterpart of executeSanitized; audit runs only
-     * after store coordination has returned.
+     * This is the audited counterpart of executeSanitized; audit runs only after
+     * store coordination has returned.
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    private <T> T executeAudited(String operation, String profileId, long profileVersion,
-            Code fallback, Supplier<T> action) {
+    private <T> T executeAudited(String operation, String profileId, long profileVersion, Code fallback,
+            Supplier<T> action) {
         try {
             return action.get();
         } catch (RuntimeException failure) {

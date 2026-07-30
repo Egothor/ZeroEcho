@@ -72,8 +72,7 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 final class CaProfileIssuanceEnforcementTest {
 
     @Test
-    void fixedSubjectIntermediateIsValidatedOnceAndPersistsCanonicalSubject(@TempDir Path directory)
-            throws Exception {
+    void fixedSubjectIntermediateIsValidatedOnceAndPersistsCanonicalSubject(@TempDir Path directory) throws Exception {
         KeyPair rootKey = rsa();
         KeyPair intermediateKey = rsa();
         KeyRef rootRef = new KeyRef("kref:v1:keyring:ca-profile:fixed-root");
@@ -81,8 +80,7 @@ final class CaProfileIssuanceEnforcementTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(directory, directory.resolve("bus.log"),
                 Map.of(rootRef, rootKey, intermediateRef, intermediateKey))) {
             byte[] fixedProfile = builtIn("intermediate-ca")
-                    .replace("\"profileId\":\"intermediate-ca\"",
-                            "\"profileId\":\"fixed-intermediate-ca\"")
+                    .replace("\"profileId\":\"intermediate-ca\"", "\"profileId\":\"fixed-intermediate-ca\"")
                     .replace("\"maximumUtf8Bytes\":253}]}",
                             "\"maximumUtf8Bytes\":253},{\"oid\":\"2.5.4.10\",\"source\":\"PROFILE_FIXED\","
                                     + "\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
@@ -91,12 +89,13 @@ final class CaProfileIssuanceEnforcementTest {
             CertificateProfileRef reference = runtime.profileService().importProfile(fixedProfile);
             runtime.profileService().activateProfile(reference.profileId(), reference.profileVersion());
 
-            PkiId rootId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Fixed Subject Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
-            PkiId intermediateId = runtime.caService().createIntermediate(new IntermediateCreateCommand(
-                    runtime.framework().formatId(), rootId, new SubjectRef("CN=Fixed Subject Intermediate"),
-                    "fixed-intermediate-ca", Optional.of(intermediateRef), new SimpleAttributeSet()));
+            PkiId rootId = runtime.caService().createRoot(
+                    new CaCreateCommand(runtime.framework().formatId(), new SubjectRef("CN=Fixed Subject Root"),
+                            "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
+            PkiId intermediateId = runtime.caService()
+                    .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootId,
+                            new SubjectRef("CN=Fixed Subject Intermediate"), "fixed-intermediate-ca",
+                            Optional.of(intermediateRef), new SimpleAttributeSet()));
             Credential additional = runtime.caService().issueIntermediateCertificate(
                     new IntermediateCertIssueCommand(runtime.framework().formatId(), rootId, intermediateId,
                             "fixed-intermediate-ca", Optional.empty(), new SimpleAttributeSet()));
@@ -131,24 +130,25 @@ final class CaProfileIssuanceEnforcementTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(store, bus,
                 Map.of(rootRef, rootKey, intermediateRef, intermediateKey))) {
             rootId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Profile Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
-            intermediateId = runtime.caService().createIntermediate(new IntermediateCreateCommand(
-                    runtime.framework().formatId(), rootId, new SubjectRef("CN=Profile Intermediate"),
-                    "intermediate-ca", Optional.of(intermediateRef), new SimpleAttributeSet()));
-            Credential additional = runtime.caService().issueIntermediateCertificate(
-                    new IntermediateCertIssueCommand(runtime.framework().formatId(), rootId, intermediateId,
-                            "intermediate-ca", Optional.empty(), new SimpleAttributeSet()));
-            rootProfile = ((CaProfileBinding) runtime.caService().getCa(rootId).caCredentials().get(0)
-                    .profileBinding()).reference();
+                    new SubjectRef("CN=Profile Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
+            intermediateId = runtime.caService()
+                    .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootId,
+                            new SubjectRef("CN=Profile Intermediate"), "intermediate-ca", Optional.of(intermediateRef),
+                            new SimpleAttributeSet()));
+            Credential additional = runtime.caService()
+                    .issueIntermediateCertificate(new IntermediateCertIssueCommand(runtime.framework().formatId(),
+                            rootId, intermediateId, "intermediate-ca", Optional.empty(), new SimpleAttributeSet()));
+            rootProfile = ((CaProfileBinding) runtime.caService().getCa(rootId).caCredentials().get(0).profileBinding())
+                    .reference();
             intermediateProfile = ((CaProfileBinding) additional.profileBinding()).reference();
             assertCaCertificate(runtime.caService().getCa(rootId).caCredentials().get(0), 1);
             assertCaCertificate(additional, 0);
         }
         try (PkiTestRuntime reopened = PkiTestRuntime.create(store, directory.resolve("reopened-bus.log"),
                 Map.of(rootRef, rootKey, intermediateRef, intermediateKey))) {
-            assertEquals(rootProfile, ((CaProfileBinding) reopened.caService().getCa(rootId)
-                    .caCredentials().get(0).profileBinding()).reference());
+            assertEquals(rootProfile,
+                    ((CaProfileBinding) reopened.caService().getCa(rootId).caCredentials().get(0).profileBinding())
+                            .reference());
             assertEquals(intermediateProfile, ((CaProfileBinding) reopened.caService().getCa(intermediateId)
                     .caCredentials().get(1).profileBinding()).reference());
         }
@@ -160,12 +160,14 @@ final class CaProfileIssuanceEnforcementTest {
         KeyRef rootRef = new KeyRef("kref:v1:keyring:ca-profile:missing");
         try (PkiTestRuntime runtime = PkiTestRuntime.create(directory, directory.resolve("bus.log"),
                 Map.of(rootRef, rootKey))) {
-            assertThrows(PkiException.class, () -> runtime.caService().createRoot(new CaCreateCommand(
-                    runtime.framework().formatId(), new SubjectRef("CN=Missing"), "missing-ca-profile",
-                    Optional.of(rootRef), new SimpleAttributeSet())));
-            assertThrows(PkiException.class, () -> runtime.caService().createRoot(new CaCreateCommand(
-                    runtime.framework().formatId(), new SubjectRef("CN=Wrong Kind"), "default",
-                    Optional.of(rootRef), new SimpleAttributeSet())));
+            assertThrows(PkiException.class,
+                    () -> runtime.caService().createRoot(
+                            new CaCreateCommand(runtime.framework().formatId(), new SubjectRef("CN=Missing"),
+                                    "missing-ca-profile", Optional.of(rootRef), new SimpleAttributeSet())));
+            assertThrows(PkiException.class,
+                    () -> runtime.caService().createRoot(
+                            new CaCreateCommand(runtime.framework().formatId(), new SubjectRef("CN=Wrong Kind"),
+                                    "default", Optional.of(rootRef), new SimpleAttributeSet())));
             assertEquals(0, runtime.submittedSignCount());
             assertTrue(runtime.store().listCas().isEmpty());
         }
@@ -180,18 +182,18 @@ final class CaProfileIssuanceEnforcementTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(directory, directory.resolve("bus.log"),
                 Map.of(rootRef, rootKey, intermediateRef, intermediateKey))) {
             PkiId rootId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Historical Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
-            byte[] versionTwo = builtIn("root-ca").replace("\"profileVersion\":1",
-                    "\"profileVersion\":2").getBytes(StandardCharsets.UTF_8);
+                    new SubjectRef("CN=Historical Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
+            byte[] versionTwo = builtIn("root-ca").replace("\"profileVersion\":1", "\"profileVersion\":2")
+                    .getBytes(StandardCharsets.UTF_8);
             CertificateProfileRef imported = runtime.profileService().importProfile(versionTwo);
             runtime.profileService().activateProfile(imported.profileId(), imported.profileVersion());
 
-            PkiId intermediateId = runtime.caService().createIntermediate(new IntermediateCreateCommand(
-                    runtime.framework().formatId(), rootId, new SubjectRef("CN=Historical Intermediate"),
-                    "intermediate-ca", Optional.of(intermediateRef), new SimpleAttributeSet()));
-            CaProfileBinding issuerBinding = (CaProfileBinding) runtime.caService().getCa(rootId)
-                    .caCredentials().get(0).profileBinding();
+            PkiId intermediateId = runtime.caService()
+                    .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootId,
+                            new SubjectRef("CN=Historical Intermediate"), "intermediate-ca",
+                            Optional.of(intermediateRef), new SimpleAttributeSet()));
+            CaProfileBinding issuerBinding = (CaProfileBinding) runtime.caService().getCa(rootId).caCredentials().get(0)
+                    .profileBinding();
             assertEquals(1, issuerBinding.reference().profileVersion());
             assertEquals(1, runtime.caService().getCa(intermediateId).caCredentials().size());
         }
@@ -233,8 +235,8 @@ final class CaProfileIssuanceEnforcementTest {
             assertCaProfileCredential("A", issuedA, versionOne, 1);
             credentialA = issuedA.credentialId();
 
-            ImportedCertificateProfileVersion storedOne = runtime.profileService()
-                    .getImportedVersion(profileId, 1).orElseThrow();
+            ImportedCertificateProfileVersion storedOne = runtime.profileService().getImportedVersion(profileId, 1)
+                    .orElseThrow();
             persistedVersionOne = storedOne.canonicalJson();
             persistedVersionOneHash = storedOne.reference().canonicalSha256();
 
@@ -255,12 +257,12 @@ final class CaProfileIssuanceEnforcementTest {
             assertCaProfileCredential("C", issuedC, versionTwo, 2);
             credentialC = issuedC.credentialId();
 
-            assertCaProfileCredential("A-reread", runtime.store().getCredential(credentialA).orElseThrow(),
-                    versionOne, 1);
-            assertCaProfileCredential("B-reread", runtime.store().getCredential(credentialB).orElseThrow(),
-                    versionOne, 1);
-            ImportedCertificateProfileVersion unchanged = runtime.profileService()
-                    .getImportedVersion(profileId, 1).orElseThrow();
+            assertCaProfileCredential("A-reread", runtime.store().getCredential(credentialA).orElseThrow(), versionOne,
+                    1);
+            assertCaProfileCredential("B-reread", runtime.store().getCredential(credentialB).orElseThrow(), versionOne,
+                    1);
+            ImportedCertificateProfileVersion unchanged = runtime.profileService().getImportedVersion(profileId, 1)
+                    .orElseThrow();
             assertArrayEquals(persistedVersionOne, unchanged.canonicalJson());
             assertArrayEquals(persistedVersionOneHash, unchanged.reference().canonicalSha256());
         }
@@ -273,8 +275,8 @@ final class CaProfileIssuanceEnforcementTest {
                     versionOne, 1);
             assertCaProfileCredential("C-restart", reopened.store().getCredential(credentialC).orElseThrow(),
                     versionTwo, 2);
-            ImportedCertificateProfileVersion unchanged = reopened.profileService()
-                    .getImportedVersion(profileId, 1).orElseThrow();
+            ImportedCertificateProfileVersion unchanged = reopened.profileService().getImportedVersion(profileId, 1)
+                    .orElseThrow();
             assertArrayEquals(persistedVersionOne, unchanged.canonicalJson());
             assertArrayEquals(persistedVersionOneHash, unchanged.reference().canonicalSha256());
         }
@@ -329,8 +331,7 @@ final class CaProfileIssuanceEnforcementTest {
             Credential issuedA = onlyCredential(runtime.caService(), caA);
             assertCaProfileCredential("A", issuedA, versionOne, 0);
             credentialA = issuedA.credentialId();
-            assertCaProfileCredential("issuer-after-A", onlyCredential(runtime.caService(), rootId),
-                    rootProfile, 2);
+            assertCaProfileCredential("issuer-after-A", onlyCredential(runtime.caService(), rootId), rootProfile, 2);
 
             ImportedCertificateProfileVersion storedOne = runtime.profileService()
                     .getImportedVersion(intermediateProfileId, 1).orElseThrow();
@@ -341,8 +342,7 @@ final class CaProfileIssuanceEnforcementTest {
             assertEquals(intermediateProfileId, versionTwo.profileId());
             assertEquals(2, versionTwo.profileVersion());
             assertTrue(!MessageDigest.isEqual(versionOne.canonicalSha256(), versionTwo.canonicalSha256()));
-            assertEquals(versionOne,
-                    runtime.profileService().getActiveReference(intermediateProfileId).orElseThrow());
+            assertEquals(versionOne, runtime.profileService().getActiveReference(intermediateProfileId).orElseThrow());
 
             caB = createIntermediate(runtime, rootId, keyRefB, "CN=Version Switch Intermediate B",
                     intermediateProfileId);
@@ -357,12 +357,11 @@ final class CaProfileIssuanceEnforcementTest {
             assertCaProfileCredential("C", issuedC, versionTwo, 1);
             credentialC = issuedC.credentialId();
 
-            assertCaProfileCredential("A-reread", runtime.store().getCredential(credentialA).orElseThrow(),
-                    versionOne, 0);
-            assertCaProfileCredential("B-reread", runtime.store().getCredential(credentialB).orElseThrow(),
-                    versionOne, 0);
-            assertCaProfileCredential("issuer-reread", onlyCredential(runtime.caService(), rootId),
-                    rootProfile, 2);
+            assertCaProfileCredential("A-reread", runtime.store().getCredential(credentialA).orElseThrow(), versionOne,
+                    0);
+            assertCaProfileCredential("B-reread", runtime.store().getCredential(credentialB).orElseThrow(), versionOne,
+                    0);
+            assertCaProfileCredential("issuer-reread", onlyCredential(runtime.caService(), rootId), rootProfile, 2);
             ImportedCertificateProfileVersion unchanged = runtime.profileService()
                     .getImportedVersion(intermediateProfileId, 1).orElseThrow();
             assertArrayEquals(persistedVersionOne, unchanged.canonicalJson());
@@ -370,16 +369,14 @@ final class CaProfileIssuanceEnforcementTest {
         }
 
         try (PkiTestRuntime reopened = PkiTestRuntime.create(store, directory.resolve("reopened-bus.log"), keys)) {
-            assertEquals(versionTwo,
-                    reopened.profileService().getActiveReference(intermediateProfileId).orElseThrow());
+            assertEquals(versionTwo, reopened.profileService().getActiveReference(intermediateProfileId).orElseThrow());
             assertCaProfileCredential("A-restart", reopened.store().getCredential(credentialA).orElseThrow(),
                     versionOne, 0);
             assertCaProfileCredential("B-restart", reopened.store().getCredential(credentialB).orElseThrow(),
                     versionOne, 0);
             assertCaProfileCredential("C-restart", reopened.store().getCredential(credentialC).orElseThrow(),
                     versionTwo, 1);
-            assertCaProfileCredential("issuer-restart", onlyCredential(reopened.caService(), rootId),
-                    rootProfile, 2);
+            assertCaProfileCredential("issuer-restart", onlyCredential(reopened.caService(), rootId), rootProfile, 2);
             ImportedCertificateProfileVersion unchanged = reopened.profileService()
                     .getImportedVersion(intermediateProfileId, 1).orElseThrow();
             assertArrayEquals(persistedVersionOne, unchanged.canonicalJson());
@@ -397,12 +394,10 @@ final class CaProfileIssuanceEnforcementTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(directory, directory.resolve("bus.log"),
                 Map.of(rootRef, rootKey, intermediateRef, intermediateKey))) {
             PkiId rootId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Format Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
+                    new SubjectRef("CN=Format Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
             CertificateProfileRef wrongFormat = runtime.profileService().importProfile(builtIn("root-ca")
                     .replace("\"profileId\":\"root-ca\"", "\"profileId\":\"other-format-root\"")
-                    .replace("\"formatId\":\"x509\"", "\"formatId\":\"other\"")
-                    .getBytes(StandardCharsets.UTF_8));
+                    .replace("\"formatId\":\"x509\"", "\"formatId\":\"other\"").getBytes(StandardCharsets.UTF_8));
             CaRecord root = runtime.caService().getCa(rootId);
             Credential original = root.caCredentials().get(0);
             Credential mutated = new Credential(original.credentialId(), original.formatId(), original.issuerRef(),
@@ -412,10 +407,11 @@ final class CaProfileIssuanceEnforcementTest {
                     root.subjectRef(), List.of(mutated)));
 
             int signCount = runtime.submittedSignCount();
-            assertThrows(PkiException.class, () -> runtime.caService().createIntermediate(
-                    new IntermediateCreateCommand(runtime.framework().formatId(), rootId,
-                            new SubjectRef("CN=Format Intermediate"), "intermediate-ca",
-                            Optional.of(intermediateRef), new SimpleAttributeSet())));
+            assertThrows(PkiException.class,
+                    () -> runtime.caService()
+                            .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootId,
+                                    new SubjectRef("CN=Format Intermediate"), "intermediate-ca",
+                                    Optional.of(intermediateRef), new SimpleAttributeSet())));
             assertEquals(signCount, runtime.submittedSignCount());
             assertEquals(1, runtime.store().listCas().size());
         }
@@ -429,12 +425,14 @@ final class CaProfileIssuanceEnforcementTest {
         KeyRef dsaRef = new KeyRef("kref:v1:keyring:ca-profile:invalid-dsa");
         try (PkiTestRuntime runtime = PkiTestRuntime.create(directory, directory.resolve("bus.log"),
                 Map.of(rootRef, rootKey, dsaRef, dsaKey))) {
-            assertThrows(PkiException.class, () -> runtime.caService().createRoot(new CaCreateCommand(
-                    runtime.framework().formatId(), new SubjectRef("O=Forbidden"), "root-ca",
-                    Optional.of(rootRef), new SimpleAttributeSet())));
-            assertThrows(PkiException.class, () -> runtime.caService().createRoot(new CaCreateCommand(
-                    runtime.framework().formatId(), new SubjectRef("CN=Unsupported Algorithm"), "root-ca",
-                    Optional.of(dsaRef), new SimpleAttributeSet())));
+            assertThrows(PkiException.class,
+                    () -> runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
+                            new SubjectRef("O=Forbidden"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet())));
+            assertThrows(PkiException.class,
+                    () -> runtime.caService()
+                            .createRoot(new CaCreateCommand(runtime.framework().formatId(),
+                                    new SubjectRef("CN=Unsupported Algorithm"), "root-ca", Optional.of(dsaRef),
+                                    new SimpleAttributeSet())));
             assertEquals(0, runtime.submittedSignCount());
             assertTrue(runtime.store().listCas().isEmpty());
         }
@@ -454,12 +452,11 @@ final class CaProfileIssuanceEnforcementTest {
             CaService service = runtime.caService(profiles);
 
             PkiId rootId = service.createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Lookup Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
+                    new SubjectRef("CN=Lookup Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
             profiles.assertAndReset("root-ca");
             PkiId intermediateId = service.createIntermediate(new IntermediateCreateCommand(
-                    runtime.framework().formatId(), rootId, new SubjectRef("CN=Lookup Intermediate"),
-                    "intermediate-ca", Optional.of(intermediateRef), new SimpleAttributeSet()));
+                    runtime.framework().formatId(), rootId, new SubjectRef("CN=Lookup Intermediate"), "intermediate-ca",
+                    Optional.of(intermediateRef), new SimpleAttributeSet()));
             profiles.assertAndReset("intermediate-ca");
             service.issueIntermediateCertificate(new IntermediateCertIssueCommand(runtime.framework().formatId(),
                     rootId, intermediateId, "intermediate-ca", Optional.empty(), new SimpleAttributeSet()));
@@ -472,12 +469,10 @@ final class CaProfileIssuanceEnforcementTest {
             CountingProfileService profiles = new CountingProfileService(target.profileService());
             CaService service = target.caService(profiles);
             service.importRoot(new CaImportCommand(target.framework().formatId(), new SubjectRef("CN=Lookup Root"),
-                    "root-ca", rootRef, new EncodedObject(Encoding.DER, rootCertificate),
-                    new SimpleAttributeSet()));
+                    "root-ca", rootRef, new EncodedObject(Encoding.DER, rootCertificate), new SimpleAttributeSet()));
             profiles.assertAndReset("root-ca");
         }
     }
-
 
     @Test
     void rootCannotBeUsedAsAdditionalIntermediateSubject(@TempDir Path directory) throws Exception {
@@ -486,12 +481,12 @@ final class CaProfileIssuanceEnforcementTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(directory, directory.resolve("bus.log"),
                 Map.of(rootRef, rootKey))) {
             PkiId rootId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root Subject"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root Subject"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
             int signCount = runtime.submittedSignCount();
-            assertThrows(PkiException.class, () -> runtime.caService().issueIntermediateCertificate(
-                    new IntermediateCertIssueCommand(runtime.framework().formatId(), rootId, rootId,
-                            "intermediate-ca", Optional.empty(), new SimpleAttributeSet())));
+            assertThrows(PkiException.class,
+                    () -> runtime.caService().issueIntermediateCertificate(
+                            new IntermediateCertIssueCommand(runtime.framework().formatId(), rootId, rootId,
+                                    "intermediate-ca", Optional.empty(), new SimpleAttributeSet())));
             assertEquals(signCount, runtime.submittedSignCount());
             assertEquals(1, runtime.caService().getCa(rootId).caCredentials().size());
         }
@@ -506,17 +501,19 @@ final class CaProfileIssuanceEnforcementTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(directory, directory.resolve("bus.log"),
                 Map.of(rootRef, rootKey, intermediateRef, intermediateKey))) {
             PkiId rootId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Validity Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
-            PkiId intermediateId = runtime.caService().createIntermediate(new IntermediateCreateCommand(
-                    runtime.framework().formatId(), rootId, new SubjectRef("CN=Validity Intermediate"),
-                    "intermediate-ca", Optional.of(intermediateRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Validity Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
+            PkiId intermediateId = runtime.caService()
+                    .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootId,
+                            new SubjectRef("CN=Validity Intermediate"), "intermediate-ca", Optional.of(intermediateRef),
+                            new SimpleAttributeSet()));
             int signCount = runtime.submittedSignCount();
             Validity invalid = new Validity(Instant.EPOCH, Instant.EPOCH.plusSeconds(3_153_600_000L));
 
-            assertThrows(PkiException.class, () -> runtime.caService().issueIntermediateCertificate(
-                    new IntermediateCertIssueCommand(runtime.framework().formatId(), rootId, intermediateId,
-                            "intermediate-ca", Optional.of(invalid), new SimpleAttributeSet())));
+            assertThrows(PkiException.class,
+                    () -> runtime.caService()
+                            .issueIntermediateCertificate(new IntermediateCertIssueCommand(
+                                    runtime.framework().formatId(), rootId, intermediateId, "intermediate-ca",
+                                    Optional.of(invalid), new SimpleAttributeSet())));
             assertEquals(signCount, runtime.submittedSignCount());
             assertEquals(1, runtime.caService().getCa(intermediateId).caCredentials().size());
         }
@@ -530,15 +527,14 @@ final class CaProfileIssuanceEnforcementTest {
         try (PkiTestRuntime source = PkiTestRuntime.create(directory.resolve("source"),
                 directory.resolve("source-bus.log"), Map.of(rootRef, rootKey))) {
             PkiId rootId = source.caService().createRoot(new CaCreateCommand(source.framework().formatId(),
-                    new SubjectRef("CN=Imported Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
+                    new SubjectRef("CN=Imported Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
             encoded = source.caService().getCa(rootId).caCredentials().get(0).encoded().bytes();
         }
         try (PkiTestRuntime target = PkiTestRuntime.create(directory.resolve("target"),
                 directory.resolve("target-bus.log"), Map.of(rootRef, rootKey))) {
-            PkiId imported = target.caService().importRoot(new CaImportCommand(target.framework().formatId(),
-                    new SubjectRef("CN=Imported Root"), "root-ca", rootRef,
-                    new EncodedObject(Encoding.DER, encoded), new SimpleAttributeSet()));
+            PkiId imported = target.caService()
+                    .importRoot(new CaImportCommand(target.framework().formatId(), new SubjectRef("CN=Imported Root"),
+                            "root-ca", rootRef, new EncodedObject(Encoding.DER, encoded), new SimpleAttributeSet()));
             Credential credential = target.caService().getCa(imported).caCredentials().get(0);
             assertEquals(target.profileService().getActiveReference("root-ca").orElseThrow(),
                     ((CaProfileBinding) credential.profileBinding()).reference());
@@ -547,16 +543,16 @@ final class CaProfileIssuanceEnforcementTest {
 
     @ParameterizedTest
     @EnumSource(ImportMutation.class)
-    void importedRootMutationFailsBeforePersistence(ImportMutation mutation, @TempDir Path directory)
-            throws Exception {
+    void importedRootMutationFailsBeforePersistence(ImportMutation mutation, @TempDir Path directory) throws Exception {
         KeyPair rootKey = rsa();
         KeyRef rootRef = new KeyRef("kref:v1:keyring:ca-profile:import-mutation");
         byte[] encoded;
         try (PkiTestRuntime source = PkiTestRuntime.create(directory.resolve("source"),
                 directory.resolve("source-bus.log"), Map.of(rootRef, rootKey))) {
-            PkiId rootId = source.caService().createRoot(new CaCreateCommand(source.framework().formatId(),
-                    new SubjectRef("CN=Import Mutation Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
+            PkiId rootId = source.caService()
+                    .createRoot(new CaCreateCommand(source.framework().formatId(),
+                            new SubjectRef("CN=Import Mutation Root"), "root-ca", Optional.of(rootRef),
+                            new SimpleAttributeSet()));
             Credential sourceCredential = source.caService().getCa(rootId).caCredentials().get(0);
             encoded = mutation.mutate(sourceCredential, rootKey);
         }
@@ -571,8 +567,8 @@ final class CaProfileIssuanceEnforcementTest {
 
     @ParameterizedTest
     @EnumSource(MetadataMutation.class)
-    void intermediateBackendMetadataMutationFailsBeforePersistence(MetadataMutation mutation,
-            @TempDir Path directory) throws Exception {
+    void intermediateBackendMetadataMutationFailsBeforePersistence(MetadataMutation mutation, @TempDir Path directory)
+            throws Exception {
         KeyPair rootKey = rsa();
         KeyPair intermediateKey = rsa();
         KeyRef rootRef = new KeyRef("kref:v1:keyring:ca-profile:mutation-root");
@@ -580,8 +576,7 @@ final class CaProfileIssuanceEnforcementTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(directory, directory.resolve("bus.log"),
                 Map.of(rootRef, rootKey, intermediateRef, intermediateKey))) {
             PkiId rootId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Mutation Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
+                    new SubjectRef("CN=Mutation Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
             CredentialIssuerBackend delegate = runtime.issuerBackend();
             CredentialIssuerBackend backend = new CredentialIssuerBackend() {
                 @Override
@@ -593,22 +588,23 @@ final class CaProfileIssuanceEnforcementTest {
                 @Override
                 public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
                         EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
-                    return mutation.apply(delegate.issueIntermediateCertificate(request, issuerCertificate,
-                            issuerKeyRef), rootKey);
+                    return mutation.apply(
+                            delegate.issueIntermediateCertificate(request, issuerCertificate, issuerKeyRef), rootKey);
                 }
             };
-            assertThrows(PkiException.class, () -> runtime.caService(backend).createIntermediate(
-                    new IntermediateCreateCommand(runtime.framework().formatId(), rootId,
-                            new SubjectRef("CN=Mutation Intermediate"), "intermediate-ca",
-                            Optional.of(intermediateRef), new SimpleAttributeSet())));
+            assertThrows(PkiException.class,
+                    () -> runtime.caService(backend)
+                            .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootId,
+                                    new SubjectRef("CN=Mutation Intermediate"), "intermediate-ca",
+                                    Optional.of(intermediateRef), new SimpleAttributeSet())));
             assertEquals(1, runtime.store().listCas().size());
         }
     }
 
     private static void assertCaCertificate(Credential credential, int pathLength) throws Exception {
         X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
-        BasicConstraints constraints = BasicConstraints.getInstance(
-                holder.getExtension(Extension.basicConstraints).getParsedValue());
+        BasicConstraints constraints = BasicConstraints
+                .getInstance(holder.getExtension(Extension.basicConstraints).getParsedValue());
         KeyUsage usage = KeyUsage.getInstance(holder.getExtension(Extension.keyUsage).getParsedValue());
         assertTrue(holder.getExtension(Extension.basicConstraints).isCritical());
         assertTrue(holder.getExtension(Extension.keyUsage).isCritical());
@@ -622,9 +618,8 @@ final class CaProfileIssuanceEnforcementTest {
         assertTrue(credential.profileBinding() instanceof CaProfileBinding);
         assertEquals(expectedProfile, ((CaProfileBinding) credential.profileBinding()).reference());
         assertCaCertificate(credential, pathLength);
-        System.out.println("..." + label + " profileVersion=" + expectedProfile.profileVersion()
-                + " hash=" + abbreviatedHash(expectedProfile)
-                + " credentialId=" + credential.credentialId().value()
+        System.out.println("..." + label + " profileVersion=" + expectedProfile.profileVersion() + " hash="
+                + abbreviatedHash(expectedProfile) + " credentialId=" + credential.credentialId().value()
                 + " pathLength=" + pathLength);
     }
 
@@ -633,8 +628,8 @@ final class CaProfileIssuanceEnforcementTest {
                 new SubjectRef(subject), profileId, Optional.of(keyRef), new SimpleAttributeSet()));
     }
 
-    private static PkiId createIntermediate(PkiTestRuntime runtime, PkiId issuerId, KeyRef keyRef,
-            String subject, String profileId) {
+    private static PkiId createIntermediate(PkiTestRuntime runtime, PkiId issuerId, KeyRef keyRef, String subject,
+            String profileId) {
         return runtime.caService().createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(),
                 issuerId, new SubjectRef(subject), profileId, Optional.of(keyRef), new SimpleAttributeSet()));
     }
@@ -645,14 +640,12 @@ final class CaProfileIssuanceEnforcementTest {
         return ca.caCredentials().get(0);
     }
 
-    private static byte[] caProfileDocument(String builtInProfileId, String profileId,
-            long profileVersion, int originalPathLength, int pathLength) {
+    private static byte[] caProfileDocument(String builtInProfileId, String profileId, long profileVersion,
+            int originalPathLength, int pathLength) {
         return builtIn(builtInProfileId)
-                .replace("\"profileId\":\"" + builtInProfileId + "\"",
-                        "\"profileId\":\"" + profileId + "\"")
+                .replace("\"profileId\":\"" + builtInProfileId + "\"", "\"profileId\":\"" + profileId + "\"")
                 .replace("\"profileVersion\":1", "\"profileVersion\":" + profileVersion)
-                .replace("\"pathLengthConstraint\":" + originalPathLength,
-                        "\"pathLengthConstraint\":" + pathLength)
+                .replace("\"pathLengthConstraint\":" + originalPathLength, "\"pathLengthConstraint\":" + pathLength)
                 .getBytes(StandardCharsets.UTF_8);
     }
 
@@ -662,10 +655,10 @@ final class CaProfileIssuanceEnforcementTest {
     }
 
     private static String builtIn(String profileId) {
-        return BuiltInCertificateProfileCatalog.load(CaProfileIssuanceEnforcementTest.class.getClassLoader())
-                .stream().filter(template -> template.definition().profileId().equals(profileId))
-                .map(template -> new String(template.canonicalJson(), StandardCharsets.UTF_8))
-                .findFirst().orElseThrow();
+        return BuiltInCertificateProfileCatalog.load(CaProfileIssuanceEnforcementTest.class.getClassLoader()).stream()
+                .filter(template -> template.definition().profileId().equals(profileId))
+                .map(template -> new String(template.canonicalJson(), StandardCharsets.UTF_8)).findFirst()
+                .orElseThrow();
     }
 
     private static KeyPair rsa() throws Exception {
@@ -715,8 +708,7 @@ final class CaProfileIssuanceEnforcementTest {
         }
 
         @Override
-        public Optional<ImportedCertificateProfileVersion> getImportedVersion(String profileId,
-                long profileVersion) {
+        public Optional<ImportedCertificateProfileVersion> getImportedVersion(String profileId, long profileVersion) {
             return delegate.getImportedVersion(profileId, profileVersion);
         }
 
@@ -739,26 +731,28 @@ final class CaProfileIssuanceEnforcementTest {
 
     private enum MetadataMutation {
         PROFILE {
-            @Override Credential apply(Credential value, KeyPair issuerKey) {
+            @Override
+            Credential apply(Credential value, KeyPair issuerKey) {
                 return copy(value, value.serialOrUniqueId(), value.validity(),
                         new CaProfileBinding(new CertificateProfileRef("other", 1, new byte[32])));
             }
         },
         SERIAL {
-            @Override Credential apply(Credential value, KeyPair issuerKey) {
+            @Override
+            Credential apply(Credential value, KeyPair issuerKey) {
                 return copy(value, value.serialOrUniqueId() + "1", value.validity(), value.profileBinding());
             }
         },
         VALIDITY {
-            @Override Credential apply(Credential value, KeyPair issuerKey) {
-                return copy(value, value.serialOrUniqueId(),
-                        new zeroecho.pki.api.Validity(value.validity().notBefore(),
-                                value.validity().notAfter().minusSeconds(1)),
-                        value.profileBinding());
+            @Override
+            Credential apply(Credential value, KeyPair issuerKey) {
+                return copy(value, value.serialOrUniqueId(), new zeroecho.pki.api.Validity(value.validity().notBefore(),
+                        value.validity().notAfter().minusSeconds(1)), value.profileBinding());
             }
         },
         SUBJECT {
-            @Override Credential apply(Credential value, KeyPair issuerKey) {
+            @Override
+            Credential apply(Credential value, KeyPair issuerKey) {
                 return new Credential(value.credentialId(), value.formatId(), value.issuerRef(),
                         new SubjectRef("CN=Substituted"), value.validity(), value.serialOrUniqueId(),
                         value.publicKeyId(), value.profileBinding(), value.status(), value.encoded(),
@@ -766,26 +760,28 @@ final class CaProfileIssuanceEnforcementTest {
             }
         },
         ATTRIBUTES {
-            @Override Credential apply(Credential value, KeyPair issuerKey) {
+            @Override
+            Credential apply(Credential value, KeyPair issuerKey) {
                 zeroecho.pki.api.attr.AttributeSet attributes = SimpleAttributeSet.builder()
                         .put(new zeroecho.pki.api.attr.AttributeId("test.unexpected"),
                                 new zeroecho.pki.api.attr.AttributeValue.StringValue("unexpected"))
                         .build();
-                return new Credential(value.credentialId(), value.formatId(), value.issuerRef(),
-                        value.subjectRef(), value.validity(), value.serialOrUniqueId(), value.publicKeyId(),
-                        value.profileBinding(), value.status(), value.encoded(), attributes);
+                return new Credential(value.credentialId(), value.formatId(), value.issuerRef(), value.subjectRef(),
+                        value.validity(), value.serialOrUniqueId(), value.publicKeyId(), value.profileBinding(),
+                        value.status(), value.encoded(), attributes);
             }
         },
         EXTRA_EXTENSION {
-            @Override Credential apply(Credential value, KeyPair issuerKey) {
+            @Override
+            Credential apply(Credential value, KeyPair issuerKey) {
                 return rebuild(value, issuerKey, null, true);
             }
         },
         SUBJECT_DER {
-            @Override Credential apply(Credential value, KeyPair issuerKey) {
-                X500Name alternate = new X500Name(new RDN[] {
-                        new RDN(BCStyle.CN, new DERPrintableString("Mutation Intermediate"))
-                });
+            @Override
+            Credential apply(Credential value, KeyPair issuerKey) {
+                X500Name alternate = new X500Name(
+                        new RDN[] { new RDN(BCStyle.CN, new DERPrintableString("Mutation Intermediate")) });
                 return rebuild(value, issuerKey, alternate, false);
             }
         };
@@ -825,11 +821,10 @@ final class CaProfileIssuanceEnforcementTest {
                     builder.addExtension(Extension.keyUsage, true, alternateKeyUsage);
                 }
                 if (extraExtension) {
-                    builder.addExtension(Extension.subjectKeyIdentifier, false,
-                            new DEROctetString(new byte[] { 1 }));
+                    builder.addExtension(Extension.subjectKeyIdentifier, false, new DEROctetString(new byte[] { 1 }));
                 }
-                byte[] encoded = builder.build(new JcaContentSignerBuilder("SHA256withRSA")
-                        .build(issuerKey.getPrivate())).getEncoded();
+                byte[] encoded = builder
+                        .build(new JcaContentSignerBuilder("SHA256withRSA").build(issuerKey.getPrivate())).getEncoded();
                 return new Credential(new PkiId("x509:" + sha256(encoded)), value.formatId(), value.issuerRef(),
                         value.subjectRef(), value.validity(), value.serialOrUniqueId(), value.publicKeyId(),
                         value.profileBinding(), value.status(), new EncodedObject(Encoding.DER, encoded),
@@ -846,60 +841,72 @@ final class CaProfileIssuanceEnforcementTest {
 
     private enum ImportMutation {
         SUBJECT {
-            @Override CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
+            @Override
+            CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
                 return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Substituted"), "root-ca");
             }
         },
         KIND {
-            @Override CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
+            @Override
+            CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
                 return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"),
                         "intermediate-ca");
             }
         },
         MALFORMED_DER {
-            @Override CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
+            @Override
+            CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
                 return importCommand(runtime, keyRef, new byte[] { 0x30, 0x01, 0x00 },
                         new SubjectRef("CN=Import Mutation Root"), "root-ca");
             }
         },
         EXTRA_EXTENSION {
-            @Override CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
-                return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"),
-                        "root-ca");
+            @Override
+            CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
+                return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"), "root-ca");
             }
-            @Override byte[] mutate(Credential credential, KeyPair issuerKey) {
+
+            @Override
+            byte[] mutate(Credential credential, KeyPair issuerKey) {
                 return MetadataMutation.rebuild(credential, issuerKey, null, true).encoded().bytes();
             }
         },
         BASIC_CONSTRAINTS {
-            @Override CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
-                return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"),
-                        "root-ca");
+            @Override
+            CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
+                return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"), "root-ca");
             }
-            @Override byte[] mutate(Credential credential, KeyPair issuerKey) {
-                return MetadataMutation.rebuild(credential, issuerKey, null, false,
-                        new BasicConstraints(false), null, null).encoded().bytes();
+
+            @Override
+            byte[] mutate(Credential credential, KeyPair issuerKey) {
+                return MetadataMutation
+                        .rebuild(credential, issuerKey, null, false, new BasicConstraints(false), null, null).encoded()
+                        .bytes();
             }
         },
         KEY_USAGE {
-            @Override CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
-                return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"),
-                        "root-ca");
+            @Override
+            CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
+                return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"), "root-ca");
             }
-            @Override byte[] mutate(Credential credential, KeyPair issuerKey) {
+
+            @Override
+            byte[] mutate(Credential credential, KeyPair issuerKey) {
                 return MetadataMutation.rebuild(credential, issuerKey, null, false, null,
                         new KeyUsage(KeyUsage.digitalSignature), null).encoded().bytes();
             }
         },
         VALIDITY {
-            @Override CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
-                return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"),
-                        "root-ca");
+            @Override
+            CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded) {
+                return importCommand(runtime, keyRef, encoded, new SubjectRef("CN=Import Mutation Root"), "root-ca");
             }
-            @Override byte[] mutate(Credential credential, KeyPair issuerKey) {
+
+            @Override
+            byte[] mutate(Credential credential, KeyPair issuerKey) {
                 Date extended = Date.from(credential.validity().notAfter().plusSeconds(1));
-                return MetadataMutation.rebuild(credential, issuerKey, null, false, null, null, extended)
-                        .encoded().bytes();
+                return MetadataMutation.rebuild(credential, issuerKey, null, false, null, null, extended).encoded()
+                        .bytes();
             }
         };
 

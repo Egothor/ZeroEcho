@@ -21,7 +21,7 @@ import zeroecho.pki.api.attr.AttributeValue;
  * Immutable single-file authority for one credential's revocation lifecycle.
  *
  * @param credentialId credential namespace identity
- * @param transitions ordered committed transitions
+ * @param transitions  ordered committed transitions
  */
 public record RevocationJournal(PkiId credentialId, List<RevocationTransition> transitions) {
 
@@ -69,8 +69,8 @@ public record RevocationJournal(PkiId credentialId, List<RevocationTransition> t
                     || transition.state() == RevocationState.PERMANENTLY_REVOKED;
         }
         return switch (previous) {
-            case CLEAR -> transition.state() == RevocationState.HELD
-                    || transition.state() == RevocationState.PERMANENTLY_REVOKED;
+            case CLEAR ->
+                transition.state() == RevocationState.HELD || transition.state() == RevocationState.PERMANENTLY_REVOKED;
             case HELD -> transition.state() == RevocationState.CLEAR
                     || transition.state() == RevocationState.PERMANENTLY_REVOKED;
             case PERMANENTLY_REVOKED -> false;

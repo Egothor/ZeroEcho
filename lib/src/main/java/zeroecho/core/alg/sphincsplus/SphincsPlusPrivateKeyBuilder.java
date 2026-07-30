@@ -51,9 +51,11 @@ import zeroecho.core.spi.PrivateKeyImporter;
  * pairs but focuses solely on importing private key material.
  * </p>
  *
- * <p>The exact supported operation is
+ * <p>
+ * The exact supported operation is
  * {@link #importPrivate(SphincsPlusPrivateKeySpec)}. Other key operations are
- * registered through their own exact interfaces.</p>
+ * registered through their own exact interfaces.
+ * </p>
  *
  * <h2>Example</h2> <pre>{@code
  * // Assuming bytes contain a PKCS#8-encoded SPHINCS+ private key:

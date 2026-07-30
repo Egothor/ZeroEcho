@@ -101,9 +101,9 @@ import java.util.function.Supplier;
  * }</pre>
  *
  * <h2>Thread-safety</h2> Instances are immutable and thread-safe. Public
- * accessors are resolved once per runtime class and operation type, then invoked
- * through cached method handles. The unload-safe {@link ClassValue} caches do
- * not retain otherwise unreachable class loaders.
+ * accessors are resolved once per runtime class and operation type, then
+ * invoked through cached method handles. The unload-safe {@link ClassValue}
+ * caches do not retain otherwise unreachable class loaders.
  *
  * @param <T> domain type that follows the marshalling and unmarshalling
  *            conventions
@@ -274,8 +274,7 @@ public final class PairSeqCodec<T> implements Codec<T, PairSeq> {
             try {
                 Method method = runtimeType.getMethod("marshal");
                 if (!PairSeq.class.isAssignableFrom(method.getReturnType())) {
-                    return new MarshalPlan(null,
-                            "marshal() must return PairSeq in " + runtimeType.getName(), null);
+                    return new MarshalPlan(null, "marshal() must return PairSeq in " + runtimeType.getName(), null);
                 }
                 MethodHandle handle = MethodHandles.lookup().unreflect(method);
                 return new MarshalPlan(handle, null, null);
@@ -327,14 +326,14 @@ public final class PairSeqCodec<T> implements Codec<T, PairSeq> {
                                 "static unmarshal(PairSeq) must return " + runtimeType.getName(), null);
                     }
                     MethodHandle handle = MethodHandles.lookup().unreflect(method);
-                    return new UnmarshalPlan(handle,
-                            "static unmarshal(PairSeq) failed for " + runtimeType.getName(), null, null);
+                    return new UnmarshalPlan(handle, "static unmarshal(PairSeq) failed for " + runtimeType.getName(),
+                            null, null);
                 }
             } catch (NoSuchMethodException ignored) {
                 // Resolve the constructor fallback below.
             } catch (IllegalAccessException exception) {
-                return new UnmarshalPlan(null, null,
-                        "static unmarshal(PairSeq) failed for " + runtimeType.getName(), exception);
+                return new UnmarshalPlan(null, null, "static unmarshal(PairSeq) failed for " + runtimeType.getName(),
+                        exception);
             }
 
             try {

@@ -79,8 +79,7 @@ final class FilesystemPkiStoreOwnershipTest {
         FilesystemPkiStore first = new FilesystemPkiStore(root, options);
         try {
             FilesystemPkiStoreTest.importProfile(first,
-                    FilesystemPkiStoreTest.TestObjects.minimalProfile("ownership-profile"),
-                    java.time.Instant.now());
+                    FilesystemPkiStoreTest.TestObjects.minimalProfile("ownership-profile"), java.time.Instant.now());
             first.activateProfile("ownership-profile", 1);
             assertOwnershipRejected(root);
             assertTrue(first.getActiveProfileRef("ownership-profile").isPresent());
@@ -98,17 +97,14 @@ final class FilesystemPkiStoreOwnershipTest {
     @Test
     void separateStoreRootsRemainIndependent(@TempDir Path tempDir) throws Exception {
         System.out.println("separateStoreRootsRemainIndependent");
-        try (FilesystemPkiStore first = new FilesystemPkiStore(tempDir.resolve("first"),
-                FsPkiStoreOptions.defaults());
+        try (FilesystemPkiStore first = new FilesystemPkiStore(tempDir.resolve("first"), FsPkiStoreOptions.defaults());
                 FilesystemPkiStore second = new FilesystemPkiStore(tempDir.resolve("second"),
                         FsPkiStoreOptions.defaults())) {
             FilesystemPkiStoreTest.importProfile(first,
-                    FilesystemPkiStoreTest.TestObjects.minimalProfile("first-profile"),
-                    java.time.Instant.now());
+                    FilesystemPkiStoreTest.TestObjects.minimalProfile("first-profile"), java.time.Instant.now());
             first.activateProfile("first-profile", 1);
             FilesystemPkiStoreTest.importProfile(second,
-                    FilesystemPkiStoreTest.TestObjects.minimalProfile("second-profile"),
-                    java.time.Instant.now());
+                    FilesystemPkiStoreTest.TestObjects.minimalProfile("second-profile"), java.time.Instant.now());
             second.activateProfile("second-profile", 1);
             assertTrue(first.getActiveProfileRef("first-profile").isPresent());
             assertFalse(first.getActiveProfileRef("second-profile").isPresent());
@@ -125,8 +121,7 @@ final class FilesystemPkiStoreOwnershipTest {
         Files.createDirectories(root);
         Files.writeString(root.resolve(FsPaths.VERSION_FILE), "unsupported", StandardCharsets.US_ASCII);
 
-        assertThrows(IllegalStateException.class,
-                () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
+        assertThrows(IllegalStateException.class, () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
         Files.writeString(root.resolve(FsPaths.VERSION_FILE), FilesystemPkiStore.CURRENT_STORE_VERSION,
                 StandardCharsets.US_ASCII);
 
@@ -221,8 +216,9 @@ final class FilesystemPkiStoreOwnershipTest {
         }
 
         private static ChildOwner start(Path root) throws Exception {
-            String executable = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
-                    .contains("win") ? "java.exe" : "java";
+            String executable = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")
+                    ? "java.exe"
+                    : "java";
             Path java = Path.of(System.getProperty("java.home"), "bin", executable);
             Process process = new ProcessBuilder(java.toString(), "-cp", childClasspath(),
                     FilesystemPkiStoreLockProcess.class.getName(), root.toString()).redirectErrorStream(true).start();
@@ -290,10 +286,8 @@ final class FilesystemPkiStoreLockProcess {
             System.exit(2);
         }
         LogManager.getLogManager().reset();
-        try (FilesystemPkiStore store = new FilesystemPkiStore(Path.of(args[0]),
-                FsPkiStoreOptions.defaults());
-                BufferedReader control = new BufferedReader(new InputStreamReader(System.in,
-                        StandardCharsets.UTF_8))) {
+        try (FilesystemPkiStore store = new FilesystemPkiStore(Path.of(args[0]), FsPkiStoreOptions.defaults());
+                BufferedReader control = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
             System.out.println("LOCK_ACQUIRED");
             System.out.flush();
             String command;

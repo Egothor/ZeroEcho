@@ -140,8 +140,7 @@ final class FsPaths {
 
     /* default */ Path credentialPath(final PkiId credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
-        return this.root.resolve("credentials").resolve(BY_ID)
-                .resolve(FsUtil.safeId(credentialId) + BINARY_EXTENSION);
+        return this.root.resolve("credentials").resolve(BY_ID).resolve(FsUtil.safeId(credentialId) + BINARY_EXTENSION);
     }
 
     // -------------------------------------------------------------------------
@@ -150,14 +149,13 @@ final class FsPaths {
 
     /* default */ Path requestPath(final PkiId requestId) {
         Objects.requireNonNull(requestId, "requestId");
-        return this.root.resolve("requests").resolve(BY_ID)
-                .resolve(FsUtil.safeId(requestId) + BINARY_EXTENSION);
+        return this.root.resolve("requests").resolve(BY_ID).resolve(FsUtil.safeId(requestId) + BINARY_EXTENSION);
     }
 
     /* default */ Path signWorkflowPath(final PkiId submissionId) {
         Objects.requireNonNull(submissionId, "submissionId");
-        return this.root.resolve("sign-workflows").resolve(BY_ID)
-                .resolve(FsUtil.safeId(submissionId)).resolve(CURRENT_FILE);
+        return this.root.resolve("sign-workflows").resolve(BY_ID).resolve(FsUtil.safeId(submissionId))
+                .resolve(CURRENT_FILE);
     }
 
     /* default */ Path signWorkflowRoot() {

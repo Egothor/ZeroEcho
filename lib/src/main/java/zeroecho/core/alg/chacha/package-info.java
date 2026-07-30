@@ -39,10 +39,10 @@
  * the stream cipher ChaCha20 and the AEAD construction ChaCha20-Poly1305. The
  * module contains algorithm descriptors, streaming cipher contexts,
  * configuration specifications, optional header codecs for runtime parameters,
- * and symmetric key import/generation specifications. Key import
- * specifications are destroyable. The design favors safe defaults
- * (12-byte nonces, 128-bit AEAD tag), explicit role-to-context binding, and a
- * clear separation between static configuration and per-operation parameters.
+ * and symmetric key import/generation specifications. Key import specifications
+ * are destroyable. The design favors safe defaults (12-byte nonces, 128-bit
+ * AEAD tag), explicit role-to-context binding, and a clear separation between
+ * static configuration and per-operation parameters.
  * </p>
  *
  * <h2>Components</h2>

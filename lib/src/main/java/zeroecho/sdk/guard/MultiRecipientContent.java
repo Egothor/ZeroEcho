@@ -46,17 +46,17 @@ import zeroecho.sdk.content.api.DataContent;
  * resources until processing or explicit cleanup.
  *
  * <p>
- * Callers must invoke {@link #close()} when a built instance is abandoned before
- * {@link #getStream()} is called. Successful or failed stream construction also
- * releases the owned recipient resources. Unlocking keys and password material
- * supplied separately remain caller-owned and are never destroyed by this
- * content.
+ * Callers must invoke {@link #close()} when a built instance is abandoned
+ * before {@link #getStream()} is called. Successful or failed stream
+ * construction also releases the owned recipient resources. Unlocking keys and
+ * password material supplied separately remain caller-owned and are never
+ * destroyed by this content.
  * </p>
  *
  * <p>
- * Implementations are not thread-safe. Cleanup is idempotent, and content cannot
- * be used after cleanup. Calling {@link #getStream()} is terminal even when stream
- * construction fails.
+ * Implementations are not thread-safe. Cleanup is idempotent, and content
+ * cannot be used after cleanup. Calling {@link #getStream()} is terminal even
+ * when stream construction fails.
  * </p>
  */
 public interface MultiRecipientContent extends DataContent, Destroyable, AutoCloseable {

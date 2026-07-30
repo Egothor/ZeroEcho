@@ -147,8 +147,8 @@ public abstract class AbstractCryptoAlgorithm extends CryptoAlgorithm {
      *
      * <h4>Validation</h4> Type checks happen at creation time (via {@code bind})
      * and again when
-     * {@link CryptoAlgorithm#createContext(KeyUsage, Key, ContextSpec)} is
-     * called. If a factory returns a context not assignable to {@code ctxType}, an
+     * {@link CryptoAlgorithm#createContext(KeyUsage, Key, ContextSpec)} is called.
+     * If a factory returns a context not assignable to {@code ctxType}, an
      * {@link IllegalStateException} will be thrown.
      *
      * @param family      high-level algorithm family classification

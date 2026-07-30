@@ -44,8 +44,8 @@ class PairSeqTest {
         assertEquals("pair 0 value must not be null",
                 assertThrows(IllegalArgumentException.class, () -> PairSeq.of("key", null)).getMessage());
         assertEquals("pair 1 key must not be null",
-                assertThrows(IllegalArgumentException.class,
-                        () -> PairSeq.of("first", "value", null, "other")).getMessage());
+                assertThrows(IllegalArgumentException.class, () -> PairSeq.of("first", "value", null, "other"))
+                        .getMessage());
 
         String[] source = { "key", "value" };
         PairSeq sequence = PairSeq.of(source);
@@ -66,8 +66,7 @@ class PairSeqTest {
 
         IOException partial = new IOException("partial");
         FailingAppendable partialOutput = new FailingAppendable(2, partial);
-        IOException partialActual = assertThrows(IOException.class,
-                () -> PairSeq.of("a", "b").writeTo(partialOutput));
+        IOException partialActual = assertThrows(IOException.class, () -> PairSeq.of("a", "b").writeTo(partialOutput));
         assertSame(partial, partialActual);
         assertEquals("a=", partialOutput.output.toString());
 

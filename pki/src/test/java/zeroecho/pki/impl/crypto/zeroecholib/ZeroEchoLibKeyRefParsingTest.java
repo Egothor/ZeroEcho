@@ -67,16 +67,16 @@ public final class ZeroEchoLibKeyRefParsingTest {
         System.out.println("signing_requires_prv_suffix_in_strict_mode_ok");
 
         try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("zeroecho-lib", Path.of("nonexistent"),
-                tempDir.resolve("operations-1"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true, TestKeyringUnlocks.provider())) {
+                tempDir.resolve("operations-1"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true,
+                TestKeyringUnlocks.provider())) {
 
             AccessContext ctx = new AccessContext(new Principal("TEST", "unit"), new Purpose("UNIT_TEST"),
                     Optional.empty(), Optional.empty());
 
             PkiId submissionId = SigningSubmissionId.create(NAMESPACE, Instant.now(), new SecureRandom()).id();
-            SignatureWorkflow.SignRequest req = SignatureWorkflow.SignRequest.create(submissionId, NAMESPACE, 1L,
-                    ctx, new KeyRef("zeroecho-lib:abc"), "ECDSA",
-                    new EncodedObject(Encoding.BINARY, new byte[] { 0x01 }), Optional.of(Encoding.BINARY),
-                    Optional.of(Instant.now()));
+            SignatureWorkflow.SignRequest req = SignatureWorkflow.SignRequest.create(submissionId, NAMESPACE, 1L, ctx,
+                    new KeyRef("zeroecho-lib:abc"), "ECDSA", new EncodedObject(Encoding.BINARY, new byte[] { 0x01 }),
+                    Optional.of(Encoding.BINARY), Optional.of(Instant.now()));
 
             PkiId opId = wf.submitSign(req);
             SignatureWorkflow.OperationStatus st = wf.status(opId);
@@ -95,7 +95,8 @@ public final class ZeroEchoLibKeyRefParsingTest {
         System.out.println("verify_with_publicKeyEncoded_invalid_spki_fails_with_crypto_failure_ok");
 
         try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("zeroecho-lib", Path.of("nonexistent"),
-                tempDir.resolve("operations-2"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true, TestKeyringUnlocks.provider())) {
+                tempDir.resolve("operations-2"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true,
+                TestKeyringUnlocks.provider())) {
 
             AccessContext ctx = new AccessContext(new Principal("TEST", "unit"), new Purpose("UNIT_TEST"),
                     Optional.empty(), Optional.empty());
@@ -123,7 +124,8 @@ public final class ZeroEchoLibKeyRefParsingTest {
         System.out.println("status_unknown_operation_is_deterministic_ok");
 
         try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("zeroecho-lib", Path.of("nonexistent"),
-                tempDir.resolve("operations-3"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true, TestKeyringUnlocks.provider())) {
+                tempDir.resolve("operations-3"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true,
+                TestKeyringUnlocks.provider())) {
 
             PkiId unknown = new PkiId("00000000-0000-0000-0000-000000000000");
             SignatureWorkflow.OperationStatus st = wf.status(unknown);

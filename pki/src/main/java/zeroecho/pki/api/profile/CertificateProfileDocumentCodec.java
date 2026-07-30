@@ -44,8 +44,8 @@ import zeroecho.pki.api.PkiException;
  */
 // The closed streaming grammar intentionally keeps all bounded field handlers in one codec.
 @SuppressWarnings({ "PMD.AvoidDuplicateLiterals", "PMD.AvoidInstantiatingObjectsInLoops",
-        "PMD.AvoidUncheckedExceptionsInSignatures", "PMD.CyclomaticComplexity",
-        "PMD.PreserveStackTrace", "PMD.TooManyMethods" })
+        "PMD.AvoidUncheckedExceptionsInSignatures", "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace",
+        "PMD.TooManyMethods" })
 public final class CertificateProfileDocumentCodec {
 
     /** Maximum accepted encoded document size. */
@@ -88,8 +88,8 @@ public final class CertificateProfileDocumentCodec {
             throw failure("MALFORMED_JSON", "$");
         }
         preflight(encodedDocument);
-        try (JsonParser parser = JSON_FACTORY.createParser(ObjectReadContext.empty(),
-                encodedDocument, 0, encodedDocument.length)) {
+        try (JsonParser parser = JSON_FACTORY.createParser(ObjectReadContext.empty(), encodedDocument, 0,
+                encodedDocument.length)) {
             CertificateProfileDefinition definition = parseDocument(parser);
             if (parser.nextToken() != null) {
                 throw failure("MALFORMED_JSON", "$");
@@ -106,9 +106,9 @@ public final class CertificateProfileDocumentCodec {
      * Reads and parses an encoded certificate-profile document.
      *
      * <p>
-     * This method does not close {@code input}; ownership remains with the
-     * caller. It reads at most one byte beyond the document limit in order to
-     * detect oversize input without unbounded buffering.
+     * This method does not close {@code input}; ownership remains with the caller.
+     * It reads at most one byte beyond the document limit in order to detect
+     * oversize input without unbounded buffering.
      * </p>
      *
      * @param input caller-owned stream containing UTF-8 JSON
@@ -119,8 +119,7 @@ public final class CertificateProfileDocumentCodec {
         if (input == null) {
             throw failure("WRONG_TYPE", "$");
         }
-        ByteArrayOutputStream output = new ByteArrayOutputStream(
-                Math.min(READ_BUFFER_BYTES, MAXIMUM_DOCUMENT_BYTES));
+        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(READ_BUFFER_BYTES, MAXIMUM_DOCUMENT_BYTES));
         byte[] buffer = new byte[READ_BUFFER_BYTES];
         int total = 0;
         try {
@@ -163,8 +162,7 @@ public final class CertificateProfileDocumentCodec {
     public static byte[] writeCanonical(CertificateProfileDefinition definition) {
         validateDefinition(definition);
         ByteArrayOutputStream output = new ByteArrayOutputStream(2_048);
-        try (JsonGenerator generator = JSON_FACTORY.createGenerator(ObjectWriteContext.empty(),
-                output)) {
+        try (JsonGenerator generator = JSON_FACTORY.createGenerator(ObjectWriteContext.empty(), output)) {
             writeDocument(generator, definition);
         } catch (JacksonException ex) {
             throw failure("CANONICALIZATION_FAILED", "$");
@@ -177,18 +175,11 @@ public final class CertificateProfileDocumentCodec {
     }
 
     private static JsonFactory createJsonFactory() {
-        StreamReadConstraints constraints = StreamReadConstraints.builder()
-                .maxNestingDepth(MAXIMUM_DEPTH)
-                .maxDocumentLength(MAXIMUM_DOCUMENT_BYTES)
-                .maxTokenCount(8_192)
-                .maxNumberLength(20)
-                .maxStringLength(MAXIMUM_STRING_UTF8_BYTES)
-                .maxNameLength(64)
-                .build();
-        JsonFactoryBuilder builder = JsonFactory.builder()
-                .streamReadConstraints(constraints)
-                .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-                .disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
+        StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(MAXIMUM_DEPTH)
+                .maxDocumentLength(MAXIMUM_DOCUMENT_BYTES).maxTokenCount(8_192).maxNumberLength(20)
+                .maxStringLength(MAXIMUM_STRING_UTF8_BYTES).maxNameLength(64).build();
+        JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
+                .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
         for (JsonReadFeature feature : JsonReadFeature.values()) {
             builder.disable(feature);
         }
@@ -196,8 +187,8 @@ public final class CertificateProfileDocumentCodec {
     }
 
     private static void preflight(byte[] encodedDocument) {
-        try (JsonParser parser = JSON_FACTORY.createParser(ObjectReadContext.empty(),
-                encodedDocument, 0, encodedDocument.length)) {
+        try (JsonParser parser = JSON_FACTORY.createParser(ObjectReadContext.empty(), encodedDocument, 0,
+                encodedDocument.length)) {
             while (parser.nextToken() != null) {
                 parser.finishToken();
             }
@@ -224,12 +215,9 @@ public final class CertificateProfileDocumentCodec {
         if (document.profileVersion <= 0) {
             throw failure("PROFILE_VERSION_INVALID", "$.profileVersion");
         }
-        validateProfileString(document.profileId, MAXIMUM_PROFILE_ID_UTF8_BYTES, "$.profileId",
-                "TOKEN_INVALID");
-        validateProfileString(document.formatId, MAXIMUM_FORMAT_ID_UTF8_BYTES, "$.formatId",
-                "TOKEN_INVALID");
-        validateProfileString(document.displayName, MAXIMUM_DISPLAY_NAME_UTF8_BYTES, "$.displayName",
-                "TOKEN_INVALID");
+        validateProfileString(document.profileId, MAXIMUM_PROFILE_ID_UTF8_BYTES, "$.profileId", "TOKEN_INVALID");
+        validateProfileString(document.formatId, MAXIMUM_FORMAT_ID_UTF8_BYTES, "$.formatId", "TOKEN_INVALID");
+        validateProfileString(document.displayName, MAXIMUM_DISPLAY_NAME_UTF8_BYTES, "$.displayName", "TOKEN_INVALID");
         requirePolicyFields(document.certificateType, document.seen);
         return constructDefinition(document);
     }
@@ -259,8 +247,7 @@ public final class CertificateProfileDocumentCodec {
             }
             case "displayName" -> {
                 document.seen = mark(document.seen, 5, "$.displayName");
-                document.displayName =
-                        readBoundedString(parser, "$.displayName", MAXIMUM_DISPLAY_NAME_UTF8_BYTES);
+                document.displayName = readBoundedString(parser, "$.displayName", MAXIMUM_DISPLAY_NAME_UTF8_BYTES);
             }
             case "maxValidity" -> {
                 document.seen = mark(document.seen, 6, "$.maxValidity");
@@ -277,28 +264,23 @@ public final class CertificateProfileDocumentCodec {
         }
     }
 
-    private static void readDocumentSan(JsonParser parser, DocumentFields document)
-            throws JacksonException {
-        if (document.certificateType != null
-                && document.certificateType != CertificateProfileKind.END_ENTITY) {
+    private static void readDocumentSan(JsonParser parser, DocumentFields document) throws JacksonException {
+        if (document.certificateType != null && document.certificateType != CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.subjectAlternativeNames");
         }
         document.seen = mark(document.seen, 8, "$.subjectAlternativeNames");
         document.san = readSan(parser, "$.subjectAlternativeNames");
     }
 
-    private static void readDocumentLeaf(JsonParser parser, DocumentFields document)
-            throws JacksonException {
-        if (document.certificateType != null
-                && document.certificateType != CertificateProfileKind.END_ENTITY) {
+    private static void readDocumentLeaf(JsonParser parser, DocumentFields document) throws JacksonException {
+        if (document.certificateType != null && document.certificateType != CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.leafCertificate");
         }
         document.seen = mark(document.seen, 9, "$.leafCertificate");
         document.leaf = readLeaf(parser, "$.leafCertificate");
     }
 
-    private static void readDocumentCa(JsonParser parser, DocumentFields document)
-            throws JacksonException {
+    private static void readDocumentCa(JsonParser parser, DocumentFields document) throws JacksonException {
         if (document.certificateType == CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.caCertificate");
         }
@@ -328,33 +310,30 @@ public final class CertificateProfileDocumentCodec {
     }
 
     /*
-     * Typed policy constructors are the authoritative semantic validators, so
-     * their validation exceptions are deliberately normalized at this boundary.
+     * Typed policy constructors are the authoritative semantic validators, so their
+     * validation exceptions are deliberately normalized at this boundary.
      */
     @SuppressWarnings("PMD.ExceptionAsFlowControl")
     private static CertificateProfileDefinition constructDefinition(DocumentFields document) {
         try {
-            SubjectPolicy subjectPolicy = new SubjectPolicy(document.subject.allowEmpty(),
-                    document.subject.rules());
+            SubjectPolicy subjectPolicy = new SubjectPolicy(document.subject.allowEmpty(), document.subject.rules());
             CertificatePolicy policy;
             if (document.certificateType == CertificateProfileKind.END_ENTITY) {
-                SubjectAlternativeNamePolicy sanPolicy = new SubjectAlternativeNamePolicy(
-                        document.san.minimumTotal(), document.san.maximumTotal(), document.san.rules(),
-                        document.san.wildcardAllowed(), document.san.allowedSchemes(),
-                        document.san.criticalWhenSubjectNonEmpty(),
+                SubjectAlternativeNamePolicy sanPolicy = new SubjectAlternativeNamePolicy(document.san.minimumTotal(),
+                        document.san.maximumTotal(), document.san.rules(), document.san.wildcardAllowed(),
+                        document.san.allowedSchemes(), document.san.criticalWhenSubjectNonEmpty(),
                         document.san.serviceIdentityRequired(), document.san.emailIdentityRequired());
                 if (document.subject.allowEmpty() && document.san.minimumTotal() < 1) {
                     throw new IllegalArgumentException("An empty subject requires at least one SAN");
                 }
                 policy = new LeafCertificatePolicy(sanPolicy, document.leaf.keyUsage(),
                         document.leaf.extendedKeyUsage(), document.leaf.keyUsageCritical(),
-                        document.leaf.extendedKeyUsageCritical(),
-                        document.leaf.basicConstraintsCritical(),
+                        document.leaf.extendedKeyUsageCritical(), document.leaf.basicConstraintsCritical(),
                         document.leaf.allowedKeyAlgorithms());
             } else {
                 policy = new CaCertificatePolicy(document.ca.basicConstraintsCritical(),
-                        document.ca.pathLengthConstraint(), document.ca.keyUsageCritical(),
-                        document.ca.keyUsages(), document.ca.allowedKeyAlgorithms());
+                        document.ca.pathLengthConstraint(), document.ca.keyUsageCritical(), document.ca.keyUsages(),
+                        document.ca.allowedKeyAlgorithms());
             }
             return new CertificateProfileDefinition(document.certificateType, document.profileId,
                     document.profileVersion, new FormatId(document.formatId), document.displayName,
@@ -500,8 +479,8 @@ public final class CertificateProfileDocumentCodec {
             }
         }
         requireAll(seen, 6, path);
-        return new SanSection(minimum, maximum, serviceRequired, emailRequired, critical,
-                rules.rules(), rules.wildcardAllowed(), rules.allowedSchemes());
+        return new SanSection(minimum, maximum, serviceRequired, emailRequired, critical, rules.rules(),
+                rules.wildcardAllowed(), rules.allowedSchemes());
     }
 
     private static SanRules readSanRules(JsonParser parser, String path) throws JacksonException {
@@ -572,8 +551,7 @@ public final class CertificateProfileDocumentCodec {
         SubjectAlternativeNameType type = parseSanType(typeValue, path + ".type");
         validateSanShape(type, seen, path);
         try {
-            SubjectAlternativeNameRule rule = new SubjectAlternativeNameRule(type, minimum, maximum,
-                    ipv4, ipv6);
+            SubjectAlternativeNameRule rule = new SubjectAlternativeNameRule(type, minimum, maximum, ipv4, ipv6);
             return new ParsedSanRule(rule, wildcard, schemes == null ? Set.of() : schemes);
         } catch (IllegalArgumentException ex) {
             throw failure("SEMANTIC_INVALID", path);
@@ -601,10 +579,8 @@ public final class CertificateProfileDocumentCodec {
         Set<String> values = new LinkedHashSet<>();
         while (parser.nextToken() != JsonToken.END_ARRAY) {
             checkArrayBound(values.size(), path);
-            String value = readBoundedString(parser, path + "[" + values.size() + "]",
-                    MAXIMUM_URI_SCHEME_ASCII_BYTES);
-            if (!isAscii(value) || !value.equals(value.toLowerCase(java.util.Locale.ROOT))
-                    || !values.add(value)) {
+            String value = readBoundedString(parser, path + "[" + values.size() + "]", MAXIMUM_URI_SCHEME_ASCII_BYTES);
+            if (!isAscii(value) || !value.equals(value.toLowerCase(java.util.Locale.ROOT)) || !values.add(value)) {
                 throw failure("TOKEN_INVALID", path);
             }
         }
@@ -653,8 +629,7 @@ public final class CertificateProfileDocumentCodec {
             }
         }
         requireAll(seen, 6, path);
-        return new LeafSection(basicCritical, keyCritical, keyUsage, extendedCritical, extended,
-                algorithms);
+        return new LeafSection(basicCritical, keyCritical, keyUsage, extendedCritical, extended, algorithms);
     }
 
     private static Set<LeafKeyUsage> readKeyUsages(JsonParser parser, String path) throws JacksonException {
@@ -716,8 +691,7 @@ public final class CertificateProfileDocumentCodec {
         return new CaSection(basicCritical, pathLength, keyCritical, keyUsages, algorithms);
     }
 
-    private static Set<CaKeyUsage> readCaKeyUsages(JsonParser parser, String path)
-            throws JacksonException {
+    private static Set<CaKeyUsage> readCaKeyUsages(JsonParser parser, String path) throws JacksonException {
         requireToken(parser.currentToken(), JsonToken.START_ARRAY, path);
         Set<CaKeyUsage> values = EnumSet.noneOf(CaKeyUsage.class);
         while (parser.nextToken() != JsonToken.END_ARRAY) {
@@ -793,16 +767,14 @@ public final class CertificateProfileDocumentCodec {
         generator.writeEndObject();
     }
 
-    private static void writeSubject(JsonGenerator generator, SubjectPolicy policy)
-            throws JacksonException {
+    private static void writeSubject(JsonGenerator generator, SubjectPolicy policy) throws JacksonException {
         generator.writeObjectPropertyStart("subject");
         generator.writeBooleanProperty("allowEmpty", policy.allowEmpty());
         generator.writeArrayPropertyStart("rules");
         for (SubjectRdnRule rule : policy.rules()) {
             generator.writeStartObject();
             generator.writeStringProperty("oid", rule.type().oid());
-            generator.writeStringProperty("source",
-                    rule.requesterSupplied() ? REQUESTER_SOURCE : PROFILE_FIXED_SOURCE);
+            generator.writeStringProperty("source", rule.requesterSupplied() ? REQUESTER_SOURCE : PROFILE_FIXED_SOURCE);
             generator.writeNumberProperty("minimumOccurrences", rule.minimumOccurrences());
             generator.writeNumberProperty("maximumOccurrences", rule.maximumOccurrences());
             generator.writeNumberProperty("maximumUtf8Bytes", rule.maximumUtf8Bytes());
@@ -815,15 +787,13 @@ public final class CertificateProfileDocumentCodec {
         generator.writeEndObject();
     }
 
-    private static void writeSan(JsonGenerator generator, SubjectAlternativeNamePolicy policy)
-            throws JacksonException {
+    private static void writeSan(JsonGenerator generator, SubjectAlternativeNamePolicy policy) throws JacksonException {
         generator.writeObjectPropertyStart("subjectAlternativeNames");
         generator.writeNumberProperty("minimumTotal", policy.minimumTotal());
         generator.writeNumberProperty("maximumTotal", policy.maximumTotal());
         generator.writeBooleanProperty("serviceIdentityRequired", policy.requireServiceIdentity());
         generator.writeBooleanProperty("emailIdentityRequired", policy.requireEmailIdentity());
-        generator.writeBooleanProperty("criticalWhenSubjectNonEmpty",
-                policy.criticalWithNonemptySubject());
+        generator.writeBooleanProperty("criticalWhenSubjectNonEmpty", policy.criticalWithNonemptySubject());
         generator.writeArrayPropertyStart("rules");
         List<SubjectAlternativeNameRule> rules = policy.rules().stream()
                 .sorted(Comparator.comparing(rule -> rule.type().name())).toList();
@@ -833,14 +803,12 @@ public final class CertificateProfileDocumentCodec {
             generator.writeNumberProperty("minimumOccurrences", rule.minimum());
             generator.writeNumberProperty("maximumOccurrences", rule.maximum());
             switch (rule.type()) {
-                case DNS_NAME -> generator.writeBooleanProperty("wildcardAllowed",
-                        policy.allowDnsWildcard());
+                case DNS_NAME -> generator.writeBooleanProperty("wildcardAllowed", policy.allowDnsWildcard());
                 case IP_ADDRESS -> {
                     generator.writeBooleanProperty("ipv4Allowed", rule.allowIpv4());
                     generator.writeBooleanProperty("ipv6Allowed", rule.allowIpv6());
                 }
-                case URI -> writeSortedStrings(generator, "allowedSchemes",
-                        policy.allowedUriSchemes());
+                case URI -> writeSortedStrings(generator, "allowedSchemes", policy.allowedUriSchemes());
                 case RFC822_NAME -> {
                     // No type-specific fields.
                 }
@@ -851,39 +819,30 @@ public final class CertificateProfileDocumentCodec {
         generator.writeEndObject();
     }
 
-    private static void writeLeaf(JsonGenerator generator, LeafCertificatePolicy policy)
-            throws JacksonException {
+    private static void writeLeaf(JsonGenerator generator, LeafCertificatePolicy policy) throws JacksonException {
         generator.writeObjectPropertyStart("leafCertificate");
-        generator.writeBooleanProperty("basicConstraintsCritical",
-                policy.basicConstraintsCritical());
+        generator.writeBooleanProperty("basicConstraintsCritical", policy.basicConstraintsCritical());
         generator.writeBooleanProperty("keyUsageCritical", policy.keyUsageCritical());
-        writeSortedStrings(generator, "keyUsage",
-                policy.keyUsages().stream().map(Enum::name).toList());
-        generator.writeBooleanProperty("extendedKeyUsageCritical",
-                policy.extendedKeyUsageCritical());
+        writeSortedStrings(generator, "keyUsage", policy.keyUsages().stream().map(Enum::name).toList());
+        generator.writeBooleanProperty("extendedKeyUsageCritical", policy.extendedKeyUsageCritical());
         writeSortedStrings(generator, "extendedKeyUsage",
                 policy.extendedKeyUsages().stream().map(ExtendedKeyUsageId::oid).toList());
-        writeSortedStrings(generator, "allowedKeyAlgorithms",
-                policy.allowedSubjectKeyAlgorithmIds());
+        writeSortedStrings(generator, "allowedKeyAlgorithms", policy.allowedSubjectKeyAlgorithmIds());
         generator.writeEndObject();
     }
 
-    private static void writeCa(JsonGenerator generator, CaCertificatePolicy policy)
-            throws JacksonException {
+    private static void writeCa(JsonGenerator generator, CaCertificatePolicy policy) throws JacksonException {
         generator.writeObjectPropertyStart("caCertificate");
-        generator.writeBooleanProperty("basicConstraintsCritical",
-                policy.basicConstraintsCritical());
+        generator.writeBooleanProperty("basicConstraintsCritical", policy.basicConstraintsCritical());
         generator.writeNumberProperty("pathLengthConstraint", policy.pathLengthConstraint());
         generator.writeBooleanProperty("keyUsageCritical", policy.keyUsageCritical());
-        writeSortedStrings(generator, "keyUsages",
-                policy.keyUsages().stream().map(Enum::name).toList());
-        writeSortedStrings(generator, "allowedSubjectKeyAlgorithms",
-                policy.allowedSubjectKeyAlgorithmIds());
+        writeSortedStrings(generator, "keyUsages", policy.keyUsages().stream().map(Enum::name).toList());
+        writeSortedStrings(generator, "allowedSubjectKeyAlgorithms", policy.allowedSubjectKeyAlgorithmIds());
         generator.writeEndObject();
     }
 
-    private static void writeSortedStrings(JsonGenerator generator, String field,
-            java.util.Collection<String> values) throws JacksonException {
+    private static void writeSortedStrings(JsonGenerator generator, String field, java.util.Collection<String> values)
+            throws JacksonException {
         generator.writeArrayPropertyStart(field);
         for (String value : values.stream().sorted().toList()) {
             generator.writeString(value);
@@ -895,20 +854,19 @@ public final class CertificateProfileDocumentCodec {
         if (definition == null) {
             throw failure("CANONICALIZATION_FAILED", "$");
         }
-        validateProfileString(definition.profileId(), MAXIMUM_PROFILE_ID_UTF8_BYTES,
-                "$.profileId", "CANONICALIZATION_FAILED");
-        validateProfileString(definition.formatId().value(), MAXIMUM_FORMAT_ID_UTF8_BYTES,
-                "$.formatId", "CANONICALIZATION_FAILED");
-        validateProfileString(definition.displayName(), MAXIMUM_DISPLAY_NAME_UTF8_BYTES,
-                "$.displayName", "CANONICALIZATION_FAILED");
-        validateWritableString(definition.maximumValidity().toString(), MAXIMUM_STRING_UTF8_BYTES,
-                "$.maxValidity");
+        validateProfileString(definition.profileId(), MAXIMUM_PROFILE_ID_UTF8_BYTES, "$.profileId",
+                "CANONICALIZATION_FAILED");
+        validateProfileString(definition.formatId().value(), MAXIMUM_FORMAT_ID_UTF8_BYTES, "$.formatId",
+                "CANONICALIZATION_FAILED");
+        validateProfileString(definition.displayName(), MAXIMUM_DISPLAY_NAME_UTF8_BYTES, "$.displayName",
+                "CANONICALIZATION_FAILED");
+        validateWritableString(definition.maximumValidity().toString(), MAXIMUM_STRING_UTF8_BYTES, "$.maxValidity");
         if (definition.subjectPolicy().rules().size() > MAXIMUM_ARRAY_ELEMENTS) {
             throw failure("CANONICALIZATION_FAILED", "$");
         }
         for (SubjectRdnRule rule : definition.subjectPolicy().rules()) {
-            rule.fixedValue().ifPresent(value -> validateWritableString(value,
-                    MAXIMUM_STRING_UTF8_BYTES, "$.subject.rules.fixedValue"));
+            rule.fixedValue().ifPresent(
+                    value -> validateWritableString(value, MAXIMUM_STRING_UTF8_BYTES, "$.subject.rules.fixedValue"));
         }
         if (definition.certificateType() != CertificateProfileKind.END_ENTITY) {
             CaCertificatePolicy ca = definition.caPolicy();
@@ -920,8 +878,7 @@ public final class CertificateProfileDocumentCodec {
         }
         LeafCertificatePolicy leaf = definition.leafPolicy();
         if (leaf.subjectAlternativeNamePolicy().rules().size() > MAXIMUM_ARRAY_ELEMENTS
-                || leaf.subjectAlternativeNamePolicy().allowedUriSchemes().size()
-                        > MAXIMUM_ARRAY_ELEMENTS
+                || leaf.subjectAlternativeNamePolicy().allowedUriSchemes().size() > MAXIMUM_ARRAY_ELEMENTS
                 || leaf.keyUsages().size() > MAXIMUM_ARRAY_ELEMENTS
                 || leaf.extendedKeyUsages().size() > MAXIMUM_ARRAY_ELEMENTS
                 || leaf.allowedSubjectKeyAlgorithmIds().size() > MAXIMUM_ARRAY_ELEMENTS) {
@@ -931,13 +888,11 @@ public final class CertificateProfileDocumentCodec {
             validateWritableString(scheme, MAXIMUM_URI_SCHEME_ASCII_BYTES,
                     "$.subjectAlternativeNames.rules.allowedSchemes");
             if (!isAscii(scheme)) {
-                throw failure("CANONICALIZATION_FAILED",
-                        "$.subjectAlternativeNames.rules.allowedSchemes");
+                throw failure("CANONICALIZATION_FAILED", "$.subjectAlternativeNames.rules.allowedSchemes");
             }
         }
         for (ExtendedKeyUsageId usage : leaf.extendedKeyUsages()) {
-            validateWritableString(usage.oid(), MAXIMUM_STRING_UTF8_BYTES,
-                    "$.leafCertificate.extendedKeyUsage");
+            validateWritableString(usage.oid(), MAXIMUM_STRING_UTF8_BYTES, "$.leafCertificate.extendedKeyUsage");
         }
     }
 
@@ -947,10 +902,9 @@ public final class CertificateProfileDocumentCodec {
         }
     }
 
-    private static void validateProfileString(String value, int maximum, String path,
-            String failureCode) {
-        if (value == null || value.isBlank() || !value.equals(value.strip())
-                || hasUnpairedSurrogate(value) || utf8Length(value) > maximum) {
+    private static void validateProfileString(String value, int maximum, String path, String failureCode) {
+        if (value == null || value.isBlank() || !value.equals(value.strip()) || hasUnpairedSurrogate(value)
+                || utf8Length(value) > maximum) {
             throw failure(failureCode, path);
         }
     }
@@ -1021,8 +975,7 @@ public final class CertificateProfileDocumentCodec {
         }
     }
 
-    private static CertificateProfileKind readCertificateType(JsonParser parser, String path)
-            throws JacksonException {
+    private static CertificateProfileKind readCertificateType(JsonParser parser, String path) throws JacksonException {
         String token = readString(parser, path);
         try {
             return CertificateProfileKind.valueOf(token);
@@ -1102,8 +1055,8 @@ public final class CertificateProfileDocumentCodec {
     }
 
     private static boolean hasUnpairedSurrogate(String value) {
-        return value.codePoints().anyMatch(codePoint ->
-                codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE);
+        return value.codePoints()
+                .anyMatch(codePoint -> codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE);
     }
 
     private static boolean isAscii(String value) {
@@ -1116,13 +1069,11 @@ public final class CertificateProfileDocumentCodec {
     }
 
     private static boolean isAllowedAlgorithm(String value) {
-        return "RSA".equals(value) || "ECDSA".equals(value)
-                || "Ed25519".equals(value) || "Ed448".equals(value);
+        return "RSA".equals(value) || "ECDSA".equals(value) || "Ed25519".equals(value) || "Ed448".equals(value);
     }
 
     private static boolean hasUtf8Bom(byte[] value) {
-        return value.length >= 3 && value[0] == (byte) 0xef
-                && value[1] == (byte) 0xbb && value[2] == (byte) 0xbf;
+        return value.length >= 3 && value[0] == (byte) 0xef && value[1] == (byte) 0xbb && value[2] == (byte) 0xbf;
     }
 
     private static boolean isDuplicateFailure(JacksonException exception) {
@@ -1154,26 +1105,23 @@ public final class CertificateProfileDocumentCodec {
     }
 
     private record SanSection(int minimumTotal, int maximumTotal, boolean serviceIdentityRequired,
-            boolean emailIdentityRequired, boolean criticalWhenSubjectNonEmpty,
-            List<SubjectAlternativeNameRule> rules, boolean wildcardAllowed,
-            Set<String> allowedSchemes) {
+            boolean emailIdentityRequired, boolean criticalWhenSubjectNonEmpty, List<SubjectAlternativeNameRule> rules,
+            boolean wildcardAllowed, Set<String> allowedSchemes) {
     }
 
     private record SanRules(List<SubjectAlternativeNameRule> rules, boolean wildcardAllowed,
             Set<String> allowedSchemes) {
     }
 
-    private record ParsedSanRule(SubjectAlternativeNameRule rule, boolean wildcardAllowed,
-            Set<String> allowedSchemes) {
+    private record ParsedSanRule(SubjectAlternativeNameRule rule, boolean wildcardAllowed, Set<String> allowedSchemes) {
     }
 
-    private record LeafSection(boolean basicConstraintsCritical, boolean keyUsageCritical,
-            Set<LeafKeyUsage> keyUsage, boolean extendedKeyUsageCritical,
-            Set<ExtendedKeyUsageId> extendedKeyUsage, Set<String> allowedKeyAlgorithms) {
-    }
-
-    private record CaSection(boolean basicConstraintsCritical, int pathLengthConstraint,
-            boolean keyUsageCritical, Set<CaKeyUsage> keyUsages,
+    private record LeafSection(boolean basicConstraintsCritical, boolean keyUsageCritical, Set<LeafKeyUsage> keyUsage,
+            boolean extendedKeyUsageCritical, Set<ExtendedKeyUsageId> extendedKeyUsage,
             Set<String> allowedKeyAlgorithms) {
+    }
+
+    private record CaSection(boolean basicConstraintsCritical, int pathLengthConstraint, boolean keyUsageCritical,
+            Set<CaKeyUsage> keyUsages, Set<String> allowedKeyAlgorithms) {
     }
 }

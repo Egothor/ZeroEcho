@@ -48,9 +48,8 @@ class AuditedContextsRegressionTest {
         DigestContext target = mock(DigestContext.class);
         when(target.tagLength()).thenReturn(2);
         when(target.wrap(any(InputStream.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        DigestContext unrelated = (DigestContext) Proxy.newProxyInstance(
-                DigestContext.class.getClassLoader(), new Class<?>[] { DigestContext.class },
-                (proxy, method, arguments) -> {
+        DigestContext unrelated = (DigestContext) Proxy.newProxyInstance(DigestContext.class.getClassLoader(),
+                new Class<?>[] { DigestContext.class }, (proxy, method, arguments) -> {
                     try {
                         return method.invoke(target, arguments);
                     } catch (InvocationTargetException exception) {
@@ -62,7 +61,8 @@ class AuditedContextsRegressionTest {
 
         assertNotSame(unrelated, wrapped);
         assertTrue(Proxy.isProxyClass(wrapped.getClass()));
-        assertArrayEquals(new byte[] { 1, 2 }, wrapped.wrap(new ByteArrayInputStream(new byte[] { 1, 2 })).readAllBytes());
+        assertArrayEquals(new byte[] { 1, 2 },
+                wrapped.wrap(new ByteArrayInputStream(new byte[] { 1, 2 })).readAllBytes());
         assertSame(wrapped, AuditedContexts.wrap(wrapped, AuditListener.noop(), KeyUsage.DIGEST));
         System.out.println("...nestedProxy=true");
         System.out.println("unrelatedProxyGetsWrapped...ok");
@@ -179,8 +179,8 @@ class AuditedContextsRegressionTest {
         AgreementContext agreement = mock(AgreementContext.class);
         doThrow(peerFailure).when(agreement).setPeerPublic(any(PublicKey.class));
         when(agreement.deriveSecret()).thenThrow(deriveFailure);
-        AgreementContext wrappedAgreement = (AgreementContext) AuditedContexts.wrap(
-                agreement, listener, KeyUsage.AGREEMENT);
+        AgreementContext wrappedAgreement = (AgreementContext) AuditedContexts.wrap(agreement, listener,
+                KeyUsage.AGREEMENT);
 
         assertSame(peerFailure, assertThrows(IllegalArgumentException.class,
                 () -> wrappedAgreement.setPeerPublic(mock(PublicKey.class))));
@@ -193,14 +193,13 @@ class AuditedContextsRegressionTest {
         doThrow(setMessageFailure).when(messageAgreement).setPeerMessage(any(byte[].class));
         when(messageAgreement.getPeerMessage()).thenThrow(getMessageFailure);
         when(messageAgreement.deriveSecret()).thenThrow(messageDeriveFailure);
-        MessageAgreementContext wrappedMessage = (MessageAgreementContext) AuditedContexts.wrap(
-                messageAgreement, listener, KeyUsage.AGREEMENT);
+        MessageAgreementContext wrappedMessage = (MessageAgreementContext) AuditedContexts.wrap(messageAgreement,
+                listener, KeyUsage.AGREEMENT);
 
-        assertSame(setMessageFailure, assertThrows(IllegalArgumentException.class,
-                () -> wrappedMessage.setPeerMessage(new byte[] { 1 })));
+        assertSame(setMessageFailure,
+                assertThrows(IllegalArgumentException.class, () -> wrappedMessage.setPeerMessage(new byte[] { 1 })));
         assertSame(getMessageFailure, assertThrows(IllegalStateException.class, wrappedMessage::getPeerMessage));
-        assertSame(messageDeriveFailure,
-                assertThrows(IllegalStateException.class, wrappedMessage::deriveSecret));
+        assertSame(messageDeriveFailure, assertThrows(IllegalStateException.class, wrappedMessage::deriveSecret));
         assertEquals(List.of(peerFailure, deriveFailure, setMessageFailure, getMessageFailure, messageDeriveFailure),
                 listener.failures);
 

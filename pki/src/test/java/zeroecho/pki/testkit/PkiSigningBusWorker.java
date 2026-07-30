@@ -41,8 +41,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 
 /**
- * Simple test-only worker that drives {@link PkiSigningBus} by periodically invoking
- * {@link PkiSigningBus#sweep(Instant)}.
+ * Simple test-only worker that drives {@link PkiSigningBus} by periodically
+ * invoking {@link PkiSigningBus#sweep(Instant)}.
  */
 public final class PkiSigningBusWorker implements AutoCloseable {
 
@@ -54,7 +54,7 @@ public final class PkiSigningBusWorker implements AutoCloseable {
     /**
      * Creates and starts a worker.
      *
-     * @param bus bus instance (never {@code null})
+     * @param bus    bus instance (never {@code null})
      * @param period sweep period (must be positive)
      */
     public PkiSigningBusWorker(PkiSigningBus bus, Duration period) {

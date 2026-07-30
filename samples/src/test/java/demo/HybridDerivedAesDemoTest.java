@@ -116,8 +116,7 @@ class HybridDerivedAesDemoTest {
 
         // ...Generate PQC key pair for ML-KEM-768 (recipient; used by Bob side to
         // decapsulate).
-        KeyPair bobPqc = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // ...Build Alice initiator: classic agreement (out-of-band peer pub) + PQC
         // encapsulation.
@@ -279,8 +278,7 @@ class HybridDerivedAesDemoTest {
         KeyPair bobClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // ...Generate PQC key pair for ML-KEM-768.
-        KeyPair bobPqc = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair bobPqc = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // ...Build Alice initiator in a step-by-step manner.
         HybridKexBuilder aliceBuilder = HybridKexBuilder.builder(session);
@@ -461,8 +459,7 @@ class HybridDerivedAesDemoTest {
         KeyPair selfClassic = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
         // ...Generate PQC identity keys (ML-KEM-768).
-        KeyPair selfPqc = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
+        KeyPair selfPqc = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber768());
 
         // ...Build local initiator (encapsulation) against our own public keys.
         HybridKexContext encKex = HybridKexBuilder.builder(session)

@@ -13,14 +13,16 @@ import zeroecho.pki.api.revocation.RevocationReason;
 /**
  * Immutable structured input for one certificate-revocation-list entry.
  *
- * <p>The serial number retains the full positive X.509 integer domain. The
+ * <p>
+ * The serial number retains the full positive X.509 integer domain. The
  * transition time is authoritative runtime state and is not replaced by CRL
  * generation time. {@link RevocationReason#REMOVE_FROM_CRL} is excluded because
- * removal is represented by omission from the current CRL.</p>
+ * removal is represented by omission from the current CRL.
+ * </p>
  *
- * @param serialNumber positive certificate serial number
+ * @param serialNumber   positive certificate serial number
  * @param transitionTime authoritative revocation or hold transition time
- * @param reason explicit CRL reason
+ * @param reason         explicit CRL reason
  */
 public record CrlEntry(BigInteger serialNumber, Instant transitionTime, RevocationReason reason) {
 

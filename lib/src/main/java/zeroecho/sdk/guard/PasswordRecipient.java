@@ -76,8 +76,8 @@ public final class PasswordRecipient implements Recipient, Destroyable, AutoClos
      * <li>The caller should clear the {@code password} array after constructing the
      * recipient to minimize exposure in memory.</li>
      * <li>Choose an iteration count appropriate to the target platform to balance
-     * password-guessing resistance against recipient creation and opening
-     * latency. Counts below {@value Pbkdf2Limits#MINIMUM} are rejected.</li>
+     * password-guessing resistance against recipient creation and opening latency.
+     * Counts below {@value Pbkdf2Limits#MINIMUM} are rejected.</li>
      * <li>Decoy recipients increase confidentiality by hiding the number of real
      * recipients but cannot successfully unwrap the CEK.</li>
      * </ul>

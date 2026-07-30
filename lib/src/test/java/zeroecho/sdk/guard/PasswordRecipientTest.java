@@ -75,10 +75,8 @@ class PasswordRecipientTest {
                     () -> new PasswordRecipient(new char[] { 'p' }, 10_000, 16, kekBytes, false, LIMITS));
         }
 
-        PasswordRecipient aes128 =
-                new PasswordRecipient(new char[] { 'p' }, 10_000, 16, 16, false, LIMITS);
-        PasswordRecipient aes256 =
-                new PasswordRecipient(new char[] { 'p' }, 10_000, 16, 32, false, LIMITS);
+        PasswordRecipient aes128 = new PasswordRecipient(new char[] { 'p' }, 10_000, 16, 16, false, LIMITS);
+        PasswordRecipient aes256 = new PasswordRecipient(new char[] { 'p' }, 10_000, 16, 32, false, LIMITS);
         aes128.close();
         aes256.close();
         System.out.println("...acceptedKekBytes=16,32");
@@ -131,9 +129,8 @@ class PasswordRecipientTest {
         ByteArrayOutputStream blob = new ByteArrayOutputStream();
         Util.writePack7I(blob, 9_999);
 
-        assertThrows(IOException.class, () -> new PasswordOpener(LIMITS).tryOpen(
-                "PWD:PBKDF2-SHA256:GCM-WRAP", blob.toByteArray(),
-                new UnlockMaterial.Password(new char[] { 'p' })));
+        assertThrows(IOException.class, () -> new PasswordOpener(LIMITS).tryOpen("PWD:PBKDF2-SHA256:GCM-WRAP",
+                blob.toByteArray(), new UnlockMaterial.Password(new char[] { 'p' })));
         System.out.println("ok");
     }
 
@@ -143,11 +140,9 @@ class PasswordRecipientTest {
         PasswordOpener opener = new PasswordOpener(LIMITS);
         UnlockMaterial.Password material = new UnlockMaterial.Password(new char[] { 'p' });
 
-        assertThrows(IOException.class,
-                () -> opener.tryOpen("PWD:PBKDF2-SHA256:GCM-WRAP", new byte[] { 1 }, material));
-        assertThrows(IOException.class,
-                () -> opener.tryOpen("PWD:PBKDF2-SHA256:GCM-WRAP",
-                        new byte[] { 1, 1, 1, 1, 1, (byte) 0x80 }, material));
+        assertThrows(IOException.class, () -> opener.tryOpen("PWD:PBKDF2-SHA256:GCM-WRAP", new byte[] { 1 }, material));
+        assertThrows(IOException.class, () -> opener.tryOpen("PWD:PBKDF2-SHA256:GCM-WRAP",
+                new byte[] { 1, 1, 1, 1, 1, (byte) 0x80 }, material));
         System.out.println("...malformedCases=2");
         System.out.println("ok");
     }
@@ -201,8 +196,7 @@ class PasswordRecipientTest {
 
         assertTrue(content.isDestroyed());
         assertTrue(recipient.isDestroyed());
-        assertThrows(IllegalStateException.class,
-                () -> content.setInput(() -> new ByteArrayInputStream(new byte[0])));
+        assertThrows(IllegalStateException.class, () -> content.setInput(() -> new ByteArrayInputStream(new byte[0])));
         assertThrows(IllegalStateException.class, content::getStream);
         System.out.println("...contentDestroyed=true");
         System.out.println("abandonedBuiltContentOwnsAndDestroysTransferredRecipient...ok");
@@ -218,14 +212,13 @@ class PasswordRecipientTest {
         DataContent limited = limitedBuilder.build(true);
         limited.setInput(() -> new ByteArrayInputStream(new byte[0]));
         assertThrows(IOException.class, limited::getStream);
-        assertTrue(limitedRecipients.stream()
-                .map(PasswordRecipient.class::cast).allMatch(PasswordRecipient::isDestroyed));
+        assertTrue(
+                limitedRecipients.stream().map(PasswordRecipient.class::cast).allMatch(PasswordRecipient::isDestroyed));
 
-        PasswordRecipient randomRecipient =
-                new PasswordRecipient(new char[] { 'c' }, 10_000, 16, 32, false, LIMITS);
+        PasswordRecipient randomRecipient = new PasswordRecipient(new char[] { 'c' }, 10_000, 16, 32, false, LIMITS);
         Encryptor randomFailure = new Encryptor(List.of(randomRecipient),
-                AesDataContentBuilder.builder(new ZeroEchoSession()).modeGcm(128).withHeader(),
-                null, 32, 4, 1024, ignored -> {
+                AesDataContentBuilder.builder(new ZeroEchoSession()).modeGcm(128).withHeader(), null, 32, 4, 1024,
+                ignored -> {
                     throw new IllegalStateException("controlled random failure");
                 });
         randomFailure.setInput(() -> new ByteArrayInputStream(new byte[0]));

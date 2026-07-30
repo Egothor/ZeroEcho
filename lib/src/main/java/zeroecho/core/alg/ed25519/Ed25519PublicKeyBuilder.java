@@ -38,8 +38,8 @@ import zeroecho.core.alg.common.eddsa.AbstractEncodedPublicKeyBuilder;
 /**
  * <h2>Public key builder for Ed25519</h2>
  *
- * Concrete {@link zeroecho.core.spi.PublicKeyImporter} for importing
- * wrapping Ed25519 public keys.
+ * Concrete {@link zeroecho.core.spi.PublicKeyImporter} for importing wrapping
+ * Ed25519 public keys.
  *
  * <p>
  * This builder integrates with the JCA under the canonical key factory

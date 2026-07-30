@@ -92,39 +92,37 @@ import zeroecho.pki.testkit.H7ProfileDocuments;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
 /**
- * End-to-end H7 acceptance evidence from signed PKCS#10 requests through durable
- * real X.509 leaf certificates.
+ * End-to-end H7 acceptance evidence from signed PKCS#10 requests through
+ * durable real X.509 leaf certificates.
  */
 final class H7EndEntityAcceptanceE2eTest {
     private static final int POSITIVE_ISSUANCE_CASE_COUNT = 16;
     private static final int MAIN_BACKEND_MUTATION_CASE_COUNT = 61;
     private static final int BACKEND_MUTATION_CASE_COUNT = 63;
     private static final String REDACTION_SENTINEL = "DO-NOT-LOG-H7-SENTINEL";
-    private static final Set<ASN1ObjectIdentifier> LEAF_EXTENSION_OIDS = Set.of(
-            Extension.basicConstraints, Extension.keyUsage, Extension.extendedKeyUsage,
-            Extension.subjectAlternativeName);
+    private static final Set<ASN1ObjectIdentifier> LEAF_EXTENSION_OIDS = Set.of(Extension.basicConstraints,
+            Extension.keyUsage, Extension.extendedKeyUsage, Extension.subjectAlternativeName);
 
     @Test
-    void everyBuiltInTemplateRequiresImportAndActivationBeforeRealIssuance(@TempDir Path tempDir)
-            throws Exception {
+    void everyBuiltInTemplateRequiresImportAndActivationBeforeRealIssuance(@TempDir Path tempDir) throws Exception {
         KeyPair rootKey = rsa();
         KeyPair leafKey = rsa();
         KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:h7-built-in:root");
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey))) {
-            List<BuiltInCertificateProfileTemplate> templates = BuiltInCertificateProfileCatalog.load(
-                    H7EndEntityAcceptanceE2eTest.class.getClassLoader());
+            List<BuiltInCertificateProfileTemplate> templates = BuiltInCertificateProfileCatalog
+                    .load(H7EndEntityAcceptanceE2eTest.class.getClassLoader());
             assertEquals(6, templates.size());
             for (BuiltInCertificateProfileTemplate template : templates) {
                 String profileId = template.definition().profileId();
                 assertTrue(runtime.profileService().getImportedVersion(profileId, 1).isEmpty());
             }
-            PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 Built-in Root"), "root-ca", Optional.of(rootKeyRef),
-                    new SimpleAttributeSet()));
+            PkiId rootCaId = runtime.caService().createRoot(
+                    new CaCreateCommand(runtime.framework().formatId(), new SubjectRef("CN=H7 Built-in Root"),
+                            "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             for (BuiltInCertificateProfileTemplate template : templates.stream()
-                    .filter(template -> template.definition().certificateType()
-                            == zeroecho.pki.api.profile.CertificateProfileKind.END_ENTITY)
+                    .filter(template -> template.definition()
+                            .certificateType() == zeroecho.pki.api.profile.CertificateProfileKind.END_ENTITY)
                     .toList()) {
                 String profileId = template.definition().profileId();
                 CertificateProfileRef imported = runtime.profileService().importBuiltIn(template);
@@ -133,15 +131,16 @@ final class H7EndEntityAcceptanceE2eTest {
                 assertEquals(imported, runtime.profileService().activateProfile(profileId, 1));
 
                 GeneralName identity = builtInIdentity(profileId);
-                ParsedCertificationRequest request = parse(runtime, leafKey,
-                        new X500Name("CN=" + profileId), List.of(identity));
-                Credential issued = runtime.issuanceService().issueEndEntity(new IssueEndEntityCommand(rootCaId,
-                        request, profileId, Optional.empty())).credential();
+                ParsedCertificationRequest request = parse(runtime, leafKey, new X500Name("CN=" + profileId),
+                        List.of(identity));
+                Credential issued = runtime.issuanceService()
+                        .issueEndEntity(new IssueEndEntityCommand(rootCaId, request, profileId, Optional.empty()))
+                        .credential();
                 EndEntityProfileBinding binding = (EndEntityProfileBinding) issued.profileBinding();
                 assertEquals(imported, binding.reference());
                 X509CertificateHolder holder = new X509CertificateHolder(issued.encoded().bytes());
-                GeneralName[] names = GeneralNames.fromExtensions(holder.getExtensions(),
-                        Extension.subjectAlternativeName).getNames();
+                GeneralName[] names = GeneralNames
+                        .fromExtensions(holder.getExtensions(), Extension.subjectAlternativeName).getNames();
                 assertEquals(1, names.length);
                 assertEquals(identity.getTagNo(), names[0].getTagNo());
             }
@@ -150,12 +149,10 @@ final class H7EndEntityAcceptanceE2eTest {
 
     private static GeneralName builtInIdentity(String profileId) {
         return switch (profileId) {
-            case "server-tls", "vpn-server" ->
-                new GeneralName(GeneralName.dNSName, profileId + ".example.com");
+            case "server-tls", "vpn-server" -> new GeneralName(GeneralName.dNSName, profileId + ".example.com");
             case "vpn-client" ->
                 new GeneralName(GeneralName.uniformResourceIdentifier, "spiffe://example.test/workload");
-            case "email-signing" ->
-                new GeneralName(GeneralName.rfc822Name, "Signer@example.com");
+            case "email-signing" -> new GeneralName(GeneralName.rfc822Name, "Signer@example.com");
             default -> throw new IllegalArgumentException("unexpected built-in profile");
         };
     }
@@ -172,24 +169,21 @@ final class H7EndEntityAcceptanceE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, busFile, Map.of(rootKeyRef, rootKey))) {
             List<byte[]> profiles = acceptanceProfileDocuments();
             profiles.forEach(runtime::importAndActivate);
-            PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 Acceptance Root"), "root-ca", Optional.of(rootKeyRef),
-                    new SimpleAttributeSet()));
+            PkiId rootCaId = runtime.caService().createRoot(
+                    new CaCreateCommand(runtime.framework().formatId(), new SubjectRef("CN=H7 Acceptance Root"),
+                            "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
 
             CredentialIssuerBackend serialCapturingBackend = serialCapturingBackend(runtime.issuerBackend(),
                     allocatedSerials);
-            List<IssuanceCase> cases = List.of(
-                    new IssuanceCase("h7-dns", new X500Name("CN=DNS Leaf"), false,
-                            List.of(new GeneralName(GeneralName.dNSName, "WWW.Example.COM")),
-                            List.of("2:www.example.com")),
+            List<IssuanceCase> cases = List.of(new IssuanceCase("h7-dns", new X500Name("CN=DNS Leaf"), false,
+                    List.of(new GeneralName(GeneralName.dNSName, "WWW.Example.COM")), List.of("2:www.example.com")),
                     new IssuanceCase("h7-dns-multiple", new X500Name("CN=Multiple DNS Leaf"), false,
                             List.of(new GeneralName(GeneralName.dNSName, "one.example.com"),
                                     new GeneralName(GeneralName.dNSName, "two.example.com"),
                                     new GeneralName(GeneralName.dNSName, "three.example.com")),
                             List.of("2:one.example.com", "2:two.example.com", "2:three.example.com")),
                     new IssuanceCase("h7-wildcard", new X500Name("CN=Wildcard Leaf"), false,
-                            List.of(new GeneralName(GeneralName.dNSName, "*.Example.COM")),
-                            List.of("2:*.example.com")),
+                            List.of(new GeneralName(GeneralName.dNSName, "*.Example.COM")), List.of("2:*.example.com")),
                     new IssuanceCase("h7-dns-empty", new X500Name(""), true,
                             List.of(new GeneralName(GeneralName.dNSName, "empty.example.com")),
                             List.of("2:empty.example.com")),
@@ -197,8 +191,7 @@ final class H7EndEntityAcceptanceE2eTest {
                             List.of(new GeneralName(GeneralName.dNSName, "critical.example.com")),
                             List.of("2:critical.example.com")),
                     new IssuanceCase("h7-ip", new X500Name("CN=IPv4 Leaf"), false,
-                            List.of(ipName(new byte[] { (byte) 192, 0, 2, 10 })),
-                            List.of("7:c000020a")),
+                            List.of(ipName(new byte[] { (byte) 192, 0, 2, 10 })), List.of("7:c000020a")),
                     new IssuanceCase("h7-ip", new X500Name("CN=IPv6 Leaf"), false,
                             List.of(ipName(HexFormat.of().parseHex("20010db8000000000000000000000001"))),
                             List.of("7:20010db8000000000000000000000001")),
@@ -207,19 +200,16 @@ final class H7EndEntityAcceptanceE2eTest {
                                     ipName(HexFormat.of().parseHex("20010db8000000000000000000000002"))),
                             List.of("7:c000020b", "7:20010db8000000000000000000000002")),
                     new IssuanceCase("h7-ip-empty", new X500Name(""), true,
-                            List.of(ipName(new byte[] { (byte) 192, 0, 2, 12 })),
-                            List.of("7:c000020c")),
+                            List.of(ipName(new byte[] { (byte) 192, 0, 2, 12 })), List.of("7:c000020c")),
                     new IssuanceCase("h7-uri", new X500Name("CN=URI Leaf"), false,
                             List.of(new GeneralName(GeneralName.uniformResourceIdentifier,
                                     "HTTPS://Service.Example.COM/a%2Fb?q=%2F")),
                             List.of("6:https://service.example.com/a%2Fb?q=%2F")),
                     new IssuanceCase("h7-uri-multiple", new X500Name("CN=Multiple URI Leaf"), false,
-                            List.of(new GeneralName(GeneralName.uniformResourceIdentifier,
-                                            "https://one.example.com/a"),
+                            List.of(new GeneralName(GeneralName.uniformResourceIdentifier, "https://one.example.com/a"),
                                     new GeneralName(GeneralName.uniformResourceIdentifier,
                                             "HTTPS://Two.Example.COM/b%2Fc?q=%2F")),
-                            List.of("6:https://one.example.com/a",
-                                    "6:https://two.example.com/b%2Fc?q=%2F")),
+                            List.of("6:https://one.example.com/a", "6:https://two.example.com/b%2Fc?q=%2F")),
                     new IssuanceCase("h7-uri-empty", new X500Name(""), true,
                             List.of(new GeneralName(GeneralName.uniformResourceIdentifier,
                                     "https://empty.example.com/service")),
@@ -240,8 +230,8 @@ final class H7EndEntityAcceptanceE2eTest {
                                     new GeneralName(GeneralName.uniformResourceIdentifier,
                                             "https://mixed.example.com/service"),
                                     new GeneralName(GeneralName.rfc822Name, "Mixed@Example.COM")),
-                            List.of("2:mixed.example.com", "7:c6336407",
-                                    "6:https://mixed.example.com/service", "1:Mixed@example.com")));
+                            List.of("2:mixed.example.com", "7:c6336407", "6:https://mixed.example.com/service",
+                                    "1:Mixed@example.com")));
             assertEquals(POSITIVE_ISSUANCE_CASE_COUNT, cases.size());
 
             for (IssuanceCase issuanceCase : cases) {
@@ -260,8 +250,8 @@ final class H7EndEntityAcceptanceE2eTest {
             assertTrue(serial.toByteArray().length <= 20);
         }
         assertEquals(List.of("issuerCaId", "request", "profileId", "validityOverride"),
-                Arrays.stream(IssueEndEntityCommand.class.getRecordComponents())
-                        .map(component -> component.getName()).toList());
+                Arrays.stream(IssueEndEntityCommand.class.getRecordComponents()).map(component -> component.getName())
+                        .toList());
 
         try (PkiTestRuntime reopened = PkiTestRuntime.create(tempDir, busFile, Map.of(rootKeyRef, rootKey))) {
             for (Map.Entry<PkiId, PersistedExpectation> entry : durableCredentials.entrySet()) {
@@ -280,34 +270,28 @@ final class H7EndEntityAcceptanceE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey))) {
             acceptanceProfileDocuments().forEach(runtime::importAndActivate);
-            PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 Rejection Root"), "root-ca", Optional.of(rootKeyRef),
-                    new SimpleAttributeSet()));
+            PkiId rootCaId = runtime.caService().createRoot(
+                    new CaCreateCommand(runtime.framework().formatId(), new SubjectRef("CN=H7 Rejection Root"),
+                            "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
 
             assertProfileRejected(runtime, rootCaId, leafKey, "h7-dns",
-                    List.of(new GeneralName(GeneralName.dNSName, "*.example.com")),
-                    "SAN_WILDCARD_FORBIDDEN");
+                    List.of(new GeneralName(GeneralName.dNSName, "*.example.com")), "SAN_WILDCARD_FORBIDDEN");
             assertProfileRejected(runtime, rootCaId, leafKey, "h7-ip",
-                    List.of(new GeneralName(GeneralName.dNSName, "wrong-type.example.com")),
-                    "SAN_TYPE_FORBIDDEN");
+                    List.of(new GeneralName(GeneralName.dNSName, "wrong-type.example.com")), "SAN_TYPE_FORBIDDEN");
             assertProfileRejected(runtime, rootCaId, leafKey, "h7-ipv4",
                     List.of(ipName(HexFormat.of().parseHex("20010db8000000000000000000000001"))),
                     "SAN_IP_FAMILY_FORBIDDEN");
             assertProfileRejected(runtime, rootCaId, leafKey, "h7-ipv6",
-                    List.of(ipName(new byte[] { (byte) 192, 0, 2, 20 })),
-                    "SAN_IP_FAMILY_FORBIDDEN");
+                    List.of(ipName(new byte[] { (byte) 192, 0, 2, 20 })), "SAN_IP_FAMILY_FORBIDDEN");
             assertProfileRejected(runtime, rootCaId, leafKey, "h7-uri",
-                    List.of(new GeneralName(GeneralName.uniformResourceIdentifier,
-                            "http://service.example.com/path")),
+                    List.of(new GeneralName(GeneralName.uniformResourceIdentifier, "http://service.example.com/path")),
                     "SAN_URI_SCHEME_FORBIDDEN");
             assertProfileRejected(runtime, rootCaId, leafKey, "h7-rfc822",
-                    List.of(new GeneralName(GeneralName.dNSName, "mail.example.com")),
-                    "SAN_TYPE_FORBIDDEN");
+                    List.of(new GeneralName(GeneralName.dNSName, "mail.example.com")), "SAN_TYPE_FORBIDDEN");
             assertProfileRejected(runtime, rootCaId, leafKey, "h7-mixed",
                     List.of(new GeneralName(GeneralName.dNSName, "mixed.example.com"),
-                            ipName(new byte[] { (byte) 198, 51, 100, 8 }),
-                            new GeneralName(GeneralName.uniformResourceIdentifier,
-                                    "https://mixed.example.com/service")),
+                            ipName(new byte[] { (byte) 198, 51, 100, 8 }), new GeneralName(
+                                    GeneralName.uniformResourceIdentifier, "https://mixed.example.com/service")),
                     "SAN_COUNT_INVALID");
         }
     }
@@ -325,15 +309,13 @@ final class H7EndEntityAcceptanceE2eTest {
                 Map.of(rootKeyRef, rootKey))) {
             runtime.importAndActivate(H7ProfileDocuments.backendMutationProfile());
             runtime.importAndActivate(H7ProfileDocuments.noSanOrEkuProfile());
-            PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 Mutation Root"), "root-ca", Optional.of(rootKeyRef),
-                    new SimpleAttributeSet()));
-            ParsedCertificationRequest request = parse(runtime, leafKey,
-                    new X500Name("CN=Mutation Leaf,O=Example"),
+            PkiId rootCaId = runtime.caService().createRoot(
+                    new CaCreateCommand(runtime.framework().formatId(), new SubjectRef("CN=H7 Mutation Root"),
+                            "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+            ParsedCertificationRequest request = parse(runtime, leafKey, new X500Name("CN=Mutation Leaf,O=Example"),
                     List.of(new GeneralName(GeneralName.dNSName, "base.example.com"),
                             ipName(new byte[] { (byte) 203, 0, 113, 9 }),
-                            new GeneralName(GeneralName.uniformResourceIdentifier,
-                                    "https://base.example.com/service"),
+                            new GeneralName(GeneralName.uniformResourceIdentifier, "https://base.example.com/service"),
                             new GeneralName(GeneralName.rfc822Name, "Base@example.com")));
 
             assertEquals(BACKEND_MUTATION_CASE_COUNT, LeafMutation.values().length);
@@ -341,16 +323,16 @@ final class H7EndEntityAcceptanceE2eTest {
                     Arrays.stream(LeafMutation.values()).filter(LeafMutation::mainProfile).count());
             for (LeafMutation mutation : LeafMutation.values()) {
                 if (mutation.mainProfile()) {
-                    assertMaliciousMutationRejected(runtime, rootCaId, request, "h7-backend-mutation",
-                            rootKey, substituteKey, mutation);
+                    assertMaliciousMutationRejected(runtime, rootCaId, request, "h7-backend-mutation", rootKey,
+                            substituteKey, mutation);
                 }
             }
             ParsedCertificationRequest noExtensions = parseWithoutExtensions(runtime, leafKey,
                     new X500Name("CN=No Extensions Leaf"));
-            assertMaliciousMutationRejected(runtime, rootCaId, noExtensions, "h7-no-san-eku",
-                    rootKey, substituteKey, LeafMutation.SUBJECT_ALTERNATIVE_NAME_ADDED_WHEN_FORBIDDEN);
-            assertMaliciousMutationRejected(runtime, rootCaId, noExtensions, "h7-no-san-eku",
-                    rootKey, substituteKey, LeafMutation.EXTENDED_KEY_USAGE_ADDED_WHEN_FORBIDDEN);
+            assertMaliciousMutationRejected(runtime, rootCaId, noExtensions, "h7-no-san-eku", rootKey, substituteKey,
+                    LeafMutation.SUBJECT_ALTERNATIVE_NAME_ADDED_WHEN_FORBIDDEN);
+            assertMaliciousMutationRejected(runtime, rootCaId, noExtensions, "h7-no-san-eku", rootKey, substituteKey,
+                    LeafMutation.EXTENDED_KEY_USAGE_ADDED_WHEN_FORBIDDEN);
             assertFalse(logHandler.messages().contains(REDACTION_SENTINEL));
         } finally {
             rootLogger.removeHandler(logHandler);
@@ -365,8 +347,8 @@ final class H7EndEntityAcceptanceE2eTest {
             generator.addExtension(oid, true, value);
             try {
                 generator.addExtension(oid, false, value);
-                assertEquals(1, Arrays.stream(generator.generate().getExtensionOIDs())
-                        .filter(oid::equals).count(), oid::getId);
+                assertEquals(1, Arrays.stream(generator.generate().getExtensionOIDs()).filter(oid::equals).count(),
+                        oid::getId);
             } catch (RuntimeException expectedRejection) {
                 assertFalse(String.valueOf(expectedRejection.getMessage()).isBlank(), oid::getId);
             }
@@ -391,17 +373,15 @@ final class H7EndEntityAcceptanceE2eTest {
                 H7ProfileDocuments.wildcardDnsProfile(), H7ProfileDocuments.emptySubjectDnsProfile(),
                 H7ProfileDocuments.criticalDnsProfile(), H7ProfileDocuments.ipProfile(),
                 H7ProfileDocuments.mixedIpProfile(), H7ProfileDocuments.emptySubjectIpProfile(),
-                H7ProfileDocuments.ipv4Profile(), H7ProfileDocuments.ipv6Profile(),
-                H7ProfileDocuments.uriProfile(), H7ProfileDocuments.multipleUriProfile(),
-                H7ProfileDocuments.emptySubjectUriProfile(), H7ProfileDocuments.rfc822Profile(),
-                H7ProfileDocuments.multipleRfc822Profile(), H7ProfileDocuments.emptySubjectRfc822Profile(),
-                H7ProfileDocuments.mixedSanProfile());
+                H7ProfileDocuments.ipv4Profile(), H7ProfileDocuments.ipv6Profile(), H7ProfileDocuments.uriProfile(),
+                H7ProfileDocuments.multipleUriProfile(), H7ProfileDocuments.emptySubjectUriProfile(),
+                H7ProfileDocuments.rfc822Profile(), H7ProfileDocuments.multipleRfc822Profile(),
+                H7ProfileDocuments.emptySubjectRfc822Profile(), H7ProfileDocuments.mixedSanProfile());
     }
 
     private static Credential issue(PkiTestRuntime runtime, CredentialIssuerBackend backend, PkiId rootCaId,
             KeyPair leafKey, IssuanceCase issuanceCase) throws Exception {
-        ParsedCertificationRequest request = parse(runtime, leafKey, issuanceCase.subject(),
-                issuanceCase.sans());
+        ParsedCertificationRequest request = parse(runtime, leafKey, issuanceCase.subject(), issuanceCase.sans());
         CredentialBundle bundle = runtime.issuanceService(backend, runtime.statusResolver()).issueEndEntity(
                 new IssueEndEntityCommand(rootCaId, request, issuanceCase.profileId(), Optional.empty()));
         return bundle.credential();
@@ -414,8 +394,8 @@ final class H7EndEntityAcceptanceE2eTest {
 
     private static ParsedCertificationRequest parse(PkiTestRuntime runtime, KeyPair leafKey, X500Name subject,
             List<GeneralName> sans) throws Exception {
-        PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(
-                subject, leafKey.getPublic());
+        PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject,
+                leafKey.getPublic());
         ExtensionsGenerator extensionGenerator = new ExtensionsGenerator();
         extensionGenerator.addExtension(Extension.subjectAlternativeName, false,
                 new GeneralNames(sans.toArray(GeneralName[]::new)));
@@ -428,8 +408,8 @@ final class H7EndEntityAcceptanceE2eTest {
 
     private static ParsedCertificationRequest parseWithoutExtensions(PkiTestRuntime runtime, KeyPair leafKey,
             X500Name subject) throws Exception {
-        PKCS10CertificationRequestBuilder builder =
-                new JcaPKCS10CertificationRequestBuilder(subject, leafKey.getPublic());
+        PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject,
+                leafKey.getPublic());
         ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(leafKey.getPrivate());
         PKCS10CertificationRequest csr = builder.build(signer);
         return runtime.certificationRequestService().parse(new CertificationRequest(runtime.framework().formatId(),
@@ -447,7 +427,8 @@ final class H7EndEntityAcceptanceE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
+                    EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
                 return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
@@ -456,8 +437,7 @@ final class H7EndEntityAcceptanceE2eTest {
     private static void assertExactLeaf(Credential credential, KeyPair rootKey, KeyPair leafKey,
             PersistedExpectation expectation) throws Exception {
         assertEquals(Encoding.DER, credential.encoded().encoding());
-        EndEntityProfileBinding binding = assertInstanceOf(EndEntityProfileBinding.class,
-                credential.profileBinding());
+        EndEntityProfileBinding binding = assertInstanceOf(EndEntityProfileBinding.class, credential.profileBinding());
         assertEquals(expectation.issuanceCase().profileId(), binding.reference().profileId());
         assertEquals(expectation.validity(), credential.validity());
         assertEquals(expectation.publicKeyId(), credential.publicKeyId());
@@ -479,8 +459,8 @@ final class H7EndEntityAcceptanceE2eTest {
         assertEquals(credential.validity().notAfter().getEpochSecond(),
                 holder.getNotAfter().toInstant().getEpochSecond());
 
-        assertEquals(LEAF_EXTENSION_OIDS, Arrays.stream(holder.getExtensions().getExtensionOIDs()).collect(
-                java.util.stream.Collectors.toUnmodifiableSet()));
+        assertEquals(LEAF_EXTENSION_OIDS, Arrays.stream(holder.getExtensions().getExtensionOIDs())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet()));
         Extension basicConstraints = holder.getExtension(Extension.basicConstraints);
         assertTrue(basicConstraints.isCritical());
         assertFalse(BasicConstraints.getInstance(basicConstraints.getParsedValue()).isCA());
@@ -498,13 +478,13 @@ final class H7EndEntityAcceptanceE2eTest {
     }
 
     private static List<String> encodedSans(X509CertificateHolder holder) {
-        GeneralName[] names = GeneralNames.fromExtensions(holder.getExtensions(),
-                Extension.subjectAlternativeName).getNames();
+        GeneralName[] names = GeneralNames.fromExtensions(holder.getExtensions(), Extension.subjectAlternativeName)
+                .getNames();
         List<String> encoded = new ArrayList<>(names.length);
         for (GeneralName name : names) {
             if (name.getTagNo() == GeneralName.iPAddress) {
-                encoded.add(name.getTagNo() + ":" + HexFormat.of().formatHex(
-                        DEROctetString.getInstance(name.getName()).getOctets()));
+                encoded.add(name.getTagNo() + ":"
+                        + HexFormat.of().formatHex(DEROctetString.getInstance(name.getName()).getOctets()));
             } else {
                 encoded.add(name.getTagNo() + ":" + DERIA5String.getInstance(name.getName()).getString());
             }
@@ -516,8 +496,8 @@ final class H7EndEntityAcceptanceE2eTest {
         return new GeneralName(GeneralName.iPAddress, new DEROctetString(address));
     }
 
-    private static void assertProfileRejected(PkiTestRuntime runtime, PkiId rootCaId, KeyPair leafKey,
-            String profileId, List<GeneralName> sans, String code) throws Exception {
+    private static void assertProfileRejected(PkiTestRuntime runtime, PkiId rootCaId, KeyPair leafKey, String profileId,
+            List<GeneralName> sans, String code) throws Exception {
         ParsedCertificationRequest request = parse(runtime, leafKey, "Rejected Leaf", sans);
         AtomicInteger backendCalls = new AtomicInteger();
         CredentialIssuerBackend backend = countingBackend(runtime.issuerBackend(), backendCalls);
@@ -525,8 +505,8 @@ final class H7EndEntityAcceptanceE2eTest {
         int signsBefore = runtime.submittedSignCount();
 
         PkiException rejection = assertThrows(PkiException.class,
-                () -> runtime.issuanceService(backend, runtime.statusResolver()).issueEndEntity(
-                        new IssueEndEntityCommand(rootCaId, request, profileId, Optional.empty())));
+                () -> runtime.issuanceService(backend, runtime.statusResolver())
+                        .issueEndEntity(new IssueEndEntityCommand(rootCaId, request, profileId, Optional.empty())));
 
         assertTrue(rejection.getMessage().contains(code), profileId);
         assertEquals(0, backendCalls.get(), profileId);
@@ -545,7 +525,8 @@ final class H7EndEntityAcceptanceE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
+                    EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
                 return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
@@ -558,25 +539,23 @@ final class H7EndEntityAcceptanceE2eTest {
         AtomicReference<Credential> baselineCredential = new AtomicReference<>();
         AtomicReference<BigInteger> deliveredSerial = new AtomicReference<>();
         AtomicInteger backendCalls = new AtomicInteger();
-        CredentialIssuerBackend backend = mutatingBackend(runtime.issuerBackend(), rootKey, substituteKey,
-                mutation, baselineCredential, maliciousCredential, deliveredSerial, backendCalls);
+        CredentialIssuerBackend backend = mutatingBackend(runtime.issuerBackend(), rootKey, substituteKey, mutation,
+                baselineCredential, maliciousCredential, deliveredSerial, backendCalls);
         int auditBefore = runtime.auditSink().snapshot().size();
 
         PkiException rejection = assertThrows(PkiException.class,
-                () -> runtime.issuanceService(backend, runtime.statusResolver()).issueEndEntity(
-                        new IssueEndEntityCommand(rootCaId, request, profileId, Optional.empty())),
+                () -> runtime.issuanceService(backend, runtime.statusResolver())
+                        .issueEndEntity(new IssueEndEntityCommand(rootCaId, request, profileId, Optional.empty())),
                 mutation.name());
 
-        String expectedCode = mutation == LeafMutation.PROFILE_ID_METADATA
-                ? "CREDENTIAL_PROFILE_BINDING_MISMATCH" : "BACKEND_CREDENTIAL_MISMATCH";
+        String expectedCode = mutation == LeafMutation.PROFILE_ID_METADATA ? "CREDENTIAL_PROFILE_BINDING_MISMATCH"
+                : "BACKEND_CREDENTIAL_MISMATCH";
         assertTrue(rejection.getMessage().contains(expectedCode), mutation.name());
         assertEquals(1, backendCalls.get(), mutation.name());
         assertTrue(deliveredSerial.get().signum() > 0, mutation.name());
         assertTrue(deliveredSerial.get().toByteArray().length <= 20, mutation.name());
-        assertTrue(runtime.store().getCredential(maliciousCredential.get().credentialId()).isEmpty(),
-                mutation.name());
-        assertTrue(runtime.store().getCredential(baselineCredential.get().credentialId()).isEmpty(),
-                mutation.name());
+        assertTrue(runtime.store().getCredential(maliciousCredential.get().credentialId()).isEmpty(), mutation.name());
+        assertTrue(runtime.store().getCredential(baselineCredential.get().credentialId()).isEmpty(), mutation.name());
         assertSingleRejectionAudit(runtime, auditBefore, expectedCode);
         assertRedacted(rejection, REDACTION_SENTINEL);
         assertFalse(runtime.auditSink().snapshot().toString().contains(REDACTION_SENTINEL), mutation.name());
@@ -592,8 +571,7 @@ final class H7EndEntityAcceptanceE2eTest {
                     EncodedObject issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
                 backendCalls.incrementAndGet();
                 deliveredSerial.set(serial);
-                CredentialBundle baseline = delegate.issueEndEntity(candidate, issuerCertificate, issuerKeyRef,
-                        serial);
+                CredentialBundle baseline = delegate.issueEndEntity(candidate, issuerCertificate, issuerKeyRef, serial);
                 baselineCredential.set(baseline.credential());
                 Credential mutated = mutateCredential(baseline.credential(), rootKey, substituteKey, mutation);
                 maliciousCredential.set(mutated);
@@ -601,7 +579,8 @@ final class H7EndEntityAcceptanceE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
+                    EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
                 return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
@@ -611,8 +590,8 @@ final class H7EndEntityAcceptanceE2eTest {
             LeafMutation mutation) {
         try {
             X509CertificateHolder original = new X509CertificateHolder(credential.encoded().bytes());
-            X500Name issuer = mutation == LeafMutation.ISSUER
-                    ? new X500Name("CN=Wrong H7 Issuer") : original.getIssuer();
+            X500Name issuer = mutation == LeafMutation.ISSUER ? new X500Name("CN=Wrong H7 Issuer")
+                    : original.getIssuer();
             X500Name subject = mutatedSubject(original.getSubject(), mutation);
             SubjectPublicKeyInfo publicKeyInfo = mutation == LeafMutation.PUBLIC_KEY
                     ? SubjectPublicKeyInfo.getInstance(substituteKey.getPublic().getEncoded())
@@ -624,7 +603,8 @@ final class H7EndEntityAcceptanceE2eTest {
                 default -> original.getSerialNumber();
             };
             Date notBefore = mutation == LeafMutation.NOT_BEFORE_MOVED
-                    ? Date.from(original.getNotBefore().toInstant().plusSeconds(60)) : original.getNotBefore();
+                    ? Date.from(original.getNotBefore().toInstant().plusSeconds(60))
+                    : original.getNotBefore();
             Date notAfter = switch (mutation) {
                 case NOT_AFTER_EXTENDED -> Date.from(original.getNotAfter().toInstant().plusSeconds(60));
                 case VALIDITY_SHORTENED -> Date.from(original.getNotAfter().toInstant().minusSeconds(60));
@@ -643,36 +623,37 @@ final class H7EndEntityAcceptanceE2eTest {
             X509CertificateHolder mutated = new X509CertificateHolder(der);
             byte[] spki = mutated.getSubjectPublicKeyInfo().getEncoded();
             Validity validity = new Validity(mutated.getNotBefore().toInstant(), mutated.getNotAfter().toInstant());
-            PkiId credentialId = mutation == LeafMutation.CREDENTIAL_ID_METADATA
-                    ? new PkiId("x509:wrong-metadata") : new PkiId("x509:" + sha256Hex(der));
-            FormatId formatId = mutation == LeafMutation.FORMAT_METADATA
-                    ? new FormatId("wrong-format") : credential.formatId();
+            PkiId credentialId = mutation == LeafMutation.CREDENTIAL_ID_METADATA ? new PkiId("x509:wrong-metadata")
+                    : new PkiId("x509:" + sha256Hex(der));
+            FormatId formatId = mutation == LeafMutation.FORMAT_METADATA ? new FormatId("wrong-format")
+                    : credential.formatId();
             IssuerRef issuerRef = mutation == LeafMutation.ISSUER_REF_METADATA
-                    ? new IssuerRef(new PkiId("ca:wrong-metadata")) : credential.issuerRef();
-            SubjectRef subjectRef = mutated.getSubject().getRDNs().length == 0
-                    ? new SubjectRef("x509:empty-subject") : new SubjectRef(mutated.getSubject().toString());
+                    ? new IssuerRef(new PkiId("ca:wrong-metadata"))
+                    : credential.issuerRef();
+            SubjectRef subjectRef = mutated.getSubject().getRDNs().length == 0 ? new SubjectRef("x509:empty-subject")
+                    : new SubjectRef(mutated.getSubject().toString());
             if (mutation == LeafMutation.SUBJECT_REF_METADATA) {
                 subjectRef = new SubjectRef("CN=Wrong Metadata Subject");
             }
             Validity metadataValidity = mutation == LeafMutation.VALIDITY_METADATA
-                    ? new Validity(validity.notBefore().plusSeconds(1), validity.notAfter()) : validity;
+                    ? new Validity(validity.notBefore().plusSeconds(1), validity.notAfter())
+                    : validity;
             String metadataSerial = mutation == LeafMutation.SERIAL_METADATA
                     ? original.getSerialNumber().add(BigInteger.TEN).toString()
                     : mutated.getSerialNumber().toString();
-            PkiId publicKeyId = mutation == LeafMutation.PUBLIC_KEY_ID_METADATA
-                    ? new PkiId("spki:wrong-metadata") : new PkiId("spki:" + sha256Hex(spki));
+            PkiId publicKeyId = mutation == LeafMutation.PUBLIC_KEY_ID_METADATA ? new PkiId("spki:wrong-metadata")
+                    : new PkiId("spki:" + sha256Hex(spki));
             EndEntityProfileBinding originalBinding = (EndEntityProfileBinding) credential.profileBinding();
             CertificateProfileRef originalRef = originalBinding.reference();
             EndEntityProfileBinding profileBinding = mutation == LeafMutation.PROFILE_ID_METADATA
                     ? new EndEntityProfileBinding(new CertificateProfileRef("wrong-profile",
                             originalRef.profileVersion(), originalRef.canonicalSha256()))
                     : originalBinding;
-            CredentialStatus status = mutation == LeafMutation.STATUS_METADATA
-                    ? CredentialStatus.REVOKED : credential.status();
+            CredentialStatus status = mutation == LeafMutation.STATUS_METADATA ? CredentialStatus.REVOKED
+                    : credential.status();
             Encoding encoding = mutation == LeafMutation.ENCODING_METADATA ? Encoding.PEM : Encoding.DER;
-            return new Credential(credentialId, formatId, issuerRef, subjectRef, metadataValidity,
-                    metadataSerial, publicKeyId, profileBinding, status, new EncodedObject(encoding, der),
-                    credential.attributes());
+            return new Credential(credentialId, formatId, issuerRef, subjectRef, metadataValidity, metadataSerial,
+                    publicKeyId, profileBinding, status, new EncodedObject(encoding, der), credential.attributes());
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to build controlled H7 mutation " + mutation.name());
         }
@@ -715,8 +696,8 @@ final class H7EndEntityAcceptanceE2eTest {
             if (mutation == LeafMutation.BASIC_CONSTRAINTS_MALFORMED) {
                 builder.addExtension(Extension.basicConstraints, true, DERNull.INSTANCE);
             } else {
-                boolean critical = mutation == LeafMutation.BASIC_CONSTRAINTS_NONCRITICAL
-                        ? false : originalBasicConstraints.isCritical();
+                boolean critical = mutation == LeafMutation.BASIC_CONSTRAINTS_NONCRITICAL ? false
+                        : originalBasicConstraints.isCritical();
                 BasicConstraints value = switch (mutation) {
                     case BASIC_CONSTRAINTS_CA -> new BasicConstraints(true);
                     case BASIC_CONSTRAINTS_PATH_LENGTH -> new BasicConstraints(0);
@@ -731,11 +712,11 @@ final class H7EndEntityAcceptanceE2eTest {
             if (mutation == LeafMutation.KEY_USAGE_MALFORMED) {
                 builder.addExtension(Extension.keyUsage, true, DERNull.INSTANCE);
             } else {
-                boolean critical = mutation == LeafMutation.KEY_USAGE_NONCRITICAL
-                        ? false : originalKeyUsage.isCritical();
+                boolean critical = mutation == LeafMutation.KEY_USAGE_NONCRITICAL ? false
+                        : originalKeyUsage.isCritical();
                 KeyUsage value = switch (mutation) {
-                    case KEY_USAGE_ADD -> new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment
-                            | KeyUsage.dataEncipherment);
+                    case KEY_USAGE_ADD ->
+                        new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment | KeyUsage.dataEncipherment);
                     case KEY_USAGE_REMOVE -> new KeyUsage(KeyUsage.digitalSignature);
                     case KEY_USAGE_REPLACE -> new KeyUsage(KeyUsage.keyAgreement);
                     default -> KeyUsage.getInstance(originalKeyUsage.getParsedValue());
@@ -763,8 +744,8 @@ final class H7EndEntityAcceptanceE2eTest {
                 } else if (mutation == LeafMutation.EXTENDED_KEY_USAGE_REPLACE) {
                     usages = new KeyPurposeId[] { KeyPurposeId.id_kp_codeSigning };
                 } else if (mutation == LeafMutation.EXTENDED_KEY_USAGE_DUPLICATE) {
-                    usages = new KeyPurposeId[] { KeyPurposeId.id_kp_serverAuth,
-                            KeyPurposeId.id_kp_clientAuth, KeyPurposeId.id_kp_serverAuth };
+                    usages = new KeyPurposeId[] { KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_clientAuth,
+                            KeyPurposeId.id_kp_serverAuth };
                 } else {
                     usages = ExtendedKeyUsage.getInstance(originalExtendedKeyUsage.getParsedValue()).getUsages();
                 }
@@ -780,8 +761,8 @@ final class H7EndEntityAcceptanceE2eTest {
             if (mutation == LeafMutation.SUBJECT_ALTERNATIVE_NAME_MALFORMED) {
                 builder.addExtension(Extension.subjectAlternativeName, false, DERNull.INSTANCE);
             } else {
-                GeneralName[] names = GeneralNames.fromExtensions(original.getExtensions(),
-                        Extension.subjectAlternativeName).getNames();
+                GeneralName[] names = GeneralNames
+                        .fromExtensions(original.getExtensions(), Extension.subjectAlternativeName).getNames();
                 if (mutation == LeafMutation.SUBJECT_ALTERNATIVE_NAME_ADD_ONE) {
                     GeneralName[] added = Arrays.copyOf(names, names.length + 1);
                     added[names.length] = new GeneralName(GeneralName.dNSName, "added.example.com");
@@ -805,8 +786,7 @@ final class H7EndEntityAcceptanceE2eTest {
                     names[2] = new GeneralName(GeneralName.uniformResourceIdentifier,
                             "https://" + REDACTION_SENTINEL.toLowerCase(java.util.Locale.ROOT) + ".example.com/");
                 } else if (mutation == LeafMutation.SUBJECT_ALTERNATIVE_NAME_RFC822_VALUE) {
-                    names[3] = new GeneralName(GeneralName.rfc822Name,
-                            REDACTION_SENTINEL + "@example.com");
+                    names[3] = new GeneralName(GeneralName.rfc822Name, REDACTION_SENTINEL + "@example.com");
                 } else if (mutation == LeafMutation.SUBJECT_ALTERNATIVE_NAME_REORDERED) {
                     GeneralName first = names[0];
                     names[0] = names[1];
@@ -825,8 +805,7 @@ final class H7EndEntityAcceptanceE2eTest {
         } else if (mutation == LeafMutation.SUBJECT_KEY_IDENTIFIER_EXTENSION) {
             builder.addExtension(Extension.subjectKeyIdentifier, false, new SubjectKeyIdentifier(new byte[20]));
         } else if (mutation == LeafMutation.AUTHORITY_KEY_IDENTIFIER_EXTENSION) {
-            builder.addExtension(Extension.authorityKeyIdentifier, false,
-                    new AuthorityKeyIdentifier(new byte[20]));
+            builder.addExtension(Extension.authorityKeyIdentifier, false, new AuthorityKeyIdentifier(new byte[20]));
         }
     }
 
@@ -867,74 +846,27 @@ final class H7EndEntityAcceptanceE2eTest {
         }
     }
 
-    private record PersistedExpectation(IssuanceCase issuanceCase, BigInteger allocatedSerial,
-            Validity validity, PkiId publicKeyId) {
+    private record PersistedExpectation(IssuanceCase issuanceCase, BigInteger allocatedSerial, Validity validity,
+            PkiId publicKeyId) {
     }
 
     private enum LeafMutation {
-        SUBJECT_REPLACED,
-        SUBJECT_REMOVED,
-        SUBJECT_ADDED,
-        SUBJECT_DUPLICATED,
-        SUBJECT_REORDERED,
-        SUBJECT_ALTERNATIVE_NAME_ADD_ONE,
-        SUBJECT_ALTERNATIVE_NAME_REMOVE_ONE,
-        SUBJECT_ALTERNATIVE_NAME_REPLACE,
-        SUBJECT_ALTERNATIVE_NAME_CHANGE_TYPE,
-        SUBJECT_ALTERNATIVE_NAME_DUPLICATE,
-        SUBJECT_ALTERNATIVE_NAME_DNS_CASE,
-        SUBJECT_ALTERNATIVE_NAME_IP_BYTES,
-        SUBJECT_ALTERNATIVE_NAME_URI_VALUE,
-        SUBJECT_ALTERNATIVE_NAME_RFC822_VALUE,
-        SUBJECT_ALTERNATIVE_NAME_REORDERED,
-        SUBJECT_ALTERNATIVE_NAME_CRITICAL,
-        SUBJECT_ALTERNATIVE_NAME_ABSENT,
-        SUBJECT_ALTERNATIVE_NAME_MALFORMED,
-        SUBJECT_ALTERNATIVE_NAME_ADDED_WHEN_FORBIDDEN(false),
-        PUBLIC_KEY,
-        ISSUER,
-        SERIAL,
-        SERIAL_ZERO,
-        SERIAL_NEGATIVE,
-        NOT_BEFORE_MOVED,
-        NOT_AFTER_EXTENDED,
-        VALIDITY_SHORTENED,
-        VALIDITY_EXCEEDS_ISSUER,
-        PROFILE_ID_METADATA,
-        CREDENTIAL_ID_METADATA,
-        FORMAT_METADATA,
-        ISSUER_REF_METADATA,
-        SUBJECT_REF_METADATA,
-        VALIDITY_METADATA,
-        SERIAL_METADATA,
-        PUBLIC_KEY_ID_METADATA,
-        STATUS_METADATA,
-        ENCODING_METADATA,
-        BASIC_CONSTRAINTS_ABSENT,
-        BASIC_CONSTRAINTS_CA,
-        BASIC_CONSTRAINTS_PATH_LENGTH,
-        BASIC_CONSTRAINTS_NONCRITICAL,
-        BASIC_CONSTRAINTS_MALFORMED,
-        KEY_USAGE_ABSENT,
-        KEY_USAGE_ADD,
-        KEY_USAGE_REMOVE,
-        KEY_USAGE_REPLACE,
-        KEY_USAGE_NONCRITICAL,
-        KEY_USAGE_MALFORMED,
-        EXTENDED_KEY_USAGE_ABSENT,
-        EXTENDED_KEY_USAGE_ADD,
-        EXTENDED_KEY_USAGE_REMOVE,
-        EXTENDED_KEY_USAGE_REPLACE,
-        EXTENDED_KEY_USAGE_DUPLICATE,
-        EXTENDED_KEY_USAGE_CRITICAL,
-        EXTENDED_KEY_USAGE_MALFORMED,
-        EXTENDED_KEY_USAGE_ADDED_WHEN_FORBIDDEN(false),
-        UNKNOWN_NONCRITICAL_EXTENSION,
-        UNKNOWN_CRITICAL_EXTENSION,
-        SUBJECT_KEY_IDENTIFIER_EXTENSION,
-        AUTHORITY_KEY_IDENTIFIER_EXTENSION,
-        CORRUPT_SIGNATURE,
-        SIGNED_BY_OTHER_KEY;
+        SUBJECT_REPLACED, SUBJECT_REMOVED, SUBJECT_ADDED, SUBJECT_DUPLICATED, SUBJECT_REORDERED,
+        SUBJECT_ALTERNATIVE_NAME_ADD_ONE, SUBJECT_ALTERNATIVE_NAME_REMOVE_ONE, SUBJECT_ALTERNATIVE_NAME_REPLACE,
+        SUBJECT_ALTERNATIVE_NAME_CHANGE_TYPE, SUBJECT_ALTERNATIVE_NAME_DUPLICATE, SUBJECT_ALTERNATIVE_NAME_DNS_CASE,
+        SUBJECT_ALTERNATIVE_NAME_IP_BYTES, SUBJECT_ALTERNATIVE_NAME_URI_VALUE, SUBJECT_ALTERNATIVE_NAME_RFC822_VALUE,
+        SUBJECT_ALTERNATIVE_NAME_REORDERED, SUBJECT_ALTERNATIVE_NAME_CRITICAL, SUBJECT_ALTERNATIVE_NAME_ABSENT,
+        SUBJECT_ALTERNATIVE_NAME_MALFORMED, SUBJECT_ALTERNATIVE_NAME_ADDED_WHEN_FORBIDDEN(false), PUBLIC_KEY, ISSUER,
+        SERIAL, SERIAL_ZERO, SERIAL_NEGATIVE, NOT_BEFORE_MOVED, NOT_AFTER_EXTENDED, VALIDITY_SHORTENED,
+        VALIDITY_EXCEEDS_ISSUER, PROFILE_ID_METADATA, CREDENTIAL_ID_METADATA, FORMAT_METADATA, ISSUER_REF_METADATA,
+        SUBJECT_REF_METADATA, VALIDITY_METADATA, SERIAL_METADATA, PUBLIC_KEY_ID_METADATA, STATUS_METADATA,
+        ENCODING_METADATA, BASIC_CONSTRAINTS_ABSENT, BASIC_CONSTRAINTS_CA, BASIC_CONSTRAINTS_PATH_LENGTH,
+        BASIC_CONSTRAINTS_NONCRITICAL, BASIC_CONSTRAINTS_MALFORMED, KEY_USAGE_ABSENT, KEY_USAGE_ADD, KEY_USAGE_REMOVE,
+        KEY_USAGE_REPLACE, KEY_USAGE_NONCRITICAL, KEY_USAGE_MALFORMED, EXTENDED_KEY_USAGE_ABSENT,
+        EXTENDED_KEY_USAGE_ADD, EXTENDED_KEY_USAGE_REMOVE, EXTENDED_KEY_USAGE_REPLACE, EXTENDED_KEY_USAGE_DUPLICATE,
+        EXTENDED_KEY_USAGE_CRITICAL, EXTENDED_KEY_USAGE_MALFORMED, EXTENDED_KEY_USAGE_ADDED_WHEN_FORBIDDEN(false),
+        UNKNOWN_NONCRITICAL_EXTENSION, UNKNOWN_CRITICAL_EXTENSION, SUBJECT_KEY_IDENTIFIER_EXTENSION,
+        AUTHORITY_KEY_IDENTIFIER_EXTENSION, CORRUPT_SIGNATURE, SIGNED_BY_OTHER_KEY;
 
         private final boolean mainProfile;
 

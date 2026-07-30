@@ -15,11 +15,13 @@ import zeroecho.core.spec.ContextSpec;
 /**
  * Creates a cryptographic context from a key and a context specification.
  *
- * <p>Implementations report provider and parameter failures with unchecked
+ * <p>
+ * Implementations report provider and parameter failures with unchecked
  * exceptions; context construction is a pure in-memory operation and does not
  * expose an I/O failure contract. Factories must be stateless or otherwise safe
  * for concurrent invocation; returned contexts retain their own documented
- * thread-safety contracts.</p>
+ * thread-safety contracts.
+ * </p>
  *
  * @param <C> context type produced
  * @param <K> key type accepted
@@ -31,7 +33,7 @@ public interface ContextFactoryKS<C extends CryptoContext, K extends Key, S exte
     /**
      * Creates a context bound to the supplied key and specification.
      *
-     * @param key non-null key
+     * @param key  non-null key
      * @param spec non-null resolved context specification
      * @return a newly created context
      */

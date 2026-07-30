@@ -236,8 +236,7 @@ public final class PkiBusContentSigner implements ContentSigner {
             Principal owner = new Principal("SYSTEM", "pki");
             opId = bus.newSubmissionId();
 
-            AccessContext ac = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(),
-                    Optional.empty());
+            AccessContext ac = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(), Optional.empty());
             SignContinuation cont = new SignContinuation(ac, algorithmId, payload, keyRef, Encoding.BINARY,
                     Optional.empty());
 

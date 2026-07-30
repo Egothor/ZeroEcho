@@ -134,8 +134,8 @@ public final class FilesystemPkiStoreTest {
         Credential credential = TestObjects.minimalCredential("SERIAL-ALL", "profile-all");
         ParsedCertificationRequest request = new ParsedCertificationRequest(new PkiId("request-all"),
                 new FormatId("fmt-x509"), new SubjectRef("CN=request-all"),
-                new EncodedObject(Encoding.DER, new byte[] { 4, 5, 6 }), Optional.empty(),
-                Optional.of("profile-all"), attributes);
+                new EncodedObject(Encoding.DER, new byte[] { 4, 5, 6 }), Optional.empty(), Optional.of("profile-all"),
+                attributes);
         StatusObject status = new StatusObject(new PkiId("status-all"), new FormatId("fmt-x509"), ca.caId(),
                 StatusObjectType.CRL, now, Optional.of(now.plusSeconds(60L)),
                 new EncodedObject(Encoding.DER, new byte[] { 7, 8 }), attributes);
@@ -238,10 +238,12 @@ public final class FilesystemPkiStoreTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
             Credential credential = TestObjects.minimalCredential("SERIAL-REV", "profile-rev");
             store.putCredential(credential);
-            store.transitionRevocation(new RevocationCommand.Hold(credential.credentialId(),
-                    TestObjects.emptyAttributes()), Instant.EPOCH.plusSeconds(10L));
-            store.transitionRevocation(new RevocationCommand.Unhold(credential.credentialId(),
-                    TestObjects.emptyAttributes()), Instant.EPOCH.plusSeconds(11L));
+            store.transitionRevocation(
+                    new RevocationCommand.Hold(credential.credentialId(), TestObjects.emptyAttributes()),
+                    Instant.EPOCH.plusSeconds(10L));
+            store.transitionRevocation(
+                    new RevocationCommand.Unhold(credential.credentialId(), TestObjects.emptyAttributes()),
+                    Instant.EPOCH.plusSeconds(11L));
 
             Optional<RevocationJournal> loaded = store.getRevocationJournal(credential.credentialId());
             assertTrue(loaded.isPresent());
@@ -337,8 +339,7 @@ public final class FilesystemPkiStoreTest {
             List<ImportedCertificateProfileVersion> profiles = s2.listProfileVersions("profile-a");
 
             Set<String> caIds = cas.stream().map(r -> r.caId().toString()).collect(Collectors.toSet());
-            Set<String> profileIds = profiles.stream().map(v -> v.reference().profileId())
-                    .collect(Collectors.toSet());
+            Set<String> profileIds = profiles.stream().map(v -> v.reference().profileId()).collect(Collectors.toSet());
 
             System.out.println("...snapshot2 caIds: " + caIds);
             System.out.println("...snapshot2 profileIds: " + profileIds);
@@ -528,16 +529,14 @@ public final class FilesystemPkiStoreTest {
      */
     static void importProfile(FilesystemPkiStore store, CertificateProfile profile, Instant importedAt)
             throws Exception {
-        CertificateProfileDefinition definition = new CertificateProfileDefinition(
-                CertificateProfileKind.END_ENTITY, profile.profileId(), 1, profile.formatId(),
-                profile.displayName(), profile.maximumValidity(), profile.subjectPolicy(),
-                profile.leafPolicy());
+        CertificateProfileDefinition definition = new CertificateProfileDefinition(CertificateProfileKind.END_ENTITY,
+                profile.profileId(), 1, profile.formatId(), profile.displayName(), profile.maximumValidity(),
+                profile.subjectPolicy(), profile.leafPolicy());
         byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
         byte[] hash = MessageDigest.getInstance("SHA-256").digest(canonical);
         CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1, hash);
         store.importProfileVersion(new ImportedCertificateProfileVersion(reference,
-                CertificateProfileDefinition.SCHEMA_VERSION, definition, canonical,
-                importedAt));
+                CertificateProfileDefinition.SCHEMA_VERSION, definition, canonical, importedAt));
     }
 
     static final class TestObjects {
@@ -558,16 +557,15 @@ public final class FilesystemPkiStoreTest {
 
         static CertificateProfile minimalProfile(String profileId) {
             FormatId formatId = new FormatId("fmt-x509");
-            SubjectPolicy subject = new SubjectPolicy(false, List.of(new SubjectRdnRule(
-                    SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true)));
-            SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(0, 0,
-                    List.of(), false, Set.of(), false, false, false);
+            SubjectPolicy subject = new SubjectPolicy(false,
+                    List.of(new SubjectRdnRule(SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true)));
+            SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(0, 0, List.of(), false, Set.of(),
+                    false, false, false);
             LeafCertificatePolicy leaf = new LeafCertificatePolicy(sans,
                     Set.of(LeafKeyUsage.DIGITAL_SIGNATURE, LeafKeyUsage.KEY_ENCIPHERMENT),
-                    Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1")), true, false, true,
-                    Set.of("RSA"));
-            return new CertificateProfile(profileId, formatId, "Test leaf profile",
-                    Duration.ofDays(365), subject, leaf);
+                    Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1")), true, false, true, Set.of("RSA"));
+            return new CertificateProfile(profileId, formatId, "Test leaf profile", Duration.ofDays(365), subject,
+                    leaf);
         }
 
         static Credential minimalCredential(String serial, String profileId) {
@@ -589,7 +587,9 @@ public final class FilesystemPkiStoreTest {
             AttributeSet attrs = emptyAttributes();
 
             return new Credential(credentialId, formatId, issuerRef, subjectRef, validity, serial, publicKeyId,
-                    new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef(profileId, 1, new byte[32])), status, encoded, attrs);
+                    new CaProfileBinding(
+                            new zeroecho.pki.api.profile.CertificateProfileRef(profileId, 1, new byte[32])),
+                    status, encoded, attrs);
         }
 
         static AttributeSet emptyAttributes() {

@@ -131,19 +131,16 @@ final class H7ProfileEnforcementTest {
 
     @Test
     void profileConstructionRejectsUnsatisfiableAndOpenPolicy() {
-        SubjectAlternativeNameRule dns =
-                new SubjectAlternativeNameRule(SubjectAlternativeNameType.DNS_NAME, 0, 1, false, false);
+        SubjectAlternativeNameRule dns = new SubjectAlternativeNameRule(SubjectAlternativeNameType.DNS_NAME, 0, 1,
+                false, false);
         assertThrows(IllegalArgumentException.class,
-                () -> new SubjectAlternativeNamePolicy(2, 2, List.of(dns), false, Set.of(), false,
-                        false, false));
+                () -> new SubjectAlternativeNamePolicy(2, 2, List.of(dns), false, Set.of(), false, false, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new SubjectAlternativeNamePolicy(0, 1, List.of(), false, Set.of(), false,
-                        true, false));
+                () -> new SubjectAlternativeNamePolicy(0, 1, List.of(), false, Set.of(), false, true, false));
+        assertThrows(IllegalArgumentException.class, () -> new SubjectAlternativeNamePolicy(0, 1, List.of(dns), false,
+                Set.of("https"), false, false, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new SubjectAlternativeNamePolicy(0, 1, List.of(dns), false, Set.of("https"), false,
-                        false, false));
-        assertThrows(IllegalArgumentException.class, () -> leaf(Set.of(LeafKeyUsage.ENCIPHER_ONLY),
-                Set.of("RSA"), Set.of()));
+                () -> leaf(Set.of(LeafKeyUsage.ENCIPHER_ONLY), Set.of("RSA"), Set.of()));
         assertThrows(IllegalArgumentException.class,
                 () -> leaf(Set.of(LeafKeyUsage.DIGITAL_SIGNATURE), Set.of("rsa"), Set.of()));
         assertThrows(IllegalArgumentException.class, () -> new ExtendedKeyUsageId("1.40.1"));
@@ -155,22 +152,19 @@ final class H7ProfileEnforcementTest {
         KeyPair keyPair = rsa();
         X500NameBuilder subject = new X500NameBuilder(BCStyle.INSTANCE);
         subject.addRDN(BCStyle.CN, new DERUTF8String("#literal\\name"));
-        Extensions extensions = extensions(false,
-                new GeneralName(GeneralName.dNSName, "WWW.Example.COM"),
+        Extensions extensions = extensions(false, new GeneralName(GeneralName.dNSName, "WWW.Example.COM"),
                 new GeneralName(GeneralName.iPAddress, new DEROctetString(new byte[] { 10, 0, 0, 1 })),
                 new GeneralName(GeneralName.uniformResourceIdentifier, "HTTPS://Example.COM/a%2Fb"),
                 new GeneralName(GeneralName.rfc822Name, "Local@Example.COM"));
 
         ParsedCertificationRequest parsed = parse(csr(keyPair, subject.build(), List.of(extensions)));
 
-        assertEquals(List.of(new SubjectRdn(SubjectRdnType.COMMON_NAME, "#literal\\name")),
-                parsed.subjectRdns());
+        assertEquals(List.of(new SubjectRdn(SubjectRdnType.COMMON_NAME, "#literal\\name")), parsed.subjectRdns());
         assertEquals(BcX509ProfileSupport.subject(parsed.subjectRdns()).toString(), parsed.subjectRef().value());
         assertEquals(List.of(new SubjectAlternativeName.DnsName("www.example.com"),
                 new SubjectAlternativeName.IpAddress(new byte[] { 10, 0, 0, 1 }),
                 new SubjectAlternativeName.UriName("https://example.com/a%2Fb"),
-                new SubjectAlternativeName.Rfc822Name("Local@example.com")),
-                parsed.subjectAlternativeNames());
+                new SubjectAlternativeName.Rfc822Name("Local@example.com")), parsed.subjectAlternativeNames());
     }
 
     @Test
@@ -180,8 +174,8 @@ final class H7ProfileEnforcementTest {
         unsupportedSubject.addRDN(BCStyle.CN, new DERBMPString("unsupported"));
         assertCode("SUBJECT_VALUE_UNSUPPORTED", () -> parse(csr(keyPair, unsupportedSubject.build(), List.of())));
 
-        Extensions unknown = new Extensions(new Extension(new ASN1ObjectIdentifier("1.2.3.4"), false,
-                new byte[] { 0x05, 0x00 }));
+        Extensions unknown = new Extensions(
+                new Extension(new ASN1ObjectIdentifier("1.2.3.4"), false, new byte[] { 0x05, 0x00 }));
         assertCode("EXTENSION_UNSUPPORTED", () -> parse(csr(keyPair, new X500Name("CN=Leaf"), List.of(unknown))));
 
         Extensions criticalSan = extensions(true, new GeneralName(GeneralName.dNSName, "example.com"));
@@ -189,8 +183,7 @@ final class H7ProfileEnforcementTest {
                 () -> parse(csr(keyPair, new X500Name("CN=Leaf"), List.of(criticalSan))));
 
         Extensions san = extensions(false, new GeneralName(GeneralName.dNSName, "example.com"));
-        assertCode("CSR_ATTRIBUTE_UNSUPPORTED",
-                () -> parse(csr(keyPair, new X500Name("CN=Leaf"), List.of(san, san))));
+        assertCode("CSR_ATTRIBUTE_UNSUPPORTED", () -> parse(csr(keyPair, new X500Name("CN=Leaf"), List.of(san, san))));
 
         Extension sanExtension = san.getExtension(Extension.subjectAlternativeName);
         DERSequence duplicateSan = new DERSequence(new ASN1Encodable[] { sanExtension, sanExtension });
@@ -215,8 +208,7 @@ final class H7ProfileEnforcementTest {
         KeyPair rsa = rsa();
         SubjectPublicKeyInfo original = SubjectPublicKeyInfo.getInstance(rsa.getPublic().getEncoded());
         SubjectPublicKeyInfo missingNull = new SubjectPublicKeyInfo(
-                new AlgorithmIdentifier(PKCSObjectIdentifiers.rsaEncryption),
-                original.getPublicKeyData().getBytes());
+                new AlgorithmIdentifier(PKCSObjectIdentifiers.rsaEncryption), original.getPublicKeyData().getBytes());
         assertCode("SUBJECT_KEY_PARAMETERS_UNSUPPORTED",
                 () -> validate(missingNull.getEncoded(), "RSA", policyWithFixedOrganization("RSA")));
 
@@ -243,13 +235,12 @@ final class H7ProfileEnforcementTest {
 
     @Test
     void activeProfileCannotSubstitutePolicyForItsCanonicalReference() {
-        CertificateProfileDefinition definition =
-                CertificateProfileDocumentCodec.parse(H7ProfileDocuments.defaultProfile());
+        CertificateProfileDefinition definition = CertificateProfileDocumentCodec
+                .parse(H7ProfileDocuments.defaultProfile());
         CertificateProfileRef substituted = new CertificateProfileRef(definition.profileId(),
                 definition.profileVersion(), new byte[CertificateProfileRef.HASH_BYTES]);
 
-        assertThrows(IllegalArgumentException.class,
-                () -> new ActiveCertificateProfile(substituted, definition));
+        assertThrows(IllegalArgumentException.class, () -> new ActiveCertificateProfile(substituted, definition));
     }
 
     @Test
@@ -273,10 +264,8 @@ final class H7ProfileEnforcementTest {
                 () -> CredentialProfileBindings.requireEndEntityBinding(ca, reference));
         assertCode(CredentialProfileBindings.MISMATCH_CODE,
                 () -> CredentialProfileBindings.requireCaBinding(endEntity, reference));
-        assertCode(CredentialProfileBindings.MISMATCH_CODE,
-                () -> CredentialProfileBindings.requireCaBinding(
-                        new CaProfileBinding(new CertificateProfileRef("other", 1, new byte[32])),
-                        reference));
+        assertCode(CredentialProfileBindings.MISMATCH_CODE, () -> CredentialProfileBindings.requireCaBinding(
+                new CaProfileBinding(new CertificateProfileRef("other", 1, new byte[32])), reference));
         assertCode(CredentialProfileBindings.MISMATCH_CODE,
                 () -> CredentialProfileBindings.requireCaBinding(null, reference));
     }
@@ -290,10 +279,9 @@ final class H7ProfileEnforcementTest {
                 Map.of(rootRef, root))) {
             PkiId caId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
                     new SubjectRef("CN=Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
-            ParsedCertificationRequest request = runtime.certificationRequestService().parse(
-                    new CertificationRequest(runtime.framework().formatId(),
-                            new EncodedObject(Encoding.DER,
-                                    csr(leaf, new X500Name("CN=Leaf"), List.of()).getEncoded())));
+            ParsedCertificationRequest request = runtime.certificationRequestService().parse(new CertificationRequest(
+                    runtime.framework().formatId(),
+                    new EncodedObject(Encoding.DER, csr(leaf, new X500Name("CN=Leaf"), List.of()).getEncoded())));
             int signs = runtime.submittedSignCount();
 
             assertRejectedWithoutSideEffects(runtime, caId, request, "missing", Optional.empty(), signs);
@@ -312,8 +300,8 @@ final class H7ProfileEnforcementTest {
             DefaultIssuanceService service = new DefaultIssuanceService(runtime.store(), runtime.framework(),
                     runtime.issuerBackend(), runtime.auditSink(), runtime.statusResolver(), mismatched,
                     Clock.systemUTC());
-            assertThrows(PkiException.class, () -> service.issueEndEntity(
-                    new IssueEndEntityCommand(caId, request, "requested", Optional.empty())));
+            assertThrows(PkiException.class, () -> service
+                    .issueEndEntity(new IssueEndEntityCommand(caId, request, "requested", Optional.empty())));
             assertEquals(signs, runtime.submittedSignCount());
 
             assertEquals(List.of("issuerCaId", "request", "profileId", "validityOverride"),
@@ -331,11 +319,10 @@ final class H7ProfileEnforcementTest {
 
     private static ProfileService mismatchedProfileService(ProfileService delegate) {
         return (ProfileService) Proxy.newProxyInstance(ProfileService.class.getClassLoader(),
-                new Class<?>[] { ProfileService.class },
-                (proxy, method, args) -> {
+                new Class<?>[] { ProfileService.class }, (proxy, method, args) -> {
                     if ("requireActiveProfile".equals(method.getName())) {
-                        CertificateProfileDefinition definition =
-                                CertificateProfileDocumentCodec.parse(H7ProfileDocuments.defaultProfile());
+                        CertificateProfileDefinition definition = CertificateProfileDocumentCodec
+                                .parse(H7ProfileDocuments.defaultProfile());
                         return new ActiveCertificateProfile(profileRef(definition), definition);
                     }
                     try {
@@ -356,11 +343,10 @@ final class H7ProfileEnforcementTest {
         }
     }
 
-    private static ValidatedCertificateRequest validate(byte[] encoded, String algorithm,
-            CertificateProfile profile) {
+    private static ValidatedCertificateRequest validate(byte[] encoded, String algorithm, CertificateProfile profile) {
         ParsedCertificationRequest request = parsedRequest(encoded);
-        IssueEndEntityCommand command =
-                new IssueEndEntityCommand(new PkiId("ca:h7"), request, profile.profileId(), Optional.empty());
+        IssueEndEntityCommand command = new IssueEndEntityCommand(new PkiId("ca:h7"), request, profile.profileId(),
+                Optional.empty());
         VerifiedIssuanceCandidate candidate = new VerifiedIssuanceCandidate(request, request.requestId(),
                 request.publicKeyInfo(), ProofOfPossessionStatus.VERIFIED, command);
         CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1,
@@ -372,41 +358,36 @@ final class H7ProfileEnforcementTest {
         AttributeSet attributes = SimpleAttributeSet.builder()
                 .put(BcX509Attributes.CSR_DER, new AttributeValue.BytesValue(new byte[] { 1 })).build();
         return new ParsedCertificationRequest(new PkiId("csr:h7"), BcX509CredentialFramework.FORMAT_ID,
-                new SubjectRef("CN=Leaf"), new EncodedObject(Encoding.DER, encoded), Optional.empty(),
-                Optional.empty(), List.of(new SubjectRdn(SubjectRdnType.COMMON_NAME, "Leaf")),
-                List.of(), false, attributes);
+                new SubjectRef("CN=Leaf"), new EncodedObject(Encoding.DER, encoded), Optional.empty(), Optional.empty(),
+                List.of(new SubjectRdn(SubjectRdnType.COMMON_NAME, "Leaf")), List.of(), false, attributes);
     }
 
     private static Credential issuerCredential() {
         return new Credential(new PkiId("credential:issuer"), BcX509CredentialFramework.FORMAT_ID,
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=Issuer"),
                 new Validity(NOW.minus(Duration.ofDays(1)), NOW.plus(Duration.ofDays(1000))), "1",
-                new PkiId("spki:issuer"),
-                new CaProfileBinding(new CertificateProfileRef("root", 1, new byte[32])),
-                CredentialStatus.ISSUED,
-                new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
+                new PkiId("spki:issuer"), new CaProfileBinding(new CertificateProfileRef("root", 1, new byte[32])),
+                CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
     }
 
     private static CertificateProfile policyWithFixedOrganization(String algorithm) {
         SubjectPolicy subject = new SubjectPolicy(false, List.of(
                 new SubjectRdnRule(SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true),
-                new SubjectRdnRule(SubjectRdnType.ORGANIZATION_NAME, 1, 1, 256,
-                        Optional.of("Profile Fixed"), false)));
-        SubjectAlternativeNamePolicy sans =
-                new SubjectAlternativeNamePolicy(0, 0, List.of(), false, Set.of(), false, false, false);
-        LeafCertificatePolicy leaf = new LeafCertificatePolicy(sans,
-                Set.of(LeafKeyUsage.DIGITAL_SIGNATURE), Set.of(), true, false, true,
-                Set.of(algorithm));
-        return new CertificateProfile("h7", BcX509CredentialFramework.FORMAT_ID, "H7",
-                Duration.ofDays(365), subject, leaf);
+                new SubjectRdnRule(SubjectRdnType.ORGANIZATION_NAME, 1, 1, 256, Optional.of("Profile Fixed"), false)));
+        SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(0, 0, List.of(), false, Set.of(), false,
+                false, false);
+        LeafCertificatePolicy leaf = new LeafCertificatePolicy(sans, Set.of(LeafKeyUsage.DIGITAL_SIGNATURE), Set.of(),
+                true, false, true, Set.of(algorithm));
+        return new CertificateProfile("h7", BcX509CredentialFramework.FORMAT_ID, "H7", Duration.ofDays(365), subject,
+                leaf);
     }
 
     private static LeafCertificatePolicy leaf(Set<LeafKeyUsage> usages, Set<String> algorithms,
             Set<ExtendedKeyUsageId> ekus) {
         return new LeafCertificatePolicy(
                 new SubjectAlternativeNamePolicy(1, 1,
-                        List.of(new SubjectAlternativeNameRule(SubjectAlternativeNameType.DNS_NAME, 1, 1,
-                                false, false)),
+                        List.of(new SubjectAlternativeNameRule(SubjectAlternativeNameType.DNS_NAME, 1, 1, false,
+                                false)),
                         false, Set.of(), false, true, false),
                 usages, ekus, true, false, true, algorithms);
     }
@@ -419,8 +400,7 @@ final class H7ProfileEnforcementTest {
 
     private static PKCS10CertificationRequest csr(KeyPair pair, X500Name subject,
             List<? extends ASN1Encodable> extensionRequests) throws Exception {
-        PKCS10CertificationRequestBuilder builder =
-                new JcaPKCS10CertificationRequestBuilder(subject, pair.getPublic());
+        PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject, pair.getPublic());
         for (ASN1Encodable extensions : extensionRequests) {
             builder.addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensions);
         }
@@ -451,8 +431,7 @@ final class H7ProfileEnforcementTest {
     private static ValidatedCertificateRequest validatedRequest(KeyPair pair) {
         return new ValidatedCertificateRequest(new PkiId("ca:h7"),
                 new CertificateProfileRef("h7", 1, new byte[CertificateProfileRef.HASH_BYTES]),
-                new SubjectRef("CN=Leaf"),
-                List.of(new SubjectRdn(SubjectRdnType.COMMON_NAME, "Leaf")),
+                new SubjectRef("CN=Leaf"), List.of(new SubjectRdn(SubjectRdnType.COMMON_NAME, "Leaf")),
                 List.of(new SubjectAlternativeName.DnsName("example.com")), false,
                 new EncodedObject(Encoding.DER, pair.getPublic().getEncoded()),
                 new Validity(NOW, NOW.plus(Duration.ofDays(1))), Set.of(LeafKeyUsage.DIGITAL_SIGNATURE),

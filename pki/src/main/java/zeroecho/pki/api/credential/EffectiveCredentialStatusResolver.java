@@ -75,7 +75,7 @@ public interface EffectiveCredentialStatusResolver {
          * @param credential credential to resolve
          * @return effective runtime status
          * @throws NullPointerException if {@code credential} is {@code null}
-         * @throws PkiException if current status cannot be resolved safely
+         * @throws PkiException         if current status cannot be resolved safely
          */
         EffectiveCredentialStatus resolve(Credential credential);
 
@@ -83,11 +83,11 @@ public interface EffectiveCredentialStatusResolver {
          * Requires a credential to be usable for the supplied operation category.
          *
          * @param credential credential to check
-         * @param use trust-decision category
+         * @param use        trust-decision category
          * @return the supplied credential when usable
          * @throws NullPointerException if an argument is {@code null}
-         * @throws PkiException if status resolution fails or the credential is not
-         *         usable
+         * @throws PkiException         if status resolution fails or the credential is
+         *                              not usable
          */
         Credential requireUsable(Credential credential, CredentialUse use);
     }

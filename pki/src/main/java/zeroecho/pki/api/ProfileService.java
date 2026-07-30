@@ -17,8 +17,8 @@ import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
  * Versioned certificate-profile import, activation, and lookup service.
  *
  * <p>
- * Import never activates a profile. All versions of one logical profile ID
- * have one immutable certificate kind. End-entity issuance resolves only an
+ * Import never activates a profile. All versions of one logical profile ID have
+ * one immutable certificate kind. End-entity issuance resolves only an
  * explicitly activated persisted version through
  * {@link #requireActiveProfile(String)}. Root and intermediate issuance use the
  * same authoritative active-profile lookup and bind issued credentials to the

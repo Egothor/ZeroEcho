@@ -42,15 +42,12 @@ class SessionBoundBuilderTest {
     void policyDenialOccursBeforeContextCreation() {
         System.out.println("policyDenialOccursBeforeContextCreation");
         RecordingListener listener = new RecordingListener();
-        ZeroEchoSession session = new ZeroEchoSession()
-                .withAuditListener(listener)
+        ZeroEchoSession session = new ZeroEchoSession().withAuditListener(listener)
                 .withPolicy((id, role, key, spec) -> {
                     throw new IllegalArgumentException("controlled policy denial");
                 });
-        DataContent encryption = AesDataContentBuilder.builder(session)
-                .withKey(new SecretKeySpec(new byte[16], "AES"))
-                .modeGcm(128)
-                .build(true);
+        DataContent encryption = AesDataContentBuilder.builder(session).withKey(new SecretKeySpec(new byte[16], "AES"))
+                .modeGcm(128).build(true);
         encryption.setInput(new PlainBytes(new byte[] { 1 }));
 
         assertThrows(IllegalArgumentException.class, encryption::getStream);
@@ -63,13 +60,9 @@ class SessionBoundBuilderTest {
     void wrappedContextUsesBuilderSessionAuditConfiguration() throws Exception {
         System.out.println("wrappedContextUsesBuilderSessionAuditConfiguration");
         RecordingListener listener = new RecordingListener();
-        ZeroEchoSession session = new ZeroEchoSession()
-                .withAuditListener(listener)
-                .withAuditMode(AuditMode.WRAP);
-        DataContent encryption = AesDataContentBuilder.builder(session)
-                .withKey(new SecretKeySpec(new byte[16], "AES"))
-                .modeGcm(128)
-                .build(true);
+        ZeroEchoSession session = new ZeroEchoSession().withAuditListener(listener).withAuditMode(AuditMode.WRAP);
+        DataContent encryption = AesDataContentBuilder.builder(session).withKey(new SecretKeySpec(new byte[16], "AES"))
+                .modeGcm(128).build(true);
         encryption.setInput(new PlainBytes(new byte[] { 1, 2, 3 }));
 
         try (InputStream input = encryption.getStream()) {

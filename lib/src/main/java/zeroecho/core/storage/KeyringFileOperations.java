@@ -24,8 +24,7 @@ interface KeyringFileOperations {
 
     /** Atomic persistence destination. */
     enum Target {
-        MAIN_IMAGE,
-        NONCE_RESERVATION
+        MAIN_IMAGE, NONCE_RESERVATION
     }
 
     /** Creates one owner-only temporary file beside its destination. */
@@ -57,10 +56,8 @@ final class NioKeyringFileOperations implements KeyringFileOperations {
     }
 
     @Override
-    public void writeTemporary(Target target, Path temporary, byte[] image)
-            throws IOException {
-        try (FileChannel channel = FileChannel.open(temporary,
-                StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+    public void writeTemporary(Target target, Path temporary, byte[] image) throws IOException {
+        try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
             ByteBuffer buffer = ByteBuffer.wrap(image);
             while (buffer.hasRemaining()) {
                 channel.write(buffer);
@@ -70,17 +67,14 @@ final class NioKeyringFileOperations implements KeyringFileOperations {
 
     @Override
     public void forceTemporary(Target target, Path temporary) throws IOException {
-        try (FileChannel channel = FileChannel.open(temporary,
-                StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+        try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
             channel.force(true);
         }
     }
 
     @Override
-    public void atomicReplace(Target target, Path temporary, Path destination)
-            throws IOException {
-        Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING);
+    public void atomicReplace(Target target, Path temporary, Path destination) throws IOException {
+        Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     }
 
     @Override

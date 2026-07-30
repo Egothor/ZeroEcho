@@ -13,10 +13,12 @@ import java.util.Objects;
 /**
  * Utilities for enforcing the best-effort audit-listener contract.
  *
- * <p>The returned listener suppresses listener failures without logging callback
+ * <p>
+ * The returned listener suppresses listener failures without logging callback
  * arguments, because those arguments may refer to sensitive cryptographic
  * objects. Cryptographic operation outcomes therefore never depend on an audit
- * sink's availability.</p>
+ * sink's availability.
+ * </p>
  *
  * @since 1.0
  */
@@ -36,8 +38,8 @@ public final class AuditListeners {
         AuditListener target = Objects.requireNonNull(listener, "listener");
         ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
         ClassLoader loader = contextLoader == null ? ClassLoader.getSystemClassLoader() : contextLoader;
-        return (AuditListener) Proxy.newProxyInstance(loader,
-                new Class<?>[] { AuditListener.class }, (proxy, method, arguments) -> {
+        return (AuditListener) Proxy.newProxyInstance(loader, new Class<?>[] { AuditListener.class },
+                (proxy, method, arguments) -> {
                     if (method.getDeclaringClass() == Object.class) {
                         return method.invoke(target, arguments);
                     }

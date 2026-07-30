@@ -67,16 +67,16 @@ class ZeroEchoSessionWrapIntegrationTest {
         SecretKey aesKey = new SecretKeySpec(new byte[16], "AES");
         CtxInterface aesContext = Ctx.INSTANCE.getContext("wrap-integration-" + CONTEXT_IDS.incrementAndGet());
         byte[] ciphertext;
-        try (EncryptionContext encryption = session.createContext(
-                "AES", KeyUsage.ENCRYPT, aesKey, AesSpec.gcm128(null))) {
+        try (EncryptionContext encryption = session.createContext("AES", KeyUsage.ENCRYPT, aesKey,
+                AesSpec.gcm128(null))) {
             assertProxy(encryption);
             ((ContextAware) encryption).setContext(aesContext);
             try (InputStream input = encryption.attach(new ByteArrayInputStream(message))) {
                 ciphertext = input.readAllBytes();
             }
         }
-        try (EncryptionContext decryption = session.createContext(
-                "AES", KeyUsage.DECRYPT, aesKey, AesSpec.gcm128(null))) {
+        try (EncryptionContext decryption = session.createContext("AES", KeyUsage.DECRYPT, aesKey,
+                AesSpec.gcm128(null))) {
             assertProxy(decryption);
             ((ContextAware) decryption).setContext(aesContext);
             try (InputStream input = decryption.attach(new ByteArrayInputStream(ciphertext))) {
@@ -84,16 +84,14 @@ class ZeroEchoSessionWrapIntegrationTest {
             }
         }
 
-        KeyPair signingKeys = session.keyBuilders().asymmetric()
-                .generateKeyPair("Ed25519", Ed25519KeyGenSpec.defaultSpec());
+        KeyPair signingKeys = session.keyBuilders().asymmetric().generateKeyPair("Ed25519",
+                Ed25519KeyGenSpec.defaultSpec());
         TaggedBody signature;
-        try (SignatureContext signer = session.createContext(
-                "Ed25519", KeyUsage.SIGN, signingKeys.getPrivate())) {
+        try (SignatureContext signer = session.createContext("Ed25519", KeyUsage.SIGN, signingKeys.getPrivate())) {
             assertProxy(signer);
             signature = produceTag(signer, message);
         }
-        try (SignatureContext verifier = session.createContext(
-                "Ed25519", KeyUsage.VERIFY, signingKeys.getPublic())) {
+        try (SignatureContext verifier = session.createContext("Ed25519", KeyUsage.VERIFY, signingKeys.getPublic())) {
             assertProxy(verifier);
             verifier.setExpectedTag(signature.tag());
             try (InputStream input = verifier.wrap(new ByteArrayInputStream(message))) {
@@ -111,9 +109,7 @@ class ZeroEchoSessionWrapIntegrationTest {
             assertArrayEquals(message, produceTag(digest, message).body());
         }
 
-        assertEquals(List.of(
-                "create:ENCRYPT", "create:DECRYPT",
-                "create:SIGN", "tag", "create:VERIFY", "verify:true",
+        assertEquals(List.of("create:ENCRYPT", "create:DECRYPT", "create:SIGN", "tag", "create:VERIFY", "verify:true",
                 "create:MAC", "tag", "create:DIGEST", "tag"), listener.events);
         System.out.println("...contexts=6...events=" + listener.events.size());
         System.out.println("registeredStreamContexts...ok");
@@ -127,10 +123,10 @@ class ZeroEchoSessionWrapIntegrationTest {
         KeyPair aliceKeys = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
         KeyPair bobKeys = session.keyBuilders().asymmetric().generateKeyPair("Xdh", XdhSpec.X25519);
 
-        try (AgreementContext alice = session.createContext(
-                "Xdh", KeyUsage.AGREEMENT, aliceKeys.getPrivate(), XdhSpec.X25519);
-                AgreementContext bob = session.createContext(
-                        "Xdh", KeyUsage.AGREEMENT, bobKeys.getPrivate(), XdhSpec.X25519)) {
+        try (AgreementContext alice = session.createContext("Xdh", KeyUsage.AGREEMENT, aliceKeys.getPrivate(),
+                XdhSpec.X25519);
+                AgreementContext bob = session.createContext("Xdh", KeyUsage.AGREEMENT, bobKeys.getPrivate(),
+                        XdhSpec.X25519)) {
             assertProxy(alice);
             assertProxy(bob);
             alice.setPeerPublic(bobKeys.getPublic());
@@ -138,10 +134,10 @@ class ZeroEchoSessionWrapIntegrationTest {
             assertArrayEquals(alice.deriveSecret(), bob.deriveSecret());
         }
 
-        try (MessageAgreementContext alice = session.createContext(
-                "Xdh", KeyUsage.AGREEMENT, new KeyPairKey(aliceKeys), XdhSpec.X25519);
-                MessageAgreementContext bob = session.createContext(
-                        "Xdh", KeyUsage.AGREEMENT, new KeyPairKey(bobKeys), XdhSpec.X25519)) {
+        try (MessageAgreementContext alice = session.createContext("Xdh", KeyUsage.AGREEMENT, new KeyPairKey(aliceKeys),
+                XdhSpec.X25519);
+                MessageAgreementContext bob = session.createContext("Xdh", KeyUsage.AGREEMENT, new KeyPairKey(bobKeys),
+                        XdhSpec.X25519)) {
             assertProxy(alice);
             assertProxy(bob);
             byte[] aliceMessage = alice.getPeerMessage();
@@ -151,10 +147,9 @@ class ZeroEchoSessionWrapIntegrationTest {
             assertArrayEquals(alice.deriveSecret(), bob.deriveSecret());
         }
 
-        assertEquals(List.of(
-                "create:AGREEMENT", "create:AGREEMENT", "peer", "peer", "derived", "derived",
-                "create:AGREEMENT", "create:AGREEMENT", "message-get", "message-get",
-                "message-set", "message-set", "derived", "derived"), listener.events);
+        assertEquals(List.of("create:AGREEMENT", "create:AGREEMENT", "peer", "peer", "derived", "derived",
+                "create:AGREEMENT", "create:AGREEMENT", "message-get", "message-get", "message-set", "message-set",
+                "derived", "derived"), listener.events);
         System.out.println("...contexts=4...events=" + listener.events.size());
         System.out.println("registeredAgreementContexts...ok");
     }
@@ -164,32 +159,30 @@ class ZeroEchoSessionWrapIntegrationTest {
         System.out.println("registeredKemContexts");
         RecordingListener listener = new RecordingListener();
         ZeroEchoSession session = wrappedSession(listener);
-        KeyPair recipient = session.keyBuilders().asymmetric()
-                .generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber512());
+        KeyPair recipient = session.keyBuilders().asymmetric().generateKeyPair("ML-KEM", KyberKeyGenSpec.kyber512());
 
         KemContext.KemResult encapsulated;
-        try (KemContext encapsulator = session.createContext(
-                "ML-KEM", KeyUsage.ENCAPSULATE, recipient.getPublic(), VoidSpec.INSTANCE);
-                KemContext decapsulator = session.createContext(
-                        "ML-KEM", KeyUsage.DECAPSULATE, recipient.getPrivate(), VoidSpec.INSTANCE)) {
+        try (KemContext encapsulator = session.createContext("ML-KEM", KeyUsage.ENCAPSULATE, recipient.getPublic(),
+                VoidSpec.INSTANCE);
+                KemContext decapsulator = session.createContext("ML-KEM", KeyUsage.DECAPSULATE, recipient.getPrivate(),
+                        VoidSpec.INSTANCE)) {
             assertProxy(encapsulator);
             assertProxy(decapsulator);
             encapsulated = encapsulator.encapsulate();
             assertArrayEquals(encapsulated.sharedSecret(), decapsulator.decapsulate(encapsulated.ciphertext()));
         }
 
-        try (MessageAgreementContext initiator = session.createContext(
-                "ML-KEM", KeyUsage.AGREEMENT, recipient.getPublic(), VoidSpec.INSTANCE);
-                MessageAgreementContext responder = session.createContext(
-                        "ML-KEM", KeyUsage.AGREEMENT, recipient.getPrivate(), VoidSpec.INSTANCE)) {
+        try (MessageAgreementContext initiator = session.createContext("ML-KEM", KeyUsage.AGREEMENT,
+                recipient.getPublic(), VoidSpec.INSTANCE);
+                MessageAgreementContext responder = session.createContext("ML-KEM", KeyUsage.AGREEMENT,
+                        recipient.getPrivate(), VoidSpec.INSTANCE)) {
             assertProxy(initiator);
             assertProxy(responder);
             responder.setPeerMessage(initiator.getPeerMessage());
             assertArrayEquals(initiator.deriveSecret(), responder.deriveSecret());
         }
 
-        assertEquals(List.of(
-                "create:ENCAPSULATE", "create:DECAPSULATE", "encapsulated", "decapsulated",
+        assertEquals(List.of("create:ENCAPSULATE", "create:DECAPSULATE", "encapsulated", "decapsulated",
                 "create:AGREEMENT", "create:AGREEMENT", "message-get", "message-set", "derived", "derived"),
                 listener.events);
         System.out.println("...contexts=4...events=" + listener.events.size());
@@ -204,8 +197,8 @@ class ZeroEchoSessionWrapIntegrationTest {
         byte[][] tag = new byte[1][];
         int tagLength = engine.tagLength();
         byte[] emittedBody;
-        try (InputStream input = new TailStrippingInputStream(
-                engine.wrap(new ByteArrayInputStream(body)), tagLength, 128) {
+        try (InputStream input = new TailStrippingInputStream(engine.wrap(new ByteArrayInputStream(body)), tagLength,
+                128) {
             @Override
             protected void processTail(byte[] tail) {
                 tag[0] = tail.clone();
@@ -220,7 +213,8 @@ class ZeroEchoSessionWrapIntegrationTest {
         assertTrue(Proxy.isProxyClass(context.getClass()));
     }
 
-    private record TaggedBody(byte[] body, byte[] tag) {}
+    private record TaggedBody(byte[] body, byte[] tag) {
+    }
 
     private static final class RecordingListener implements AuditListener {
         private final List<String> events = new ArrayList<>();

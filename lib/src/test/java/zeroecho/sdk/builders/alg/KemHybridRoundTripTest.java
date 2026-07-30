@@ -243,25 +243,29 @@ class KemHybridRoundTripTest {
     }
 
     private static DataContent encryptStage(String kemId, KeyPair kp, String mode) {
-        KemDataContentBuilder kem = KemDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).kem(kemId).recipientPublic(kp.getPublic())
-                .derivedKeyBytes(32); // AES-256 or ChaCha20 key
+        KemDataContentBuilder kem = KemDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).kem(kemId)
+                .recipientPublic(kp.getPublic()).derivedKeyBytes(32); // AES-256 or ChaCha20 key
 
         switch (mode) {
             case "GCM": {
-                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128).withHeader().withAad(AAD);
+                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
+                        .modeGcm(128).withHeader().withAad(AAD);
                 return kem.withAes(aes).build(true);
             }
             case "CBC": {
-                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeCbcPkcs5().withHeader();
+                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
+                        .modeCbcPkcs5().withHeader();
                 return kem.withAes(aes).build(true);
             }
             case "CTR": {
-                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeCtr().withHeader();
+                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeCtr()
+                        .withHeader();
                 return kem.withAes(aes).build(true);
             }
             case "CHACHA20-POLY1305": {
-                ChaChaDataContentBuilder ch = ChaChaDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withAad(AAD) // non-empty → AEAD
-                                                                                              // variant
+                ChaChaDataContentBuilder ch = ChaChaDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
+                        .withAad(AAD) // non-empty → AEAD
+                        // variant
                         .withHeader(); // carry nonce
                 return kem.withChaCha(ch).build(true);
             }
@@ -271,24 +275,28 @@ class KemHybridRoundTripTest {
     }
 
     private static DataContent decryptStage(String kemId, KeyPair kp, String mode) {
-        KemDataContentBuilder kem = KemDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).kem(kemId).recipientPrivate(kp.getPrivate())
-                .derivedKeyBytes(32);
+        KemDataContentBuilder kem = KemDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).kem(kemId)
+                .recipientPrivate(kp.getPrivate()).derivedKeyBytes(32);
 
         switch (mode) {
             case "GCM": {
-                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeGcm(128).withHeader().withAad(AAD);
+                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
+                        .modeGcm(128).withHeader().withAad(AAD);
                 return kem.withAes(aes).build(false);
             }
             case "CBC": {
-                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeCbcPkcs5().withHeader();
+                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
+                        .modeCbcPkcs5().withHeader();
                 return kem.withAes(aes).build(false);
             }
             case "CTR": {
-                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeCtr().withHeader();
+                AesDataContentBuilder aes = AesDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).modeCtr()
+                        .withHeader();
                 return kem.withAes(aes).build(false);
             }
             case "CHACHA20-POLY1305": {
-                ChaChaDataContentBuilder ch = ChaChaDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession()).withAad(AAD).withHeader();
+                ChaChaDataContentBuilder ch = ChaChaDataContentBuilder.builder(new zeroecho.sdk.ZeroEchoSession())
+                        .withAad(AAD).withHeader();
                 return kem.withChaCha(ch).build(false);
             }
             default:

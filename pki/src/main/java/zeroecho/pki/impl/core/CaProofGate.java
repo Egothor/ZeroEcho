@@ -77,8 +77,8 @@ final class CaProofGate {
 
     private static final Principal SYSTEM_PKI = new Principal("SYSTEM", "pki");
     private static final Purpose CA_ISSUANCE_PURPOSE = new Purpose("CA_ISSUANCE");
-    private static final byte[] MANAGED_KEY_CHALLENGE_DOMAIN =
-            "ZeroEcho/PKI/managed-key-possession/v1\0".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    private static final byte[] MANAGED_KEY_CHALLENGE_DOMAIN = "ZeroEcho/PKI/managed-key-possession/v1\0"
+            .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
     private static final int CHALLENGE_NONCE_BYTES = 32;
     private static final SecureRandom CHALLENGE_RANDOM = new SecureRandom();
 
@@ -265,8 +265,7 @@ final class CaProofGate {
                 PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(accessContext,
                         algorithmId, payload, keyRef, Encoding.BINARY, Optional.empty());
                 try {
-                    bus.submitSign(opId, owner, keyRef, algorithmId, payload, ttl,
-                            Optional.of(continuation.encode()));
+                    bus.submitSign(opId, owner, keyRef, algorithmId, payload, ttl, Optional.of(continuation.encode()));
                 } catch (RuntimeException failure) { // NOPMD - delete state if submission partially persisted it
                     deletePreservingFailure(opId);
                     throw failure;
@@ -330,7 +329,8 @@ final class CaProofGate {
             try {
                 bus.retireSignOperation(opId, "failed-or-expired");
             } catch (RuntimeException cleanupFailure) { // NOPMD - preserve primary failure
-                // The primary safe failure remains authoritative; provider diagnostics are discarded.
+                // The primary safe failure remains authoritative; provider diagnostics are
+                // discarded.
             }
         }
 

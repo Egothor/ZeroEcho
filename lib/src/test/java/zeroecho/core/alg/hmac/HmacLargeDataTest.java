@@ -127,7 +127,8 @@ public class HmacLargeDataTest {
         CryptoAlgorithm algo = CryptoAlgorithms.require(ALG_ID);
 
         // Generate a key (macName must match)
-        SecretKey key = algo.symmetricKeyGenerator(HmacKeyGenSpec.class).generateSecret(new HmacKeyGenSpec(JCA_MAC, 256));
+        SecretKey key = algo.symmetricKeyGenerator(HmacKeyGenSpec.class)
+                .generateSecret(new HmacKeyGenSpec(JCA_MAC, 256));
 
         // --- MAC (produce): engine emits [body][tag]; capture trailer ---
         HmacSpec spec = HmacSpec.sha256();

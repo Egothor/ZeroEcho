@@ -48,7 +48,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * <p>
  * {@code SphincsPlusPrivateKeySpec} wraps a PKCS#8-encoded SPHINCS+ private key
  * along with the provider name that should be used for import. It is a simple
- * destroyable holder designed for use with {@link SphincsPlusPrivateKeyBuilder}.
+ * destroyable holder designed for use with
+ * {@link SphincsPlusPrivateKeyBuilder}.
  * </p>
  *
  * <h2>Encoding</h2>

@@ -206,8 +206,10 @@ public class AgreementAlgorithmsRoundTripTest {
                     MessageAgreementContext bCtx = null;
 
                     try {
-                        aCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, aliceKey, spec);
-                        bCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bobKey, spec);
+                        aCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, aliceKey,
+                                spec);
+                        bCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bobKey,
+                                spec);
 
                         byte[] aMsg = aCtx.getPeerMessage();
                         byte[] bMsg = bCtx.getPeerMessage();
@@ -274,12 +276,12 @@ public class AgreementAlgorithmsRoundTripTest {
 
                     try {
                         // Alice (initiator): has Bob's public key
-                        aliceCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bob.getPublic(),
-                                VoidSpec.INSTANCE);
+                        aliceCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT,
+                                bob.getPublic(), VoidSpec.INSTANCE);
 
                         // Bob (responder): has his private key
-                        bobCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(),
-                                VoidSpec.INSTANCE);
+                        bobCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT,
+                                bob.getPrivate(), VoidSpec.INSTANCE);
 
                         // Initiator produces encapsulation message (ciphertext) to send
                         byte[] enc = aliceCtx.getPeerMessage();
@@ -362,8 +364,10 @@ public class AgreementAlgorithmsRoundTripTest {
                     AgreementContext bCtx = null;
 
                     try {
-                        aCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, alice.getPrivate(), spec);
-                        bCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT, bob.getPrivate(), spec);
+                        aCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT,
+                                alice.getPrivate(), spec);
+                        bCtx = new zeroecho.sdk.ZeroEchoSession().createContext(alg.id(), KeyUsage.AGREEMENT,
+                                bob.getPrivate(), spec);
 
                         aCtx.setPeerPublic(bob.getPublic());
                         bCtx.setPeerPublic(alice.getPublic());

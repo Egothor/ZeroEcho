@@ -74,10 +74,10 @@ import zeroecho.core.tag.TagEngine;
  *
  * <p>
  * These tests focus on the internal audit wrapping path used by
- * {@link AuditedContexts#wrap(CryptoContext, AuditListener, KeyUsage)}.
- * They verify that representative context types are wrapped as audited JDK
- * proxies and that the resulting wrapper preserves the expected basic
- * delegation behavior.
+ * {@link AuditedContexts#wrap(CryptoContext, AuditListener, KeyUsage)}. They
+ * verify that representative context types are wrapped as audited JDK proxies
+ * and that the resulting wrapper preserves the expected basic delegation
+ * behavior.
  * </p>
  */
 class CryptoAlgorithmsAuditWrapTest {

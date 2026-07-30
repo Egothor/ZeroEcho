@@ -21,12 +21,8 @@ final class CrlEntryTest {
     @Test
     void acceptsEveryExplicitActiveReasonAndFullPositiveSerialDomain() {
         BigInteger largestFeasibleX509Serial = BigInteger.ONE.shiftLeft(159).subtract(BigInteger.ONE);
-        BigInteger[] serials = {
-                BigInteger.ONE,
-                BigInteger.valueOf(Long.MAX_VALUE),
-                BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.ONE),
-                largestFeasibleX509Serial
-        };
+        BigInteger[] serials = { BigInteger.ONE, BigInteger.valueOf(Long.MAX_VALUE),
+                BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.ONE), largestFeasibleX509Serial };
         for (RevocationReason reason : activeReasons()) {
             for (BigInteger serial : serials) {
                 CrlEntry entry = new CrlEntry(serial, TIME, reason);
@@ -45,15 +41,13 @@ final class CrlEntryTest {
                 () -> new CrlEntry(BigInteger.valueOf(-1L), TIME, RevocationReason.UNSPECIFIED));
         assertThrows(NullPointerException.class,
                 () -> new CrlEntry(BigInteger.ONE, null, RevocationReason.UNSPECIFIED));
-        assertThrows(NullPointerException.class,
-                () -> new CrlEntry(BigInteger.ONE, TIME, null));
+        assertThrows(NullPointerException.class, () -> new CrlEntry(BigInteger.ONE, TIME, null));
         assertThrows(IllegalArgumentException.class,
                 () -> new CrlEntry(BigInteger.ONE, TIME, RevocationReason.REMOVE_FROM_CRL));
     }
 
     private static RevocationReason[] activeReasons() {
-        return Arrays.stream(RevocationReason.values())
-                .filter(reason -> reason != RevocationReason.REMOVE_FROM_CRL)
+        return Arrays.stream(RevocationReason.values()).filter(reason -> reason != RevocationReason.REMOVE_FROM_CRL)
                 .toArray(RevocationReason[]::new);
     }
 }

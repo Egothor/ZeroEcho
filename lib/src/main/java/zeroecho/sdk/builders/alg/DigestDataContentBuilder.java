@@ -113,6 +113,7 @@ import zeroecho.sdk.content.api.PlainContent;
  */
 public final class DigestDataContentBuilder implements DataContentBuilder<PlainContent> {
     private final ZeroEchoSession session;
+
     /**
      * OutputMode selects how the digest-computing pipeline presents its result to
      * callers.

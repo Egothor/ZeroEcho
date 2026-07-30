@@ -61,18 +61,20 @@ public final class BcX509ProfileSupport {
             case COUNTRY_NAME, SERIAL_NUMBER -> new DERPrintableString(rdn.value(), true);
             case EMAIL_ADDRESS -> new DERIA5String(rdn.value(), true);
             case COMMON_NAME, ORGANIZATION_NAME, ORGANIZATIONAL_UNIT_NAME, STATE_OR_PROVINCE_NAME, LOCALITY_NAME,
-                    PSEUDONYM -> new DERUTF8String(rdn.value());
+                    PSEUDONYM ->
+                new DERUTF8String(rdn.value());
         };
     }
 
     /**
      * Verifies the complete allowed leaf extension set and exact values.
      *
-     * @param holder issued certificate
+     * @param holder  issued certificate
      * @param request validated request
      * @return {@code true} only when every extension matches
      */
-    // Malformed post-signing ASN.1 is a false postcondition, not an exposed parser failure.
+    // Malformed post-signing ASN.1 is a false postcondition, not an exposed parser
+    // failure.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public static boolean matchesLeafExtensions(X509CertificateHolder holder, ValidatedCertificateRequest request) {
         try {
@@ -119,8 +121,7 @@ public final class BcX509ProfileSupport {
         return Arrays.equals(actual.getBytes(), expected.getBytes()) && actual.getPadBits() == expected.getPadBits();
     }
 
-    private static boolean matchesExtendedKeyUsage(X509CertificateHolder holder,
-            ValidatedCertificateRequest request) {
+    private static boolean matchesExtendedKeyUsage(X509CertificateHolder holder, ValidatedCertificateRequest request) {
         Extension extension = holder.getExtension(Extension.extendedKeyUsage);
         if (request.extendedKeyUsages().isEmpty()) {
             return extension == null;
@@ -162,8 +163,7 @@ public final class BcX509ProfileSupport {
 
     private static SubjectAlternativeName parse(GeneralName name) {
         return switch (name.getTagNo()) {
-            case GeneralName.dNSName ->
-                new SubjectAlternativeName.DnsName(((ASN1String) name.getName()).getString());
+            case GeneralName.dNSName -> new SubjectAlternativeName.DnsName(((ASN1String) name.getName()).getString());
             case GeneralName.iPAddress ->
                 new SubjectAlternativeName.IpAddress(ASN1OctetString.getInstance(name.getName()).getOctets());
             case GeneralName.uniformResourceIdentifier ->

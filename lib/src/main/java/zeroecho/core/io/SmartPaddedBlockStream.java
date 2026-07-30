@@ -59,6 +59,7 @@ final class SmartPaddedBlockStream extends AbstractChunkTransformInputStream {
     private static final Logger LOG = Logger.getLogger(SmartPaddedBlockStream.class.getName());
 
     private final Cipher cipher;
+
     /* package */ SmartPaddedBlockStream(InputStream upstream, Cipher cipher, int inChunkSize, int outChunkSize,
             int bufferedBlocks) {
         super(upstream, inChunkSize, outChunkSize, bufferedBlocks);

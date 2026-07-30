@@ -60,8 +60,8 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * </p>
  *
  * <p>
- * Objects of this type are thread-safe while active and may be destroyed to wipe
- * their owned key bytes. Access and marshalling fail after destruction.
+ * Objects of this type are thread-safe while active and may be destroyed to
+ * wipe their owned key bytes. Access and marshalling fail after destruction.
  * </p>
  *
  * @since 1.0

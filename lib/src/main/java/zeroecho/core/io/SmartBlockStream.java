@@ -58,6 +58,7 @@ final class SmartBlockStream extends AbstractChunkTransformInputStream {
     private static final Logger LOG = Logger.getLogger(SmartBlockStream.class.getName());
 
     private final Cipher cipher;
+
     /* package */ SmartBlockStream(InputStream upstream, Cipher cipher, int inChunkSize, int outChunkSize,
             int bufferedBlocks) {
         super(upstream, inChunkSize, outChunkSize, bufferedBlocks);

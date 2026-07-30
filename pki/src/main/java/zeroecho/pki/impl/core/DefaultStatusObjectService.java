@@ -131,12 +131,12 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      * Creates a status object service bound to the supplied persistence and
      * framework collaborators.
      *
-     * @param store     PKI store used for issuer lookup, revocation enumeration,
-     *                  status object persistence, and status object listing; must
-     *                  not be {@code null}
-     * @param framework credential framework providing the format-specific status
-     *                  object generator; must not be {@code null}
-     * @param auditSink required sink for safe trust-rejection audit events
+     * @param store          PKI store used for issuer lookup, revocation
+     *                       enumeration, status object persistence, and status
+     *                       object listing; must not be {@code null}
+     * @param framework      credential framework providing the format-specific
+     *                       status object generator; must not be {@code null}
+     * @param auditSink      required sink for safe trust-rejection audit events
      * @param statusResolver authoritative runtime credential-status resolver
      * @throws NullPointerException if an argument is {@code null}
      */
@@ -154,9 +154,9 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      *
      * <p>
      * The issuer CA must already exist, must be in {@link CaState#ACTIVE} state,
-     * and must expose at least one usable credential matching the requested
-     * format. Candidates are evaluated newest-first against current revocation
-     * state and one authoritative evaluation time.
+     * and must expose at least one usable credential matching the requested format.
+     * Candidates are evaluated newest-first against current revocation state and
+     * one authoritative evaluation time.
      * </p>
      *
      * <p>
@@ -244,8 +244,8 @@ public final class DefaultStatusObjectService implements StatusObjectService {
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     private List<CrlEntry> collectCrlEntries(PkiId issuerCaId, Instant evaluationTime) {
         try {
-            List<RevocationJournal> journals =
-                    Objects.requireNonNull(store.listRevocationJournals(), "revocation journals");
+            List<RevocationJournal> journals = Objects.requireNonNull(store.listRevocationJournals(),
+                    "revocation journals");
             List<CrlEntry> entries = new java.util.ArrayList<>();
             Set<BigInteger> serials = new HashSet<>();
             for (RevocationJournal journal : journals) {
@@ -257,8 +257,8 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         }
     }
 
-    private Optional<CrlEntry> collectCrlEntry(PkiId issuerCaId, Instant evaluationTime,
-            RevocationJournal journal, Set<BigInteger> serials) {
+    private Optional<CrlEntry> collectCrlEntry(PkiId issuerCaId, Instant evaluationTime, RevocationJournal journal,
+            Set<BigInteger> serials) {
         Objects.requireNonNull(journal, "journal");
         RevocationTransition latest = Objects.requireNonNull(journal.latest(), "latest transition");
         if (latest.time().isAfter(evaluationTime)) {
@@ -267,8 +267,8 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         if (latest.state() == RevocationState.CLEAR) {
             return Optional.empty();
         }
-        Credential credential = store.getCredential(journal.credentialId()).orElseThrow(
-                DefaultStatusObjectService::crlGenerationFailure);
+        Credential credential = store.getCredential(journal.credentialId())
+                .orElseThrow(DefaultStatusObjectService::crlGenerationFailure);
         if (!issuerCaId.equals(credential.issuerRef().caId())) {
             return Optional.empty();
         }
@@ -282,8 +282,8 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         }
         RevocationReason reason = switch (latest.state()) {
             case HELD -> RevocationReason.CERTIFICATE_HOLD;
-            case PERMANENTLY_REVOKED -> latest.permanentReason().orElseThrow(
-                    DefaultStatusObjectService::crlGenerationFailure);
+            case PERMANENTLY_REVOKED ->
+                latest.permanentReason().orElseThrow(DefaultStatusObjectService::crlGenerationFailure);
             case CLEAR -> throw crlGenerationFailure();
         };
         return Optional.of(new CrlEntry(serial, latest.time(), reason));

@@ -118,8 +118,7 @@ final class HybridSignatureContext implements SignatureContext {
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
      */
     /* default */ HybridSignatureContext(ZeroEchoSession session, HybridSignatureProfile profile,
-            PrivateKey classicPrivate,
-            PrivateKey pqcPrivate, int maxBufferedBytes) {
+            PrivateKey classicPrivate, PrivateKey pqcPrivate, int maxBufferedBytes) {
         this.session = Objects.requireNonNull(session, "session");
         this.profile = Objects.requireNonNull(profile, "profile");
         this.classicPrivate = Objects.requireNonNull(classicPrivate, "classicPrivate");
@@ -151,8 +150,7 @@ final class HybridSignatureContext implements SignatureContext {
      * @throws IllegalArgumentException if {@code maxBufferedBytes <= 0}
      */
     /* default */ HybridSignatureContext(ZeroEchoSession session, HybridSignatureProfile profile,
-            PublicKey classicPublic,
-            PublicKey pqcPublic, int maxBufferedBytes) {
+            PublicKey classicPublic, PublicKey pqcPublic, int maxBufferedBytes) {
         this.session = Objects.requireNonNull(session, "session");
         this.profile = Objects.requireNonNull(profile, "profile");
         this.classicPublic = Objects.requireNonNull(classicPublic, "classicPublic");

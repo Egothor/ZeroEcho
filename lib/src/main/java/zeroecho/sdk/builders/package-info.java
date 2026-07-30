@@ -70,7 +70,8 @@
  * {@link zeroecho.sdk.builders.alg.ElgamalEncDataContentBuilder}.</li>
  * <li>RSA signatures:
  * {@link zeroecho.sdk.builders.alg.RsaSigDataContentBuilder}; generic signature
- * trailers use {@link zeroecho.sdk.builders.SignatureTrailerDataContentBuilder}.</li>
+ * trailers use
+ * {@link zeroecho.sdk.builders.SignatureTrailerDataContentBuilder}.</li>
  * <li>MAC and digest: {@link zeroecho.sdk.builders.alg.HmacDataContentBuilder},
  * {@link zeroecho.sdk.builders.alg.DigestDataContentBuilder}.</li>
  * <li>KEM envelopes: {@link zeroecho.sdk.builders.alg.KemDataContentBuilder}

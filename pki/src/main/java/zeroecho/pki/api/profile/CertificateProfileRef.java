@@ -23,8 +23,8 @@ public final class CertificateProfileRef {
     /**
      * Creates an exact profile reference.
      *
-     * @param profileId logical profile identifier
-     * @param profileVersion positive profile version
+     * @param profileId       logical profile identifier
+     * @param profileVersion  positive profile version
      * @param canonicalSha256 SHA-256 of the canonical JSON document
      */
     public CertificateProfileRef(String profileId, long profileVersion, byte[] canonicalSha256) {
@@ -69,10 +69,8 @@ public final class CertificateProfileRef {
 
     @Override
     public boolean equals(Object other) {
-        return this == other || other instanceof CertificateProfileRef ref
-                && profileVersion == ref.profileVersion
-                && profileId.equals(ref.profileId)
-                && MessageDigest.isEqual(canonicalSha256, ref.canonicalSha256);
+        return this == other || other instanceof CertificateProfileRef ref && profileVersion == ref.profileVersion
+                && profileId.equals(ref.profileId) && MessageDigest.isEqual(canonicalSha256, ref.canonicalSha256);
     }
 
     @Override
@@ -85,7 +83,7 @@ public final class CertificateProfileRef {
 
     @Override
     public String toString() {
-        return "CertificateProfileRef[profileId=" + profileId + ", profileVersion=" + profileVersion
-                + ", fingerprint=" + shortFingerprint() + "]";
+        return "CertificateProfileRef[profileId=" + profileId + ", profileVersion=" + profileVersion + ", fingerprint="
+                + shortFingerprint() + "]";
     }
 }

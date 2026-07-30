@@ -117,8 +117,8 @@ public final class Sha2Sha3Algorithm extends AbstractCryptoAlgorithm {
                         MessageDigest md = MessageDigest.getInstance(s.algorithm().jca());
                         return new JcaDigestContext(this, md, s);
                     } catch (GeneralSecurityException e) {
-                        throw new ProviderFailureException(
-                                "Failed to initialize MessageDigest " + s.algorithm().jca(), e);
+                        throw new ProviderFailureException("Failed to initialize MessageDigest " + s.algorithm().jca(),
+                                e);
                     }
                 }, DigestSpec::sha256 // default for catalog/tests
         );

@@ -38,14 +38,14 @@ import zeroecho.pki.impl.audit.InMemoryAuditSink;
 import zeroecho.pki.impl.core.DefaultProfileService;
 
 /**
- * Atomic persistence and fail-closed lookup evidence for profile lifecycle state.
+ * Atomic persistence and fail-closed lookup evidence for profile lifecycle
+ * state.
  */
 final class FilesystemProfileLifecycleTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-30T10:00:00Z"), ZoneOffset.UTC);
 
     @Test
-    void precommitFailuresPreserveAbsentVersionAndPreviousActivePointer(@TempDir Path directory)
-            throws Exception {
+    void precommitFailuresPreserveAbsentVersionAndPreviousActivePointer(@TempDir Path directory) throws Exception {
         Path root = directory.resolve("store");
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
         byte[] versionTwo = version(template, 2, "Server TLS v2");
@@ -54,8 +54,7 @@ final class FilesystemProfileLifecycleTest {
             CertificateProfileRef one = service.importBuiltIn(template);
             service.activateProfile("server-tls", 1);
 
-            Path versionTemporary = new FsPaths(root).profileVersion("server-tls", 2)
-                    .resolveSibling("2.bin.tmp");
+            Path versionTemporary = new FsPaths(root).profileVersion("server-tls", 2).resolveSibling("2.bin.tmp");
             Files.createDirectories(versionTemporary);
             Files.writeString(versionTemporary.resolve("block"), "blocked");
             assertThrows(PkiException.class, () -> service.importProfile(versionTwo));
@@ -66,8 +65,7 @@ final class FilesystemProfileLifecycleTest {
             Files.delete(versionTemporary);
             CertificateProfileRef two = service.importProfile(versionTwo);
 
-            Path pointerTemporary = new FsPaths(root).profileActive("server-tls")
-                    .resolveSibling("active.bin.tmp");
+            Path pointerTemporary = new FsPaths(root).profileActive("server-tls").resolveSibling("active.bin.tmp");
             Files.createDirectories(pointerTemporary);
             Files.writeString(pointerTemporary.resolve("block"), "blocked");
             assertThrows(PkiException.class, () -> service.activateProfile("server-tls", 2));
@@ -78,8 +76,7 @@ final class FilesystemProfileLifecycleTest {
     }
 
     @Test
-    void corruptAndNoncanonicalVersionsFailClosedAndCannotBeOverwritten(@TempDir Path directory)
-            throws Exception {
+    void corruptAndNoncanonicalVersionsFailClosedAndCannotBeOverwritten(@TempDir Path directory) throws Exception {
         BuiltInCertificateProfileTemplate template = builtIn("server-tls");
         Path corruptRoot = directory.resolve("corrupt");
         try (FilesystemPkiStore store = store(corruptRoot)) {
@@ -100,10 +97,9 @@ final class FilesystemProfileLifecycleTest {
             byte[] noncanonical = (new String(template.canonicalJson(), StandardCharsets.UTF_8) + "\n")
                     .getBytes(StandardCharsets.UTF_8);
             ImportedCertificateProfileVersion invalid = new ImportedCertificateProfileVersion(
-                    new CertificateProfileRef(template.definition().profileId(),
-                            template.definition().profileVersion(), template.canonicalSha256()),
-                    CertificateProfileDefinition.SCHEMA_VERSION, template.definition(),
-                    noncanonical, CLOCK.instant());
+                    new CertificateProfileRef(template.definition().profileId(), template.definition().profileVersion(),
+                            template.canonicalSha256()),
+                    CertificateProfileDefinition.SCHEMA_VERSION, template.definition(), noncanonical, CLOCK.instant());
             Path path = new FsPaths(noncanonicalRoot).profileVersion("server-tls", 1);
             FsOperations.ensureDir(path.getParent());
             Files.write(path, FsCodec.encode(FsCodec.PROFILE_VERSION, invalid));
@@ -115,11 +111,10 @@ final class FilesystemProfileLifecycleTest {
         Path hashMismatchRoot = directory.resolve("hash-mismatch");
         try (FilesystemPkiStore store = store(hashMismatchRoot)) {
             ImportedCertificateProfileVersion invalid = new ImportedCertificateProfileVersion(
-                    new CertificateProfileRef(template.definition().profileId(),
-                            template.definition().profileVersion(),
+                    new CertificateProfileRef(template.definition().profileId(), template.definition().profileVersion(),
                             new byte[CertificateProfileRef.HASH_BYTES]),
-                    CertificateProfileDefinition.SCHEMA_VERSION, template.definition(),
-                    template.canonicalJson(), CLOCK.instant());
+                    CertificateProfileDefinition.SCHEMA_VERSION, template.definition(), template.canonicalJson(),
+                    CLOCK.instant());
             Path path = new FsPaths(hashMismatchRoot).profileVersion("server-tls", 1);
             FsOperations.ensureDir(path.getParent());
             Files.write(path, FsCodec.encode(FsCodec.PROFILE_VERSION, invalid));
@@ -130,14 +125,12 @@ final class FilesystemProfileLifecycleTest {
     }
 
     @Test
-    void unrelatedProfileIdsProceedWhileAnotherProfileCoordinatorIsHeld(@TempDir Path directory)
-            throws Exception {
+    void unrelatedProfileIdsProceedWhileAnotherProfileCoordinatorIsHeld(@TempDir Path directory) throws Exception {
         try (FilesystemPkiStore store = store(directory.resolve("store"))) {
             DefaultProfileService service = service(store);
             Method acquire = FilesystemPkiStore.class.getDeclaredMethod("acquireProfileLock", String.class);
-            Method release = FilesystemPkiStore.class.getDeclaredMethod("releaseProfileLock",
-                    String.class, Class.forName(
-                            "zeroecho.pki.impl.fs.FilesystemPkiStore$ProfileLockEntry"));
+            Method release = FilesystemPkiStore.class.getDeclaredMethod("releaseProfileLock", String.class,
+                    Class.forName("zeroecho.pki.impl.fs.FilesystemPkiStore$ProfileLockEntry"));
             acquire.setAccessible(true);
             release.setAccessible(true);
             CountDownLatch held = new CountDownLatch(1);
@@ -156,8 +149,8 @@ final class FilesystemProfileLifecycleTest {
                 });
                 assertTrue(held.await(5, TimeUnit.SECONDS));
 
-                Future<CertificateProfileRef> unrelated =
-                        executor.submit(() -> service.importBuiltIn(builtIn("email-signing")));
+                Future<CertificateProfileRef> unrelated = executor
+                        .submit(() -> service.importBuiltIn(builtIn("email-signing")));
                 CertificateProfileRef imported = unrelated.get(5, TimeUnit.SECONDS);
                 assertEquals("email-signing", imported.profileId());
                 assertTrue(service.getImportedVersion("email-signing", 1).isPresent());
@@ -173,8 +166,7 @@ final class FilesystemProfileLifecycleTest {
     }
 
     @Test
-    void caKindsUseLifecycleAndOneLogicalIdCannotChangeKindAcrossVersions(
-            @TempDir Path directory) throws Exception {
+    void caKindsUseLifecycleAndOneLogicalIdCannotChangeKindAcrossVersions(@TempDir Path directory) throws Exception {
         Path root = directory.resolve("store");
         CertificateProfileRef rootRef;
         CertificateProfileRef intermediateRef;
@@ -195,11 +187,9 @@ final class FilesystemProfileLifecycleTest {
             CertificateProfileRef versionTwo = service.importProfile(sameKindVersion);
             assertEquals(2, versionTwo.profileVersion());
 
-            byte[] conflictingKind = new String(builtIn("intermediate-ca").canonicalJson(),
-                    StandardCharsets.UTF_8)
+            byte[] conflictingKind = new String(builtIn("intermediate-ca").canonicalJson(), StandardCharsets.UTF_8)
                     .replace("\"profileId\":\"intermediate-ca\"", "\"profileId\":\"root-ca\"")
-                    .replace("\"profileVersion\":1", "\"profileVersion\":3")
-                    .getBytes(StandardCharsets.UTF_8);
+                    .replace("\"profileVersion\":1", "\"profileVersion\":3").getBytes(StandardCharsets.UTF_8);
             assertCode(() -> service.importProfile(conflictingKind), "PROFILE_KIND_CONFLICT");
             assertTrue(service.getImportedVersion("root-ca", 3).isEmpty());
             assertEquals(rootRef, service.getActiveReference("root-ca").orElseThrow());
@@ -208,8 +198,7 @@ final class FilesystemProfileLifecycleTest {
         try (FilesystemPkiStore reopened = store(root)) {
             DefaultProfileService service = service(reopened);
             assertEquals(rootRef, service.getActiveReference("root-ca").orElseThrow());
-            assertEquals(intermediateRef,
-                    service.getActiveReference("intermediate-ca").orElseThrow());
+            assertEquals(intermediateRef, service.getActiveReference("intermediate-ca").orElseThrow());
             assertEquals(CertificateProfileKind.ROOT_CA,
                     service.requireActiveProfile("root-ca").definition().certificateType());
             assertEquals(CertificateProfileKind.INTERMEDIATE_CA,
@@ -260,8 +249,7 @@ final class FilesystemProfileLifecycleTest {
 
             IllegalStateException failure = assertThrows(IllegalStateException.class,
                     () -> store.exportSnapshot(corruptTarget, CLOCK.instant()));
-            assertEquals("Historical snapshot failed: code=PROFILE_VERSION_CORRUPT",
-                    failure.getMessage());
+            assertEquals("Historical snapshot failed: code=PROFILE_VERSION_CORRUPT", failure.getMessage());
             assertEquals(null, failure.getCause());
             assertEquals(0, failure.getSuppressed().length);
             assertFalse(failure.getMessage().contains(corruptRoot.toString()));
@@ -274,15 +262,14 @@ final class FilesystemProfileLifecycleTest {
         try (FilesystemPkiStore store = store(pathRoot)) {
             service(store).importBuiltIn(template);
             Path original = new FsPaths(pathRoot).profileVersion("server-tls", 1);
-            Path misplaced = pathRoot.resolve("profiles").resolve("by-id").resolve("id-wrong")
-                    .resolve("versions").resolve("1.bin");
+            Path misplaced = pathRoot.resolve("profiles").resolve("by-id").resolve("id-wrong").resolve("versions")
+                    .resolve("1.bin");
             FsOperations.ensureDir(misplaced.getParent());
             Files.write(misplaced, Files.readAllBytes(original));
 
             IllegalStateException failure = assertThrows(IllegalStateException.class,
                     () -> store.exportSnapshot(pathTarget, CLOCK.instant()));
-            assertEquals("Historical snapshot failed: code=PROFILE_VERSION_CORRUPT",
-                    failure.getMessage());
+            assertEquals("Historical snapshot failed: code=PROFILE_VERSION_CORRUPT", failure.getMessage());
             assertFalse(Files.exists(pathTarget));
         }
 
@@ -292,8 +279,7 @@ final class FilesystemProfileLifecycleTest {
             Files.writeString(invalidRoot.resolve("profiles"), "not-a-directory");
             IllegalStateException failure = assertThrows(IllegalStateException.class,
                     () -> store.exportSnapshot(invalidTarget, CLOCK.instant()));
-            assertEquals("Historical snapshot failed: code=PROFILE_STORE_FAILURE",
-                    failure.getMessage());
+            assertEquals("Historical snapshot failed: code=PROFILE_STORE_FAILURE", failure.getMessage());
             assertEquals(null, failure.getCause());
             assertEquals(0, failure.getSuppressed().length);
             assertFalse(Files.exists(invalidTarget));
@@ -318,17 +304,13 @@ final class FilesystemProfileLifecycleTest {
 
     private static BuiltInCertificateProfileTemplate builtIn(String profileId) {
         return BuiltInCertificateProfileCatalog.load(FilesystemProfileLifecycleTest.class.getClassLoader()).stream()
-                .filter(template -> profileId.equals(template.definition().profileId()))
-                .findFirst().orElseThrow();
+                .filter(template -> profileId.equals(template.definition().profileId())).findFirst().orElseThrow();
     }
 
     private static void assertActiveChainFailure(DefaultProfileService service, String profileId, String code) {
-        PkiException referenceFailure = assertThrows(PkiException.class,
-                () -> service.getActiveReference(profileId));
-        PkiException profileFailure = assertThrows(PkiException.class,
-                () -> service.requireActiveProfile(profileId));
-        assertEquals("Profile lifecycle operation failed: code=" + code,
-                referenceFailure.getMessage());
+        PkiException referenceFailure = assertThrows(PkiException.class, () -> service.getActiveReference(profileId));
+        PkiException profileFailure = assertThrows(PkiException.class, () -> service.requireActiveProfile(profileId));
+        assertEquals("Profile lifecycle operation failed: code=" + code, referenceFailure.getMessage());
         assertEquals(referenceFailure.getMessage(), profileFailure.getMessage());
         assertEquals(null, referenceFailure.getCause());
         assertEquals(null, profileFailure.getCause());

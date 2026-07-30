@@ -41,8 +41,8 @@ import zeroecho.pki.api.FormatId;
  * <p>
  * A framework implementation provides request parsing, proof-of-possession
  * verification and status object generation for a particular {@link FormatId}.
- * Credential minting is intentionally not exposed by this framework facade; core
- * issuance services own that privileged implementation boundary.
+ * Credential minting is intentionally not exposed by this framework facade;
+ * core issuance services own that privileged implementation boundary.
  * </p>
  */
 public interface CredentialFramework {

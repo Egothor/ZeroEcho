@@ -11,11 +11,10 @@ import java.util.Objects;
 /**
  * Validated active profile resolution result used by end-entity issuance.
  *
- * @param reference exact active version reference
+ * @param reference  exact active version reference
  * @param definition authoritative immutable definition
  */
-public record ActiveCertificateProfile(CertificateProfileRef reference,
-        CertificateProfileDefinition definition) {
+public record ActiveCertificateProfile(CertificateProfileRef reference, CertificateProfileDefinition definition) {
     /** Creates an active profile result. */
     public ActiveCertificateProfile {
         Objects.requireNonNull(reference, "reference");

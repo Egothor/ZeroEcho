@@ -85,10 +85,10 @@ final class FilesystemSignWorkflowStoreTest {
     void currentRecordCodecRequiresExactShapeAndRedactsStructuralFailures() throws Exception {
         System.out.println("currentRecordCodecRequiresExactShapeAndRedactsStructuralFailures");
         Instant createdAt = Instant.parse("2026-01-02T03:04:05.123Z");
-        PkiId id = SigningSubmissionId.create("0123456789abcdef0123456789abcdef.test-signer", createdAt,
-                new SecureRandom()).id();
-        SignWorkflowStore.Record current = intent(id, createdAt,
-                new EncodedObject(Encoding.BINARY, new byte[] { 7 }), TEST_ALGORITHM);
+        PkiId id = SigningSubmissionId
+                .create("0123456789abcdef0123456789abcdef.test-signer", createdAt, new SecureRandom()).id();
+        SignWorkflowStore.Record current = intent(id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { 7 }),
+                TEST_ALGORITHM);
         String fingerprint = current.fingerprint();
         byte[] encoded = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, current);
 
@@ -177,9 +177,9 @@ final class FilesystemSignWorkflowStoreTest {
         Instant createdAt = Instant.parse("2026-01-02T03:04:05.123Z");
         MutableClock clock = new MutableClock(createdAt);
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
-        FsPkiStoreOptions options = new FsPkiStoreOptions(defaults.caHistoryPolicy(),
-                defaults.profileHistoryPolicy(), defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(),
-                true, Duration.ofDays(90), Duration.ZERO);
+        FsPkiStoreOptions options = new FsPkiStoreOptions(defaults.caHistoryPolicy(), defaults.profileHistoryPolicy(),
+                defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), true, Duration.ofDays(90),
+                Duration.ZERO);
         EncodedObject request = new EncodedObject(Encoding.BINARY, new byte[] { 1, 2, 3 });
         PkiId id;
         SignWorkflowStore.Record intent;
@@ -196,9 +196,8 @@ final class FilesystemSignWorkflowStoreTest {
             assertEquals(1L, claimed.revision());
             assertEquals(1L, claimed.fence());
             assertTrue(store.tryClaimSign(id, 0L, Duration.ofSeconds(30)).isEmpty());
-            assertTrue(store.transitionSign(id, claimed.revision(), claimed.fence(),
-                    SignWorkflowStore.State.DISPATCHED, Optional.of("DISPATCHED"), Optional.empty(),
-                    Optional.empty()).isPresent());
+            assertTrue(store.transitionSign(id, claimed.revision(), claimed.fence(), SignWorkflowStore.State.DISPATCHED,
+                    Optional.of("DISPATCHED"), Optional.empty(), Optional.empty()).isPresent());
         }
 
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, options, clock)) {
@@ -206,9 +205,10 @@ final class FilesystemSignWorkflowStoreTest {
             clock.set(createdAt.plus(Duration.ofDays(90)));
             assertEquals(0, reopened.purgeExpiredSignRecords());
             SignWorkflowStore.Record active = reopened.getSignRecord(id).orElseThrow();
-            SignWorkflowStore.Record failed = reopened.transitionSign(id, active.revision(), active.fence(),
-                    SignWorkflowStore.State.FAILED, Optional.of("PROVIDER_FAILED"), Optional.empty(),
-                    Optional.of(clock.instant())).orElseThrow();
+            SignWorkflowStore.Record failed = reopened
+                    .transitionSign(id, active.revision(), active.fence(), SignWorkflowStore.State.FAILED,
+                            Optional.of("PROVIDER_FAILED"), Optional.empty(), Optional.of(clock.instant()))
+                    .orElseThrow();
             reopened.retireSign(id, failed.revision(), failed.fence()).orElseThrow();
             assertEquals(1, reopened.purgeExpiredSignRecords());
             assertFalse(reopened.getSignRecord(id).isPresent());
@@ -235,13 +235,12 @@ final class FilesystemSignWorkflowStoreTest {
             store.createSignIntent(created);
             SignWorkflowStore.Record claimed = store.tryClaimSign(id, 0L, Duration.ofSeconds(10)).orElseThrow();
             SignWorkflowStore.Record dispatched = store.transitionSign(id, claimed.revision(), claimed.fence(),
-                    SignWorkflowStore.State.DISPATCHED, Optional.of("DISPATCHED"), Optional.empty(),
-                    Optional.empty()).orElseThrow();
+                    SignWorkflowStore.State.DISPATCHED, Optional.of("DISPATCHED"), Optional.empty(), Optional.empty())
+                    .orElseThrow();
             clock.set(createdAt.plusSeconds(1));
             store.transitionSign(id, dispatched.revision(), dispatched.fence(), SignWorkflowStore.State.SUCCEEDED,
                     Optional.of("SIGNED"), Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 9 })),
-                    Optional.of(createdAt.plusSeconds(1)))
-                    .orElseThrow();
+                    Optional.of(createdAt.plusSeconds(1))).orElseThrow();
             clock.set(createdAt.plusSeconds(30));
             assertEquals(createdAt.plusSeconds(30), store.signingNow());
             clock.set(createdAt.minusSeconds(30));
@@ -317,19 +316,16 @@ final class FilesystemSignWorkflowStoreTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
             String namespace = store.signingNamespace() + ".test-signer";
             id = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
-            store.createSignIntent(intent(id, createdAt,
-                    new EncodedObject(Encoding.BINARY, new byte[] { 8 }), TEST_ALGORITHM));
+            store.createSignIntent(
+                    intent(id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { 8 }), TEST_ALGORITHM));
             SignWorkflowStore.Record claimed = store.tryClaimSign(id, 0L, Duration.ofSeconds(30)).orElseThrow();
             SignWorkflowStore.Record dispatched = store.transitionSign(id, claimed.revision(), claimed.fence(),
-                    SignWorkflowStore.State.DISPATCHED, Optional.of("DISPATCHED"), Optional.empty(),
-                    Optional.empty()).orElseThrow();
-            store.transitionSign(id, dispatched.revision(), dispatched.fence(),
-                    SignWorkflowStore.State.CANCELLING, Optional.of("CANCEL_REQUESTED"), Optional.empty(),
-                    Optional.empty())
+                    SignWorkflowStore.State.DISPATCHED, Optional.of("DISPATCHED"), Optional.empty(), Optional.empty())
                     .orElseThrow();
+            store.transitionSign(id, dispatched.revision(), dispatched.fence(), SignWorkflowStore.State.CANCELLING,
+                    Optional.of("CANCEL_REQUESTED"), Optional.empty(), Optional.empty()).orElseThrow();
             assertEquals(30, SignWorkflowStore.State.CANCELLING.persistentCode());
-            assertThrows(IllegalArgumentException.class,
-                    () -> SignWorkflowStore.State.fromPersistentCode(999));
+            assertThrows(IllegalArgumentException.class, () -> SignWorkflowStore.State.fromPersistentCode(999));
         }
         try (FilesystemPkiStore restarted = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
             assertEquals(SignWorkflowStore.State.CANCELLING, restarted.getSignRecord(id).orElseThrow().state());
@@ -393,9 +389,9 @@ final class FilesystemSignWorkflowStoreTest {
 
             PkiId retiredId = persistDispatched(store, createdAt, 9);
             SignWorkflowStore.Record retiredSuccessSource = store.getSignRecord(retiredId).orElseThrow();
-            SignWorkflowStore.Record retiredSuccess = store.transitionSign(retiredId,
-                    retiredSuccessSource.revision(), retiredSuccessSource.fence(), SignWorkflowStore.State.SUCCEEDED,
-                    Optional.of("SIGNED"), Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 9 })),
+            SignWorkflowStore.Record retiredSuccess = store.transitionSign(retiredId, retiredSuccessSource.revision(),
+                    retiredSuccessSource.fence(), SignWorkflowStore.State.SUCCEEDED, Optional.of("SIGNED"),
+                    Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 9 })),
                     Optional.of(createdAt.plusSeconds(1))).orElseThrow();
             store.retireSign(retiredId, retiredSuccess.revision(), retiredSuccess.fence()).orElseThrow();
             expected.put(retiredId, SignWorkflowStore.State.RETIRED);
@@ -419,68 +415,86 @@ final class FilesystemSignWorkflowStoreTest {
     void semanticCorruptionCannotActivateRecoverOrExposeInjectedResult(@TempDir Path root) throws Exception {
         System.out.println("semanticCorruptionCannotActivateRecoverOrExposeInjectedResult");
         List<CorruptionCase> cases = List.of(
-                new CorruptionCase("request-changed", record -> copy(record,
-                        request(record.submissionId(), new byte[] { 99 }, TEST_ALGORITHM),
-                        record.fingerprint(), record.state(), record.revision(), record.fence(), record.leaseUntil(),
-                        record.detailCode(), record.result(), record.providerUpdatedAt()), "FINGERPRINT_MISMATCH"),
-                new CorruptionCase("fingerprint-changed", record -> copy(record, record.request(),
-                        flipFingerprint(record.fingerprint()), record.state(), record.revision(), record.fence(),
-                        record.leaseUntil(), record.detailCode(), record.result(), record.providerUpdatedAt()),
+                new CorruptionCase("request-changed",
+                        record -> copy(record, request(record.submissionId(), new byte[] { 99 }, TEST_ALGORITHM),
+                                record.fingerprint(), record.state(), record.revision(), record.fence(),
+                                record.leaseUntil(), record.detailCode(), record.result(), record.providerUpdatedAt()),
                         "FINGERPRINT_MISMATCH"),
-                new CorruptionCase("fingerprint-length", record -> copy(record, record.request(), "signfp:v1:00",
-                        record.state(), record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
-                        record.result(), record.providerUpdatedAt()), "FINGERPRINT_FORMAT_INVALID"),
-                new CorruptionCase("success-no-result", record -> copy(record, record.request(),
-                        record.fingerprint(), record.state(), record.revision(), record.fence(), record.leaseUntil(),
-                        record.detailCode(), Optional.empty(), record.providerUpdatedAt()),
+                new CorruptionCase("fingerprint-changed",
+                        record -> copy(record, record.request(), flipFingerprint(record.fingerprint()), record.state(),
+                                record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
+                                record.result(), record.providerUpdatedAt()),
+                        "FINGERPRINT_MISMATCH"),
+                new CorruptionCase("fingerprint-length",
+                        record -> copy(record, record.request(), "signfp:v1:00", record.state(), record.revision(),
+                                record.fence(), record.leaseUntil(), record.detailCode(), record.result(),
+                                record.providerUpdatedAt()),
+                        "FINGERPRINT_FORMAT_INVALID"),
+                new CorruptionCase("success-no-result",
+                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                                record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
+                                Optional.empty(), record.providerUpdatedAt()),
                         "SUCCESS_EVIDENCE_MISSING"),
-                new CorruptionCase("success-no-provider-time", record -> copy(record, record.request(),
-                        record.fingerprint(), record.state(), record.revision(), record.fence(), record.leaseUntil(),
-                        record.detailCode(), record.result(), Optional.empty()), "SUCCESS_EVIDENCE_MISSING"),
-                new CorruptionCase("success-at-deadline", record -> copy(record, record.request(),
-                        record.fingerprint(), record.state(), record.revision(), record.fence(), record.leaseUntil(),
-                        record.detailCode(), record.result(), Optional.of(record.deadline())),
+                new CorruptionCase("success-no-provider-time",
+                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                                record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
+                                record.result(), Optional.empty()),
+                        "SUCCESS_EVIDENCE_MISSING"),
+                new CorruptionCase("success-at-deadline",
+                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                                record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
+                                record.result(), Optional.of(record.deadline())),
                         "PROVIDER_TIME_INVALID"),
-                new CorruptionCase("success-after-deadline", record -> copy(record, record.request(),
-                        record.fingerprint(), record.state(), record.revision(), record.fence(), record.leaseUntil(),
-                        record.detailCode(), record.result(), Optional.of(record.deadline().plusNanos(1))),
+                new CorruptionCase("success-after-deadline",
+                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                                record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
+                                record.result(), Optional.of(record.deadline().plusNanos(1))),
                         "PROVIDER_TIME_INVALID"),
-                new CorruptionCase("success-active-lease", record -> copy(record, record.request(),
-                        record.fingerprint(), record.state(), record.revision(), record.fence(),
-                        Optional.of(record.createdAt().plusSeconds(30)), record.detailCode(), record.result(),
-                        record.providerUpdatedAt()), "SUCCESS_EVIDENCE_MISSING"),
-                new CorruptionCase("success-expiry-code", record -> copy(record, record.request(),
-                        record.fingerprint(), record.state(), record.revision(), record.fence(), record.leaseUntil(),
-                        Optional.of("EXPIRED"), record.result(), record.providerUpdatedAt()),
+                new CorruptionCase("success-active-lease",
+                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                                record.revision(), record.fence(), Optional.of(record.createdAt().plusSeconds(30)),
+                                record.detailCode(), record.result(), record.providerUpdatedAt()),
+                        "SUCCESS_EVIDENCE_MISSING"),
+                new CorruptionCase("success-expiry-code",
+                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                                record.revision(), record.fence(), record.leaseUntil(), Optional.of("EXPIRED"),
+                                record.result(), record.providerUpdatedAt()),
                         "SUCCESS_DETAIL_CONTRADICTORY"),
-                new CorruptionCase("success-stale-fence", record -> copy(record, record.request(),
-                        record.fingerprint(), record.state(), record.revision(), record.revision(),
-                        record.leaseUntil(), record.detailCode(), record.result(), record.providerUpdatedAt()),
+                new CorruptionCase("success-stale-fence",
+                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                                record.revision(), record.revision(), record.leaseUntil(), record.detailCode(),
+                                record.result(), record.providerUpdatedAt()),
                         "SUCCESS_REVISION_INVALID"),
-                new CorruptionCase("injected-result-fingerprint-mismatch", record -> copy(record, record.request(),
-                        flipFingerprint(record.fingerprint()), record.state(), record.revision(), record.fence(),
-                        record.leaseUntil(), record.detailCode(),
-                        Optional.of(new EncodedObject(Encoding.BINARY, "injected-signature".getBytes(
-                                java.nio.charset.StandardCharsets.UTF_8))),
-                        record.providerUpdatedAt()), "FINGERPRINT_MISMATCH"),
-                new CorruptionCase("failed-with-result", record -> copy(record, record.request(),
-                        record.fingerprint(), SignWorkflowStore.State.FAILED, record.revision(), record.fence(),
-                        record.leaseUntil(), Optional.of("FAILED"), record.result(), record.providerUpdatedAt()),
+                new CorruptionCase("injected-result-fingerprint-mismatch",
+                        record -> copy(record, record.request(), flipFingerprint(record.fingerprint()), record.state(),
+                                record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
+                                Optional.of(new EncodedObject(Encoding.BINARY,
+                                        "injected-signature".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+                                record.providerUpdatedAt()),
+                        "FINGERPRINT_MISMATCH"),
+                new CorruptionCase("failed-with-result",
+                        record -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.FAILED,
+                                record.revision(), record.fence(), record.leaseUntil(), Optional.of("FAILED"),
+                                record.result(), record.providerUpdatedAt()),
                         "FAILURE_RESULT_OR_LEASE_PRESENT"),
-                new CorruptionCase("claim-without-lease", record -> copy(record, record.request(),
-                        record.fingerprint(), SignWorkflowStore.State.INTENT, 1L, 1L, Optional.empty(),
-                        Optional.of("INTENT"), Optional.empty(), Optional.empty()), "INTENT_CLAIM_INVALID"),
-                new CorruptionCase("terminal-with-lease", record -> copy(record, record.request(),
-                        record.fingerprint(), record.state(), record.revision(), record.fence(),
-                        Optional.of(record.createdAt().plusSeconds(30)), record.detailCode(), record.result(),
-                        record.providerUpdatedAt()), "SUCCESS_EVIDENCE_MISSING"),
-                new CorruptionCase("lease-before-creation", record -> copy(record, record.request(),
-                        record.fingerprint(), SignWorkflowStore.State.INTENT, 1L, 1L,
-                        Optional.of(record.createdAt().minusNanos(1)), Optional.of("INTENT"), Optional.empty(),
-                        Optional.empty()), "LEASE_TIME_INVALID"),
-                new CorruptionCase("dispatched-zero-fence", record -> copy(record, record.request(),
-                        record.fingerprint(), SignWorkflowStore.State.DISPATCHED, 1L, 0L, Optional.empty(),
-                        Optional.of("DISPATCHED"), Optional.empty(), Optional.empty()),
+                new CorruptionCase("claim-without-lease",
+                        record -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.INTENT,
+                                1L, 1L, Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty()),
+                        "INTENT_CLAIM_INVALID"),
+                new CorruptionCase("terminal-with-lease",
+                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                                record.revision(), record.fence(), Optional.of(record.createdAt().plusSeconds(30)),
+                                record.detailCode(), record.result(), record.providerUpdatedAt()),
+                        "SUCCESS_EVIDENCE_MISSING"),
+                new CorruptionCase("lease-before-creation",
+                        record -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.INTENT,
+                                1L, 1L, Optional.of(record.createdAt().minusNanos(1)), Optional.of("INTENT"),
+                                Optional.empty(), Optional.empty()),
+                        "LEASE_TIME_INVALID"),
+                new CorruptionCase("dispatched-zero-fence",
+                        record -> copy(record, record.request(), record.fingerprint(),
+                                SignWorkflowStore.State.DISPATCHED, 1L, 0L, Optional.empty(), Optional.of("DISPATCHED"),
+                                Optional.empty(), Optional.empty()),
                         "DISPATCH_REVISION_INVALID"));
 
         int index = 0;
@@ -498,16 +512,16 @@ final class FilesystemSignWorkflowStoreTest {
         PkiSigningBus.SignContinuation continuation = continuation(id, request, algorithmId);
         String namespace = SigningSubmissionId.parse(id).namespace();
         String fingerprint = continuation.semanticFingerprint(namespace, deadline);
-        return new SignWorkflowStore.Record(id, namespace, fingerprint, TEST_OWNER,
-                createdAt, deadline, continuation.encode(), SignWorkflowStore.State.INTENT, 0L, 0L,
-                Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty());
+        return new SignWorkflowStore.Record(id, namespace, fingerprint, TEST_OWNER, createdAt, deadline,
+                continuation.encode(), SignWorkflowStore.State.INTENT, 0L, 0L, Optional.empty(), Optional.of("INTENT"),
+                Optional.empty(), Optional.empty());
     }
 
     private static PkiId persistIntent(FilesystemPkiStore store, Instant createdAt, int marker) {
         String namespace = store.signingNamespace() + ".test-signer";
         PkiId id = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
-        store.createSignIntent(intent(id, createdAt,
-                new EncodedObject(Encoding.BINARY, new byte[] { (byte) marker }), TEST_ALGORITHM));
+        store.createSignIntent(intent(id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { (byte) marker }),
+                TEST_ALGORITHM));
         return id;
     }
 
@@ -525,8 +539,7 @@ final class FilesystemSignWorkflowStoreTest {
         return id;
     }
 
-    private static PkiSigningBus.SignContinuation continuation(PkiId id, EncodedObject payload,
-            String algorithmId) {
+    private static PkiSigningBus.SignContinuation continuation(PkiId id, EncodedObject payload, String algorithmId) {
         return new PkiSigningBus.SignContinuation(TEST_ACCESS, algorithmId, payload, TEST_KEY, Encoding.BINARY,
                 Optional.of(id));
     }
@@ -536,9 +549,8 @@ final class FilesystemSignWorkflowStoreTest {
     }
 
     private static SignWorkflowStore.Record copy(SignWorkflowStore.Record source, EncodedObject request,
-            String fingerprint, SignWorkflowStore.State state, long revision, long fence,
-            Optional<Instant> leaseUntil, Optional<String> detailCode, Optional<EncodedObject> result,
-            Optional<Instant> providerUpdatedAt) {
+            String fingerprint, SignWorkflowStore.State state, long revision, long fence, Optional<Instant> leaseUntil,
+            Optional<String> detailCode, Optional<EncodedObject> result, Optional<Instant> providerUpdatedAt) {
         return new SignWorkflowStore.Record(source.submissionId(), source.namespace(), fingerprint, source.owner(),
                 source.createdAt(), source.deadline(), request, state, revision, fence, leaseUntil, detailCode, result,
                 providerUpdatedAt);
@@ -561,8 +573,8 @@ final class FilesystemSignWorkflowStoreTest {
             clock.set(createdAt.plusSeconds(1));
             succeeded = store.transitionSign(id, dispatched.revision(), dispatched.fence(),
                     SignWorkflowStore.State.SUCCEEDED, Optional.of("SIGNED"),
-                    Optional.of(new EncodedObject(Encoding.BINARY, "valid-signature".getBytes(
-                            java.nio.charset.StandardCharsets.UTF_8))),
+                    Optional.of(new EncodedObject(Encoding.BINARY,
+                            "valid-signature".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
                     Optional.of(createdAt.plusSeconds(1))).orElseThrow();
         }
 
@@ -588,8 +600,7 @@ final class FilesystemSignWorkflowStoreTest {
         assertFalse(Files.exists(busLog) && Files.size(busLog) > 0L);
     }
 
-    private static void writeRawCurrentRecord(Path root, PkiId id, SignWorkflowStore.Record record)
-            throws Exception {
+    private static void writeRawCurrentRecord(Path root, PkiId id, SignWorkflowStore.Record record) throws Exception {
         Path path = new FsPaths(root).signWorkflowPath(id);
         byte[] existing = Files.readAllBytes(path);
         byte[] payload = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record);
@@ -605,8 +616,8 @@ final class FilesystemSignWorkflowStoreTest {
         assertFalse(failure.toString().contains(sensitiveFingerprint));
     }
 
-    private record CorruptionCase(String name,
-            java.util.function.UnaryOperator<SignWorkflowStore.Record> mutation, String expectedCode) {
+    private record CorruptionCase(String name, java.util.function.UnaryOperator<SignWorkflowStore.Record> mutation,
+            String expectedCode) {
     }
 
     private static final class MutableClock extends Clock {

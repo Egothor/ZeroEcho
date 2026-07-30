@@ -96,19 +96,16 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         assertStatus(expiredMetadata, Optional.empty(), EffectiveCredentialStatus.EXPIRED);
 
         Credential held = credential("held", CredentialStatus.ISSUED, NOW.minusSeconds(60), NOW.plusSeconds(60));
-        assertStatus(held, revocation(held, RevocationReason.CERTIFICATE_HOLD, NOW),
-                EffectiveCredentialStatus.HELD);
+        assertStatus(held, revocation(held, RevocationReason.CERTIFICATE_HOLD, NOW), EffectiveCredentialStatus.HELD);
 
-        Credential revoked = credential("revoked", CredentialStatus.ISSUED, NOW.minusSeconds(60),
-                NOW.plusSeconds(60));
+        Credential revoked = credential("revoked", CredentialStatus.ISSUED, NOW.minusSeconds(60), NOW.plusSeconds(60));
         assertStatus(revoked, revocation(revoked, RevocationReason.KEY_COMPROMISE, NOW),
                 EffectiveCredentialStatus.PERMANENTLY_REVOKED);
     }
 
     @Test
     void embeddedRevokedIsPermanentFloorAcrossHoldAndUnholdRecords() {
-        Credential revoked = credential("floor", CredentialStatus.REVOKED, NOW.minusSeconds(60),
-                NOW.plusSeconds(60));
+        Credential revoked = credential("floor", CredentialStatus.REVOKED, NOW.minusSeconds(60), NOW.plusSeconds(60));
         assertStatus(revoked, Optional.empty(), EffectiveCredentialStatus.PERMANENTLY_REVOKED);
         assertStatus(revoked, revocation(revoked, RevocationReason.CERTIFICATE_HOLD, NOW),
                 EffectiveCredentialStatus.PERMANENTLY_REVOKED);
@@ -120,8 +117,7 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
     void futureAndMismatchedJournalsFailClosed() {
         Credential credential = credential("invalid", CredentialStatus.ISSUED, NOW.minusSeconds(60),
                 NOW.plusSeconds(60));
-        assertResolutionFailure(credential,
-                revocation(credential, RevocationReason.KEY_COMPROMISE, NOW.plusNanos(1)));
+        assertResolutionFailure(credential, revocation(credential, RevocationReason.KEY_COMPROMISE, NOW.plusNanos(1)));
         RevocationJournal mismatch = new RevocationJournal(new PkiId("credential:other"),
                 List.of(new RevocationTransition(1L, RevocationState.PERMANENTLY_REVOKED, NOW,
                         Optional.of(RevocationReason.KEY_COMPROMISE), new SimpleAttributeSet())));
@@ -135,17 +131,15 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         PkiStore failing = store(id -> {
             throw new IllegalStateException("DO_NOT_EXPOSE_REVOCATION_SENTINEL");
         }, new AtomicInteger());
-        StoreBackedEffectiveCredentialStatusResolver resolver =
-                new StoreBackedEffectiveCredentialStatusResolver(failing, Clock.fixed(NOW, ZoneOffset.UTC));
+        StoreBackedEffectiveCredentialStatusResolver resolver = new StoreBackedEffectiveCredentialStatusResolver(
+                failing, Clock.fixed(NOW, ZoneOffset.UTC));
 
-        PkiException failure = assertThrows(PkiException.class,
-                () -> resolver.beginEvaluation().resolve(credential));
+        PkiException failure = assertThrows(PkiException.class, () -> resolver.beginEvaluation().resolve(credential));
         assertEquals("Credential status resolution failed: code=CREDENTIAL_STATUS_RESOLUTION_FAILED",
                 failure.getMessage());
         assertFalse(messages(failure).contains("DO_NOT_EXPOSE_REVOCATION_SENTINEL"));
 
-        Credential held = credential("not-usable", CredentialStatus.ISSUED, NOW.minusSeconds(60),
-                NOW.plusSeconds(60));
+        Credential held = credential("not-usable", CredentialStatus.ISSUED, NOW.minusSeconds(60), NOW.plusSeconds(60));
         EffectiveCredentialStatusResolver.Evaluation evaluation = resolver(
                 revocation(held, RevocationReason.CERTIFICATE_HOLD, NOW)).beginEvaluation();
         PkiException rejected = assertThrows(PkiException.class,
@@ -157,8 +151,8 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
     void oneEvaluationCapturesClockOnceAndLooksUpEachCredentialOnce() {
         CountingClock clock = new CountingClock(NOW);
         AtomicInteger lookups = new AtomicInteger();
-        StoreBackedEffectiveCredentialStatusResolver resolver =
-                new StoreBackedEffectiveCredentialStatusResolver(store(id -> Optional.empty(), lookups), clock);
+        StoreBackedEffectiveCredentialStatusResolver resolver = new StoreBackedEffectiveCredentialStatusResolver(
+                store(id -> Optional.empty(), lookups), clock);
         EffectiveCredentialStatusResolver.Evaluation evaluation = resolver.beginEvaluation();
         Credential first = credential("first", CredentialStatus.ISSUED, NOW.minusSeconds(60), NOW.plusSeconds(60));
         Credential second = credential("second", CredentialStatus.ISSUED, NOW.minusSeconds(60), NOW.plusSeconds(60));
@@ -176,9 +170,8 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         Credential credential = new Credential(new PkiId("credential:audit"), new FormatId(sentinel),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=Audit"),
                 new Validity(NOW.minusSeconds(60), NOW.plusSeconds(60)), "audit", new PkiId("key:audit"),
-                new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])), CredentialStatus.ISSUED,
-                new EncodedObject(Encoding.DER, new byte[] { 1 }),
-                new SimpleAttributeSet());
+                new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])),
+                CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
         AtomicReference<AuditEvent> recorded = new AtomicReference<>();
 
         CredentialTrustAudit.rejected(recorded::set, NOW, credential, CredentialUse.END_ENTITY_ISSUER,
@@ -221,16 +214,16 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
     private static Optional<RevocationJournal> revocation(Credential credential, RevocationReason reason,
             Instant time) {
         if (reason == RevocationReason.REMOVE_FROM_CRL) {
-            return Optional.of(new RevocationJournal(credential.credentialId(), List.of(
-                    new RevocationTransition(1L, RevocationState.HELD, time.minusNanos(1), Optional.empty(),
+            return Optional.of(new RevocationJournal(credential.credentialId(),
+                    List.of(new RevocationTransition(1L, RevocationState.HELD, time.minusNanos(1), Optional.empty(),
                             new SimpleAttributeSet()),
-                    new RevocationTransition(2L, RevocationState.CLEAR, time, Optional.empty(),
-                            new SimpleAttributeSet()))));
+                            new RevocationTransition(2L, RevocationState.CLEAR, time, Optional.empty(),
+                                    new SimpleAttributeSet()))));
         }
-        RevocationState state = reason == RevocationReason.CERTIFICATE_HOLD
-                ? RevocationState.HELD : RevocationState.PERMANENTLY_REVOKED;
-        Optional<RevocationReason> permanentReason = state == RevocationState.PERMANENTLY_REVOKED
-                ? Optional.of(reason) : Optional.empty();
+        RevocationState state = reason == RevocationReason.CERTIFICATE_HOLD ? RevocationState.HELD
+                : RevocationState.PERMANENTLY_REVOKED;
+        Optional<RevocationReason> permanentReason = state == RevocationState.PERMANENTLY_REVOKED ? Optional.of(reason)
+                : Optional.empty();
         return Optional.of(new RevocationJournal(credential.credentialId(),
                 List.of(new RevocationTransition(1L, state, time, permanentReason, new SimpleAttributeSet()))));
     }
@@ -239,8 +232,8 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
                 new Validity(notBefore, notAfter), suffix, new PkiId("key:" + suffix),
-                new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])), status,
-                new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }), new SimpleAttributeSet());
+                new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])),
+                status, new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }), new SimpleAttributeSet());
     }
 
     private static String messages(Throwable throwable) {

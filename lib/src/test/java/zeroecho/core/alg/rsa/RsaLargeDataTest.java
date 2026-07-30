@@ -88,16 +88,19 @@ public class RsaLargeDataTest {
         byte[] msg = randomBytes(SIZE);
         System.out.printf("...input: %d bytes%n", msg.length);
 
-        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA",
+                RsaKeyGenSpec.rsa2048());
         RsaEncSpec spec = RsaEncSpec.oaep(RsaEncSpec.Hash.SHA256);
 
-        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.ENCRYPT, kp.getPublic(), spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.ENCRYPT,
+                kp.getPublic(), spec);
         InputStream ctIn = enc.attach(new ByteArrayInputStream(msg));
         byte[] ct = ctIn.readAllBytes();
         enc.close();
         System.out.printf("...encrypted: %d bytes%n", ct.length);
 
-        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.DECRYPT, kp.getPrivate(), spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.DECRYPT,
+                kp.getPrivate(), spec);
         InputStream ptIn = dec.attach(new ByteArrayInputStream(ct));
         byte[] pt = ptIn.readAllBytes();
         dec.close();
@@ -116,16 +119,19 @@ public class RsaLargeDataTest {
         byte[] msg = randomBytes(SIZE);
         System.out.printf("...input: %d bytes%n", msg.length);
 
-        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA", RsaKeyGenSpec.rsa2048());
+        KeyPair kp = new zeroecho.sdk.ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("RSA",
+                RsaKeyGenSpec.rsa2048());
         RsaEncSpec spec = RsaEncSpec.pkcs1v15();
 
-        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.ENCRYPT, kp.getPublic(), spec);
+        EncryptionContext enc = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.ENCRYPT,
+                kp.getPublic(), spec);
         InputStream ctIn = enc.attach(new ByteArrayInputStream(msg));
         byte[] ct = ctIn.readAllBytes();
         enc.close();
         System.out.printf("...encrypted: %d bytes%n", ct.length);
 
-        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.DECRYPT, kp.getPrivate(), spec);
+        EncryptionContext dec = new zeroecho.sdk.ZeroEchoSession().createContext("RSA", KeyUsage.DECRYPT,
+                kp.getPrivate(), spec);
         InputStream ptIn = dec.attach(new ByteArrayInputStream(ct));
         byte[] pt = ptIn.readAllBytes();
         dec.close();

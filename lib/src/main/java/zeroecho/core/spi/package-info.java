@@ -34,20 +34,26 @@
 /**
  * Provider contracts for context construction and exact key operations.
  *
- * <p>Algorithms bind each supported role to a {@link ContextFactoryKS}. Context
+ * <p>
+ * Algorithms bind each supported role to a {@link ContextFactoryKS}. Context
  * construction is an in-memory operation; stream attachment and processing are
- * responsible for reporting {@link java.io.IOException}.</p>
+ * responsible for reporting {@link java.io.IOException}.
+ * </p>
  *
- * <p>Key capabilities are registered independently through
+ * <p>
+ * Key capabilities are registered independently through
  * {@link SymmetricKeyGenerator}, {@link SymmetricKeyImporter},
  * {@link AsymmetricKeyPairGenerator}, {@link PublicKeyImporter}, and
  * {@link PrivateKeyImporter}. A provider registers only the operations it
  * implements, so capability lookup fails before invocation instead of returning
- * an object with unsupported methods.</p>
+ * an object with unsupported methods.
+ * </p>
  *
- * <p>SPI implementations should be stateless or otherwise safe for concurrent
+ * <p>
+ * SPI implementations should be stateless or otherwise safe for concurrent
  * lookup and invocation. Created cryptographic contexts remain operation-local
- * and are not necessarily thread-safe.</p>
+ * and are not necessarily thread-safe.
+ * </p>
  *
  * @since 1.0
  */

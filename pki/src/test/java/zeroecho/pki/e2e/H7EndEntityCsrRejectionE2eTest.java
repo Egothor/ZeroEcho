@@ -69,7 +69,8 @@ import zeroecho.pki.testkit.H7ProfileDocuments;
 import zeroecho.pki.testkit.PkiTestRuntime;
 
 /**
- * Real signed-CSR rejection evidence for the closed H7 SAN and extension grammar.
+ * Real signed-CSR rejection evidence for the closed H7 SAN and extension
+ * grammar.
  */
 final class H7EndEntityCsrRejectionE2eTest {
     private static final int DNS_AND_IP_REJECTION_CASE_COUNT = 11;
@@ -81,52 +82,48 @@ final class H7EndEntityCsrRejectionE2eTest {
     @Test
     void signedDnsAndIpInvalidMatrixRejectsWithoutIssuanceSideEffects(@TempDir Path tempDir) throws Exception {
         try (RejectionFixture fixture = RejectionFixture.create(tempDir)) {
-            List<SignedCsrCase> parserCases = List.of(
-                    sanCase("dns-trailing-dot", dns(REDACTION_SENTINEL + ".example."), "SAN_MALFORMED"),
-                    sanCase("dns-partial-wildcard", dns("www*.example.com"), "SAN_MALFORMED"),
-                    sanCase("dns-multiple-wildcard", dns("*.*.example.com"), "SAN_MALFORMED"),
-                    sanCase("dns-ip-literal", dns("192.0.2.1"), "SAN_MALFORMED"),
-                    sanCase("dns-duplicate-lowercase",
-                            List.of(dns("Example.COM"), dns("example.com")), "SAN_DUPLICATE"),
-                    sanCase("ip-invalid-length", ip(new byte[] { 1, 2, 3, 4, 5 }), "SAN_MALFORMED"),
-                    sanCase("ip-duplicate",
-                            List.of(ip(new byte[] { (byte) 192, 0, 2, 1 }),
-                                    ip(new byte[] { (byte) 192, 0, 2, 1 })),
-                            "SAN_DUPLICATE"),
-                    sanCase("ip-address-invalid-length", ip(new byte[15]), "SAN_MALFORMED"));
+            List<SignedCsrCase> parserCases = List
+                    .of(sanCase("dns-trailing-dot", dns(REDACTION_SENTINEL + ".example."), "SAN_MALFORMED"),
+                            sanCase("dns-partial-wildcard", dns("www*.example.com"), "SAN_MALFORMED"),
+                            sanCase("dns-multiple-wildcard", dns("*.*.example.com"), "SAN_MALFORMED"),
+                            sanCase("dns-ip-literal", dns("192.0.2.1"), "SAN_MALFORMED"),
+                            sanCase("dns-duplicate-lowercase", List.of(dns("Example.COM"), dns("example.com")),
+                                    "SAN_DUPLICATE"),
+                            sanCase("ip-invalid-length", ip(new byte[] { 1, 2, 3, 4, 5 }), "SAN_MALFORMED"),
+                            sanCase("ip-duplicate",
+                                    List.of(ip(new byte[] { (byte) 192, 0, 2, 1 }),
+                                            ip(new byte[] { (byte) 192, 0, 2, 1 })),
+                                    "SAN_DUPLICATE"),
+                            sanCase("ip-address-invalid-length", ip(new byte[15]), "SAN_MALFORMED"));
             assertParserCases(fixture, parserCases);
 
             fixture.assertProfileRejected("dns-wildcard-disabled", "h7-dns",
-                    signedSanCsr(fixture.leafKey(), new X500Name("CN=Leaf"),
-                            List.of(dns("*.example.com"))),
+                    signedSanCsr(fixture.leafKey(), new X500Name("CN=Leaf"), List.of(dns("*.example.com"))),
                     "SAN_WILDCARD_FORBIDDEN");
-            fixture.assertProfileRejected("ipv6-forbidden-by-ipv4-profile", "h7-ipv4",
-                    signedSanCsr(fixture.leafKey(), new X500Name("CN=Leaf"),
-                            List.of(ip(hex("20010db8000000000000000000000001")))),
+            fixture.assertProfileRejected(
+                    "ipv6-forbidden-by-ipv4-profile", "h7-ipv4", signedSanCsr(fixture.leafKey(),
+                            new X500Name("CN=Leaf"), List.of(ip(hex("20010db8000000000000000000000001")))),
                     "SAN_IP_FAMILY_FORBIDDEN");
-            fixture.assertProfileRejected("ipv4-forbidden-by-ipv6-profile", "h7-ipv6",
-                    signedSanCsr(fixture.leafKey(), new X500Name("CN=Leaf"),
-                            List.of(ip(new byte[] { (byte) 192, 0, 2, 2 }))),
+            fixture.assertProfileRejected(
+                    "ipv4-forbidden-by-ipv6-profile", "h7-ipv6", signedSanCsr(fixture.leafKey(),
+                            new X500Name("CN=Leaf"), List.of(ip(new byte[] { (byte) 192, 0, 2, 2 }))),
                     "SAN_IP_FAMILY_FORBIDDEN");
-            assertEquals(CSR_REJECTION_CASE_COUNT, DNS_AND_IP_REJECTION_CASE_COUNT
-                    + URI_AND_RFC822_REJECTION_CASE_COUNT + CSR_STRUCTURE_REJECTION_CASE_COUNT);
+            assertEquals(CSR_REJECTION_CASE_COUNT, DNS_AND_IP_REJECTION_CASE_COUNT + URI_AND_RFC822_REJECTION_CASE_COUNT
+                    + CSR_STRUCTURE_REJECTION_CASE_COUNT);
             assertEquals(DNS_AND_IP_REJECTION_CASE_COUNT, fixture.assertedCaseCount());
         }
     }
 
     @Test
-    void signedUriAndRfc822InvalidMatrixRejectsWithoutIssuanceSideEffects(@TempDir Path tempDir)
-            throws Exception {
+    void signedUriAndRfc822InvalidMatrixRejectsWithoutIssuanceSideEffects(@TempDir Path tempDir) throws Exception {
         try (RejectionFixture fixture = RejectionFixture.create(tempDir)) {
             String oversizedUri = "https://oversize.example.com/" + "a".repeat(2050);
-            List<SignedCsrCase> parserCases = List.of(
-                    sanCase("uri-relative", uri("/relative/path"), "SAN_MALFORMED"),
+            List<SignedCsrCase> parserCases = List.of(sanCase("uri-relative", uri("/relative/path"), "SAN_MALFORMED"),
                     sanCase("uri-missing-host", uri("https:///missing-host"), "SAN_MALFORMED"),
                     sanCase("uri-opaque", uri("mailto:user@example.com"), "SAN_MALFORMED"),
                     sanCase("uri-userinfo", uri("https://user@example.com/path"), "SAN_MALFORMED"),
                     sanCase("uri-fragment", uri("https://example.com/path#fragment"), "SAN_MALFORMED"),
-                    sanCase("uri-duplicate",
-                            List.of(uri("HTTPS://Example.COM/path"), uri("https://example.com/path")),
+                    sanCase("uri-duplicate", List.of(uri("HTTPS://Example.COM/path"), uri("https://example.com/path")),
                             "SAN_DUPLICATE"),
                     sanCase("uri-oversize", uri(oversizedUri), "SAN_MALFORMED"),
                     sanCase("rfc822-display-name", rfc822("Display <user@example.com>"), "SAN_MALFORMED"),
@@ -136,26 +133,23 @@ final class H7EndEntityCsrRejectionE2eTest {
                     sanCase("rfc822-empty-local", rfc822("@example.com"), "SAN_MALFORMED"),
                     sanCase("rfc822-empty-domain", rfc822("user@"), "SAN_MALFORMED"),
                     sanCase("rfc822-invalid-domain", rfc822("user@-example.com"), "SAN_MALFORMED"),
-                    sanCase("rfc822-duplicate",
-                            List.of(rfc822("Local@Example.COM"), rfc822("Local@example.com")),
+                    sanCase("rfc822-duplicate", List.of(rfc822("Local@Example.COM"), rfc822("Local@example.com")),
                             "SAN_DUPLICATE"));
             assertParserCases(fixture, parserCases);
 
             fixture.assertProfileRejected("uri-forbidden-scheme", "h7-uri",
-                    signedSanCsr(fixture.leafKey(), new X500Name("CN=Leaf"),
-                            List.of(uri("http://example.com/path"))),
+                    signedSanCsr(fixture.leafKey(), new X500Name("CN=Leaf"), List.of(uri("http://example.com/path"))),
                     "SAN_URI_SCHEME_FORBIDDEN");
             PKCS10CertificationRequest subjectEmail = signedCsr(fixture.leafKey(),
                     new X500Name("CN=Leaf,E=user@example.com"), List.of());
-            fixture.assertProfileRejected("subject-email-does-not-replace-rfc822-san",
-                    "h7-subject-email-rfc822", subjectEmail, "SAN_COUNT_INVALID");
+            fixture.assertProfileRejected("subject-email-does-not-replace-rfc822-san", "h7-subject-email-rfc822",
+                    subjectEmail, "SAN_COUNT_INVALID");
             assertEquals(URI_AND_RFC822_REJECTION_CASE_COUNT, fixture.assertedCaseCount());
         }
     }
 
     @Test
-    void signedCsrExtensionStructureMatrixRejectsBeforeBackendAndPersistence(@TempDir Path tempDir)
-            throws Exception {
+    void signedCsrExtensionStructureMatrixRejectsBeforeBackendAndPersistence(@TempDir Path tempDir) throws Exception {
         try (RejectionFixture fixture = RejectionFixture.create(tempDir)) {
             Extension san = sanExtension(false, List.of(dns("structure.example.com")));
             Extension keyUsage = new Extension(Extension.keyUsage, true,
@@ -179,19 +173,16 @@ final class H7EndEntityCsrRejectionE2eTest {
                     extensionCase("san-plus-key-usage", new DERSequence(new ASN1Encodable[] { san, keyUsage }),
                             "EXTENSION_UNSUPPORTED"),
                     extensionCase("san-plus-basic-constraints",
-                            new DERSequence(new ASN1Encodable[] { san, basicConstraints }),
-                            "EXTENSION_UNSUPPORTED"),
+                            new DERSequence(new ASN1Encodable[] { san, basicConstraints }), "EXTENSION_UNSUPPORTED"),
                     extensionCase("unknown-critical", new Extensions(unknownCritical), "EXTENSION_UNSUPPORTED"),
-                    extensionCase("unknown-noncritical", new Extensions(unknownNoncritical),
-                            "EXTENSION_UNSUPPORTED"),
+                    extensionCase("unknown-noncritical", new Extensions(unknownNoncritical), "EXTENSION_UNSUPPORTED"),
                     extensionCase("two-san-extensions", duplicateSan, "EXTENSION_REQUEST_MALFORMED"),
                     new SignedCsrCase("two-extension-request-attributes", new X500Name("CN=Leaf"),
                             List.of(new Extensions(san), new Extensions(san)), "CSR_ATTRIBUTE_UNSUPPORTED"),
                     extensionCase("empty-san", new Extensions(emptySan), "SAN_COUNT_INVALID"),
                     extensionCase("other-name", new Extensions(otherName), "SAN_MALFORMED"),
                     extensionCase("directory-name", new Extensions(directoryName), "SAN_TYPE_UNSUPPORTED"),
-                    extensionCase("criticality-mismatch", new Extensions(criticalSan),
-                            "SAN_CRITICALITY_REQUESTED"));
+                    extensionCase("criticality-mismatch", new Extensions(criticalSan), "SAN_CRITICALITY_REQUESTED"));
             assertParserCases(fixture, cases);
             assertEquals(CSR_STRUCTURE_REJECTION_CASE_COUNT, fixture.assertedCaseCount());
         }
@@ -217,15 +208,15 @@ final class H7EndEntityCsrRejectionE2eTest {
         return new SignedCsrCase(name, new X500Name("CN=Leaf"), List.of(extensionRequest), code);
     }
 
-    private static PKCS10CertificationRequest signedSanCsr(KeyPair keyPair, X500Name subject,
-            List<GeneralName> names) throws Exception {
+    private static PKCS10CertificationRequest signedSanCsr(KeyPair keyPair, X500Name subject, List<GeneralName> names)
+            throws Exception {
         return signedCsr(keyPair, subject, List.of(new Extensions(sanExtension(false, names))));
     }
 
     private static PKCS10CertificationRequest signedCsr(KeyPair keyPair, X500Name subject,
             List<? extends ASN1Encodable> extensionRequests) throws Exception {
-        PKCS10CertificationRequestBuilder builder =
-                new JcaPKCS10CertificationRequestBuilder(subject, keyPair.getPublic());
+        PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject,
+                keyPair.getPublic());
         for (ASN1Encodable extensionRequest : extensionRequests) {
             builder.addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extensionRequest);
         }
@@ -292,9 +283,10 @@ final class H7EndEntityCsrRejectionE2eTest {
             runtime.importAndActivate(H7ProfileDocuments.ipv6Profile());
             runtime.importAndActivate(H7ProfileDocuments.uriProfile());
             runtime.importAndActivate(H7ProfileDocuments.subjectEmailAndRfc822Profile());
-            PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 CSR Rejection Root"), "root-ca", Optional.of(rootRef),
-                    new SimpleAttributeSet()));
+            PkiId rootCaId = runtime.caService()
+                    .createRoot(new CaCreateCommand(runtime.framework().formatId(),
+                            new SubjectRef("CN=H7 CSR Rejection Root"), "root-ca", Optional.of(rootRef),
+                            new SimpleAttributeSet()));
             PKCS10CertificationRequest valid = signedSanCsr(leafKey, new X500Name("CN=Template"),
                     List.of(dns("template.example.com")));
             ParsedCertificationRequest template = parse(runtime, valid);
@@ -311,8 +303,9 @@ final class H7EndEntityCsrRejectionE2eTest {
 
         private void assertParserAndGateRejected(String name, PKCS10CertificationRequest csr, String parserCode)
                 throws Exception {
-            assertTrue(csr.isSignatureValid(new JcaContentVerifierProviderBuilder().build(
-                    csr.getSubjectPublicKeyInfo())), name);
+            assertTrue(
+                    csr.isSignatureValid(new JcaContentVerifierProviderBuilder().build(csr.getSubjectPublicKeyInfo())),
+                    name);
             int signsBefore = runtime.submittedSignCount();
             int auditBefore = runtime.auditSink().snapshot().size();
             PkiException parserRejection = assertThrows(PkiException.class, () -> parse(runtime, csr), name);
@@ -326,10 +319,11 @@ final class H7EndEntityCsrRejectionE2eTest {
             assertedCases++;
         }
 
-        private void assertProfileRejected(String name, String profileId, PKCS10CertificationRequest csr,
-                String code) throws Exception {
-            assertTrue(csr.isSignatureValid(new JcaContentVerifierProviderBuilder().build(
-                    csr.getSubjectPublicKeyInfo())), name);
+        private void assertProfileRejected(String name, String profileId, PKCS10CertificationRequest csr, String code)
+                throws Exception {
+            assertTrue(
+                    csr.isSignatureValid(new JcaContentVerifierProviderBuilder().build(csr.getSubjectPublicKeyInfo())),
+                    name);
             ParsedCertificationRequest parsed = parse(runtime, csr);
             int signsBefore = runtime.submittedSignCount();
             int auditBefore = runtime.auditSink().snapshot().size();
@@ -337,19 +331,18 @@ final class H7EndEntityCsrRejectionE2eTest {
             assertedCases++;
         }
 
-        private void assertGateRejected(String name, ParsedCertificationRequest request, String profileId,
-                String code, int signsBefore, int auditBefore) {
+        private void assertGateRejected(String name, ParsedCertificationRequest request, String profileId, String code,
+                int signsBefore, int auditBefore) {
             AtomicInteger backendCalls = new AtomicInteger();
             AtomicInteger persistenceCalls = new AtomicInteger();
             CredentialIssuerBackend backend = countingBackend(runtime.issuerBackend(), backendCalls);
             PkiStore trackingStore = trackingStore(runtime.store(), persistenceCalls);
-            DefaultIssuanceService service = new DefaultIssuanceService(trackingStore, runtime.framework(),
-                    backend, runtime.auditSink(), runtime.statusResolver(), runtime.profileService(),
-                    Clock.systemUTC());
+            DefaultIssuanceService service = new DefaultIssuanceService(trackingStore, runtime.framework(), backend,
+                    runtime.auditSink(), runtime.statusResolver(), runtime.profileService(), Clock.systemUTC());
 
             PkiException rejection = assertThrows(PkiException.class,
-                    () -> service.issueEndEntity(new IssueEndEntityCommand(rootCaId, request, profileId,
-                            Optional.empty())),
+                    () -> service
+                            .issueEndEntity(new IssueEndEntityCommand(rootCaId, request, profileId, Optional.empty())),
                     name);
 
             assertTrue(rejection.getMessage().contains(code), name);
@@ -381,9 +374,8 @@ final class H7EndEntityCsrRejectionE2eTest {
         AttributeSet attributes = SimpleAttributeSet.builder()
                 .put(BcX509Attributes.CSR_DER, new AttributeValue.BytesValue(csrDer)).build();
         return new ParsedCertificationRequest(source.requestId(), source.formatId(), source.subjectRef(),
-                source.publicKeyInfo(), source.requestedValidity(), source.requestedProfileId(),
-                source.subjectRdns(), source.subjectAlternativeNames(), source.subjectAlternativeNamePresent(),
-                attributes);
+                source.publicKeyInfo(), source.requestedValidity(), source.requestedProfileId(), source.subjectRdns(),
+                source.subjectAlternativeNames(), source.subjectAlternativeNamePresent(), attributes);
     }
 
     private static CredentialIssuerBackend countingBackend(CredentialIssuerBackend delegate,
@@ -397,7 +389,8 @@ final class H7EndEntityCsrRejectionE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
+                    EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
                 return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };

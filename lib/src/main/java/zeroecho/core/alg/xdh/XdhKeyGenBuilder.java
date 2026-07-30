@@ -51,7 +51,8 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * <h2>Design and scope</h2>
  * <ul>
  * <li><b>Generation only:</b> This implementation exposes only the exact
- * key-pair generation capability; import operations are registered separately.</li>
+ * key-pair generation capability; import operations are registered
+ * separately.</li>
  * <li><b>Provider resolution:</b> The default JCA provider selection is used.
  * If a specific provider is required, supply or register one that exposes the
  * requested XDH algorithm name.</li>

@@ -111,12 +111,11 @@ public interface SignatureWorkflow extends Closeable {
      * namespace whose provider component is {@link #id()}.
      * </p>
      *
-     * @param namespace combined stable store and provider namespace
-     * @param horizon authoritative operation horizon
+     * @param namespace     combined stable store and provider namespace
+     * @param horizon       authoritative operation horizon
      * @param permittedSkew authoritative future timestamp skew
      */
-    default void validateSigningDomain(String namespace, java.time.Duration horizon,
-            java.time.Duration permittedSkew) {
+    default void validateSigningDomain(String namespace, java.time.Duration horizon, java.time.Duration permittedSkew) {
         Objects.requireNonNull(namespace, "namespace");
         Objects.requireNonNull(horizon, "horizon");
         Objects.requireNonNull(permittedSkew, "permittedSkew");
@@ -145,15 +144,16 @@ public interface SignatureWorkflow extends Closeable {
      * </p>
      *
      * <p>
-     * {@link SignRequest#fencingToken()} is monotonic. A stale token must not mutate
-     * state; a completion may commit only while its fingerprint, token, and running
-     * state remain current. Providers must check an optional request deadline
-     * before starting cryptography or approval execution and again before committing
-     * success. A completion at the deadline is late; it must become
-     * {@link State#EXPIRED} without exposing a result. Terminal states are immutable. At and after the
-     * configured horizon, submission is rejected and {@link #status(PkiId)} reports
-     * {@link State#EXPIRED}, including after payload/result purge and restart.
-     * Provider callbacks must run after operation state locks are released.
+     * {@link SignRequest#fencingToken()} is monotonic. A stale token must not
+     * mutate state; a completion may commit only while its fingerprint, token, and
+     * running state remain current. Providers must check an optional request
+     * deadline before starting cryptography or approval execution and again before
+     * committing success. A completion at the deadline is late; it must become
+     * {@link State#EXPIRED} without exposing a result. Terminal states are
+     * immutable. At and after the configured horizon, submission is rejected and
+     * {@link #status(PkiId)} reports {@link State#EXPIRED}, including after
+     * payload/result purge and restart. Provider callbacks must run after operation
+     * state locks are released.
      * </p>
      *
      * <h4>Failure model (normative)</h4>
@@ -213,8 +213,8 @@ public interface SignatureWorkflow extends Closeable {
      * <p>
      * A {@code true} return value means only that the provider accepted the
      * cancellation request. It does not prove that the operation is terminal.
-     * Callers must re-read {@link #status(PkiId)} and may retire state only after an
-     * immutable terminal status is observed.
+     * Callers must re-read {@link #status(PkiId)} and may retire state only after
+     * an immutable terminal status is observed.
      * </p>
      *
      * @param operationId operation id (never {@code null})
@@ -257,10 +257,12 @@ public interface SignatureWorkflow extends Closeable {
      * {@link #submitSign(SignRequest)}.
      * </p>
      *
-     * @param submissionId stable caller-assigned submission identifier
-     * @param namespace provider/store namespace
-     * @param semanticFingerprint versioned request fingerprint excluding fence
-     * @param fencingToken current positive fencing token
+     * @param submissionId               stable caller-assigned submission
+     *                                   identifier
+     * @param namespace                  provider/store namespace
+     * @param semanticFingerprint        versioned request fingerprint excluding
+     *                                   fence
+     * @param fencingToken               current positive fencing token
      * @param accessContext              audit/governance context (never
      *                                   {@code null})
      * @param keyRef                     opaque reference to the private key (never
@@ -313,9 +315,9 @@ public interface SignatureWorkflow extends Closeable {
         }
 
         /**
-         * Computes the canonical {@code signfp:v1} semantic fingerprint in
-         * O(payload) time and O(payload) temporary memory from the defensive payload
-         * copy, with constant-size digest state.
+         * Computes the canonical {@code signfp:v1} semantic fingerprint in O(payload)
+         * time and O(payload) temporary memory from the defensive payload copy, with
+         * constant-size digest state.
          */
         public static String fingerprint(String namespace, AccessContext accessContext, KeyRef keyRef,
                 String algorithmId, EncodedObject payload, Optional<Encoding> preferredSignatureEncoding,
@@ -460,10 +462,11 @@ public interface SignatureWorkflow extends Closeable {
      * </p>
      *
      * <p>
-     * For terminal states, {@link #updatedAt()} is the durable completion timestamp,
-     * not the time at which a caller happened to poll. Providers must preserve that
-     * value across restart. A successful status at or after its request deadline is
-     * invalid and must instead be exposed as {@link State#EXPIRED} without a result.
+     * For terminal states, {@link #updatedAt()} is the durable completion
+     * timestamp, not the time at which a caller happened to poll. Providers must
+     * preserve that value across restart. A successful status at or after its
+     * request deadline is invalid and must instead be exposed as
+     * {@link State#EXPIRED} without a result.
      * </p>
      *
      * @param state      current lifecycle state of the operation (never
@@ -485,8 +488,7 @@ public interface SignatureWorkflow extends Closeable {
             Objects.requireNonNull(updatedAt, "updatedAt");
             Objects.requireNonNull(detailCode, "detailCode");
             Objects.requireNonNull(result, "result");
-            if (state == State.SUCCEEDED && result.isEmpty()
-                    || state != State.SUCCEEDED && result.isPresent()) {
+            if (state == State.SUCCEEDED && result.isEmpty() || state != State.SUCCEEDED && result.isPresent()) {
                 throw new IllegalArgumentException("Operation result does not match status state");
             }
         }
