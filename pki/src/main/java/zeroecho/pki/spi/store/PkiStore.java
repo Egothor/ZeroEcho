@@ -245,7 +245,24 @@ public interface PkiStore extends SignWorkflowStore {
      */
     List<PublicationRecord> listPublicationRecords();
 
-    /** Atomically imports one immutable validated profile version. */
+    /**
+     * Atomically imports one immutable validated profile version.
+     *
+     * <p>
+     * Every version stored under one logical profile ID must have the same
+     * certificate kind. An implementation must reject an import whose kind
+     * differs from any already imported version for that ID. For an existing
+     * identical ID and version, exact canonical-reference equality is
+     * idempotent and returns the committed version; a different reference for
+     * that same version is a version conflict. This same-version decision takes
+     * precedence over the cross-version kind check.
+     * </p>
+     *
+     * @param version validated immutable version to import
+     * @return the newly committed version or the identical existing version
+     * @throws RuntimeException if validation, kind consistency, conflict
+     *                          handling, or durable persistence fails
+     */
     ImportedCertificateProfileVersion importProfileVersion(ImportedCertificateProfileVersion version);
 
     /** Retrieves one imported version. */

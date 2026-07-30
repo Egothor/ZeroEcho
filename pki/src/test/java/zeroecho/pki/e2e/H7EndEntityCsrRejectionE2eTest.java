@@ -60,7 +60,7 @@ import zeroecho.pki.api.issuance.IssueEndEntityCommand;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.impl.core.DefaultIssuanceService;
-import zeroecho.pki.impl.core.ManagedCaIssuance;
+import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
 import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
@@ -294,7 +294,7 @@ final class H7EndEntityCsrRejectionE2eTest {
             runtime.importAndActivate(H7ProfileDocuments.uriProfile());
             runtime.importAndActivate(H7ProfileDocuments.subjectEmailAndRfc822Profile());
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 CSR Rejection Root"), "default", Optional.of(rootRef),
+                    new SubjectRef("CN=H7 CSR Rejection Root"), "root-ca", Optional.of(rootRef),
                     new SimpleAttributeSet()));
             PKCS10CertificationRequest valid = signedSanCsr(leafKey, new X500Name("CN=Template"),
                     List.of(dns("template.example.com")));
@@ -398,8 +398,8 @@ final class H7EndEntityCsrRejectionE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                return delegate.issueIntermediateCertificate(issuance);
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
     }

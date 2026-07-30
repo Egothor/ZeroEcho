@@ -29,9 +29,9 @@ final class CredentialProfileBindings {
         }
     }
 
-    /* default */ static void requireCaBinding(CredentialProfileBinding binding, String expectedCaProfileId) {
+    /* default */ static void requireCaBinding(CredentialProfileBinding binding, CertificateProfileRef expected) {
         if (!(binding instanceof CaProfileBinding ca)
-                || !ca.profileId().equals(expectedCaProfileId)) {
+                || !ca.reference().equals(expected)) {
             throw mismatch();
         }
     }

@@ -54,6 +54,7 @@ import zeroecho.pki.api.RevocationService;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.StatusObjectService;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
+import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.impl.core.DefaultCaService;
 import zeroecho.pki.impl.core.DefaultCertificationRequestService;
 import zeroecho.pki.impl.core.DefaultIssuanceService;
@@ -104,6 +105,7 @@ public final class PkiTestRuntime implements AutoCloseable {
 
     private final Map<String, PublicKey> publicKeysByKeyRef;
     private Runnable publicKeyResolveHook;
+    private boolean caProfilesProvisioned;
 
     private PkiTestRuntime(FilesystemPkiStore store, PkiSigningBus signingBus, SignatureWorkflow signatureWorkflow,
             CredentialFramework framework, CredentialIssuerBackend issuerBackend,
@@ -129,7 +131,7 @@ public final class PkiTestRuntime implements AutoCloseable {
         this.statusObjectService = new DefaultStatusObjectService(store, framework, auditSink, statusResolver);
 
         this.caService = new DefaultCaService(store, framework, issuerBackend, this::resolvePublicKeyInfo, signingBus,
-                auditSink, statusResolver, "SHA256withRSA", signingTtl);
+                auditSink, statusResolver, profileService, clock, "SHA256withRSA", signingTtl);
     }
 
     /**
@@ -306,25 +308,51 @@ public final class PkiTestRuntime implements AutoCloseable {
     }
 
     public CaService caService() {
+        provisionCaProfiles();
         return caService;
     }
 
     public CaService caService(CredentialFramework credentialFramework) {
+        provisionCaProfiles();
         return new DefaultCaService(store, Objects.requireNonNull(credentialFramework, "credentialFramework"),
-                issuerBackend, this::resolvePublicKeyInfo, signingBus, auditSink, statusResolver, "SHA256withRSA",
-                Duration.ofSeconds(2));
+                issuerBackend, this::resolvePublicKeyInfo, signingBus, auditSink, statusResolver, profileService,
+                Clock.systemUTC(), "SHA256withRSA", Duration.ofSeconds(2));
     }
 
     public CaService caService(CredentialIssuerBackend backend) {
+        provisionCaProfiles();
         return new DefaultCaService(store, framework, Objects.requireNonNull(backend, "backend"),
-                this::resolvePublicKeyInfo, signingBus, auditSink, statusResolver, "SHA256withRSA",
-                Duration.ofSeconds(2));
+                this::resolvePublicKeyInfo, signingBus, auditSink, statusResolver, profileService, Clock.systemUTC(),
+                "SHA256withRSA", Duration.ofSeconds(2));
     }
 
     public CaService caService(CredentialIssuerBackend backend, EffectiveCredentialStatusResolver resolver) {
+        provisionCaProfiles();
         return new DefaultCaService(store, framework, Objects.requireNonNull(backend, "backend"),
                 this::resolvePublicKeyInfo, signingBus, auditSink, Objects.requireNonNull(resolver, "resolver"),
+                profileService, Clock.systemUTC(), "SHA256withRSA", Duration.ofSeconds(2));
+    }
+
+    public CaService caService(ProfileService profiles) {
+        provisionCaProfiles();
+        return new DefaultCaService(store, framework, issuerBackend, this::resolvePublicKeyInfo, signingBus,
+                auditSink, statusResolver, Objects.requireNonNull(profiles, "profiles"), Clock.systemUTC(),
                 "SHA256withRSA", Duration.ofSeconds(2));
+    }
+
+    private synchronized void provisionCaProfiles() {
+        if (caProfilesProvisioned) {
+            return;
+        }
+        BuiltInCertificateProfileCatalog.load(PkiTestRuntime.class.getClassLoader()).stream()
+                .filter(template -> template.definition().profileId().equals("root-ca")
+                        || template.definition().profileId().equals("intermediate-ca"))
+                .forEach(template -> {
+                    zeroecho.pki.api.profile.CertificateProfileRef reference =
+                            profileService.importBuiltIn(template);
+                    profileService.activateProfile(reference.profileId(), reference.profileVersion());
+                });
+        caProfilesProvisioned = true;
     }
 
     public CertificationRequestService certificationRequestService() {

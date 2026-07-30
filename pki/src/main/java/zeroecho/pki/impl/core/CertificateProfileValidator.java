@@ -64,10 +64,10 @@ final class CertificateProfileValidator {
         ParsedCertificationRequest request = candidate.request();
         LeafCertificatePolicy policy = profile.leafPolicy();
         requireCanonicalRequestAttributes(request);
-        List<SubjectRdn> approvedSubject = validateSubject(request, policy);
+        List<SubjectRdn> approvedSubject = validateSubject(request, profile);
         List<SubjectAlternativeName> approvedSans = validateSans(request, policy, approvedSubject.isEmpty());
-        requireSubjectKeyAllowed(candidate, policy);
-        Validity validity = approvedValidity(candidate, request, policy, issuerCredential, evaluationTime);
+        requireSubjectKeyAllowed(candidate.exactPublicKey(), policy.allowedSubjectKeyAlgorithmIds());
+        Validity validity = approvedValidity(candidate, request, profile, issuerCredential, evaluationTime);
         boolean sanCritical = approvedSubject.isEmpty()
                 || policy.subjectAlternativeNamePolicy().criticalWithNonemptySubject();
         SubjectRef approvedSubjectRef = new SubjectRef(approvedSubject.isEmpty()
@@ -90,9 +90,9 @@ final class CertificateProfileValidator {
 
     // The branches preserve the deny-by-default RDN ownership and cardinality rules.
     @SuppressWarnings("PMD.CyclomaticComplexity")
-    private static List<SubjectRdn> validateSubject(ParsedCertificationRequest request, LeafCertificatePolicy policy) {
+    private static List<SubjectRdn> validateSubject(ParsedCertificationRequest request, CertificateProfile profile) {
         Map<SubjectRdnType, SubjectRdnRule> rules = new EnumMap<>(SubjectRdnType.class);
-        for (SubjectRdnRule rule : policy.subjectPolicy().rules()) {
+        for (SubjectRdnRule rule : profile.subjectPolicy().rules()) {
             rules.put(rule.type(), rule);
         }
         Map<SubjectRdnType, Integer> counts = new EnumMap<>(SubjectRdnType.class);
@@ -113,7 +113,7 @@ final class CertificateProfileValidator {
             counts.put(rdn.type(), count);
             approved.add(new SubjectRdn(rdn.type(), canonical));
         }
-        for (SubjectRdnRule rule : policy.subjectPolicy().rules()) {
+        for (SubjectRdnRule rule : profile.subjectPolicy().rules()) {
             if (rule.fixedValue().isPresent()) {
                 approved.add(new SubjectRdn(rule.type(), rule.fixedValue().orElseThrow()));
                 counts.put(rule.type(), 1);
@@ -123,7 +123,7 @@ final class CertificateProfileValidator {
                 throw reject("SUBJECT_RDN_REQUIRED");
             }
         }
-        if (approved.isEmpty() && !policy.subjectAlternativeNamePolicy().allowEmptySubject()) {
+        if (approved.isEmpty() && !profile.subjectPolicy().allowEmpty()) {
             throw reject("SUBJECT_EMPTY");
         }
         if (approved.size() > zeroecho.pki.api.profile.SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
@@ -197,16 +197,17 @@ final class CertificateProfileValidator {
 
     // The public exception deliberately redacts ASN.1 parser details.
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.AvoidRethrowingException" })
-    private static void requireSubjectKeyAllowed(VerifiedIssuanceCandidate candidate, LeafCertificatePolicy policy) {
-        if (candidate.exactPublicKey().encoding() != Encoding.DER) {
+    /* package */ static void requireSubjectKeyAllowed(zeroecho.pki.api.EncodedObject exactPublicKey,
+            Set<String> allowedAlgorithms) {
+        if (exactPublicKey.encoding() != Encoding.DER) {
             throw reject("SUBJECT_KEY_UNSUPPORTED");
         }
-        byte[] encoded = candidate.exactPublicKey().bytes();
+        byte[] encoded = exactPublicKey.bytes();
         try {
             SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(encoded);
             SubjectKeyAlgorithm algorithm = subjectKeyAlgorithm(spki.getAlgorithm().getAlgorithm());
             requireSupportedParameters(spki, algorithm);
-            if (!policy.allowedSubjectKeyAlgorithmIds().contains(algorithm.profileId())) {
+            if (!allowedAlgorithms.contains(algorithm.profileId())) {
                 throw reject("SUBJECT_KEY_ALGORITHM_FORBIDDEN");
             }
             PublicKey reconstructed = KeyFactory.getInstance(algorithm.jcaName())
@@ -262,12 +263,12 @@ final class CertificateProfileValidator {
     // The public exception deliberately redacts temporal arithmetic details.
     @SuppressWarnings("PMD.PreserveStackTrace")
     private static Validity approvedValidity(VerifiedIssuanceCandidate candidate, ParsedCertificationRequest request,
-            LeafCertificatePolicy policy, Credential issuerCredential, Instant evaluationTime) {
+            CertificateProfile profile, Credential issuerCredential, Instant evaluationTime) {
         Optional<Validity> supplied = candidate.validityOverride().isPresent()
                 ? candidate.validityOverride() : request.requestedValidity();
         Duration duration = supplied.map(value -> Duration.between(value.notBefore(), value.notAfter()))
-                .orElse(policy.maximumValidity());
-        if (duration.isZero() || duration.isNegative() || duration.compareTo(policy.maximumValidity()) > 0) {
+                .orElse(profile.maximumValidity());
+        if (duration.isZero() || duration.isNegative() || duration.compareTo(profile.maximumValidity()) > 0) {
             throw reject("VALIDITY_EXCEEDS_PROFILE");
         }
         Instant notAfter;

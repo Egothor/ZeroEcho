@@ -372,7 +372,7 @@ final class DefaultStatusObjectServiceCrlTest {
         CaProfileBinding binding = assertInstanceOf(CaProfileBinding.class, template.profileBinding());
         return new Credential(new PkiId("credential:" + suffix), formatId, template.issuerRef(),
                 template.subjectRef(), template.validity(), template.serialOrUniqueId(),
-                template.publicKeyId(), new CaProfileBinding(binding.profileId()), CredentialStatus.ISSUED, encoded,
+                template.publicKeyId(), new CaProfileBinding(binding.reference()), CredentialStatus.ISSUED, encoded,
                 template.attributes());
     }
 
@@ -410,7 +410,7 @@ final class DefaultStatusObjectServiceCrlTest {
 
     private static PkiId createRoot(PkiTestRuntime runtime, KeyRef keyRef, String commonName) {
         return runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                new SubjectRef("CN=" + commonName), "default", Optional.of(keyRef), emptyAttributes()));
+                new SubjectRef("CN=" + commonName), "root-ca", Optional.of(keyRef), emptyAttributes()));
     }
 
     private static KeyPair generateRsa() throws Exception {

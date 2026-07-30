@@ -212,7 +212,7 @@ public final class H7ProfileDocuments {
             boolean critical, List<String> sanRules, boolean noKeyEncipherment, List<String> eku) {
         String keyUsage = noKeyEncipherment
                 ? "[\"DIGITAL_SIGNATURE\"]" : "[\"DIGITAL_SIGNATURE\",\"KEY_ENCIPHERMENT\"]";
-        String json = "{\"schemaVersion\":1,\"profileId\":\"" + id
+        String json = "{\"schemaVersion\":2,\"certificateType\":\"END_ENTITY\",\"profileId\":\"" + id
                 + "\",\"profileVersion\":1,\"formatId\":\"" + formatId
                 + "\",\"displayName\":\"H7 Test Profile\","
                 + "\"maxValidity\":\"PT8760H\",\"subject\":{\"allowEmpty\":" + allowEmpty

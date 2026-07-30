@@ -499,7 +499,7 @@ final class FilesystemRevocationJournalTest {
         return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
                 new Validity(TIME.minusSeconds(60), TIME.plusSeconds(60)), suffix,
-                new PkiId("key:" + suffix), new CaProfileBinding("default"), CredentialStatus.ISSUED,
+                new PkiId("key:" + suffix), new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])), CredentialStatus.ISSUED,
                 new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }), new SimpleAttributeSet());
     }
 

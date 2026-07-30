@@ -46,13 +46,13 @@
  * </p>
  *
  * <p>
- * Built-in end-entity profile resources are deterministic baseline
- * provisioning templates. Loading the catalogue neither persists nor activates
- * a profile, and the resources are never implicit issuance defaults.
- * Administrator-supplied profiles will use the same strict document schema.
- * Canonical JSON and SHA-256 hashes support deterministic provisioning and
- * audit. CA profile resources are intentionally absent until the CA profile
- * policy model is defined.
+ * Document schema version 2 distinguishes end-entity, root-CA, and
+ * intermediate-CA profiles through a closed certificate-policy variant.
+ * Built-in resources are deterministic provisioning templates. Loading the
+ * catalogue neither persists nor activates a profile, and resources are never
+ * implicit issuance defaults. A logical profile ID cannot change certificate
+ * kind across versions. Active definitions of every supported certificate kind
+ * are authoritative issuance inputs.
  * </p>
  *
  * @since 1.0

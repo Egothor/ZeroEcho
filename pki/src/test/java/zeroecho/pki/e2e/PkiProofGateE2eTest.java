@@ -114,7 +114,7 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.core.DefaultIssuanceService;
-import zeroecho.pki.impl.core.ManagedCaIssuance;
+import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
 import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
@@ -134,10 +134,10 @@ final class PkiProofGateE2eTest {
         System.out.println("issuerBackendApiRequiresOpaqueGateProducedInputs");
 
         assertTrue(Modifier.isFinal(ValidatedCertificateRequest.class.getModifiers()));
-        assertTrue(Modifier.isFinal(ManagedCaIssuance.class.getModifiers()));
+        assertTrue(Modifier.isFinal(ValidatedCaCertificateRequest.class.getModifiers()));
         assertTrue(java.util.Arrays.stream(ValidatedCertificateRequest.class.getDeclaredConstructors())
                 .noneMatch(constructor -> Modifier.isPublic(constructor.getModifiers())));
-        assertTrue(java.util.Arrays.stream(ManagedCaIssuance.class.getDeclaredConstructors())
+        assertTrue(java.util.Arrays.stream(ValidatedCaCertificateRequest.class.getDeclaredConstructors())
                 .noneMatch(constructor -> Modifier.isPublic(constructor.getModifiers())));
         Class<?> managedKeyProof = Class.forName("zeroecho.pki.impl.core.CaProofGate$ManagedKeyProof");
         assertTrue(java.util.Arrays.stream(managedKeyProof.getDeclaredConstructors())
@@ -153,7 +153,8 @@ final class PkiProofGateE2eTest {
                 .findFirst().orElseThrow();
         assertArrayEquals(new Class<?>[] { ValidatedCertificateRequest.class, EncodedObject.class, KeyRef.class,
                 BigInteger.class }, endEntity.getParameterTypes());
-        assertArrayEquals(new Class<?>[] { ManagedCaIssuance.class }, intermediate.getParameterTypes());
+        assertArrayEquals(new Class<?>[] { ValidatedCaCertificateRequest.class, EncodedObject.class, KeyRef.class },
+                intermediate.getParameterTypes());
         assertTrue(java.util.Arrays.stream(BcX509CredentialIssuerBackend.class.getMethods())
                 .filter(method -> method.getName().startsWith("issue"))
                 .noneMatch(method -> java.util.Arrays.asList(method.getParameterTypes())
@@ -189,7 +190,7 @@ final class PkiProofGateE2eTest {
             assertEquals(0, counting.endEntityCalls.get());
 
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             CredentialBundle issued = issuance.issueEndEntity(new IssueEndEntityCommand(rootCaId, valid, "default",
                     Optional.empty()));
             assertEquals(1, counting.endEntityCalls.get());
@@ -199,14 +200,14 @@ final class PkiProofGateE2eTest {
 
             CaService caService = runtime.caService(counting);
             caService.createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootCaId,
-                    new SubjectRef("CN=Intermediate"), "default", Optional.of(subjectKeyRef),
+                    new SubjectRef("CN=Intermediate"), "intermediate-ca", Optional.of(subjectKeyRef),
                     new SimpleAttributeSet()));
             assertEquals(1, counting.intermediateCalls.get());
 
             runtime.replaceResolvedKey(subjectKeyRef, wrongKey.getPublic());
             assertThrows(PkiException.class,
                     () -> caService.createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(),
-                            rootCaId, new SubjectRef("CN=Rejected"), "default", Optional.of(subjectKeyRef),
+                            rootCaId, new SubjectRef("CN=Rejected"), "intermediate-ca", Optional.of(subjectKeyRef),
                             new SimpleAttributeSet())));
             assertEquals(1, counting.intermediateCalls.get());
 
@@ -222,12 +223,12 @@ final class PkiProofGateE2eTest {
         System.out.println("unsupportedIssuanceVariantsFailWithoutSideEffects");
 
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"), Map.of())) {
-            int auditCount = runtime.auditSink().snapshot().size();
             CountingIssuerBackend counting = new CountingIssuerBackend(runtime.issuerBackend());
             DefaultIssuanceService issuance = new DefaultIssuanceService(runtime.store(), runtime.framework(),
                     counting, runtime.auditSink(), runtime.statusResolver(), runtime.profileService(),
                     Clock.systemUTC());
             CaService caService = runtime.caService(counting);
+            int auditCount = runtime.auditSink().snapshot().size();
             ParsedCertificationRequest request = new ParsedCertificationRequest(new PkiId("csr:unsupported"),
                     runtime.framework().formatId(), new SubjectRef("CN=Unsupported"),
                     new EncodedObject(Encoding.DER, new byte[] { 1 }), Optional.empty(), Optional.empty(),
@@ -282,7 +283,7 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey, subjectKeyRef, subjectKey))) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             PKCS10CertificationRequest validCsr = makeCsr(subjectKey, subjectKey, "CN=Subject");
             ParsedCertificationRequest valid = parse(runtime, validCsr);
             ParsedCertificationRequest pss = parse(runtime,
@@ -376,7 +377,7 @@ final class PkiProofGateE2eTest {
                         return new ProofOfPossessionResult(status, Optional.empty());
                     })) {
                 PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                        new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                        new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
                 ParsedCertificationRequest parsed = parse(runtime, makeCsr(subjectKey, subjectKey, "CN=Subject"));
                 assertThrows(PkiException.class, () -> issue(runtime, rootCaId, parsed));
                 assertTrue(required.get());
@@ -411,7 +412,7 @@ final class PkiProofGateE2eTest {
                     return result;
                 })) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             ParsedCertificationRequest parsed = parse(runtime, makeCsr(subjectKey, subjectKey, "CN=Subject"));
             byte[] callerCsr = csrDer(parsed);
             byte[] callerSpki = parsed.publicKeyInfo().bytes();
@@ -449,7 +450,7 @@ final class PkiProofGateE2eTest {
                 new BcX509ProofOfPossessionVerifier())) {
             assertThrows(PkiException.class,
                     () -> runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                            new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef),
+                            new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef),
                             new SimpleAttributeSet())));
             assertTrue(runtime.store().listCas().isEmpty());
             assertTrue(runtime.store().listWorkflowStates().isEmpty());
@@ -462,7 +463,7 @@ final class PkiProofGateE2eTest {
                 Map.of(rootKeyRef, expectedRoot.getPublic()), new BcX509ProofOfPossessionVerifier())) {
             assertThrows(PkiException.class,
                     () -> runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                            new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef),
+                            new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef),
                             new SimpleAttributeSet())));
             assertTrue(runtime.store().listWorkflowStates().isEmpty());
             assertEquals(1, runtime.submittedSignCount());
@@ -477,11 +478,12 @@ final class PkiProofGateE2eTest {
         keys.put(intermediateKeyRef, intermediateKey);
         try (PkiTestRuntime runtime = PkiTestRuntime.create(validDir, validDir.resolve("bus.log"), keys)) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
-            AttributeSet hostile = hostileIntermediateAttributes(expectedRoot.getPublic());
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+            AttributeSet approved = new SimpleAttributeSet();
             PkiId intermediateCaId = runtime.caService()
                     .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootCaId,
-                            new SubjectRef("CN=Intermediate"), "default", Optional.of(intermediateKeyRef), hostile));
+                            new SubjectRef("CN=Intermediate"), "intermediate-ca",
+                            Optional.of(intermediateKeyRef), approved));
 
             Credential first = runtime.caService().getCa(intermediateCaId).caCredentials().get(0);
             X509CertificateHolder firstHolder = new X509CertificateHolder(first.encoded().bytes());
@@ -492,7 +494,7 @@ final class PkiProofGateE2eTest {
 
             Credential additional = runtime.caService()
                     .issueIntermediateCertificate(new IntermediateCertIssueCommand(runtime.framework().formatId(),
-                            rootCaId, intermediateCaId, "default", Optional.empty(), hostile));
+                            rootCaId, intermediateCaId, "intermediate-ca", Optional.empty(), approved));
             X509CertificateHolder additionalHolder = new X509CertificateHolder(additional.encoded().bytes());
             assertEquals("CN=Intermediate", additionalHolder.getSubject().toString());
             assertArrayEquals(intermediateKey.getPublic().getEncoded(),
@@ -517,13 +519,13 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(issuerDir, issuerDir.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey, intermediateKeyRef, intermediateKey))) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             assertEquals(2, runtime.submittedSignCount());
             runtime.replaceManagedKey(rootKeyRef, replacementRootKey);
             assertThrows(PkiException.class,
                     () -> runtime.caService()
                             .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(),
-                                    rootCaId, new SubjectRef("CN=Intermediate"), "default",
+                                    rootCaId, new SubjectRef("CN=Intermediate"), "intermediate-ca",
                                     Optional.of(intermediateKeyRef), new SimpleAttributeSet())));
             assertEquals(4, runtime.submittedSignCount());
             assertEquals(1, runtime.store().listCas().size());
@@ -537,17 +539,17 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(additionalDir, additionalDir.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey, intermediateKeyRef, intermediateKey))) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             PkiId intermediateCaId = runtime.caService()
                     .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootCaId,
-                            new SubjectRef("CN=Intermediate"), "default", Optional.of(intermediateKeyRef),
+                            new SubjectRef("CN=Intermediate"), "intermediate-ca", Optional.of(intermediateKeyRef),
                             new SimpleAttributeSet()));
             assertEquals(5, runtime.submittedSignCount());
             runtime.replaceManagedKey(rootKeyRef, replacementRootKey);
             assertThrows(PkiException.class,
                     () -> runtime.caService().issueIntermediateCertificate(
                             new IntermediateCertIssueCommand(runtime.framework().formatId(), rootCaId,
-                                    intermediateCaId, "default", Optional.empty(), new SimpleAttributeSet())));
+                                    intermediateCaId, "intermediate-ca", Optional.empty(), new SimpleAttributeSet())));
             assertEquals(7, runtime.submittedSignCount());
             assertEquals(1, runtime.caService().getCa(intermediateCaId).caCredentials().size());
             assertTrue(runtime.store().listWorkflowStates().isEmpty());
@@ -560,11 +562,11 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime source = PkiTestRuntime.create(sourceDir, sourceDir.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey, intermediateKeyRef, intermediateKey))) {
             PkiId rootCaId = source.caService().createRoot(new CaCreateCommand(source.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             rootCertificate = source.caService().getCa(rootCaId).caCredentials().get(0).encoded().bytes().clone();
             PkiId intermediateCaId = source.caService()
                     .createIntermediate(new IntermediateCreateCommand(source.framework().formatId(), rootCaId,
-                            new SubjectRef("CN=Intermediate"), "default", Optional.of(intermediateKeyRef),
+                            new SubjectRef("CN=Intermediate"), "intermediate-ca", Optional.of(intermediateKeyRef),
                             new SimpleAttributeSet()));
             intermediateCertificate = source.caService().getCa(intermediateCaId).caCredentials().get(0).encoded()
                     .bytes().clone();
@@ -577,7 +579,7 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime target = PkiTestRuntime.create(importDir, importDir.resolve("bus.log"),
                 Map.of(rootKeyRef, replacementRootKey))) {
             CaImportCommand command = new CaImportCommand(target.framework().formatId(), new SubjectRef("CN=Root"),
-                    "default", rootKeyRef, new EncodedObject(Encoding.DER, rootCertificate),
+                    "root-ca", rootKeyRef, new EncodedObject(Encoding.DER, rootCertificate),
                     new SimpleAttributeSet());
             assertThrows(PkiException.class, () -> target.caService().importRoot(command));
             assertTrue(target.store().listCas().isEmpty());
@@ -593,7 +595,7 @@ final class PkiProofGateE2eTest {
                 Map.of(rootKeyRef, rootKey))) {
             target.onPublicKeyResolve(() -> callerOwnedCertificate[callerOwnedCertificate.length - 1] ^= 0x01);
             PkiId importedCaId = target.caService().importRoot(new CaImportCommand(target.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", rootKeyRef,
+                    new SubjectRef("CN=Root"), "root-ca", rootKeyRef,
                     new EncodedObject(Encoding.DER, callerOwnedCertificate), new SimpleAttributeSet()));
             assertTrue(target.caService().getCa(importedCaId).caCredentials().get(0)
                     .profileBinding() instanceof CaProfileBinding);
@@ -616,7 +618,7 @@ final class PkiProofGateE2eTest {
             assertThrows(PkiException.class,
                     () -> signingFailure.caService().createRoot(new CaCreateCommand(
                             signingFailure.framework().formatId(),
-                            new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef),
+                            new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef),
                             new SimpleAttributeSet())));
             assertTrue(signingFailure.store().listCas().isEmpty());
             assertTrue(signingFailure.store().listWorkflowStates().isEmpty());
@@ -637,7 +639,7 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(rootDir, rootDir.resolve("bus.log"),
                 Map.of(keyRef, keyPair))) {
             CaImportCommand command = new CaImportCommand(runtime.framework().formatId(), new SubjectRef(subject),
-                    "default", keyRef, new EncodedObject(Encoding.DER, certificate), new SimpleAttributeSet());
+                    "root-ca", keyRef, new EncodedObject(Encoding.DER, certificate), new SimpleAttributeSet());
             assertThrows(PkiException.class, () -> runtime.caService().importRoot(command));
             assertTrue(runtime.store().listCas().isEmpty());
             assertEquals(0, runtime.submittedSignCount());
@@ -657,7 +659,7 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(runtimeDir, runtimeDir.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey))) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             ParsedCertificationRequest subject = parse(runtime, makeCsr(subjectKey, subjectKey, "CN=Subject"));
             ParsedCertificationRequest substitute = parse(runtime,
                     makeCsr(subjectKey, subjectKey, "CN=Substitute"));
@@ -670,7 +672,7 @@ final class PkiProofGateE2eTest {
                 }
 
                 @Override
-                public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
+                public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
                     throw new IllegalStateException("DO_NOT_LOG_SIGNATURE_SENTINEL");
                 }
             };
@@ -696,8 +698,8 @@ final class PkiProofGateE2eTest {
                 }
 
                 @Override
-                public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                    return delegateBackend.issueIntermediateCertificate(issuance);
+                public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                    return delegateBackend.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                 }
             };
             DefaultIssuanceService service = new DefaultIssuanceService(runtime.store(), runtime.framework(),
@@ -719,15 +721,15 @@ final class PkiProofGateE2eTest {
                     CredentialBundle rawBundle = delegateBackend.issueEndEntity(candidate, issuerCertificate,
                             issuerKeyRef, serial);
                     Credential raw = rawBundle.credential();
-                    Credential wrongBinding = copyWithBinding(raw, new CaProfileBinding(candidate.profileReference()
-                            .profileId()));
+                    Credential wrongBinding = copyWithBinding(raw,
+                            new CaProfileBinding(candidate.profileReference()));
                     wrongBindingCredential.set(wrongBinding);
                     return new CredentialBundle(wrongBinding, rawBundle.supportingObjects());
                 }
 
                 @Override
-                public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                    return delegateBackend.issueIntermediateCertificate(issuance);
+                public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                    return delegateBackend.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                 }
             };
             DefaultIssuanceService wrongBindingService = new DefaultIssuanceService(runtime.store(),
@@ -754,8 +756,8 @@ final class PkiProofGateE2eTest {
                         }
 
                         @Override
-                        public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                            return delegateBackend.issueIntermediateCertificate(issuance);
+                        public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                            return delegateBackend.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                         }
                     };
             DefaultIssuanceService invalidSignatureService = new DefaultIssuanceService(runtime.store(),
@@ -775,8 +777,8 @@ final class PkiProofGateE2eTest {
                         }
 
                         @Override
-                        public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                            return delegateBackend.issueIntermediateCertificate(issuance);
+                        public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                            return delegateBackend.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                         }
                     };
             DefaultIssuanceService snapshotService = new DefaultIssuanceService(runtime.store(),
@@ -865,7 +867,7 @@ final class PkiProofGateE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey, intermediateKeyRef, intermediateKey))) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootKeyRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootKeyRef), new SimpleAttributeSet()));
             assertTrue(runtime.caService().getCa(rootCaId).caCredentials().get(0)
                     .profileBinding() instanceof CaProfileBinding);
             CredentialIssuerBackend delegate = runtime.issuerBackend();
@@ -876,7 +878,7 @@ final class PkiProofGateE2eTest {
                 PkiException rejected = assertThrows(PkiException.class,
                         () -> wrongBindingService.createIntermediate(new IntermediateCreateCommand(
                                 runtime.framework().formatId(), rootCaId,
-                                new SubjectRef("CN=BindingRejectedIntermediate"), "default",
+                                new SubjectRef("CN=BindingRejectedIntermediate"), "intermediate-ca",
                                 Optional.of(intermediateKeyRef), new SimpleAttributeSet())), mutation.name());
                 assertTrue(rejected.getMessage().contains("CREDENTIAL_PROFILE_BINDING_MISMATCH"), mutation.name());
                 assertEquals(1, runtime.store().listCas().size(), mutation.name());
@@ -892,8 +894,8 @@ final class PkiProofGateE2eTest {
                         }
 
                         @Override
-                        public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                            Credential raw = delegate.issueIntermediateCertificate(issuance);
+                        public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                            Credential raw = delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                             return rebuildIntermediateIdentity(raw, rootKey, Optional.of(wrongKey.getPublic()),
                                     Optional.empty());
                         }
@@ -901,13 +903,13 @@ final class PkiProofGateE2eTest {
             CaService wrongKeyService = runtime.caService(wrongKeyBackend);
             assertThrows(PkiException.class,
                     () -> wrongKeyService.createIntermediate(new IntermediateCreateCommand(runtime.framework()
-                            .formatId(), rootCaId, new SubjectRef("CN=Intermediate"), "default",
+                            .formatId(), rootCaId, new SubjectRef("CN=Intermediate"), "intermediate-ca",
                             Optional.of(intermediateKeyRef), new SimpleAttributeSet())));
             assertEquals(1, runtime.store().listCas().size());
 
             PkiId intermediateCaId = runtime.caService()
                     .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootCaId,
-                            new SubjectRef("CN=Intermediate"), "default", Optional.of(intermediateKeyRef),
+                            new SubjectRef("CN=Intermediate"), "intermediate-ca", Optional.of(intermediateKeyRef),
                             new SimpleAttributeSet()));
             for (BindingVariantMutation mutation : BindingVariantMutation.values()) {
                 AtomicReference<Credential> produced = new AtomicReference<>();
@@ -915,7 +917,7 @@ final class PkiProofGateE2eTest {
                         produced));
                 PkiException rejected = assertThrows(PkiException.class,
                         () -> wrongBindingService.issueIntermediateCertificate(new IntermediateCertIssueCommand(
-                                runtime.framework().formatId(), rootCaId, intermediateCaId, "default",
+                                runtime.framework().formatId(), rootCaId, intermediateCaId, "intermediate-ca",
                                 Optional.empty(), new SimpleAttributeSet())), mutation.name());
                 assertTrue(rejected.getMessage().contains("CREDENTIAL_PROFILE_BINDING_MISMATCH"), mutation.name());
                 assertEquals(1, runtime.caService().getCa(intermediateCaId).caCredentials().size(),
@@ -932,8 +934,8 @@ final class PkiProofGateE2eTest {
                         }
 
                         @Override
-                        public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                            Credential raw = delegate.issueIntermediateCertificate(issuance);
+                        public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                            Credential raw = delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                             return rebuildIntermediateIdentity(raw, rootKey, Optional.empty(),
                                     Optional.of("CN=WrongIntermediate"));
                         }
@@ -941,7 +943,7 @@ final class PkiProofGateE2eTest {
             CaService wrongSubjectService = runtime.caService(wrongSubjectBackend);
             assertThrows(PkiException.class,
                     () -> wrongSubjectService.issueIntermediateCertificate(new IntermediateCertIssueCommand(
-                            runtime.framework().formatId(), rootCaId, intermediateCaId, "default", Optional.empty(),
+                            runtime.framework().formatId(), rootCaId, intermediateCaId, "intermediate-ca", Optional.empty(),
                             new SimpleAttributeSet())));
             assertEquals(1, runtime.caService().getCa(intermediateCaId).caCredentials().size());
 
@@ -952,8 +954,8 @@ final class PkiProofGateE2eTest {
                         }
 
                         @Override
-                        public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                            Credential raw = delegate.issueIntermediateCertificate(issuance);
+                        public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                            Credential raw = delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                             byte[] invalid = raw.encoded().bytes().clone();
                             invalid[invalid.length - 1] ^= 0x01;
                             return new Credential(raw.credentialId(), raw.formatId(), raw.issuerRef(),
@@ -965,7 +967,7 @@ final class PkiProofGateE2eTest {
             CaService invalidSignatureService = runtime.caService(invalidSignatureBackend);
             assertThrows(PkiException.class,
                     () -> invalidSignatureService.issueIntermediateCertificate(new IntermediateCertIssueCommand(
-                            runtime.framework().formatId(), rootCaId, intermediateCaId, "default", Optional.empty(),
+                            runtime.framework().formatId(), rootCaId, intermediateCaId, "intermediate-ca", Optional.empty(),
                             new SimpleAttributeSet())));
             assertEquals(1, runtime.caService().getCa(intermediateCaId).caCredentials().size());
 
@@ -975,7 +977,7 @@ final class PkiProofGateE2eTest {
                 assertThrows(PkiException.class,
                         () -> maliciousExtensionService.issueIntermediateCertificate(
                                 new IntermediateCertIssueCommand(runtime.framework().formatId(), rootCaId,
-                                        intermediateCaId, "default", Optional.empty(), new SimpleAttributeSet())),
+                                        intermediateCaId, "intermediate-ca", Optional.empty(), new SimpleAttributeSet())),
                         variant.name());
                 assertEquals(1, runtime.caService().getCa(intermediateCaId).caCredentials().size(), variant.name());
             }
@@ -988,15 +990,15 @@ final class PkiProofGateE2eTest {
                         }
 
                         @Override
-                        public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                            Credential raw = delegate.issueIntermediateCertificate(issuance);
+                        public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                            Credential raw = delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                             rawCredential.set(raw);
                             return raw;
                         }
                     };
             CaService snapshotService = runtime.caService(mutableBackend);
             Credential returned = snapshotService.issueIntermediateCertificate(new IntermediateCertIssueCommand(
-                    runtime.framework().formatId(), rootCaId, intermediateCaId, "default", Optional.empty(),
+                    runtime.framework().formatId(), rootCaId, intermediateCaId, "intermediate-ca", Optional.empty(),
                     new SimpleAttributeSet()));
             byte[] expected = returned.encoded().bytes().clone();
             rawCredential.get().encoded().bytes()[0] ^= 0x01;
@@ -1041,9 +1043,9 @@ final class PkiProofGateE2eTest {
         }
 
         @Override
-        public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
+        public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
             intermediateCalls.incrementAndGet();
-            return delegate.issueIntermediateCertificate(issuance);
+            return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
         }
     }
 
@@ -1057,8 +1059,8 @@ final class PkiProofGateE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                Credential credential = delegate.issueIntermediateCertificate(issuance);
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                Credential credential = delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                 return rebuildIntermediateExtensions(credential, issuerKey, variant);
             }
         };
@@ -1074,24 +1076,27 @@ final class PkiProofGateE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                Credential raw = delegate.issueIntermediateCertificate(issuance);
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                Credential raw = delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
                 produced.set(raw);
                 if (mutation == BindingVariantMutation.NULL_CREDENTIAL) {
                     return null;
                 }
-                return copyWithBinding(raw, bindingFor(mutation, issuance.profileId()));
+                return copyWithBinding(raw, bindingFor(mutation, issuance.profileReference()));
             }
         };
     }
 
-    private static CredentialProfileBinding bindingFor(BindingVariantMutation mutation, String profileId) {
+    private static CredentialProfileBinding bindingFor(BindingVariantMutation mutation,
+            CertificateProfileRef profileReference) {
         return switch (mutation) {
-            case END_ENTITY_SAME_ID -> new EndEntityProfileBinding(new CertificateProfileRef(profileId, 1,
+            case END_ENTITY_SAME_ID -> new EndEntityProfileBinding(new CertificateProfileRef(
+                    profileReference.profileId(), 1,
                     new byte[CertificateProfileRef.HASH_BYTES]));
             case END_ENTITY_OTHER_ID -> new EndEntityProfileBinding(new CertificateProfileRef("other", 1,
                     new byte[CertificateProfileRef.HASH_BYTES]));
-            case CA_OTHER_ID -> new CaProfileBinding("other");
+            case CA_OTHER_ID -> new CaProfileBinding(new CertificateProfileRef("other", 1,
+                    new byte[CertificateProfileRef.HASH_BYTES]));
             case NULL_CREDENTIAL -> throw new IllegalStateException("null credential has no binding");
         };
     }

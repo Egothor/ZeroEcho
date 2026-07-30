@@ -4,13 +4,11 @@
  ******************************************************************************/
 package zeroecho.pki.api.profile;
 
-import java.time.Duration;
 import java.util.Set;
 
 /**
  * Complete issuer-controlled leaf certificate extension and identity policy.
  *
- * @param subjectPolicy                 subject policy
  * @param subjectAlternativeNamePolicy SAN policy
  * @param keyUsages                     exact key-usage set
  * @param extendedKeyUsages             exact extended-key-usage set
@@ -18,12 +16,12 @@ import java.util.Set;
  * @param extendedKeyUsageCritical      extended-key-usage criticality
  * @param basicConstraintsCritical      BasicConstraints criticality
  * @param allowedSubjectKeyAlgorithmIds exact canonical ZeroEcho key algorithm identifiers
- * @param maximumValidity               positive maximum validity
  */
-public record LeafCertificatePolicy(SubjectPolicy subjectPolicy,
-        SubjectAlternativeNamePolicy subjectAlternativeNamePolicy, Set<LeafKeyUsage> keyUsages,
+public record LeafCertificatePolicy(SubjectAlternativeNamePolicy subjectAlternativeNamePolicy,
+        Set<LeafKeyUsage> keyUsages,
         Set<ExtendedKeyUsageId> extendedKeyUsages, boolean keyUsageCritical, boolean extendedKeyUsageCritical,
-        boolean basicConstraintsCritical, Set<String> allowedSubjectKeyAlgorithmIds, Duration maximumValidity) {
+        boolean basicConstraintsCritical,
+        Set<String> allowedSubjectKeyAlgorithmIds) implements CertificatePolicy {
 
     private static final Set<String> SUPPORTED_SUBJECT_KEY_ALGORITHMS =
             Set.of("RSA", "ECDSA", "Ed25519", "Ed448");
@@ -32,8 +30,8 @@ public record LeafCertificatePolicy(SubjectPolicy subjectPolicy,
      * Validates and constructs the policy.
      */
     public LeafCertificatePolicy {
-        if (subjectPolicy == null || subjectAlternativeNamePolicy == null || keyUsages == null
-                || extendedKeyUsages == null || allowedSubjectKeyAlgorithmIds == null || maximumValidity == null) {
+        if (subjectAlternativeNamePolicy == null || keyUsages == null
+                || extendedKeyUsages == null || allowedSubjectKeyAlgorithmIds == null) {
             throw new IllegalArgumentException("Leaf certificate policy values must not be null");
         }
         keyUsages = Set.copyOf(keyUsages);
@@ -46,9 +44,6 @@ public record LeafCertificatePolicy(SubjectPolicy subjectPolicy,
         if ((keyUsages.contains(LeafKeyUsage.ENCIPHER_ONLY) || keyUsages.contains(LeafKeyUsage.DECIPHER_ONLY))
                 && !keyUsages.contains(LeafKeyUsage.KEY_AGREEMENT)) {
             throw new IllegalArgumentException("encipherOnly and decipherOnly require keyAgreement");
-        }
-        if (maximumValidity.isZero() || maximumValidity.isNegative()) {
-            throw new IllegalArgumentException("Maximum validity must be positive");
         }
     }
 }

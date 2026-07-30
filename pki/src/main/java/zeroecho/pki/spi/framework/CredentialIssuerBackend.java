@@ -39,7 +39,7 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
-import zeroecho.pki.impl.core.ManagedCaIssuance;
+import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
 import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 
 /**
@@ -153,13 +153,14 @@ public interface CredentialIssuerBackend {
      * </p>
      *
      * <p>
-     * The supplied {@link ManagedCaIssuance} can be constructed only after the core
-     * CA proof gate has completed a managed-key possession challenge and bound the
-     * exact public key, subject, operation, and authoritative attributes.
+     * The supplied {@link ValidatedCaCertificateRequest} can be constructed only
+     * after the core CA proof and active-profile gates have bound the exact public
+     * key, subject, profile version, policy, validity, and serial.
      * </p>
      *
-     * @param issuance gate-produced managed CA issuance authority; must not be
-     *                 {@code null}
+     * @param request gate-produced validated CA request; must not be {@code null}
+     * @param issuerCertificate trusted encoded issuer certificate
+     * @param issuerKeyRef trusted issuer signing-key reference
      * @return issued CA credential, never {@code null}
      * @throws IllegalArgumentException if {@code command} is {@code null} or
      *                                  structurally invalid for the concrete
@@ -168,5 +169,6 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    Credential issueIntermediateCertificate(ManagedCaIssuance issuance);
+    Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
+            EncodedObject issuerCertificate, KeyRef issuerKeyRef);
 }

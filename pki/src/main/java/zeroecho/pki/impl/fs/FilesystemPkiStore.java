@@ -466,6 +466,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 }
                 return existing;
             }
+            requireConsistentProfileKind(version);
             try {
                 FsOperations.writeNewAtomicStrict(target, FsCodec.encode(FsCodec.PROFILE_VERSION, version));
                 return version;
@@ -484,6 +485,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
         } finally {
             releaseProfileLock(profileId, lock);
+        }
+    }
+
+    private void requireConsistentProfileKind(ImportedCertificateProfileVersion candidate) {
+        for (ImportedCertificateProfileVersion existing :
+                listProfileVersions(candidate.reference().profileId())) {
+            if (existing.definition().certificateType()
+                    != candidate.definition().certificateType()) {
+                throw new ProfileLifecycleFailure(Code.PROFILE_KIND_CONFLICT);
+            }
         }
     }
 

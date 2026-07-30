@@ -34,7 +34,8 @@ final class CertificateProfileDocumentCodecTest {
 
     private static final String VALID_DOCUMENT = """
             {
-              "schemaVersion": 1,
+              "schemaVersion": 2,
+              "certificateType": "END_ENTITY",
               "profileId": "tls-service",
               "profileVersion": 7,
               "formatId": "x509",
@@ -108,17 +109,18 @@ final class CertificateProfileDocumentCodecTest {
     void parsesEverySupportedRuleShapeIntoAuthoritativeTypedPolicies() {
         CertificateProfileDefinition definition = parse(VALID_DOCUMENT);
 
-        assertEquals(CertificateProfileDefinition.SCHEMA_VERSION, 1);
+        assertEquals(2, CertificateProfileDefinition.SCHEMA_VERSION);
+        assertEquals(CertificateProfileKind.END_ENTITY, definition.certificateType());
         assertEquals("tls-service", definition.profileId());
         assertEquals(7, definition.profileVersion());
         assertEquals("x509", definition.formatId().value());
         assertEquals("TLS service", definition.displayName());
         LeafCertificatePolicy leaf = definition.leafPolicy();
-        assertEquals(Duration.ofDays(1), leaf.maximumValidity());
+        assertEquals(Duration.ofDays(1), definition.maximumValidity());
         assertEquals(List.of(SubjectRdnType.COMMON_NAME, SubjectRdnType.ORGANIZATION_NAME),
-                leaf.subjectPolicy().rules().stream().map(SubjectRdnRule::type).toList());
-        assertEquals("ZeroEcho", leaf.subjectPolicy().rules().get(1).fixedValue().orElseThrow());
-        assertFalse(leaf.subjectAlternativeNamePolicy().allowEmptySubject());
+                definition.subjectPolicy().rules().stream().map(SubjectRdnRule::type).toList());
+        assertEquals("ZeroEcho", definition.subjectPolicy().rules().get(1).fixedValue().orElseThrow());
+        assertFalse(definition.subjectPolicy().allowEmpty());
         assertTrue(leaf.subjectAlternativeNamePolicy().allowDnsWildcard());
         assertEquals(Set.of("https", "spiffe"),
                 leaf.subjectAlternativeNamePolicy().allowedUriSchemes());
@@ -141,7 +143,7 @@ final class CertificateProfileDocumentCodecTest {
                 definition("uri", requesterCn(), uriSan(), eku(), Set.of("Ed448")),
                 definition("email", requesterCn(), emailSan(), eku(), Set.of("RSA")),
                 definition("mixed", requesterCn(), mixedSan(), eku(), Set.of("RSA", "ECDSA")),
-                definition("empty-subject", new SubjectPolicy(List.of()), dnsSan(false, true),
+                definition("empty-subject", new SubjectPolicy(true, List.of()), dnsSan(false, true),
                         eku(), Set.of("RSA")),
                 definition("fixed-rdn", fixedOrganization(), noSan(), eku(), Set.of("RSA")),
                 definition("multiple-algorithms", requesterCn(), noSan(), Set.of(),
@@ -161,7 +163,7 @@ final class CertificateProfileDocumentCodecTest {
         CertificateProfileDefinition immutable = CertificateProfileDocumentCodec.parse(
                 CertificateProfileDocumentCodec.writeCanonical(definitions.get(7)));
         assertThrows(UnsupportedOperationException.class,
-                () -> immutable.leafPolicy().subjectPolicy().rules().add(
+                () -> immutable.subjectPolicy().rules().add(
                         new SubjectRdnRule(SubjectRdnType.PSEUDONYM, 0, 0, 32,
                                 Optional.empty(), true)));
         assertThrows(UnsupportedOperationException.class,
@@ -169,6 +171,55 @@ final class CertificateProfileDocumentCodecTest {
         assertThrows(UnsupportedOperationException.class,
                 () -> immutable.leafPolicy().subjectAlternativeNamePolicy()
                         .allowedUriSchemes().add("ssh"));
+    }
+
+    @Test
+    void roundTripsRootAndIntermediateCaPoliciesAndRejectsWrongKindShapes() {
+        CertificateProfileDefinition root = caDefinition("root-test",
+                CertificateProfileKind.ROOT_CA, 1);
+        CertificateProfileDefinition intermediate = caDefinition("intermediate-test",
+                CertificateProfileKind.INTERMEDIATE_CA, 0);
+        CertificateProfileDefinition delegatedIntermediate = caDefinition(
+                "delegated-intermediate-test", CertificateProfileKind.INTERMEDIATE_CA, 1);
+        for (CertificateProfileDefinition expected :
+                List.of(root, intermediate, delegatedIntermediate)) {
+            byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(expected);
+            CertificateProfileDefinition actual = CertificateProfileDocumentCodec.parse(canonical);
+            assertEquals(expected, actual);
+            assertArrayEquals(canonical, CertificateProfileDocumentCodec.writeCanonical(actual));
+        }
+
+        String rootJson = canonical(root);
+        assertCode(rootJson.replace("\"certificateType\":\"ROOT_CA\"",
+                "\"certificateType\":\"END_ENTITY\""),
+                "FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE");
+        assertCode(rootJson.replace("\"caCertificate\":", "\"leafCertificate\":"),
+                "FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE");
+        assertCode(rootJson.replace("\"caCertificate\":", "\"subjectAlternativeNames\":"),
+                "FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE");
+        assertCode(rootJson.replace(",\"caCertificate\":{", ",\"leafCertificate\":{}"
+                + ",\"caCertificate\":{"), "FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE");
+        assertCode(rootJson.replace("\"allowEmpty\":false", "\"allowEmpty\":true"),
+                "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("\"pathLengthConstraint\":1",
+                "\"pathLengthConstraint\":-1"), "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("\"pathLengthConstraint\":1",
+                "\"pathLengthConstraint\":33"), "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("\"basicConstraintsCritical\":true",
+                "\"basicConstraintsCritical\":false"), "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("\"keyUsageCritical\":true",
+                "\"keyUsageCritical\":false"), "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("[\"CRL_SIGN\",\"KEY_CERT_SIGN\"]",
+                "[\"KEY_CERT_SIGN\"]"), "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("[\"CRL_SIGN\",\"KEY_CERT_SIGN\"]",
+                "[\"CRL_SIGN\"]"), "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("[\"CRL_SIGN\",\"KEY_CERT_SIGN\"]",
+                "[\"CRL_SIGN\",\"CRL_SIGN\",\"KEY_CERT_SIGN\"]"), "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("\"allowedSubjectKeyAlgorithms\":[\"RSA\"]",
+                "\"allowedSubjectKeyAlgorithms\":[]"), "SEMANTIC_INVALID");
+        assertCode(rootJson.replace("\"allowedSubjectKeyAlgorithms\":",
+                "\"extendedKeyUsage\":[],\"allowedSubjectKeyAlgorithms\":"),
+                "UNKNOWN_FIELD");
     }
 
     @Test
@@ -184,7 +235,8 @@ final class CertificateProfileDocumentCodecTest {
         assertFalse(json.contains("\n"));
         assertFalse(json.contains(": "));
         assertFalse(json.contains(", "));
-        assertTrue(json.indexOf("\"schemaVersion\"") < json.indexOf("\"profileId\""));
+        assertTrue(json.indexOf("\"schemaVersion\"") < json.indexOf("\"certificateType\""));
+        assertTrue(json.indexOf("\"certificateType\"") < json.indexOf("\"profileId\""));
         assertTrue(json.indexOf("\"DNS_NAME\"") < json.indexOf("\"IP_ADDRESS\""));
         assertTrue(json.indexOf("\"IP_ADDRESS\"") < json.indexOf("\"RFC822_NAME\""));
         assertTrue(json.indexOf("\"RFC822_NAME\"") < json.indexOf("\"URI\""));
@@ -201,12 +253,15 @@ final class CertificateProfileDocumentCodecTest {
         CertificateProfileDefinition valid = definition("valid", requesterCn(), noSan(),
                 Set.of(), Set.of("RSA"));
         List<CertificateProfileDefinition> invalid = List.of(
-                new CertificateProfileDefinition(" padded", valid.profileVersion(),
-                        valid.formatId(), valid.displayName(), valid.leafPolicy()),
-                new CertificateProfileDefinition(valid.profileId(), valid.profileVersion(),
-                        new FormatId("x509 "), valid.displayName(), valid.leafPolicy()),
-                new CertificateProfileDefinition(valid.profileId(), valid.profileVersion(),
-                        valid.formatId(), " padded ", valid.leafPolicy()));
+                new CertificateProfileDefinition(valid.certificateType(), " padded", valid.profileVersion(),
+                        valid.formatId(), valid.displayName(), valid.maximumValidity(),
+                        valid.subjectPolicy(), valid.certificatePolicy()),
+                new CertificateProfileDefinition(valid.certificateType(), valid.profileId(),
+                        valid.profileVersion(), new FormatId("x509 "), valid.displayName(),
+                        valid.maximumValidity(), valid.subjectPolicy(), valid.certificatePolicy()),
+                new CertificateProfileDefinition(valid.certificateType(), valid.profileId(),
+                        valid.profileVersion(), valid.formatId(), " padded ", valid.maximumValidity(),
+                        valid.subjectPolicy(), valid.certificatePolicy()));
 
         for (CertificateProfileDefinition definition : invalid) {
             assertWriteCode(definition, "CANONICALIZATION_FAILED");
@@ -245,11 +300,11 @@ final class CertificateProfileDocumentCodecTest {
 
     @Test
     void rejectsDuplicateUnknownMissingNullWrongAndNonintegralFields() {
-        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 1,",
-                "\"schemaVersion\": 1,\"schemaVersion\": 1,"), "DUPLICATE_FIELD");
+        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 2,",
+                "\"schemaVersion\": 2,\"schemaVersion\": 2,"), "DUPLICATE_FIELD");
         for (String document : List.of(
-                VALID_DOCUMENT.replace("\"schemaVersion\": 1,",
-                        "\"secret-field\": true,\"schemaVersion\": 1,"),
+                VALID_DOCUMENT.replace("\"schemaVersion\": 2,",
+                        "\"secret-field\": true,\"schemaVersion\": 2,"),
                 VALID_DOCUMENT.replace("\"allowEmpty\": false,",
                         "\"unknown\": true,\"allowEmpty\": false,"),
                 VALID_DOCUMENT.replace("\"oid\": \"2.5.4.3\",",
@@ -272,7 +327,7 @@ final class CertificateProfileDocumentCodecTest {
             assertCode(document, "DUPLICATE_FIELD");
         }
         for (String document : List.of(
-                VALID_DOCUMENT.replace("\"schemaVersion\": 1,\n", ""),
+                VALID_DOCUMENT.replace("\"schemaVersion\": 2,\n", ""),
                 VALID_DOCUMENT.replace("\"allowEmpty\": false,\n", ""),
                 VALID_DOCUMENT.replace("\"oid\": \"2.5.4.3\",\n", ""),
                 VALID_DOCUMENT.replace("\"minimumTotal\": 1,\n", ""),
@@ -303,8 +358,10 @@ final class CertificateProfileDocumentCodecTest {
 
     @Test
     void rejectsUnsupportedVersionsTokensCaseWhitespaceAndNoncanonicalDuration() {
-        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 1",
-                "\"schemaVersion\": 2"), "SCHEMA_VERSION_UNSUPPORTED");
+        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 2",
+                "\"schemaVersion\": 1"), "SCHEMA_VERSION_UNSUPPORTED");
+        assertCode(VALID_DOCUMENT.replace("\"certificateType\": \"END_ENTITY\"",
+                "\"certificateType\": \"end_entity\""), "CERTIFICATE_TYPE_UNSUPPORTED");
         assertCode(VALID_DOCUMENT.replace("\"profileVersion\": 7",
                 "\"profileVersion\": 0"), "PROFILE_VERSION_INVALID");
         assertCode(VALID_DOCUMENT.replace("\"type\": \"DNS_NAME\"",
@@ -386,7 +443,7 @@ final class CertificateProfileDocumentCodecTest {
                 eku(), Set.of("RSA")));
         assertCode(email.replace("\"serviceIdentityRequired\":false",
                 "\"serviceIdentityRequired\":true"), "SEMANTIC_INVALID");
-        String empty = canonical(definition("empty-invalid", new SubjectPolicy(List.of()),
+        String empty = canonical(definition("empty-invalid", new SubjectPolicy(true, List.of()),
                 dnsSan(false, true), eku(), Set.of("RSA")));
         assertCode(empty.replace("\"minimumTotal\":1", "\"minimumTotal\":0"),
                 "SEMANTIC_INVALID");
@@ -449,8 +506,8 @@ final class CertificateProfileDocumentCodecTest {
     @Test
     void redactsHostileInputAndParserDetailsFromFailures() {
         String secret = "do-not-disclose-credential";
-        String hostile = VALID_DOCUMENT.replace("\"schemaVersion\": 1,",
-                "\"" + secret + "\": true,\"schemaVersion\": 1,");
+        String hostile = VALID_DOCUMENT.replace("\"schemaVersion\": 2,",
+                "\"" + secret + "\": true,\"schemaVersion\": 2,");
 
         PkiException exception = assertThrows(PkiException.class, () -> parse(hostile));
 
@@ -485,8 +542,8 @@ final class CertificateProfileDocumentCodecTest {
         logger.addHandler(handler);
         try {
             for (String field : hostileFields) {
-                String document = VALID_DOCUMENT.replace("\"schemaVersion\": 1,",
-                        "\"" + field + "\":\"" + probeName + "\",\"schemaVersion\": 1,");
+                String document = VALID_DOCUMENT.replace("\"schemaVersion\": 2,",
+                        "\"" + field + "\":\"" + probeName + "\",\"schemaVersion\": 2,");
                 PkiException exception = assertThrows(PkiException.class, () -> parse(document));
                 assertTrue(exception.getMessage().contains("code=UNKNOWN_FIELD "));
                 assertFalse(exception.getMessage().contains(field));
@@ -512,57 +569,69 @@ final class CertificateProfileDocumentCodecTest {
     private static CertificateProfileDefinition definition(String id, SubjectPolicy subject,
             SubjectAlternativeNamePolicy san, Set<ExtendedKeyUsageId> extendedKeyUsages,
             Set<String> algorithms) {
-        LeafCertificatePolicy leaf = new LeafCertificatePolicy(subject, san,
+        LeafCertificatePolicy leaf = new LeafCertificatePolicy(san,
                 Set.of(LeafKeyUsage.DIGITAL_SIGNATURE), extendedKeyUsages, true, false, true,
-                algorithms, Duration.ofDays(1));
-        return new CertificateProfileDefinition(id, 1, new FormatId("x509"), id, leaf);
+                algorithms);
+        return new CertificateProfileDefinition(CertificateProfileKind.END_ENTITY, id, 1,
+                new FormatId("x509"), id, Duration.ofDays(1), subject, leaf);
+    }
+
+    private static CertificateProfileDefinition caDefinition(String id,
+            CertificateProfileKind kind, int pathLength) {
+        SubjectPolicy subject = new SubjectPolicy(false,
+                List.of(new SubjectRdnRule(SubjectRdnType.COMMON_NAME, 1, 1, 253,
+                        Optional.empty(), true)));
+        CaCertificatePolicy ca = new CaCertificatePolicy(true, pathLength, true,
+                Set.of(CaKeyUsage.KEY_CERT_SIGN, CaKeyUsage.CRL_SIGN), Set.of("RSA"));
+        return new CertificateProfileDefinition(kind, id, 1, new FormatId("x509"), id,
+                Duration.ofDays(365), subject, ca);
     }
 
     private static SubjectPolicy requesterCn() {
-        return new SubjectPolicy(List.of(new SubjectRdnRule(SubjectRdnType.COMMON_NAME,
+        return new SubjectPolicy(false, List.of(new SubjectRdnRule(SubjectRdnType.COMMON_NAME,
                 1, 1, 128, Optional.empty(), true)));
     }
 
     private static SubjectPolicy fixedOrganization() {
-        return new SubjectPolicy(List.of(new SubjectRdnRule(SubjectRdnType.ORGANIZATION_NAME,
+        return new SubjectPolicy(false, List.of(new SubjectRdnRule(SubjectRdnType.ORGANIZATION_NAME,
                 1, 1, 64, Optional.of("ZeroEcho"), false)));
     }
 
     private static SubjectAlternativeNamePolicy noSan() {
-        return new SubjectAlternativeNamePolicy(false, 0, 0, List.of(), false, Set.of(),
+        return new SubjectAlternativeNamePolicy(0, 0, List.of(), false, Set.of(),
                 false, false, false);
     }
 
     private static SubjectAlternativeNamePolicy dnsSan(boolean wildcard, boolean emptySubject) {
-        return new SubjectAlternativeNamePolicy(emptySubject, 1, 1,
+        return new SubjectAlternativeNamePolicy(1, 1,
                 List.of(new SubjectAlternativeNameRule(SubjectAlternativeNameType.DNS_NAME,
                         1, 1, false, false)),
                 wildcard, Set.of(), emptySubject, true, false);
     }
 
     private static SubjectAlternativeNamePolicy ipSan(boolean ipv4, boolean ipv6) {
-        return new SubjectAlternativeNamePolicy(false, 1, 1,
+        return new SubjectAlternativeNamePolicy(1, 1,
                 List.of(new SubjectAlternativeNameRule(SubjectAlternativeNameType.IP_ADDRESS,
                         1, 1, ipv4, ipv6)),
                 false, Set.of(), false, true, false);
     }
 
     private static SubjectAlternativeNamePolicy uriSan() {
-        return new SubjectAlternativeNamePolicy(false, 1, 1,
+        return new SubjectAlternativeNamePolicy(1, 1,
                 List.of(new SubjectAlternativeNameRule(SubjectAlternativeNameType.URI,
                         1, 1, false, false)),
                 false, Set.of("https"), false, true, false);
     }
 
     private static SubjectAlternativeNamePolicy emailSan() {
-        return new SubjectAlternativeNamePolicy(false, 1, 1,
+        return new SubjectAlternativeNamePolicy(1, 1,
                 List.of(new SubjectAlternativeNameRule(SubjectAlternativeNameType.RFC822_NAME,
                         1, 1, false, false)),
                 false, Set.of(), false, false, true);
     }
 
     private static SubjectAlternativeNamePolicy mixedSan() {
-        return new SubjectAlternativeNamePolicy(false, 0, 4, List.of(
+        return new SubjectAlternativeNamePolicy(0, 4, List.of(
                 new SubjectAlternativeNameRule(SubjectAlternativeNameType.DNS_NAME,
                         0, 1, false, false),
                 new SubjectAlternativeNameRule(SubjectAlternativeNameType.IP_ADDRESS,

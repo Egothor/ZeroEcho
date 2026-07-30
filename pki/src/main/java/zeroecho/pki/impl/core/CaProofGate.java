@@ -59,9 +59,6 @@ import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.SubjectRef;
-import zeroecho.pki.api.Validity;
-import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
@@ -127,16 +124,7 @@ final class CaProofGate {
 
     /* default */ ManagedKeyProof proveManagedKey(KeyRef keyRef, FormatId formatId, String auditAction,
             Optional<PkiId> subjectCaId) {
-        EncodedObject resolved;
-        try {
-            resolved = publicKeyResolver.resolveSpkiDer(keyRef);
-        } catch (RuntimeException ex) { // NOPMD - managed-key resolution boundary fails closed
-            throw rejection(auditAction, formatId, subjectCaId, "MANAGED_KEY_UNAVAILABLE");
-        }
-        if (resolved == null || resolved.encoding() != Encoding.DER) {
-            throw rejection(auditAction, formatId, subjectCaId, "MANAGED_KEY_INVALID");
-        }
-
+        EncodedObject resolved = resolveManagedKey(keyRef, formatId, auditAction, subjectCaId);
         byte[] exactSpki = resolved.bytes().clone();
         byte[] challenge = new byte[MANAGED_KEY_CHALLENGE_DOMAIN.length + CHALLENGE_NONCE_BYTES];
         CHALLENGE_RANDOM.nextBytes(challenge);
@@ -160,12 +148,18 @@ final class CaProofGate {
         }
     }
 
-    /* default */ ManagedCaIssuance authorizeIntermediate(ManagedKeyProof proof,
-            ManagedCaIssuance.Operation operation, PkiId issuerCaId, PkiId subjectCaId, String profileId,
-            Optional<Validity> requestedValidity, AttributeSet attributes, SubjectRef subjectRef) {
-        Objects.requireNonNull(proof, "proof");
-        return new ManagedCaIssuance(proof, operation, issuerCaId, subjectCaId, profileId, requestedValidity,
-                attributes, subjectRef);
+    /* default */ EncodedObject resolveManagedKey(KeyRef keyRef, FormatId formatId, String auditAction,
+            Optional<PkiId> subjectCaId) {
+        EncodedObject resolved;
+        try {
+            resolved = publicKeyResolver.resolveSpkiDer(keyRef);
+        } catch (RuntimeException ex) { // NOPMD - managed-key resolution boundary fails closed
+            throw rejection(auditAction, formatId, subjectCaId, "MANAGED_KEY_UNAVAILABLE");
+        }
+        if (resolved == null || resolved.encoding() != Encoding.DER) {
+            throw rejection(auditAction, formatId, subjectCaId, "MANAGED_KEY_INVALID");
+        }
+        return new EncodedObject(Encoding.DER, resolved.bytes());
     }
 
     /* default */ PkiException rejection(String action, FormatId formatId, Optional<PkiId> objectId, String code) {

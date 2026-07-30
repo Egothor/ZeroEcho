@@ -71,6 +71,7 @@ import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.profile.CertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileDefinition;
 import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
+import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ExtendedKeyUsageId;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
@@ -215,7 +216,7 @@ final class FsCodecTest {
         CertificateProfileRef reference = new CertificateProfileRef("profile-a", 1,
                 new byte[CertificateProfileRef.HASH_BYTES]);
         List<CredentialProfileBinding> bindings = List.of(new EndEntityProfileBinding(reference),
-                new CaProfileBinding(reference.profileId()));
+                new CaProfileBinding(reference));
 
         for (CredentialProfileBinding binding : bindings) {
             Credential original = credential(binding);
@@ -223,6 +224,33 @@ final class FsCodecTest {
             assertEquals(binding, decoded.profileBinding());
             assertEquals(binding.getClass(), decoded.profileBinding().getClass());
         }
+    }
+
+    @Test
+    void obsoleteBareStringCaBindingFailsStrictDecode() {
+        byte[] encoded = FsCodec.encode(FsCodec.CREDENTIAL,
+                credential(new CaProfileBinding(new CertificateProfileRef("profile-a", 1,
+                        new byte[CertificateProfileRef.HASH_BYTES]))));
+        int binding = indexOf(encoded, new byte[] { 73, 2, 72 });
+        assertTrue(binding >= 0);
+        encoded[binding + 2] = 1;
+        assertInvalid(encoded);
+    }
+
+    private static int indexOf(byte[] source, byte[] target) {
+        for (int index = 0; index <= source.length - target.length; index++) {
+            boolean matches = true;
+            for (int offset = 0; offset < target.length; offset++) {
+                if (source[index + offset] != target[offset]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     private static ParsedCertificationRequest roundTripRequest(AttributeSet attributes) {
@@ -239,15 +267,16 @@ final class FsCodecTest {
     }
 
     private static CertificateProfile profile() {
-        SubjectPolicy subject = new SubjectPolicy(List.of(new SubjectRdnRule(
+        SubjectPolicy subject = new SubjectPolicy(false, List.of(new SubjectRdnRule(
                 SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true)));
-        SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(false, 0, 0,
+        SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(0, 0,
                 List.of(), false, java.util.Set.of(), false, false, false);
-        LeafCertificatePolicy leaf = new LeafCertificatePolicy(subject, sans,
+        LeafCertificatePolicy leaf = new LeafCertificatePolicy(sans,
                 java.util.Set.of(LeafKeyUsage.DIGITAL_SIGNATURE, LeafKeyUsage.KEY_ENCIPHERMENT),
                 java.util.Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1")), true, false, true,
-                java.util.Set.of("RSA"), Duration.ofDays(365));
-        return new CertificateProfile("profile-a", new FormatId("x509"), "Test leaf profile", leaf);
+                java.util.Set.of("RSA"));
+        return new CertificateProfile("profile-a", new FormatId("x509"), "Test leaf profile",
+                Duration.ofDays(365), subject, leaf);
     }
 
     private static Credential credential(CredentialProfileBinding binding) {
@@ -261,12 +290,15 @@ final class FsCodecTest {
     private static ImportedCertificateProfileVersion profileVersion() {
         try {
             CertificateProfile profile = profile();
-            CertificateProfileDefinition definition = new CertificateProfileDefinition(profile.profileId(), 1,
-                    profile.formatId(), profile.displayName(), profile.leafPolicy());
+            CertificateProfileDefinition definition = new CertificateProfileDefinition(
+                    CertificateProfileKind.END_ENTITY, profile.profileId(), 1, profile.formatId(),
+                    profile.displayName(), profile.maximumValidity(), profile.subjectPolicy(),
+                    profile.leafPolicy());
             byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
             CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1,
                     MessageDigest.getInstance("SHA-256").digest(canonical));
-            return new ImportedCertificateProfileVersion(reference, 1, definition, canonical, Instant.EPOCH);
+            return new ImportedCertificateProfileVersion(reference,
+                    CertificateProfileDefinition.SCHEMA_VERSION, definition, canonical, Instant.EPOCH);
         } catch (java.security.NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
         }

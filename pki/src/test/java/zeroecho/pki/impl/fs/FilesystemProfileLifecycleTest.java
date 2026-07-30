@@ -30,7 +30,9 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
+import zeroecho.pki.api.profile.CertificateProfileDefinition;
 import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.impl.audit.InMemoryAuditSink;
 import zeroecho.pki.impl.core.DefaultProfileService;
@@ -100,7 +102,8 @@ final class FilesystemProfileLifecycleTest {
             ImportedCertificateProfileVersion invalid = new ImportedCertificateProfileVersion(
                     new CertificateProfileRef(template.definition().profileId(),
                             template.definition().profileVersion(), template.canonicalSha256()),
-                    1, template.definition(), noncanonical, CLOCK.instant());
+                    CertificateProfileDefinition.SCHEMA_VERSION, template.definition(),
+                    noncanonical, CLOCK.instant());
             Path path = new FsPaths(noncanonicalRoot).profileVersion("server-tls", 1);
             FsOperations.ensureDir(path.getParent());
             Files.write(path, FsCodec.encode(FsCodec.PROFILE_VERSION, invalid));
@@ -115,7 +118,8 @@ final class FilesystemProfileLifecycleTest {
                     new CertificateProfileRef(template.definition().profileId(),
                             template.definition().profileVersion(),
                             new byte[CertificateProfileRef.HASH_BYTES]),
-                    1, template.definition(), template.canonicalJson(), CLOCK.instant());
+                    CertificateProfileDefinition.SCHEMA_VERSION, template.definition(),
+                    template.canonicalJson(), CLOCK.instant());
             Path path = new FsPaths(hashMismatchRoot).profileVersion("server-tls", 1);
             FsOperations.ensureDir(path.getParent());
             Files.write(path, FsCodec.encode(FsCodec.PROFILE_VERSION, invalid));
@@ -165,6 +169,51 @@ final class FilesystemProfileLifecycleTest {
                 releaseHeld.countDown();
                 executor.shutdownNow();
             }
+        }
+    }
+
+    @Test
+    void caKindsUseLifecycleAndOneLogicalIdCannotChangeKindAcrossVersions(
+            @TempDir Path directory) throws Exception {
+        Path root = directory.resolve("store");
+        CertificateProfileRef rootRef;
+        CertificateProfileRef intermediateRef;
+        try (FilesystemPkiStore store = store(root)) {
+            DefaultProfileService service = service(store);
+            rootRef = service.importBuiltIn(builtIn("root-ca"));
+            intermediateRef = service.importBuiltIn(builtIn("intermediate-ca"));
+            assertTrue(service.getActiveReference("root-ca").isEmpty());
+            assertTrue(service.getActiveReference("intermediate-ca").isEmpty());
+            assertEquals(rootRef, service.activateProfile("root-ca", 1));
+            assertEquals(intermediateRef, service.activateProfile("intermediate-ca", 1));
+            assertEquals(CertificateProfileKind.ROOT_CA,
+                    service.requireActiveProfile("root-ca").definition().certificateType());
+            assertEquals(CertificateProfileKind.INTERMEDIATE_CA,
+                    service.requireActiveProfile("intermediate-ca").definition().certificateType());
+
+            byte[] sameKindVersion = version(builtIn("root-ca"), 2, "Root CA v2");
+            CertificateProfileRef versionTwo = service.importProfile(sameKindVersion);
+            assertEquals(2, versionTwo.profileVersion());
+
+            byte[] conflictingKind = new String(builtIn("intermediate-ca").canonicalJson(),
+                    StandardCharsets.UTF_8)
+                    .replace("\"profileId\":\"intermediate-ca\"", "\"profileId\":\"root-ca\"")
+                    .replace("\"profileVersion\":1", "\"profileVersion\":3")
+                    .getBytes(StandardCharsets.UTF_8);
+            assertCode(() -> service.importProfile(conflictingKind), "PROFILE_KIND_CONFLICT");
+            assertTrue(service.getImportedVersion("root-ca", 3).isEmpty());
+            assertEquals(rootRef, service.getActiveReference("root-ca").orElseThrow());
+        }
+
+        try (FilesystemPkiStore reopened = store(root)) {
+            DefaultProfileService service = service(reopened);
+            assertEquals(rootRef, service.getActiveReference("root-ca").orElseThrow());
+            assertEquals(intermediateRef,
+                    service.getActiveReference("intermediate-ca").orElseThrow());
+            assertEquals(CertificateProfileKind.ROOT_CA,
+                    service.requireActiveProfile("root-ca").definition().certificateType());
+            assertEquals(CertificateProfileKind.INTERMEDIATE_CA,
+                    service.requireActiveProfile("intermediate-ca").definition().certificateType());
         }
     }
 

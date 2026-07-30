@@ -688,7 +688,7 @@ final class FsCodec {
             }
             case CaProfileBinding ca -> {
                 writer.writeUnsignedByte(2);
-                writer.writeValue(STRING, ca.profileId());
+                writer.writeValue(PROFILE_REF, ca.reference());
             }
         }
     }
@@ -696,7 +696,7 @@ final class FsCodec {
     private static CredentialProfileBinding readProfileBinding(Reader reader) throws IOException {
         return switch (reader.readUnsignedByte()) {
             case 1 -> new EndEntityProfileBinding(reader.readValue(PROFILE_REF));
-            case 2 -> new CaProfileBinding(reader.readValue(STRING));
+            case 2 -> new CaProfileBinding(reader.readValue(PROFILE_REF));
             default -> throw new IOException("unknown credential profile binding");
         };
     }

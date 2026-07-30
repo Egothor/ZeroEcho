@@ -42,10 +42,13 @@ final class BuiltInCertificateProfileCatalogTest {
     private static final String VPN_SERVER = ROOT + "vpn-server.json";
     private static final String VPN_CLIENT = ROOT + "vpn-client.json";
     private static final String EMAIL = ROOT + "email-signing.json";
+    private static final String ROOT_CA = ROOT + "root-ca.json";
+    private static final String INTERMEDIATE_CA = ROOT + "intermediate-ca.json";
     private static final List<String> PROFILE_RESOURCES =
-            List.of(SERVER, VPN_SERVER, VPN_CLIENT, EMAIL);
+            List.of(SERVER, VPN_SERVER, VPN_CLIENT, EMAIL, ROOT_CA, INTERMEDIATE_CA);
     private static final List<String> EXPECTED_ORDER =
-            List.of("server-tls", "vpn-server", "vpn-client", "email-signing");
+            List.of("server-tls", "vpn-server", "vpn-client", "email-signing",
+                    "root-ca", "intermediate-ca");
     private static final Set<String> EXPECTED_ALGORITHMS =
             Set.of("RSA", "ECDSA", "Ed25519");
     private static final ExtendedKeyUsageId SERVER_AUTH =
@@ -65,7 +68,7 @@ final class BuiltInCertificateProfileCatalogTest {
         List<BuiltInCertificateProfileTemplate> second =
                 BuiltInCertificateProfileCatalog.load(getClass().getClassLoader());
 
-        assertEquals(4, first.size());
+        assertEquals(6, first.size());
         assertEquals(EXPECTED_ORDER,
                 first.stream().map(template -> template.definition().profileId()).toList());
         assertEquals(first, second);
@@ -76,7 +79,6 @@ final class BuiltInCertificateProfileCatalogTest {
             byte[] hash = template.canonicalSha256();
             assertEquals(1, definition.profileVersion());
             assertEquals("x509", definition.formatId().value());
-            assertEquals(Duration.ofDays(365), definition.leafPolicy().maximumValidity());
             assertArrayEquals(canonical,
                     CertificateProfileDocumentCodec.writeCanonical(definition));
             assertEquals(definition, CertificateProfileDocumentCodec.parse(canonical));
@@ -103,8 +105,8 @@ final class BuiltInCertificateProfileCatalogTest {
             LeafCertificatePolicy leaf = profiles.get(profileId).leafPolicy();
             SubjectAlternativeNamePolicy san = leaf.subjectAlternativeNamePolicy();
 
-            assertOptionalCommonName(leaf);
-            assertTrue(san.allowEmptySubject());
+            assertOptionalCommonName(profiles.get(profileId));
+            assertTrue(profiles.get(profileId).subjectPolicy().allowEmpty());
             assertEquals(1, san.minimumTotal());
             assertEquals(64, san.maximumTotal());
             assertTrue(san.requireServiceIdentity());
@@ -123,11 +125,12 @@ final class BuiltInCertificateProfileCatalogTest {
 
     @Test
     void vpnClientTemplateHasOnlySpiffeUriAndRfc822Identity() {
-        LeafCertificatePolicy leaf = productionDefinitions().get("vpn-client").leafPolicy();
+        CertificateProfileDefinition definition = productionDefinitions().get("vpn-client");
+        LeafCertificatePolicy leaf = definition.leafPolicy();
         SubjectAlternativeNamePolicy san = leaf.subjectAlternativeNamePolicy();
 
-        assertOptionalCommonName(leaf);
-        assertTrue(san.allowEmptySubject());
+        assertOptionalCommonName(definition);
+        assertTrue(definition.subjectPolicy().allowEmpty());
         assertEquals(1, san.minimumTotal());
         assertEquals(16, san.maximumTotal());
         assertFalse(san.requireServiceIdentity());
@@ -142,13 +145,14 @@ final class BuiltInCertificateProfileCatalogTest {
 
     @Test
     void emailTemplateRequiresRfc822SanAndDoesNotEnableSubjectEmail() {
-        LeafCertificatePolicy leaf = productionDefinitions().get("email-signing").leafPolicy();
+        CertificateProfileDefinition definition = productionDefinitions().get("email-signing");
+        LeafCertificatePolicy leaf = definition.leafPolicy();
         SubjectAlternativeNamePolicy san = leaf.subjectAlternativeNamePolicy();
 
-        assertOptionalCommonName(leaf);
+        assertOptionalCommonName(definition);
         assertEquals(List.of(SubjectRdnType.COMMON_NAME),
-                leaf.subjectPolicy().rules().stream().map(SubjectRdnRule::type).toList());
-        assertTrue(san.allowEmptySubject());
+                definition.subjectPolicy().rules().stream().map(SubjectRdnRule::type).toList());
+        assertTrue(definition.subjectPolicy().allowEmpty());
         assertEquals(1, san.minimumTotal());
         assertEquals(16, san.maximumTotal());
         assertFalse(san.requireServiceIdentity());
@@ -157,6 +161,15 @@ final class BuiltInCertificateProfileCatalogTest {
                 san.rules().stream().map(SubjectAlternativeNameRule::type).toList());
         assertEquals(1, san.rules().get(0).minimum());
         assertLeafPolicy(leaf, Set.of(EMAIL_PROTECTION));
+    }
+
+    @Test
+    void caTemplatesHaveExactKindsSubjectAndCertificatePolicies() {
+        Map<String, CertificateProfileDefinition> profiles = productionDefinitions();
+        assertCaProfile(profiles.get("root-ca"), CertificateProfileKind.ROOT_CA,
+                Duration.ofHours(87_600), 1);
+        assertCaProfile(profiles.get("intermediate-ca"),
+                CertificateProfileKind.INTERMEDIATE_CA, Duration.ofHours(43_800), 0);
     }
 
     @Test
@@ -226,12 +239,12 @@ final class BuiltInCertificateProfileCatalogTest {
     @Test
     void profileDocumentsFailClosedForInvalidSchemaFieldsEncodingAndClassMetadata() {
         List<byte[]> invalidDocuments = List.of(
-                replace(mainResource(SERVER), "\"schemaVersion\":1",
-                        "\"schemaVersion\":2"),
-                replace(mainResource(SERVER), "\"schemaVersion\":1,",
-                        "\"schemaVersion\":1,\"active\":true,"),
-                replace(mainResource(SERVER), "\"schemaVersion\":1,",
-                        "\"schemaVersion\":1,\"@class\":\""
+                replace(mainResource(SERVER), "\"schemaVersion\":2",
+                        "\"schemaVersion\":1"),
+                replace(mainResource(SERVER), "\"schemaVersion\":2,",
+                        "\"schemaVersion\":2,\"active\":true,"),
+                replace(mainResource(SERVER), "\"schemaVersion\":2,",
+                        "\"schemaVersion\":2,\"@class\":\""
                                 + InitializationSentinel.CLASS_NAME + "\","),
                 malformedUtf8(mainResource(SERVER)));
         for (byte[] invalid : invalidDocuments) {
@@ -251,8 +264,9 @@ final class BuiltInCertificateProfileCatalogTest {
         CertificateProfileDefinition server =
                 CertificateProfileDocumentCodec.parse(mainResource(SERVER));
         CertificateProfileDefinition changed = new CertificateProfileDefinition(
-                server.profileId(), server.profileVersion(), server.formatId(),
-                "Changed display", server.leafPolicy());
+                server.certificateType(), server.profileId(), server.profileVersion(),
+                server.formatId(), "Changed display", server.maximumValidity(),
+                server.subjectPolicy(), server.certificatePolicy());
         Map<String, List<byte[]>> duplicateIdentity = baseResources();
         duplicateIdentity.put(VPN_SERVER, List.of(
                 CertificateProfileDocumentCodec.writeCanonical(changed)));
@@ -265,9 +279,9 @@ final class BuiltInCertificateProfileCatalogTest {
         assertCode(wrongSet, "BUILT_IN_PROFILE_SET_INVALID");
     }
 
-    private static void assertOptionalCommonName(LeafCertificatePolicy leaf) {
-        assertEquals(1, leaf.subjectPolicy().rules().size());
-        SubjectRdnRule commonName = leaf.subjectPolicy().rules().get(0);
+    private static void assertOptionalCommonName(CertificateProfileDefinition definition) {
+        assertEquals(1, definition.subjectPolicy().rules().size());
+        SubjectRdnRule commonName = definition.subjectPolicy().rules().get(0);
         assertEquals(SubjectRdnType.COMMON_NAME, commonName.type());
         assertEquals(0, commonName.minimumOccurrences());
         assertEquals(1, commonName.maximumOccurrences());
@@ -284,7 +298,25 @@ final class BuiltInCertificateProfileCatalogTest {
         assertFalse(leaf.extendedKeyUsageCritical());
         assertTrue(leaf.basicConstraintsCritical());
         assertEquals(EXPECTED_ALGORITHMS, leaf.allowedSubjectKeyAlgorithmIds());
-        assertEquals(Duration.ofDays(365), leaf.maximumValidity());
+    }
+
+    private static void assertCaProfile(CertificateProfileDefinition definition,
+            CertificateProfileKind kind, Duration maximumValidity, int pathLength) {
+        assertEquals(kind, definition.certificateType());
+        assertEquals(maximumValidity, definition.maximumValidity());
+        assertFalse(definition.subjectPolicy().allowEmpty());
+        assertEquals(1, definition.subjectPolicy().rules().size());
+        SubjectRdnRule commonName = definition.subjectPolicy().rules().get(0);
+        assertEquals(SubjectRdnType.COMMON_NAME, commonName.type());
+        assertEquals(1, commonName.minimumOccurrences());
+        assertEquals(1, commonName.maximumOccurrences());
+        assertEquals(253, commonName.maximumUtf8Bytes());
+        CaCertificatePolicy ca = definition.caPolicy();
+        assertTrue(ca.basicConstraintsCritical());
+        assertEquals(pathLength, ca.pathLengthConstraint());
+        assertTrue(ca.keyUsageCritical());
+        assertEquals(Set.of(CaKeyUsage.KEY_CERT_SIGN, CaKeyUsage.CRL_SIGN), ca.keyUsages());
+        assertEquals(EXPECTED_ALGORITHMS, ca.allowedSubjectKeyAlgorithmIds());
     }
 
     private static SubjectAlternativeNameRule rule(SubjectAlternativeNamePolicy policy,

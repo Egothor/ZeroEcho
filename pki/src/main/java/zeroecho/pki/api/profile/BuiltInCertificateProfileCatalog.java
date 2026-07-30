@@ -32,7 +32,7 @@ import tools.jackson.core.json.JsonReadFeature;
 import zeroecho.pki.api.PkiException;
 
 /**
- * Loader for the fixed built-in end-entity profile resource catalogue.
+ * Loader for the fixed built-in certificate-profile resource catalogue.
  *
  * <p>
  * The catalogue is stateless and thread-safe. Every load reparses the packaged
@@ -68,7 +68,8 @@ public final class BuiltInCertificateProfileCatalog {
     private static final String ERROR_PREFIX =
             "Built-in certificate profile catalogue rejected: code=";
     private static final Set<String> EXPECTED_PROFILE_IDS =
-            Set.of("server-tls", "vpn-server", "vpn-client", "email-signing");
+            Set.of("server-tls", "vpn-server", "vpn-client", "email-signing",
+                    "root-ca", "intermediate-ca");
     private BuiltInCertificateProfileCatalog() {
     }
 
@@ -222,6 +223,9 @@ public final class BuiltInCertificateProfileCatalog {
         private final Set<ProfileIdentity> identities = new HashSet<>();
         private final Set<ByteBuffer> hashes = new HashSet<>();
         private final Set<String> profileIds = new HashSet<>();
+        private int endEntityCount;
+        private int rootCount;
+        private int intermediateCount;
 
         private CatalogueAccumulator(int expectedSize) {
             templates = new ArrayList<>(expectedSize);
@@ -240,12 +244,18 @@ public final class BuiltInCertificateProfileCatalog {
                     || !profileIds.add(definition.profileId())) {
                 throw failure("BUILT_IN_PROFILE_SET_INVALID");
             }
+            switch (definition.certificateType()) {
+                case END_ENTITY -> endEntityCount++;
+                case ROOT_CA -> rootCount++;
+                case INTERMEDIATE_CA -> intermediateCount++;
+            }
             templates.add(template);
         }
 
         private List<BuiltInCertificateProfileTemplate> finish() {
             if (templates.size() != EXPECTED_PROFILE_IDS.size()
-                    || !profileIds.equals(EXPECTED_PROFILE_IDS)) {
+                    || !profileIds.equals(EXPECTED_PROFILE_IDS)
+                    || endEntityCount != 4 || rootCount != 1 || intermediateCount != 1) {
                 throw failure("BUILT_IN_PROFILE_SET_INVALID");
             }
             return List.copyOf(templates);

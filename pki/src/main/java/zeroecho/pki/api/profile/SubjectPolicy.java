@@ -10,9 +10,10 @@ import java.util.Set;
 /**
  * Deny-by-default subject distinguished-name policy.
  *
- * @param rules ordered immutable supported RDN rules
+ * @param allowEmpty whether an empty subject is permitted
+ * @param rules      ordered immutable supported RDN rules
  */
-public record SubjectPolicy(List<SubjectRdnRule> rules) {
+public record SubjectPolicy(boolean allowEmpty, List<SubjectRdnRule> rules) {
 
     /** Maximum number of subject RDNs. */
     public static final int HARD_MAXIMUM_RDN_COUNT = 32;

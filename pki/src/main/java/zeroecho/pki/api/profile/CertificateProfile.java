@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.api.profile;
 
+import java.time.Duration;
+
 import zeroecho.pki.api.FormatId;
 
 /**
@@ -51,10 +53,12 @@ import zeroecho.pki.api.FormatId;
  * @param profileId          stable profile identifier
  * @param formatId           framework/format supported by the profile
  * @param displayName        human-readable name
- * @param leafPolicy         complete end-entity identity and extension policy
+ * @param maximumValidity    positive maximum validity
+ * @param subjectPolicy      complete end-entity subject policy
+ * @param leafPolicy         complete end-entity extension policy
  */
 public record CertificateProfile(String profileId, FormatId formatId, String displayName,
-        LeafCertificatePolicy leafPolicy) {
+        Duration maximumValidity, SubjectPolicy subjectPolicy, LeafCertificatePolicy leafPolicy) {
 
     /**
      * Creates a certificate profile.
@@ -72,8 +76,9 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
         if (displayName == null || displayName.isBlank()) {
             throw new IllegalArgumentException("displayName must not be null/blank");
         }
-        if (leafPolicy == null) {
-            throw new IllegalArgumentException("leafPolicy must not be null");
+        if (maximumValidity == null || maximumValidity.isZero() || maximumValidity.isNegative()
+                || subjectPolicy == null || leafPolicy == null) {
+            throw new IllegalArgumentException("profile policies and maximum validity must be valid");
         }
     }
 
@@ -87,7 +92,10 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
         if (definition == null) {
             throw new IllegalArgumentException("definition must not be null");
         }
+        if (definition.certificateType() != CertificateProfileKind.END_ENTITY) {
+            throw new IllegalArgumentException("Only end-entity definitions have a runtime issuance projection");
+        }
         return new CertificateProfile(definition.profileId(), definition.formatId(), definition.displayName(),
-                definition.leafPolicy());
+                definition.maximumValidity(), definition.subjectPolicy(), definition.leafPolicy());
     }
 }

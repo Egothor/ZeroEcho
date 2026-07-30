@@ -76,6 +76,7 @@ import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.profile.CertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileDefinition;
 import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
+import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ExtendedKeyUsageId;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
@@ -527,12 +528,15 @@ public final class FilesystemPkiStoreTest {
      */
     static void importProfile(FilesystemPkiStore store, CertificateProfile profile, Instant importedAt)
             throws Exception {
-        CertificateProfileDefinition definition = new CertificateProfileDefinition(profile.profileId(), 1,
-                profile.formatId(), profile.displayName(), profile.leafPolicy());
+        CertificateProfileDefinition definition = new CertificateProfileDefinition(
+                CertificateProfileKind.END_ENTITY, profile.profileId(), 1, profile.formatId(),
+                profile.displayName(), profile.maximumValidity(), profile.subjectPolicy(),
+                profile.leafPolicy());
         byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
         byte[] hash = MessageDigest.getInstance("SHA-256").digest(canonical);
         CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1, hash);
-        store.importProfileVersion(new ImportedCertificateProfileVersion(reference, 1, definition, canonical,
+        store.importProfileVersion(new ImportedCertificateProfileVersion(reference,
+                CertificateProfileDefinition.SCHEMA_VERSION, definition, canonical,
                 importedAt));
     }
 
@@ -554,15 +558,16 @@ public final class FilesystemPkiStoreTest {
 
         static CertificateProfile minimalProfile(String profileId) {
             FormatId formatId = new FormatId("fmt-x509");
-            SubjectPolicy subject = new SubjectPolicy(List.of(new SubjectRdnRule(
+            SubjectPolicy subject = new SubjectPolicy(false, List.of(new SubjectRdnRule(
                     SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true)));
-            SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(false, 0, 0,
+            SubjectAlternativeNamePolicy sans = new SubjectAlternativeNamePolicy(0, 0,
                     List.of(), false, Set.of(), false, false, false);
-            LeafCertificatePolicy leaf = new LeafCertificatePolicy(subject, sans,
+            LeafCertificatePolicy leaf = new LeafCertificatePolicy(sans,
                     Set.of(LeafKeyUsage.DIGITAL_SIGNATURE, LeafKeyUsage.KEY_ENCIPHERMENT),
                     Set.of(new ExtendedKeyUsageId("1.3.6.1.5.5.7.3.1")), true, false, true,
-                    Set.of("RSA"), Duration.ofDays(365));
-            return new CertificateProfile(profileId, formatId, "Test leaf profile", leaf);
+                    Set.of("RSA"));
+            return new CertificateProfile(profileId, formatId, "Test leaf profile",
+                    Duration.ofDays(365), subject, leaf);
         }
 
         static Credential minimalCredential(String serial, String profileId) {
@@ -584,7 +589,7 @@ public final class FilesystemPkiStoreTest {
             AttributeSet attrs = emptyAttributes();
 
             return new Credential(credentialId, formatId, issuerRef, subjectRef, validity, serial, publicKeyId,
-                    new CaProfileBinding(profileId), status, encoded, attrs);
+                    new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef(profileId, 1, new byte[32])), status, encoded, attrs);
         }
 
         static AttributeSet emptyAttributes() {

@@ -4,16 +4,18 @@
  ******************************************************************************/
 package zeroecho.pki.api.credential;
 
+import java.util.Objects;
+
+import zeroecho.pki.api.profile.CertificateProfileRef;
+
 /**
- * Explicit CA policy identity for a root or intermediate credential.
+ * Exact versioned CA profile identity for a root or intermediate credential.
  *
- * @param profileId existing CA policy identifier
+ * @param reference imported CA profile version used for issuance
  */
-public record CaProfileBinding(String profileId) implements CredentialProfileBinding {
+public record CaProfileBinding(CertificateProfileRef reference) implements CredentialProfileBinding {
     /** Creates a CA profile binding. */
     public CaProfileBinding {
-        if (profileId == null || profileId.isBlank()) {
-            throw new IllegalArgumentException("profileId must not be null/blank");
-        }
+        Objects.requireNonNull(reference, "reference");
     }
 }

@@ -139,13 +139,13 @@ final class H7ProfileEnforcementTest {
         SubjectAlternativeNameRule dns =
                 new SubjectAlternativeNameRule(SubjectAlternativeNameType.DNS_NAME, 0, 1, false, false);
         assertThrows(IllegalArgumentException.class,
-                () -> new SubjectAlternativeNamePolicy(false, 2, 2, List.of(dns), false, Set.of(), false,
+                () -> new SubjectAlternativeNamePolicy(2, 2, List.of(dns), false, Set.of(), false,
                         false, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new SubjectAlternativeNamePolicy(false, 0, 1, List.of(), false, Set.of(), false,
+                () -> new SubjectAlternativeNamePolicy(0, 1, List.of(), false, Set.of(), false,
                         true, false));
         assertThrows(IllegalArgumentException.class,
-                () -> new SubjectAlternativeNamePolicy(false, 0, 1, List.of(dns), false, Set.of("https"), false,
+                () -> new SubjectAlternativeNamePolicy(0, 1, List.of(dns), false, Set.of("https"), false,
                         false, false));
         assertThrows(IllegalArgumentException.class, () -> leaf(Set.of(LeafKeyUsage.ENCIPHER_ONLY),
                 Set.of("RSA"), Set.of()));
@@ -262,7 +262,7 @@ final class H7ProfileEnforcementTest {
         CertificateProfileRef reference = new CertificateProfileRef("shared-profile", 1,
                 new byte[CertificateProfileRef.HASH_BYTES]);
         EndEntityProfileBinding endEntity = new EndEntityProfileBinding(reference);
-        CaProfileBinding ca = new CaProfileBinding(reference.profileId());
+        CaProfileBinding ca = new CaProfileBinding(reference);
 
         assertTrue(CredentialProfileBinding.class.isSealed());
         assertEquals(Set.of(EndEntityProfileBinding.class, CaProfileBinding.class),
@@ -273,16 +273,17 @@ final class H7ProfileEnforcementTest {
                 .noneMatch(method -> method.getName().equals("profileId")));
 
         CredentialProfileBindings.requireEndEntityBinding(endEntity, reference);
-        CredentialProfileBindings.requireCaBinding(ca, reference.profileId());
+        CredentialProfileBindings.requireCaBinding(ca, reference);
         assertCode(CredentialProfileBindings.MISMATCH_CODE,
                 () -> CredentialProfileBindings.requireEndEntityBinding(ca, reference));
         assertCode(CredentialProfileBindings.MISMATCH_CODE,
-                () -> CredentialProfileBindings.requireCaBinding(endEntity, reference.profileId()));
+                () -> CredentialProfileBindings.requireCaBinding(endEntity, reference));
         assertCode(CredentialProfileBindings.MISMATCH_CODE,
-                () -> CredentialProfileBindings.requireCaBinding(new CaProfileBinding("other"),
-                        reference.profileId()));
+                () -> CredentialProfileBindings.requireCaBinding(
+                        new CaProfileBinding(new CertificateProfileRef("other", 1, new byte[32])),
+                        reference));
         assertCode(CredentialProfileBindings.MISMATCH_CODE,
-                () -> CredentialProfileBindings.requireCaBinding(null, reference.profileId()));
+                () -> CredentialProfileBindings.requireCaBinding(null, reference));
     }
 
     @Test
@@ -293,7 +294,7 @@ final class H7ProfileEnforcementTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"),
                 Map.of(rootRef, root))) {
             PkiId caId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=Root"), "default", Optional.of(rootRef), new SimpleAttributeSet()));
+                    new SubjectRef("CN=Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
             ParsedCertificationRequest request = runtime.certificationRequestService().parse(
                     new CertificationRequest(runtime.framework().formatId(),
                             new EncodedObject(Encoding.DER,
@@ -385,31 +386,34 @@ final class H7ProfileEnforcementTest {
         return new Credential(new PkiId("credential:issuer"), BcX509CredentialFramework.FORMAT_ID,
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=Issuer"),
                 new Validity(NOW.minus(Duration.ofDays(1)), NOW.plus(Duration.ofDays(1000))), "1",
-                new PkiId("spki:issuer"), new CaProfileBinding("root"), CredentialStatus.ISSUED,
+                new PkiId("spki:issuer"),
+                new CaProfileBinding(new CertificateProfileRef("root", 1, new byte[32])),
+                CredentialStatus.ISSUED,
                 new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
     }
 
     private static CertificateProfile policyWithFixedOrganization(String algorithm) {
-        SubjectPolicy subject = new SubjectPolicy(List.of(
+        SubjectPolicy subject = new SubjectPolicy(false, List.of(
                 new SubjectRdnRule(SubjectRdnType.COMMON_NAME, 1, 1, 256, Optional.empty(), true),
                 new SubjectRdnRule(SubjectRdnType.ORGANIZATION_NAME, 1, 1, 256,
                         Optional.of("Profile Fixed"), false)));
         SubjectAlternativeNamePolicy sans =
-                new SubjectAlternativeNamePolicy(false, 0, 0, List.of(), false, Set.of(), false, false, false);
-        LeafCertificatePolicy leaf = new LeafCertificatePolicy(subject, sans,
-                Set.of(LeafKeyUsage.DIGITAL_SIGNATURE), Set.of(), true, false, true, Set.of(algorithm),
-                Duration.ofDays(365));
-        return new CertificateProfile("h7", BcX509CredentialFramework.FORMAT_ID, "H7", leaf);
+                new SubjectAlternativeNamePolicy(0, 0, List.of(), false, Set.of(), false, false, false);
+        LeafCertificatePolicy leaf = new LeafCertificatePolicy(sans,
+                Set.of(LeafKeyUsage.DIGITAL_SIGNATURE), Set.of(), true, false, true,
+                Set.of(algorithm));
+        return new CertificateProfile("h7", BcX509CredentialFramework.FORMAT_ID, "H7",
+                Duration.ofDays(365), subject, leaf);
     }
 
     private static LeafCertificatePolicy leaf(Set<LeafKeyUsage> usages, Set<String> algorithms,
             Set<ExtendedKeyUsageId> ekus) {
-        return new LeafCertificatePolicy(new SubjectPolicy(List.of()),
-                new SubjectAlternativeNamePolicy(true, 1, 1,
+        return new LeafCertificatePolicy(
+                new SubjectAlternativeNamePolicy(1, 1,
                         List.of(new SubjectAlternativeNameRule(SubjectAlternativeNameType.DNS_NAME, 1, 1,
                                 false, false)),
                         false, Set.of(), false, true, false),
-                usages, ekus, true, false, true, algorithms, Duration.ofDays(1));
+                usages, ekus, true, false, true, algorithms);
     }
 
     private static ParsedCertificationRequest parse(PKCS10CertificationRequest request) throws Exception {

@@ -84,7 +84,7 @@ import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.issuance.IssueEndEntityCommand;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
-import zeroecho.pki.impl.core.ManagedCaIssuance;
+import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
 import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
@@ -114,15 +114,18 @@ final class H7EndEntityAcceptanceE2eTest {
                 Map.of(rootKeyRef, rootKey))) {
             List<BuiltInCertificateProfileTemplate> templates = BuiltInCertificateProfileCatalog.load(
                     H7EndEntityAcceptanceE2eTest.class.getClassLoader());
-            assertEquals(4, templates.size());
+            assertEquals(6, templates.size());
             for (BuiltInCertificateProfileTemplate template : templates) {
                 String profileId = template.definition().profileId();
                 assertTrue(runtime.profileService().getImportedVersion(profileId, 1).isEmpty());
             }
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 Built-in Root"), "default", Optional.of(rootKeyRef),
+                    new SubjectRef("CN=H7 Built-in Root"), "root-ca", Optional.of(rootKeyRef),
                     new SimpleAttributeSet()));
-            for (BuiltInCertificateProfileTemplate template : templates) {
+            for (BuiltInCertificateProfileTemplate template : templates.stream()
+                    .filter(template -> template.definition().certificateType()
+                            == zeroecho.pki.api.profile.CertificateProfileKind.END_ENTITY)
+                    .toList()) {
                 String profileId = template.definition().profileId();
                 CertificateProfileRef imported = runtime.profileService().importBuiltIn(template);
                 assertTrue(runtime.profileService().getActiveReference(profileId).isEmpty());
@@ -170,7 +173,7 @@ final class H7EndEntityAcceptanceE2eTest {
             List<byte[]> profiles = acceptanceProfileDocuments();
             profiles.forEach(runtime::importAndActivate);
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 Acceptance Root"), "default", Optional.of(rootKeyRef),
+                    new SubjectRef("CN=H7 Acceptance Root"), "root-ca", Optional.of(rootKeyRef),
                     new SimpleAttributeSet()));
 
             CredentialIssuerBackend serialCapturingBackend = serialCapturingBackend(runtime.issuerBackend(),
@@ -278,7 +281,7 @@ final class H7EndEntityAcceptanceE2eTest {
                 Map.of(rootKeyRef, rootKey))) {
             acceptanceProfileDocuments().forEach(runtime::importAndActivate);
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 Rejection Root"), "default", Optional.of(rootKeyRef),
+                    new SubjectRef("CN=H7 Rejection Root"), "root-ca", Optional.of(rootKeyRef),
                     new SimpleAttributeSet()));
 
             assertProfileRejected(runtime, rootCaId, leafKey, "h7-dns",
@@ -323,7 +326,7 @@ final class H7EndEntityAcceptanceE2eTest {
             runtime.importAndActivate(H7ProfileDocuments.backendMutationProfile());
             runtime.importAndActivate(H7ProfileDocuments.noSanOrEkuProfile());
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
-                    new SubjectRef("CN=H7 Mutation Root"), "default", Optional.of(rootKeyRef),
+                    new SubjectRef("CN=H7 Mutation Root"), "root-ca", Optional.of(rootKeyRef),
                     new SimpleAttributeSet()));
             ParsedCertificationRequest request = parse(runtime, leafKey,
                     new X500Name("CN=Mutation Leaf,O=Example"),
@@ -444,8 +447,8 @@ final class H7EndEntityAcceptanceE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                return delegate.issueIntermediateCertificate(issuance);
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
     }
@@ -542,8 +545,8 @@ final class H7EndEntityAcceptanceE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                return delegate.issueIntermediateCertificate(issuance);
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
     }
@@ -598,8 +601,8 @@ final class H7EndEntityAcceptanceE2eTest {
             }
 
             @Override
-            public Credential issueIntermediateCertificate(ManagedCaIssuance issuance) {
-                return delegate.issueIntermediateCertificate(issuance);
+            public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance, EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
     }

@@ -11,7 +11,6 @@ import java.util.Set;
 /**
  * Deny-by-default Subject Alternative Name policy.
  *
- * @param allowEmptySubject             whether the subject DN may be empty
  * @param minimumTotal                  minimum total SAN count
  * @param maximumTotal                  maximum total SAN count
  * @param rules                         permitted SAN type rules
@@ -21,7 +20,7 @@ import java.util.Set;
  * @param requireServiceIdentity        whether DNS, IP, or URI identity is required
  * @param requireEmailIdentity          whether an RFC822 identity is required
  */
-public record SubjectAlternativeNamePolicy(boolean allowEmptySubject, int minimumTotal, int maximumTotal,
+public record SubjectAlternativeNamePolicy(int minimumTotal, int maximumTotal,
         List<SubjectAlternativeNameRule> rules, boolean allowDnsWildcard, Set<String> allowedUriSchemes,
         boolean criticalWithNonemptySubject, boolean requireServiceIdentity, boolean requireEmailIdentity) {
 
@@ -74,9 +73,6 @@ public record SubjectAlternativeNamePolicy(boolean allowEmptySubject, int minimu
                 || requireEmailIdentity && !emailIdentityPossible
                 || uriPossible != !allowedUriSchemes.isEmpty()) {
             throw new IllegalArgumentException("SAN policy requirements are not satisfiable");
-        }
-        if (allowEmptySubject && minimumTotal < 1) {
-            throw new IllegalArgumentException("An empty subject requires at least one SAN");
         }
     }
 }

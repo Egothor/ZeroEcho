@@ -176,7 +176,7 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         Credential credential = new Credential(new PkiId("credential:audit"), new FormatId(sentinel),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=Audit"),
                 new Validity(NOW.minusSeconds(60), NOW.plusSeconds(60)), "audit", new PkiId("key:audit"),
-                new CaProfileBinding("default"), CredentialStatus.ISSUED,
+                new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])), CredentialStatus.ISSUED,
                 new EncodedObject(Encoding.DER, new byte[] { 1 }),
                 new SimpleAttributeSet());
         AtomicReference<AuditEvent> recorded = new AtomicReference<>();
@@ -239,7 +239,7 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
                 new Validity(notBefore, notAfter), suffix, new PkiId("key:" + suffix),
-                new CaProfileBinding("default"), status,
+                new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])), status,
                 new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }), new SimpleAttributeSet());
     }
 
