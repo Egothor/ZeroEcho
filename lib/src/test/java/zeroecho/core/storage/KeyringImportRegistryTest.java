@@ -5,14 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.nio.file.Path;
 import java.security.Key;
 import java.security.KeyPair;
 import java.security.PublicKey;
-import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 
-import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import javax.security.auth.Destroyable;
 

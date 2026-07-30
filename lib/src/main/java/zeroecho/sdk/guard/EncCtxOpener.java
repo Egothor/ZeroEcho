@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.guard;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -44,6 +42,7 @@ import java.util.Objects;
 
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
+import zeroecho.sdk.ZeroEchoSession;
 
 /**
  * Reusable opener for {@code CTX-ENC:<algorithm>} entries.

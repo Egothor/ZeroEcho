@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.hybrid.kex;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.IOException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -45,6 +43,7 @@ import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.CryptoContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.ContextSpec;
+import zeroecho.sdk.ZeroEchoSession;
 
 /**
  * Factory utilities for constructing hybrid key exchange (KEX) contexts.

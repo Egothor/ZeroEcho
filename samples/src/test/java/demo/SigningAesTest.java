@@ -53,12 +53,12 @@ import zeroecho.core.alg.rsa.RsaSigSpec;
 import zeroecho.core.tag.TagEngine;
 import zeroecho.core.tag.TagEngineBuilder;
 import zeroecho.core.util.Strings;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.TagTrailerDataContentBuilder;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
-import zeroecho.sdk.ZeroEchoSession;
 
 @Tag("sample")
 class SigningAesTest {

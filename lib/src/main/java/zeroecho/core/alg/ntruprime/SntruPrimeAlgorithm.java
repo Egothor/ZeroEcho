@@ -44,8 +44,8 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.PKCS8EncodedKeySpec;
-import java.util.Arrays;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
 
 import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 import org.bouncycastle.pqc.jcajce.spec.SNTRUPrimeParameterSpec;

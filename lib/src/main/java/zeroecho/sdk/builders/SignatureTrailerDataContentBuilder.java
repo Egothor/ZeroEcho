@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.builders;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
@@ -46,6 +44,7 @@ import conflux.Key;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.tag.TagEngine;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.hybrid.signature.HybridSignatureContexts;

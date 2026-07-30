@@ -15,7 +15,6 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.time.Clock;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -66,8 +65,8 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
 import zeroecho.pki.spi.store.PkiStore;
-import zeroecho.pki.testkit.PkiTestRuntime;
 import zeroecho.pki.testkit.H7ProfileDocuments;
+import zeroecho.pki.testkit.PkiTestRuntime;
 
 /**
  * Real signed-CSR rejection evidence for the closed H7 SAN and extension grammar.

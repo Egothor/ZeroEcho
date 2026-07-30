@@ -63,6 +63,7 @@ import javax.xml.transform.stream.StreamSource;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import zeroecho.core.audit.AuditMode;
 import zeroecho.core.audit.JulAuditListenerStd;
 import zeroecho.core.context.DigestContext;
 import zeroecho.core.context.EncryptionContext;
@@ -71,11 +72,8 @@ import zeroecho.core.context.MacContext;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.TailStrippingInputStream;
 import zeroecho.core.spec.AlgorithmKeySpec;
-import zeroecho.core.KeyOperation;
-import zeroecho.core.KeyOperationInfo;
 import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 import zeroecho.core.spi.SymmetricKeyGenerator;
-import zeroecho.core.audit.AuditMode;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.util.BouncyCastleActivator;
 

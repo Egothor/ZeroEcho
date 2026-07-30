@@ -45,8 +45,8 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import javax.security.auth.Destroyable;
 
-import zeroecho.sdk.content.api.SecretContent;
 import zeroecho.sdk.content.api.DataContent;
+import zeroecho.sdk.content.api.SecretContent;
 import zeroecho.sdk.util.Password;
 
 /**

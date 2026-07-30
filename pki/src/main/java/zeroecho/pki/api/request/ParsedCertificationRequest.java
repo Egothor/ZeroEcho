@@ -33,8 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.api.request;
 
-import java.util.Optional;
 import java.util.List;
+import java.util.Optional;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;

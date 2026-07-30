@@ -44,7 +44,6 @@ import java.util.Arrays;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 

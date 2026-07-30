@@ -7,8 +7,8 @@ package zeroecho.core.alg.aes;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,8 +41,8 @@ import zeroecho.core.KeyUsage;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spec.VoidSpec;
 import zeroecho.core.spi.ContextAware;
-import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.core.util.RandomSupport;
+import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 
 class AesRandomSupportTest {
     private static final SecretKey KEY = new SecretKeySpec(new byte[16], "AES");

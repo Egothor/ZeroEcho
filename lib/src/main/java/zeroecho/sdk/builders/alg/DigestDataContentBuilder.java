@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -50,6 +48,7 @@ import zeroecho.core.NullKey;
 import zeroecho.core.alg.digest.DigestSpec;
 import zeroecho.core.context.DigestContext;
 import zeroecho.core.io.TailStrippingInputStream;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.PlainContent;

@@ -9,15 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.security.Key;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.audit.AuditMode;
 import zeroecho.core.audit.AuditListener;
+import zeroecho.core.audit.AuditMode;
 import zeroecho.core.err.UnsupportedSpecException;
-import zeroecho.core.spec.ContextSpec;
 import zeroecho.sdk.ZeroEchoSession;
 
 class WrongKeySecurityTest {

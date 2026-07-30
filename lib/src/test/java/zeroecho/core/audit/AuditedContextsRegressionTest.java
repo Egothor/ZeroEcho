@@ -23,7 +23,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
-import java.security.Key;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.ArrayList;
@@ -37,11 +36,9 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.AgreementContext;
-import zeroecho.core.context.CryptoContext;
 import zeroecho.core.context.DigestContext;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.context.MessageAgreementContext;
-import zeroecho.core.spec.ContextSpec;
 
 class AuditedContextsRegressionTest {
 

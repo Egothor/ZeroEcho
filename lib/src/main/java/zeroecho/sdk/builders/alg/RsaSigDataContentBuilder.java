@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -56,6 +54,7 @@ import zeroecho.core.alg.rsa.RsaPublicKeySpec;
 import zeroecho.core.alg.rsa.RsaSigSpec;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.TailStrippingInputStream;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.PlainContent;

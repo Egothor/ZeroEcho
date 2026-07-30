@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
@@ -50,6 +48,7 @@ import zeroecho.core.alg.elgamal.ElgamalParamSpec;
 import zeroecho.core.alg.elgamal.ElgamalPrivateKeySpec;
 import zeroecho.core.alg.elgamal.ElgamalPublicKeySpec;
 import zeroecho.core.context.EncryptionContext;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.EncryptedContent;

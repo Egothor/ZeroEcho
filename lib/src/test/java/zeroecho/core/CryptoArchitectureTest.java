@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Proxy;
-import java.security.Key;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -22,11 +21,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.audit.AuditMode;
 import zeroecho.core.audit.AuditListener;
+import zeroecho.core.audit.AuditMode;
 import zeroecho.core.context.DigestContext;
-import zeroecho.core.policy.CryptoPolicy;
-import zeroecho.core.spec.ContextSpec;
 import zeroecho.sdk.ZeroEchoSession;
 
 /**

@@ -55,7 +55,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.alg.ed25519.Ed25519KeyGenSpec;
 import zeroecho.core.alg.elgamal.ElgamalParamSpec;

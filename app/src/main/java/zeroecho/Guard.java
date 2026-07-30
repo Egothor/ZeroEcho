@@ -58,6 +58,7 @@ import zeroecho.core.context.KemContext;
 import zeroecho.core.err.UnsupportedRoleException;
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringStore;
+import zeroecho.core.util.RandomSupport;
 import zeroecho.sdk.Pbkdf2Limits;
 import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
@@ -67,7 +68,6 @@ import zeroecho.sdk.guard.MultiRecipientContent;
 import zeroecho.sdk.guard.MultiRecipientDataSourceBuilder;
 import zeroecho.sdk.guard.RecipientKekSizes;
 import zeroecho.sdk.guard.UnlockMaterial;
-import zeroecho.core.util.RandomSupport;
 
 /**
  * Guard is a unified subcommand that encrypts and decrypts using a

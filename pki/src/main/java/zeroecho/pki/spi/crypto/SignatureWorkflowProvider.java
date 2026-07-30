@@ -35,8 +35,8 @@ package zeroecho.pki.spi.crypto;
 
 import java.util.Objects;
 
-import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.ConfigurableProvider;
+import zeroecho.pki.spi.ProviderConfig;
 
 /**
  * ServiceLoader provider for {@link SignatureWorkflow}.

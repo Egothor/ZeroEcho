@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.hybrid.signature;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -55,6 +53,7 @@ import zeroecho.core.err.VerificationException;
 import zeroecho.core.io.TailStrippingInputStream;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.tag.ThrowingBiPredicate.VerificationBiPredicate;
+import zeroecho.sdk.ZeroEchoSession;
 
 /**
  * Package-private {@link SignatureContext} that composes two signature engines.

@@ -33,8 +33,8 @@
  ******************************************************************************/
 package zeroecho.core.alg.aes;
 
-import java.io.IOException;
 import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;

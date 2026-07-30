@@ -8,6 +8,7 @@ import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.PublicKey;
+import java.security.spec.X509EncodedKeySpec;
 import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
@@ -19,14 +20,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import java.security.spec.X509EncodedKeySpec;
-
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.DERNull;
 import org.bouncycastle.asn1.edec.EdECObjectIdentifiers;
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
-import org.bouncycastle.asn1.x9.X9ObjectIdentifiers;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import org.bouncycastle.asn1.x9.X9ObjectIdentifiers;
 
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;

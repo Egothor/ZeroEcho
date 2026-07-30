@@ -26,7 +26,6 @@ import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.NullKey;
 import zeroecho.core.alg.aes.AesAlgorithm;
-import zeroecho.core.context.CryptoContext;
 import zeroecho.core.context.DigestContext;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spec.ContextSpec;

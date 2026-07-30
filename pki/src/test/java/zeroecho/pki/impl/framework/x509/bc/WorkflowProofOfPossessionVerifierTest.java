@@ -41,10 +41,10 @@ import java.security.KeyPairGenerator;
 import java.util.Map;
 import java.util.Optional;
 
+import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
-import org.bouncycastle.asn1.x500.X500Name;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

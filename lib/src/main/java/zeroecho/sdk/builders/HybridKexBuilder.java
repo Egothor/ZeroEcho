@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.builders;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.IOException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -45,6 +43,7 @@ import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.ContextSpec;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.hybrid.kex.HybridKexContext;
 import zeroecho.sdk.hybrid.kex.HybridKexExporter;
 import zeroecho.sdk.hybrid.kex.HybridKexPolicy;

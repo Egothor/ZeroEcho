@@ -26,7 +26,6 @@ import org.junit.jupiter.api.Test;
 
 import conflux.Ctx;
 import conflux.CtxInterface;
-import zeroecho.core.audit.AuditMode;
 import zeroecho.core.alg.aes.AesSpec;
 import zeroecho.core.alg.common.agreement.KeyPairKey;
 import zeroecho.core.alg.ed25519.Ed25519KeyGenSpec;
@@ -34,6 +33,7 @@ import zeroecho.core.alg.hmac.HmacSpec;
 import zeroecho.core.alg.kyber.KyberKeyGenSpec;
 import zeroecho.core.alg.xdh.XdhSpec;
 import zeroecho.core.audit.AuditListener;
+import zeroecho.core.audit.AuditMode;
 import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.CryptoContext;
 import zeroecho.core.context.DigestContext;

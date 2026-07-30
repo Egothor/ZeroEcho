@@ -56,14 +56,14 @@ import org.junit.jupiter.api.Test;
 import zeroecho.core.Capability;
 import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.CryptoAlgorithms;
+import zeroecho.core.KeyOperation;
+import zeroecho.core.KeyOperationInfo;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.spec.VoidSpec;
-import zeroecho.core.KeyOperation;
-import zeroecho.core.KeyOperationInfo;
 import zeroecho.core.spi.AsymmetricKeyPairGenerator;
 import zeroecho.sdk.util.BouncyCastleActivator;
 

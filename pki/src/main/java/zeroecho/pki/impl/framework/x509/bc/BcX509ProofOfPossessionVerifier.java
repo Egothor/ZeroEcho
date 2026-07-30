@@ -35,10 +35,10 @@ package zeroecho.pki.impl.framework.x509.bc;
 
 import java.util.Optional;
 
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentVerifierProvider;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 
 import zeroecho.pki.api.attr.AttributeValue;

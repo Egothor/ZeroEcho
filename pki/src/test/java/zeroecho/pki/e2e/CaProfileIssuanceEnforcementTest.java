@@ -4,8 +4,8 @@
  ******************************************************************************/
 package zeroecho.pki.e2e;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,14 +21,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Stream;
 
-import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.DEROctetString;
 import org.bouncycastle.asn1.DERPrintableString;
 import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.cert.X509CertificateHolder;
@@ -39,10 +38,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import zeroecho.pki.api.CaService;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
-import zeroecho.pki.api.CaService;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ProfileService;
@@ -56,8 +55,8 @@ import zeroecho.pki.api.ca.IntermediateCreateCommand;
 import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
-import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
+import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;

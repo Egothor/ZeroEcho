@@ -33,8 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
-import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.Base64;
 import java.util.Objects;
 

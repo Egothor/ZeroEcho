@@ -50,13 +50,13 @@ import org.junit.jupiter.api.TestInstance;
 
 import zeroecho.core.alg.kyber.KyberKeyGenSpec;
 import zeroecho.core.util.Strings;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.alg.KemDataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.util.BouncyCastleActivator;
-import zeroecho.sdk.ZeroEchoSession;
 
 @Tag("sample")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)

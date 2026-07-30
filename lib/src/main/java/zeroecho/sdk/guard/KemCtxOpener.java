@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.guard;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
@@ -46,6 +44,7 @@ import javax.crypto.AEADBadTagException;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.context.KemContext;
 import zeroecho.core.io.Util;
+import zeroecho.sdk.ZeroEchoSession;
 
 /**
  * Reusable opener for {@code KEM:<algorithm>:GCM-WRAP} entries.

@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
@@ -49,6 +47,7 @@ import zeroecho.core.alg.rsa.RsaKeyGenSpec;
 import zeroecho.core.alg.rsa.RsaPrivateKeySpec;
 import zeroecho.core.alg.rsa.RsaPublicKeySpec;
 import zeroecho.core.context.EncryptionContext;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.EncryptedContent;

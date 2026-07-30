@@ -35,9 +35,9 @@ package zeroecho.sdk;
 
 import java.security.Key;
 import java.security.KeyPair;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -48,9 +48,9 @@ import zeroecho.core.CryptoAlgorithm;
 import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.KeyUsage;
 import zeroecho.core.audit.AuditListener;
+import zeroecho.core.audit.AuditListeners;
 import zeroecho.core.audit.AuditMode;
 import zeroecho.core.audit.AuditedContexts;
-import zeroecho.core.audit.AuditListeners;
 import zeroecho.core.context.AgreementContext;
 import zeroecho.core.context.CryptoContext;
 import zeroecho.core.context.DigestContext;

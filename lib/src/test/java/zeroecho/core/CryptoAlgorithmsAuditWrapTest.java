@@ -48,7 +48,6 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Proxy;
-import java.security.Key;
 import java.security.PublicKey;
 import java.util.ArrayList;
 import java.util.List;
@@ -67,7 +66,6 @@ import zeroecho.core.context.KemContext.KemResult;
 import zeroecho.core.context.MacContext;
 import zeroecho.core.context.MessageAgreementContext;
 import zeroecho.core.context.SignatureContext;
-import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.tag.TagEngine;
 
 /**

@@ -4,6 +4,10 @@
  ******************************************************************************/
 package zeroecho.pki.api.request;
 
+import static zeroecho.pki.api.request.SubjectAlternativeName.canonicalDns;
+import static zeroecho.pki.api.request.SubjectAlternativeName.canonicalMailbox;
+import static zeroecho.pki.api.request.SubjectAlternativeName.canonicalUri;
+
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;

@@ -57,11 +57,11 @@ import conflux.Ctx;
 import conflux.CtxInterface;
 import zeroecho.core.alg.aes.AesKeyGenSpec;
 import zeroecho.core.alg.aes.AesSpec;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.alg.AesDataContentBuilder;
 import zeroecho.sdk.builders.core.DataContentChainBuilder;
 import zeroecho.sdk.builders.core.PlainBytesBuilder;
 import zeroecho.sdk.content.api.DataContent;
-import zeroecho.sdk.ZeroEchoSession;
 
 class JpegExifIntegrationTest {
 

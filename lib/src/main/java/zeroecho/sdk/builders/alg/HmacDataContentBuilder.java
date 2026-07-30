@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -52,6 +50,7 @@ import zeroecho.core.alg.hmac.HmacKeyImportSpec;
 import zeroecho.core.alg.hmac.HmacSpec;
 import zeroecho.core.context.MacContext;
 import zeroecho.core.io.TailStrippingInputStream;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.PlainContent;

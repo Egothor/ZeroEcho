@@ -56,7 +56,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import zeroecho.core.CryptoAlgorithms;
 import zeroecho.core.alg.bike.BikeKeyGenSpec;
 import zeroecho.core.alg.cmce.CmceKeyGenSpec;
 import zeroecho.core.alg.frodo.FrodoKeyGenSpec;

@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.sdk.builders.alg;
 
-import zeroecho.sdk.ZeroEchoSession;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
@@ -55,6 +53,7 @@ import zeroecho.core.alg.aes.AesKeyImportSpec;
 import zeroecho.core.alg.aes.AesSpec;
 import zeroecho.core.context.EncryptionContext;
 import zeroecho.core.spi.ContextAware;
+import zeroecho.sdk.ZeroEchoSession;
 import zeroecho.sdk.builders.core.DataContentBuilder;
 import zeroecho.sdk.content.api.DataContent;
 import zeroecho.sdk.content.api.EncryptedContent;

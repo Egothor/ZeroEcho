@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.io.UncheckedIOException;
 
 import org.junit.jupiter.api.Test;
 

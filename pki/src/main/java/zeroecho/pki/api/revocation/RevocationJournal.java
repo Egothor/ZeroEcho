@@ -4,13 +4,13 @@
  ******************************************************************************/
 package zeroecho.pki.api.revocation;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.time.Instant;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.attr.AttributeId;
