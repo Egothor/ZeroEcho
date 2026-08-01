@@ -173,6 +173,10 @@ final class FsPaths {
         return revocationDir(credentialId).resolve("journal.bin");
     }
 
+    /* default */ Path revocationTransitionLog() {
+        return this.root.resolve("revocations").resolve("transitions.log");
+    }
+
     /* default */ Path revocationSnapshotRoot() {
         return this.root.resolve("revocation-snapshots");
     }
