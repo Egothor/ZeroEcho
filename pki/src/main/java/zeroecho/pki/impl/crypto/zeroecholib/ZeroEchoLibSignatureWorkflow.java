@@ -51,7 +51,6 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.time.Clock;
 import java.time.Duration;
@@ -75,6 +74,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import zeroecho.core.KeyUsage;
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.alg.common.sig.SignatureInteropProfile;
 import zeroecho.core.alg.common.sig.SignatureInteropProfiles;
 import zeroecho.core.alg.ecdsa.EcdsaPublicKeySpec;
@@ -87,11 +87,12 @@ import zeroecho.core.alg.sphincsplus.SphincsPlusPublicKeySpec;
 import zeroecho.core.context.SignatureContext;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
-import zeroecho.core.io.TailStrippingInputStream;
+import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spec.ContextSpec;
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringPassword;
+import zeroecho.core.storage.KeyringSignatureExecutor;
 import zeroecho.core.storage.KeyringStore;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -108,9 +109,10 @@ import zeroecho.sdk.ZeroEchoSession;
  * This provider forms a cryptographic boundary between the PKI orchestration
  * layer and ZeroEcho-lib based key material handling backed by
  * {@link KeyringStore}. It resolves opaque {@link KeyRef} values to provider-
- * local keyring aliases, materializes the required key objects inside this
- * boundary, and performs signing or verification through the explicit
- * {@link ZeroEchoSession} and {@link SignatureContext}.
+ * local keyring aliases, delegates signing to the keyring-owned execution
+ * boundary, and performs verification through the explicit
+ * {@link ZeroEchoSession} and {@link SignatureContext}. Private key objects never
+ * enter this PKI module.
  * </p>
  *
  * <p>
@@ -125,8 +127,8 @@ import zeroecho.sdk.ZeroEchoSession;
  *
  * <h2>Supported operations</h2>
  * <ul>
- * <li>{@link #submitSign(SignRequest)} resolves a private/public key pair from
- * the configured {@link KeyringStore}, validates the requested algorithm
+ * <li>{@link #submitSign(SignRequest)} resolves a private key from the configured
+ * {@link KeyringStore}, validates the requested algorithm
  * compatibility, produces a signature over the supplied payload, and stores the
  * result as a terminal successful or failed operation status.</li>
  * <li>{@link #submitVerify(VerifyRequest)} verifies a signature either against
@@ -187,18 +189,12 @@ import zeroecho.sdk.ZeroEchoSession;
  * {@code zeroecho-lib:&lt;alias&gt;.pub}.</li>
  * </ul>
  *
- * <p>
- * The provider may derive the corresponding public alias from a signing key
- * reference in order to obtain public-key metadata needed for algorithm checks
- * and interop processing.
- * </p>
- *
  * <h2>Algorithm handling</h2>
  * <p>
- * Requested signature algorithm identifiers are matched against the stored key
- * algorithm using {@link SignatureInteropProfiles} where available and by a
- * legacy normalization fallback for historical identifiers such as
- * {@code *withRSA} and {@code *withECDSA}. For interoperable algorithms, the
+ * Signing resolves requested identifiers through
+ * {@link BootstrapAlgorithmIdentities} and delegates the exact canonical identity
+ * to the keyring-owned executor. Verification retains compatibility normalization
+ * for supported public-key import forms. For interoperable algorithms, the
  * provider transparently maps between external signature form and the internal
  * ZeroEcho representation expected by {@link SignatureContext}.
  * </p>
@@ -224,8 +220,8 @@ import zeroecho.sdk.ZeroEchoSession;
  * <ul>
  * <li>Never logs {@link KeyRef} values.</li>
  * <li>Never logs payload bytes or signature bytes.</li>
- * <li>Never returns private key material; private keys are materialized only
- * within this provider boundary.</li>
+ * <li>Never returns private key material; signing key resolution occurs only in
+ * the keyring-owning library boundary.</li>
  * <li>Notification sinks must be treated as trusted local integration points,
  * because they receive operation identifiers and status metadata for all
  * operations observed by this provider instance.</li>
@@ -315,7 +311,24 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
 
     /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
             Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
+            KeyringUnlockProvider keyringUnlockProvider, SigningDependencies signingDependencies) {
+        this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
+                keyringUnlockProvider, (category, cleared) -> {
+                }, signingDependencies.session());
+        this.keyringOrNull = signingDependencies.keyring();
+    }
+
+    /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
+            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
             KeyringUnlockProvider keyringUnlockProvider, BiConsumer<String, byte[]> cleanupObserver) {
+        this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
+                keyringUnlockProvider, cleanupObserver, new ZeroEchoSession());
+    }
+
+    private ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
+            Duration operationHorizon, String keyRefPrefix, boolean requireComponentSuffix,
+            KeyringUnlockProvider keyringUnlockProvider, BiConsumer<String, byte[]> cleanupObserver,
+            ZeroEchoSession session) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("id must not be blank");
         }
@@ -349,7 +362,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         this.requireComponentSuffix = requireComponentSuffix;
         this.cleanupObserver = cleanupObserver;
         this.keyringUnlockProvider = keyringUnlockProvider;
-        this.session = new ZeroEchoSession();
+        this.session = java.util.Objects.requireNonNull(session, "session must not be null");
 
         this.statuses = new ConcurrentHashMap<>();
         this.fingerprints = new ConcurrentHashMap<>();
@@ -451,10 +464,9 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
      * </p>
      *
      * <p>
-     * The method validates the key reference, loads the corresponding private and
-     * public key entries from the configured {@link KeyringStore}, verifies that
-     * the requested signature algorithm is compatible with the stored key
-     * algorithm, performs streaming signature generation, encodes the resulting
+     * The method validates the key reference, resolves the requested algorithm to
+     * an exact canonical identity, delegates key resolution and streaming signature
+     * generation to {@link KeyringSignatureExecutor}, encodes the resulting
      * signature according to the preferred output encoding, and stores the final
      * outcome in the internal status registry.
      * </p>
@@ -468,9 +480,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
      * @param request sign request; must not be {@code null}
      * @return operation identifier that can be used to query the terminal result
      * @throws IllegalArgumentException if {@code request} is {@code null}
-     */
+    */
     @Override
-    @SuppressWarnings("PMD.CloseResource")
     public PkiId submitSign(SignRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
@@ -488,6 +499,16 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             return opId;
         }
 
+        SignExecutionResult execution = executeAcceptedSign(request);
+        try {
+            completeSign(request, execution.status);
+            return opId;
+        } finally {
+            clearOwned("sign-result-copy", execution.signatureBytes);
+        }
+    }
+
+    private SignExecutionResult executeAcceptedSign(SignRequest request) {
         byte[] signatureBytes = null;
         try {
             KeyRefParts parts = parseKeyRefOrThrow(request.keyRef(), true);
@@ -495,26 +516,17 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             if (request.algorithmId() == null || request.algorithmId().isBlank()) {
                 throw new InvalidRequestException(DC_INVALID_ALGORITHM_ID);
             }
-
-            KeyringStore ks = requireKeyringOrThrow();
-
-            KeyringStore.PrivateWithId prv;
-            KeyringStore.PublicWithId pub;
-            try {
-                prv = ks.getPrivateWithId(parts.privateAlias);
-                pub = ks.getPublicWithId(parts.publicAlias);
-            } catch (GeneralSecurityException missing) {
-                throw new InvalidRequestException(DC_KEY_NOT_FOUND, missing);
+            Optional<AlgorithmIdentity> resolvedAlgorithm = BootstrapAlgorithmIdentities.resolve(request.algorithmId());
+            if (resolvedAlgorithm.isEmpty()
+                    || resolvedAlgorithm.get().kind() != AlgorithmIdentity.Kind.SIGNATURE) {
+                throw new InvalidRequestException(DC_INVALID_ALGORITHM_ID);
             }
-
-            enforceAlgorithmMatchOrThrow(request.algorithmId(), prv.algorithm());
 
             if (deadlineReached(request.deadline(), now())) {
-                completeSign(request, expiredStatus());
-                return opId;
+                return SignExecutionResult.terminal(expiredStatus());
             }
-            request.cancellation().throwIfCancelled();
-            signatureBytes = signStreaming(request.algorithmId(), prv.key(), pub.key(), request.content(),
+            KeyringSignatureExecutor executor = requireSignatureExecutor();
+            signatureBytes = executor.sign(parts.privateAlias, resolvedAlgorithm.get(), request.content(),
                     request.cancellation());
 
             Encoding outEnc = request.preferredSignatureEncoding().orElse(Encoding.BINARY);
@@ -522,39 +534,48 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
 
             Instant completedAt = now();
             if (deadlineReached(request.deadline(), completedAt)) {
-                completeSign(request, expiredStatus(completedAt));
-                return opId;
+                return SignExecutionResult.withSignature(expiredStatus(completedAt), signatureBytes);
             }
             OperationResult result = new OperationResult(Optional.of(signature), Optional.empty());
-            completeSign(request,
-                    new OperationStatus(State.SUCCEEDED, completedAt, Optional.of(DC_SIGNED), Optional.of(result)));
-            return opId;
+            OperationStatus status = new OperationStatus(State.SUCCEEDED, completedAt, Optional.of(DC_SIGNED),
+                    Optional.of(result));
+            return SignExecutionResult.withSignature(status, signatureBytes);
+
+        } catch (KeyringSignatureExecutor.Failure failure) {
+            String detailCode = switch (failure.code()) {
+                case KEY_UNAVAILABLE -> DC_KEY_NOT_FOUND;
+                case ALGORITHM_MISMATCH -> DC_ALGORITHM_MISMATCH;
+                case PROVIDER_FAILURE -> DC_CRYPTO_FAILURE;
+            };
+            if (failure.code() == KeyringSignatureExecutor.FailureCode.PROVIDER_FAILURE) {
+                logSafeFailure("SIGN", detailCode, failure);
+            }
+            return SignExecutionResult.withSignature(failedStatus(detailCode), signatureBytes);
 
         } catch (InvalidRequestException inv) { // NOPMD
-            completeSign(request,
-                    new OperationStatus(State.FAILED, now(), Optional.of(inv.detailCode), Optional.empty()));
-            return opId;
+            return SignExecutionResult.withSignature(failedStatus(inv.detailCode), signatureBytes);
+
+        } catch (KeyringSignatureExecutor.Cancellation cancelled) {
+            OperationStatus status = new OperationStatus(State.CANCELLED, now(), Optional.of(DC_CANCELLED),
+                    Optional.empty());
+            return SignExecutionResult.withSignature(status, signatureBytes);
 
         } catch (IOException io) {
-            completeSign(request,
-                    new OperationStatus(State.FAILED, now(), Optional.of(DC_KEYRING_IO_ERROR), Optional.empty()));
             logSafeFailure("SIGN", DC_KEYRING_IO_ERROR, io);
-            return opId;
+            return SignExecutionResult.withSignature(failedStatus(DC_KEYRING_IO_ERROR), signatureBytes);
 
         } catch (GeneralSecurityException sec) {
-            completeSign(request,
-                    new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
             logSafeFailure("SIGN", DC_CRYPTO_FAILURE, sec);
-            return opId;
-
-        } catch (RuntimeException ex) { // NOPMD
-            completeSign(request,
-                    new OperationStatus(State.FAILED, now(), Optional.of(DC_CRYPTO_FAILURE), Optional.empty()));
-            logSafeFailure("SIGN", DC_CRYPTO_FAILURE, ex);
-            return opId;
-        } finally {
-            clearOwned("sign-result-copy", signatureBytes);
+            return SignExecutionResult.withSignature(failedStatus(DC_CRYPTO_FAILURE), signatureBytes);
         }
+    }
+
+    private OperationStatus failedStatus(String detailCode) {
+        return new OperationStatus(State.FAILED, now(), Optional.of(detailCode), Optional.empty());
+    }
+
+    private KeyringSignatureExecutor requireSignatureExecutor() throws IOException, GeneralSecurityException {
+        return new KeyringSignatureExecutor(requireKeyringOrThrow(), session);
     }
 
     private boolean beginSign(SignRequest request) {
@@ -940,9 +961,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
 
         if (forSigning) {
             String privateAlias = hasPrv ? v : (v + ".prv");
-            String base = hasPrv ? v.substring(0, v.length() - 4) : v;
-            String publicAlias = base + ".pub";
-            return new KeyRefParts(privateAlias, publicAlias);
+            return new KeyRefParts(privateAlias, null);
         }
 
         String publicAlias = hasPub ? v : (v + ".pub");
@@ -1057,47 +1076,6 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             return "ECDSA";
         }
         return a;
-    }
-
-    private byte[] signStreaming(String algorithmId, PrivateKey prv, PublicKey pub, RepeatableContent content,
-            CancellationSignal cancellation)
-            throws GeneralSecurityException, IOException {
-
-        Optional<SignatureInteropProfile> profile = SignatureInteropProfiles.resolve(algorithmId);
-        String contextAlgorithmId = profile.map(SignatureInteropProfile::contextAlgorithmId).orElse(algorithmId);
-        ContextSpec contextSpec = profile.map(SignatureInteropProfile::contextSpec).orElse(null);
-
-        int sigLen;
-        try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub, contextSpec)) {
-            sigLen = verifier.tagLength();
-        }
-
-        try (SignatureContext signer = session.createContext(contextAlgorithmId, KeyUsage.SIGN, prv, contextSpec)) {
-            final byte[][] sigHolder = new byte[1][];
-            try (InputStream source = content.openStream();
-                    InputStream in = new TailStrippingInputStream(signer.wrap(source), sigLen, 8192) {
-                @Override
-                protected void processTail(byte[] tail) throws IOException {
-                    sigHolder[0] = (tail == null) ? null : tail.clone();
-                }
-            }) {
-                consume(in, cancellation);
-            }
-
-            byte[] internalSignature = sigHolder[0];
-            try {
-                if (internalSignature == null || internalSignature.length == 0) {
-                    throw new GeneralSecurityException("Signature trailer missing.");
-                }
-                if (profile.isPresent()) {
-                    return profile.get().internalToExternalSignature(internalSignature);
-                }
-                sigHolder[0] = null;
-                return internalSignature;
-            } finally {
-                clearOwned("sign-internal-signature", sigHolder[0]);
-            }
-        }
     }
 
     private boolean verifyStreaming(String algorithmId, PublicKey pub, RepeatableContent content, byte[] signature,
@@ -1661,6 +1639,14 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         }
     }
 
+    /** Package-local dependencies used to exercise provider failure boundaries. */
+    /* default */ record SigningDependencies(KeyringStore keyring, ZeroEchoSession session) {
+        SigningDependencies {
+            java.util.Objects.requireNonNull(keyring, "keyring must not be null");
+            java.util.Objects.requireNonNull(session, "session must not be null");
+        }
+    }
+
     /**
      * Parsed, provider-local representation of a {@link KeyRef}.
      *
@@ -1680,11 +1666,10 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
      * </ul>
      *
      * <p>
-     * For signing requests, {@link #privateAlias} is expected to address the
-     * private component (e.g. {@code *.prv}) and {@link #publicAlias} the
-     * corresponding public component (e.g. {@code *.pub}). For verification,
-     * {@link #privateAlias} is unused and {@link #publicAlias} addresses the public
-     * component.
+     * For signing requests, {@link #privateAlias} addresses the authoritative
+     * private component (e.g. {@code *.prv}) and {@link #publicAlias} is unused.
+     * For verification, {@link #privateAlias} is unused and {@link #publicAlias}
+     * addresses the public component.
      * </p>
      */
     private static final class KeyRefParts {
@@ -1694,6 +1679,28 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         private KeyRefParts(String privateAlias, String publicAlias) {
             this.privateAlias = privateAlias;
             this.publicAlias = publicAlias;
+        }
+    }
+
+    /**
+     * Terminal status and the executor-owned signature copy that must be cleared
+     * after the status is committed.
+     */
+    private static final class SignExecutionResult {
+        private final OperationStatus status;
+        private final byte[] signatureBytes;
+
+        private SignExecutionResult(OperationStatus status, byte[] signatureBytes) {
+            this.status = status;
+            this.signatureBytes = signatureBytes;
+        }
+
+        private static SignExecutionResult terminal(OperationStatus status) {
+            return new SignExecutionResult(status, null);
+        }
+
+        private static SignExecutionResult withSignature(OperationStatus status, byte[] signatureBytes) {
+            return new SignExecutionResult(status, signatureBytes);
         }
     }
 

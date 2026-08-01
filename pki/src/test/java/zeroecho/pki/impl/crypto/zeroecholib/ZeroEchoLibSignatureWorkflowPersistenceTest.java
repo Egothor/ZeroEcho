@@ -38,11 +38,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.Key;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.ProviderException;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -50,8 +56,10 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -67,9 +75,13 @@ import java.util.logging.Logger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.storage.KeyringStore;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.ImmutableByteContent;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.core.policy.CryptoPolicy;
+import zeroecho.core.spec.ContextSpec;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
@@ -79,6 +91,7 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.sdk.ZeroEchoSession;
 
 final class ZeroEchoLibSignatureWorkflowPersistenceTest {
 
@@ -162,7 +175,197 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
             logger.removeHandler(handler);
             logger.setLevel(previousLevel);
         }
+        byte[] privateEncoding = pair.getPrivate().getEncoded();
+        try (java.util.stream.Stream<Path> paths = Files.walk(root.resolve("cleanup-operations"))) {
+            for (Path path : paths.filter(Files::isRegularFile).toList()) {
+                byte[] persisted = Files.readAllBytes(path);
+                try {
+                    assertFalse(contains(persisted, privateEncoding));
+                } finally {
+                    Arrays.fill(persisted, (byte) 0);
+                }
+            }
+        } finally {
+            Arrays.fill(privateEncoding, (byte) 0);
+        }
         System.out.println("signingVerificationPersistenceAndCallbackCopiesAreCleared...ok");
+    }
+
+    @Test
+    void signingMapsCanonicalInvalidMissingForeignAndMismatchedInputs(@TempDir Path root) throws Exception {
+        System.out.println("signingMapsCanonicalInvalidMissingForeignAndMismatchedInputs");
+        Instant now = Instant.parse("2026-02-03T04:05:06.789Z");
+        Clock clock = Clock.fixed(now, ZoneOffset.UTC);
+        Path keyring = root.resolve("mapping-keyring.zek");
+        KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+        try (zeroecho.core.storage.KeyringPassword password = TestKeyringUnlocks.provider().acquire();
+                KeyringStore keyringStore = KeyringStore.create(keyring, password)) {
+            keyringStore.putPrivate("test.prv", "RSA", pair.getPrivate());
+            keyringStore.putPublic("test.pub", "RSA", pair.getPublic());
+        }
+
+        AtomicInteger terminalPublications = new AtomicInteger();
+        try (ZeroEchoLibSignatureWorkflow workflow = workflow(root, root.resolve("mapping-operations"), keyring,
+                clock);
+                SignatureWorkflow.Registration registration = workflow.register((operationId, status) -> {
+                    if (status.state() != SignatureWorkflow.State.RUNNING) {
+                        terminalPublications.incrementAndGet();
+                    }
+                })) {
+            PkiId canonicalId = SigningSubmissionId.create(NAMESPACE, now, new SecureRandom()).id();
+            SignatureWorkflow.SignRequest canonical = request(canonicalId, 1L, new byte[] { 1, 2, 3 },
+                    new KeyRef("zeroecho-lib:test.prv"), Optional.empty(),
+                    BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm());
+            workflow.submitSign(canonical);
+            assertEquals(SignatureWorkflow.State.SUCCEEDED, workflow.status(canonicalId).state());
+
+            assertSigningFailure(workflow, now, "SHA1withRSA", new KeyRef("zeroecho-lib:test.prv"),
+                    ZeroEchoLibSignatureWorkflow.DC_INVALID_ALGORITHM_ID);
+            assertSigningFailure(workflow, now, BootstrapAlgorithmIdentities.SHA256.canonicalForm(),
+                    new KeyRef("zeroecho-lib:test.prv"), ZeroEchoLibSignatureWorkflow.DC_INVALID_ALGORITHM_ID);
+            assertSigningFailure(workflow, now, "SHA256withRSA", new KeyRef("zeroecho-lib:missing.prv"),
+                    ZeroEchoLibSignatureWorkflow.DC_KEY_NOT_FOUND);
+            assertSigningFailure(workflow, now, "SHA256withRSA", new KeyRef("foreign:test.prv"),
+                    ZeroEchoLibSignatureWorkflow.DC_INVALID_KEYREF_PREFIX);
+            assertSigningFailure(workflow, now, "SHA256withECDSA", new KeyRef("zeroecho-lib:test.prv"),
+                    ZeroEchoLibSignatureWorkflow.DC_ALGORITHM_MISMATCH);
+            assertEquals(6, terminalPublications.get());
+        }
+        System.out.println("signingMapsCanonicalInvalidMissingForeignAndMismatchedInputs...ok");
+    }
+
+    @Test
+    void signingCancellationIsTerminalOnlyForRequestedCancellation(@TempDir Path root) throws Exception {
+        System.out.println("signingCancellationIsTerminalOnlyForRequestedCancellation");
+        Instant now = Instant.parse("2026-02-03T04:05:06.789Z");
+        Clock clock = Clock.fixed(now, ZoneOffset.UTC);
+        Path keyring = root.resolve("cancellation-keyring.zek");
+        KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+        try (zeroecho.core.storage.KeyringPassword password = TestKeyringUnlocks.provider().acquire();
+                KeyringStore keyringStore = KeyringStore.create(keyring, password)) {
+            keyringStore.putPrivate("test.prv", "RSA", pair.getPrivate());
+        }
+
+        AtomicInteger terminalPublications = new AtomicInteger();
+        try (ZeroEchoLibSignatureWorkflow workflow = workflow(root, root.resolve("cancellation-operations"), keyring,
+                clock);
+                SignatureWorkflow.Registration registration = workflow.register((operationId, status) -> {
+                    if (status.state() != SignatureWorkflow.State.RUNNING) {
+                        terminalPublications.incrementAndGet();
+                    }
+                })) {
+            PkiId beforeId = SigningSubmissionId.create(NAMESPACE, now, new SecureRandom()).id();
+            SignatureWorkflow.SignRequest beforeBase = request(beforeId, 1L, new byte[] { 1 });
+            AtomicInteger cancellationChecks = new AtomicInteger();
+            workflow.submitSign(withCancellation(beforeBase, () -> {
+                if (cancellationChecks.incrementAndGet() > 1) {
+                    throw new IllegalStateException("CANCELLATION_RECHECK_SENTINEL");
+                }
+                return true;
+            }));
+            assertEquals(1, cancellationChecks.get());
+            assertEquals(SignatureWorkflow.State.CANCELLED, workflow.status(beforeId).state());
+            assertEquals(Optional.of(ZeroEchoLibSignatureWorkflow.DC_CANCELLED),
+                    workflow.status(beforeId).detailCode());
+
+            AtomicBoolean armed = new AtomicBoolean();
+            AtomicBoolean cancelled = new AtomicBoolean();
+            byte[] payload = new byte[32 * 1024];
+            RepeatableContent streaming = repeatableContent(payload, input -> {
+                if (armed.get() && input > 0) {
+                    cancelled.set(true);
+                }
+            });
+            PkiId streamingId = SigningSubmissionId.create(NAMESPACE, now, new SecureRandom()).id();
+            SignatureWorkflow.SignRequest streamingRequest = request(streamingId, 1L, streaming,
+                    new KeyRef("zeroecho-lib:test.prv"), "SHA256withRSA", cancelled::get);
+            armed.set(true);
+            workflow.submitSign(streamingRequest);
+            assertEquals(SignatureWorkflow.State.CANCELLED, workflow.status(streamingId).state());
+            assertEquals(Optional.of(ZeroEchoLibSignatureWorkflow.DC_CANCELLED),
+                    workflow.status(streamingId).detailCode());
+
+            AtomicBoolean failReads = new AtomicBoolean();
+            RepeatableContent interruptedIo = new RepeatableContent() {
+                @Override
+                public InputStream openStream() {
+                    if (failReads.get()) {
+                        return new InputStream() {
+                            @Override
+                            public int read() throws IOException {
+                                throw new InterruptedIOException("controlled interruption");
+                            }
+                        };
+                    }
+                    return new ByteArrayInputStream(new byte[] { 4, 5, 6 });
+                }
+
+                @Override
+                public OptionalLong length() {
+                    return OptionalLong.of(3);
+                }
+
+                @Override
+                public String contentId() {
+                    return "interrupted-io-content";
+                }
+
+                @Override
+                public void close() {
+                    // Caller owns this test content.
+                }
+            };
+            PkiId ioId = SigningSubmissionId.create(NAMESPACE, now, new SecureRandom()).id();
+            SignatureWorkflow.SignRequest ioRequest = request(ioId, 1L, interruptedIo,
+                    new KeyRef("zeroecho-lib:test.prv"), "SHA256withRSA", CancellationSignal.NONE);
+            failReads.set(true);
+            workflow.submitSign(ioRequest);
+            assertEquals(SignatureWorkflow.State.FAILED, workflow.status(ioId).state());
+            assertEquals(Optional.of(ZeroEchoLibSignatureWorkflow.DC_KEYRING_IO_ERROR),
+                    workflow.status(ioId).detailCode());
+            assertEquals(3, terminalPublications.get());
+        }
+        System.out.println("signingCancellationIsTerminalOnlyForRequestedCancellation...ok");
+    }
+
+    @Test
+    void providerFailureTerminalizesExactlyOnce(@TempDir Path root) throws Exception {
+        System.out.println("providerFailureTerminalizesExactlyOnce");
+        Instant now = Instant.parse("2026-02-03T04:05:06.789Z");
+        Path keyring = root.resolve("provider-keyring.zek");
+        KeyPair pair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+        try (zeroecho.core.storage.KeyringPassword password = TestKeyringUnlocks.provider().acquire();
+                KeyringStore created = KeyringStore.create(keyring, password)) {
+            created.putPrivate("test.prv", "RSA", pair.getPrivate());
+        }
+
+        KeyringStore opened;
+        try (zeroecho.core.storage.KeyringPassword password = TestKeyringUnlocks.provider().acquire()) {
+            opened = KeyringStore.open(keyring, password);
+        }
+        ZeroEchoSession denied = new ZeroEchoSession().withPolicy(
+                (CryptoPolicy<ContextSpec, Key>) (algorithm, role, key, spec) -> {
+                    throw new ProviderException("PROVIDER_POLICY_RUNTIME_SENTINEL");
+                });
+        AtomicInteger terminalPublications = new AtomicInteger();
+        try (ZeroEchoLibSignatureWorkflow workflow = new ZeroEchoLibSignatureWorkflow("zeroecho-lib", keyring,
+                root.resolve("provider-operations"), Clock.fixed(now, ZoneOffset.UTC), Duration.ofDays(90),
+                "zeroecho-lib:", true, TestKeyringUnlocks.provider(),
+                new ZeroEchoLibSignatureWorkflow.SigningDependencies(opened, denied));
+                SignatureWorkflow.Registration registration = workflow.register((operationId, status) -> {
+                    if (status.state() != SignatureWorkflow.State.RUNNING) {
+                        terminalPublications.incrementAndGet();
+                    }
+                })) {
+            PkiId id = SigningSubmissionId.create(NAMESPACE, now, new SecureRandom()).id();
+            workflow.submitSign(request(id, 1L, new byte[] { 6, 7, 8 }, new KeyRef("zeroecho-lib:test.prv"),
+                    Optional.empty()));
+            assertEquals(SignatureWorkflow.State.FAILED, workflow.status(id).state());
+            assertEquals(Optional.of(ZeroEchoLibSignatureWorkflow.DC_CRYPTO_FAILURE),
+                    workflow.status(id).detailCode());
+            assertEquals(1, terminalPublications.get());
+        }
+        System.out.println("providerFailureTerminalizesExactlyOnce...ok");
     }
 
     @Test
@@ -369,10 +572,97 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
 
     private static SignatureWorkflow.SignRequest request(PkiId id, long fence, byte[] payload, KeyRef keyRef,
             Optional<Instant> deadline) {
+        return request(id, fence, payload, keyRef, deadline, "SHA256withRSA");
+    }
+
+    private static SignatureWorkflow.SignRequest request(PkiId id, long fence, byte[] payload, KeyRef keyRef,
+            Optional<Instant> deadline, String algorithmId) {
         AccessContext access = new AccessContext(new Principal("TEST", "owner"), new Purpose("TEST"), Optional.empty(),
                 Optional.empty());
-        return SignatureWorkflow.SignRequest.create(id, NAMESPACE, fence, access, keyRef, "SHA256withRSA",
+        return SignatureWorkflow.SignRequest.create(id, NAMESPACE, fence, access, keyRef, algorithmId,
                 new ImmutableByteContent(payload), Optional.of(Encoding.BINARY), deadline);
+    }
+
+    private static SignatureWorkflow.SignRequest request(PkiId id, long fence, RepeatableContent content,
+            KeyRef keyRef, String algorithmId, CancellationSignal cancellation) {
+        AccessContext access = new AccessContext(new Principal("TEST", "owner"), new Purpose("TEST"), Optional.empty(),
+                Optional.empty());
+        Optional<Encoding> encoding = Optional.of(Encoding.BINARY);
+        Optional<Instant> deadline = Optional.empty();
+        String fingerprint = SignatureWorkflow.SignRequest.fingerprint(NAMESPACE, access, keyRef, algorithmId,
+                content, encoding, deadline);
+        return new SignatureWorkflow.SignRequest(id, NAMESPACE, fingerprint, fence, access, keyRef, algorithmId,
+                content, encoding, deadline, cancellation);
+    }
+
+    private static SignatureWorkflow.SignRequest withCancellation(SignatureWorkflow.SignRequest request,
+            CancellationSignal cancellation) {
+        return new SignatureWorkflow.SignRequest(request.submissionId(), request.namespace(),
+                request.semanticFingerprint(), request.fencingToken(), request.accessContext(), request.keyRef(),
+                request.algorithmId(), request.content(), request.preferredSignatureEncoding(), request.deadline(),
+                cancellation);
+    }
+
+    private static RepeatableContent repeatableContent(byte[] payload, java.util.function.IntConsumer readObserver) {
+        return new RepeatableContent() {
+            @Override
+            public InputStream openStream() {
+                return new ByteArrayInputStream(payload) {
+                    @Override
+                    public int read() {
+                        int value = super.read();
+                        readObserver.accept(value < 0 ? value : 1);
+                        return value;
+                    }
+
+                    @Override
+                    public int read(byte[] bytes, int offset, int length) {
+                        int count = super.read(bytes, offset, length);
+                        readObserver.accept(count);
+                        return count;
+                    }
+                };
+            }
+
+            @Override
+            public OptionalLong length() {
+                return OptionalLong.of(payload.length);
+            }
+
+            @Override
+            public String contentId() {
+                return "streaming-cancellation-content";
+            }
+
+            @Override
+            public void close() {
+                // Caller owns this test content.
+            }
+        };
+    }
+
+    private static void assertSigningFailure(ZeroEchoLibSignatureWorkflow workflow, Instant now, String algorithmId,
+            KeyRef keyRef, String expectedDetailCode) {
+        PkiId id = SigningSubmissionId.create(NAMESPACE, now, new SecureRandom()).id();
+        workflow.submitSign(request(id, 1L, new byte[] { 9 }, keyRef, Optional.empty(), algorithmId));
+        assertEquals(SignatureWorkflow.State.FAILED, workflow.status(id).state());
+        assertEquals(Optional.of(expectedDetailCode), workflow.status(id).detailCode());
+    }
+
+    private static boolean contains(byte[] haystack, byte[] needle) {
+        if (needle.length == 0 || needle.length > haystack.length) {
+            return false;
+        }
+        for (int offset = 0; offset <= haystack.length - needle.length; offset++) {
+            int index = 0;
+            while (index < needle.length && haystack[offset + index] == needle[index]) {
+                index++;
+            }
+            if (index == needle.length) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void forcePersistedStateCode(Path operations, int from, int to) {
