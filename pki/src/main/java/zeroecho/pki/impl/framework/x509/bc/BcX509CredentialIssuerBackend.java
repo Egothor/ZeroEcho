@@ -33,6 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.time.Duration;
@@ -52,8 +55,9 @@ import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
-import org.bouncycastle.operator.ContentSigner;
 
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.IssuerRef;
@@ -67,6 +71,7 @@ import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
 import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.credential.EndEntityProfileBinding;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.profile.LeafKeyUsage;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
@@ -74,6 +79,7 @@ import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
+import zeroecho.pki.spi.store.ContentSink;
 
 /**
  * Bouncy Castle backed X.509 credential issuance backend.
@@ -122,7 +128,7 @@ import zeroecho.pki.spi.framework.CredentialIssuerBackend;
 public final class BcX509CredentialIssuerBackend implements CredentialIssuerBackend {
 
     private final PkiSigningBus signingBus;
-    private final String signatureAlgorithmId;
+    private final AlgorithmIdentity signatureIdentity;
     private final Duration signingTtl;
 
     /**
@@ -139,17 +145,29 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      *                                  contract
      */
     public BcX509CredentialIssuerBackend(PkiSigningBus signingBus, String signatureAlgorithmId, Duration signingTtl) {
+        this(signingBus, signingBus.authority().resolveIdentity(signatureAlgorithmId), signingTtl);
+    }
+
+    /**
+     * Creates the X.509 issuance backend with an exact signature identity.
+     *
+     * @param signingBus        signing bus used to delegate signing
+     * @param signatureIdentity exact provider-independent signature identity
+     * @param signingTtl        positive maximum signing TTL
+     */
+    public BcX509CredentialIssuerBackend(PkiSigningBus signingBus, AlgorithmIdentity signatureIdentity,
+            Duration signingTtl) {
         if (signingBus == null) {
             throw new IllegalArgumentException("signingBus must not be null");
         }
-        if (signatureAlgorithmId == null || signatureAlgorithmId.isBlank()) {
-            throw new IllegalArgumentException("signatureAlgorithmId must not be null/blank");
+        if (signatureIdentity == null || signatureIdentity.kind() != AlgorithmIdentity.Kind.SIGNATURE) {
+            throw new IllegalArgumentException("signatureIdentity must be a signature identity");
         }
         if (signingTtl == null || signingTtl.isZero() || signingTtl.isNegative()) {
             throw new IllegalArgumentException("signingTtl must be positive");
         }
         this.signingBus = signingBus;
-        this.signatureAlgorithmId = signatureAlgorithmId;
+        this.signatureIdentity = signatureIdentity;
         this.signingTtl = signingTtl;
     }
 
@@ -174,13 +192,14 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      *                                  fails, or certificate encoding fails
      */
     @Override
-    public CredentialBundle issueEndEntity(ValidatedCertificateRequest request, EncodedObject issuerCertificate,
+    public CredentialBundle issueEndEntity(ValidatedCertificateRequest request,
+            DurableContentReference issuerCertificate,
             KeyRef issuerKeyRef, BigInteger serial) {
         if (request == null || issuerCertificate == null || issuerKeyRef == null || serial == null
                 || serial.signum() <= 0 || serial.toByteArray().length > 20) {
             throw new IllegalArgumentException("Invalid validated end-entity issuance input");
         }
-        byte[] issuerDer = issuerCertificate.bytes();
+        byte[] issuerDer = materialize(issuerCertificate);
         X509CertificateHolder issuer;
         try {
             issuer = parseIssuerCertificateOrThrow(issuerDer);
@@ -195,7 +214,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
                 Date.from(request.validity().notBefore()), Date.from(request.validity().notAfter()), subjectDn, spki);
         addLeafExtensions(builder, request);
 
-        ContentSigner signer = new PkiBusContentSigner(signingBus, issuerKeyRef, signatureAlgorithmId, signingTtl);
+        PkiBusContentSigner signer = new PkiBusContentSigner(signingBus, issuerKeyRef, signatureIdentity, signingTtl);
         X509CertificateHolder leaf;
         try {
             leaf = builder.build(signer);
@@ -214,10 +233,12 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         PkiId publicKeyId = new PkiId("spki:" + fingerprintEncoded(request.exactPublicKey()));
 
         try {
+            DurableContentReference content = stageCertificate(certDer);
+            validateGeneratedCertificate(content, signer);
             Credential credential = new Credential(credId, BcX509CredentialFramework.FORMAT_ID,
                     new IssuerRef(request.issuerCaId()), request.subjectRef(), request.validity(), serial.toString(),
                     publicKeyId, new EndEntityProfileBinding(request.profileReference()), CredentialStatus.ISSUED,
-                    new EncodedObject(Encoding.DER, certDer), SimpleAttributeSet.builder().build());
+                    content, SimpleAttributeSet.builder().build());
             return new CredentialBundle(credential, java.util.List.of(issuerCertificate));
         } finally {
             java.util.Arrays.fill(certDer, (byte) 0);
@@ -302,7 +323,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      */
     @Override
     public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
-            EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+            DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
         if (request == null || issuerCertificate == null || issuerKeyRef == null) {
             throw new IllegalArgumentException("validated CA issuance inputs must not be null");
         }
@@ -310,7 +331,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
             throw new IllegalArgumentException("Unsupported formatId");
         }
 
-        byte[] issuerDer = issuerCertificate.bytes();
+        byte[] issuerDer = materialize(issuerCertificate);
         X509CertificateHolder issuer;
         try {
             issuer = parseIssuerCertificateOrThrow(issuerDer);
@@ -343,7 +364,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
             throw new PkiException("X.509 extension construction failed: code=EXTENSION_BUILD_FAILED");
         }
 
-        ContentSigner signer = new PkiBusContentSigner(signingBus, issuerKeyRef, signatureAlgorithmId, signingTtl);
+        PkiBusContentSigner signer = new PkiBusContentSigner(signingBus, issuerKeyRef, signatureIdentity, signingTtl);
         X509CertificateHolder certificate;
         try {
             certificate = builder.build(signer);
@@ -361,12 +382,63 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
 
         try {
+            DurableContentReference content = stageCertificate(certDer);
+            validateGeneratedCertificate(content, signer);
             return new Credential(credId, request.formatId(), new IssuerRef(request.issuerCaId()), subjectRef, validity,
                     serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
-                    CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, certDer),
+                    CredentialStatus.ISSUED, content,
                     SimpleAttributeSet.builder().build());
         } finally {
             java.util.Arrays.fill(certDer, (byte) 0);
+        }
+    }
+
+    private DurableContentReference stageCertificate(byte[] certificate) {
+        try (ContentSink sink = signingBus.beginContent(Encoding.DER, DurableContentReference.Lifecycle.PERSISTED);
+                OutputStream output = sink.outputStream()) {
+            output.write(certificate);
+            return sink.complete();
+        } catch (IOException exception) {
+            throw new PkiException("Certificate staging failed: code=SPOOL_STORAGE_FAILED", exception);
+        }
+    }
+
+    private void validateGeneratedCertificate(DurableContentReference reference, PkiBusContentSigner signer) {
+        try (RepeatableContent content = signingBus.openContent(reference)) {
+            new BcX509SignedObjectValidator(signingBus.authority()).validateGeneratedCertificate(content,
+                    signer.executionPlan(), zeroecho.core.io.CancellationSignal.NONE);
+        } catch (IOException | IllegalArgumentException exception) {
+            signingBus.releaseContent(reference);
+            throw new PkiException("Certificate postcondition failed: code=BACKEND_RESULT_SUBSTITUTION", exception);
+        }
+    }
+
+    private byte[] materialize(DurableContentReference reference) {
+        if (reference.length() > Integer.MAX_VALUE) {
+            throw new PkiException("Certificate exceeds BC adapter element domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
+        }
+        byte[] result = new byte[(int) reference.length()];
+        try {
+            readExact(reference, result);
+            return result;
+        } catch (IOException exception) {
+            throw new PkiException("Certificate content failed: code=CONTENT_IO_FAILED", exception);
+        }
+    }
+
+    private void readExact(DurableContentReference reference, byte[] result) throws IOException {
+        try (RepeatableContent content = signingBus.openContent(reference); InputStream input = content.openStream()) {
+            int offset = 0;
+            while (offset != result.length) {
+                int count = input.read(result, offset, result.length - offset);
+                if (count < 0) {
+                    throw new IOException("Certificate content is truncated");
+                }
+                offset += count;
+            }
+            if (input.read() >= 0) {
+                throw new IOException("Certificate content has trailing bytes");
+            }
         }
     }
 

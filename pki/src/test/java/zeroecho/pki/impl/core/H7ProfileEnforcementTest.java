@@ -139,6 +139,9 @@ import zeroecho.pki.testkit.PkiTestRuntime;
 final class H7ProfileEnforcementTest {
     private static final Instant NOW = Instant.parse("2026-06-01T00:00:00Z");
 
+    @TempDir
+    private Path fixtureDirectory;
+
     @Test
     void sanCanonicalizationPreservesTypedIdentityAndRawUriEscapes() {
         assertEquals("www.example.com", new SubjectAlternativeName.DnsName("WWW.Example.COM").value());
@@ -372,7 +375,8 @@ final class H7ProfileEnforcementTest {
         }
     }
 
-    private static ValidatedCertificateRequest validate(byte[] encoded, String algorithm, CertificateProfile profile) {
+    private ValidatedCertificateRequest validate(byte[] encoded, String algorithm, CertificateProfile profile)
+            throws Exception {
         ParsedCertificationRequest request = parsedRequest(encoded);
         IssueEndEntityCommand command = new IssueEndEntityCommand(new PkiId("ca:h7"), request, profile.profileId(),
                 Optional.empty());
@@ -380,7 +384,11 @@ final class H7ProfileEnforcementTest {
                 request.publicKeyInfo(), ProofOfPossessionStatus.VERIFIED, command);
         CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1,
                 new byte[CertificateProfileRef.HASH_BYTES]);
-        return CertificateProfileValidator.validate(candidate, profile, reference, issuerCredential(), NOW);
+        zeroecho.pki.impl.framework.x509.X509AlgorithmResolver.Policy policy = (suite, direction) -> true;
+        zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot authority =
+                zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot.compose(List.of(), List.of(), policy);
+        return CertificateProfileValidator.validate(candidate, profile, reference, issuerCredential(), NOW,
+                authority);
     }
 
     private static ParsedCertificationRequest parsedRequest(byte[] encoded) {
@@ -391,12 +399,17 @@ final class H7ProfileEnforcementTest {
                 List.of(new SubjectRdn(SubjectRdnType.COMMON_NAME, "Leaf")), List.of(), false, attributes);
     }
 
-    private static Credential issuerCredential() {
+    private Credential issuerCredential() throws Exception {
+        zeroecho.pki.impl.fs.FilesystemStagedContentStore staged =
+                new zeroecho.pki.impl.fs.FilesystemStagedContentStore(fixtureDirectory.resolve("references"),
+                        "0123456789abcdef0123456789abcdef");
         return new Credential(new PkiId("credential:issuer"), BcX509CredentialFramework.FORMAT_ID,
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=Issuer"),
                 new Validity(NOW.minus(Duration.ofDays(1)), NOW.plus(Duration.ofDays(1000))), "1",
                 new PkiId("spki:issuer"), new CaProfileBinding(new CertificateProfileRef("root", 1, new byte[32])),
-                CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
+                CredentialStatus.ISSUED,
+                zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(staged, Encoding.DER, new byte[] { 1 }),
+                new SimpleAttributeSet());
     }
 
     private static CertificateProfile policyWithFixedOrganization(String algorithm) {

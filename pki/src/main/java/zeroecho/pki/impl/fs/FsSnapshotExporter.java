@@ -113,6 +113,7 @@ final class FsSnapshotExporter {
             copyTreeIfExists(sourceRoot.resolve("policy"), targetRoot.resolve("policy"));
             copyTreeIfExists(sourceRoot.resolve("publications"), targetRoot.resolve("publications"));
             copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
+            copyTreeIfExists(sourceRoot.resolve("staged-content"), targetRoot.resolve("staged-content"));
             copyTreeIfExists(sourceRoot.resolve("revocations"), targetRoot.resolve("revocations"));
             copyImportedProfilesAsOf(profiles, targetRoot.resolve("profiles"));
 

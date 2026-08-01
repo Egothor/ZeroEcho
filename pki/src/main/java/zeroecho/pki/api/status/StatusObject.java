@@ -36,10 +36,10 @@ package zeroecho.pki.api.status;
 import java.time.Instant;
 import java.util.Optional;
 
-import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.attr.AttributeSet;
+import zeroecho.pki.api.content.DurableContentReference;
 
 /**
  * Generated status object used for revocation distribution.
@@ -57,12 +57,12 @@ import zeroecho.pki.api.attr.AttributeSet;
  * @param type           status object type
  * @param thisUpdate     time of issuance/publication baseline
  * @param nextUpdate     optional next update timestamp
- * @param encoded        encoded payload
+ * @param content        immutable store-owned encoded content reference
  * @param attributes     universal attributes describing the object (must not
  *                       contain secrets)
  */
 public record StatusObject(PkiId statusObjectId, FormatId formatId, PkiId issuerCaId, StatusObjectType type,
-        Instant thisUpdate, Optional<Instant> nextUpdate, EncodedObject encoded, AttributeSet attributes) {
+        Instant thisUpdate, Optional<Instant> nextUpdate, DurableContentReference content, AttributeSet attributes) {
 
     /**
      * Creates a status object.
@@ -89,8 +89,8 @@ public record StatusObject(PkiId statusObjectId, FormatId formatId, PkiId issuer
         if (nextUpdate == null) {
             throw new IllegalArgumentException("nextUpdate must not be null");
         }
-        if (encoded == null) {
-            throw new IllegalArgumentException("encoded must not be null");
+        if (content == null) {
+            throw new IllegalArgumentException("content must not be null");
         }
         if (attributes == null) {
             throw new IllegalArgumentException("attributes must not be null");

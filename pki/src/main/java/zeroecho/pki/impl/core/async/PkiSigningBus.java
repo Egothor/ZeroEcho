@@ -40,6 +40,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -48,18 +49,27 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
+import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
+import zeroecho.pki.spi.store.ContentSink;
+import zeroecho.pki.spi.store.TemporaryUniqueIndex;
 import zeroecho.pki.util.async.AsyncEndpoint;
 import zeroecho.pki.util.async.AsyncState;
 import zeroecho.pki.util.async.AsyncStatus;
@@ -112,6 +122,7 @@ public final class PkiSigningBus implements AutoCloseable {
     private final PkiStore store;
     private final DurableAsyncBus<PkiId, Principal, String, EncodedObject> bus;
     private final SignatureWorkflow signer;
+    private final X509AuthoritySnapshot authority;
     private final SecureRandom random;
     private final String namespace;
     private final OperationCoordinator coordinator;
@@ -122,58 +133,70 @@ public final class PkiSigningBus implements AutoCloseable {
     private final OrchestrationDurabilityPolicy durabilityPolicy;
 
     /**
-     * Creates a signing bus.
-     *
-     * @param store                persistent store (source of truth for
-     *                             continuation state)
-     * @param signer               signature workflow
-     * @param durableLineStorePath path to append-only line store file
-     */
-    public PkiSigningBus(PkiStore store, SignatureWorkflow signer, Path durableLineStorePath) {
-        this(store, signer, durableLineStorePath, resolveDisplaySuffixMaxLen(Optional.empty()),
-                OrchestrationDurabilityPolicy.DURABLE_MIN_STATE);
-    }
-
-    /**
-     * Creates a signing bus.
+     * Creates a signing bus in an explicitly composed runtime authority graph.
      *
      * <p>
-     * The {@code displaySuffixMaxLen} parameter controls the maximum number of
-     * characters appended after {@code '#'} in operation identifiers returned by
-     * {@link #canonicalizeOperationId(PkiId, Principal)}. If
-     * {@code displaySuffixMaxLen} is not positive, the constructor fails.
+     * The authority must already bind every signing identity declared by
+     * {@code signer} to that exact workflow instance for the {@code SIGN}
+     * direction. This constructor validates ownership before registering the
+     * workflow or activating durable state. It never constructs an internal
+     * authority, accepts an authority from another runtime, or handles private
+     * key material.
      * </p>
      *
-     * @param store                persistent store (source of truth for
-     *                             continuation state)
-     * @param signer               signature workflow
-     * @param durableLineStorePath path to append-only line store file
-     * @param displaySuffixMaxLen  maximum number of characters after {@code '#'}
+     * @param store                persistent store
+     * @param signer               exact signing workflow owned by
+     *                             {@code authority}
+     * @param durableLineStorePath durable bus path
+     * @param authority            shared immutable runtime authority
+     * @throws NullPointerException     if any argument is {@code null}
+     * @throws IllegalArgumentException if the authority does not own the exact
+     *                                  workflow for every declared signing
+     *                                  identity and the {@code SIGN} direction
      */
-    public PkiSigningBus(PkiStore store, SignatureWorkflow signer, Path durableLineStorePath, int displaySuffixMaxLen) {
-        this(store, signer, durableLineStorePath, displaySuffixMaxLen, OrchestrationDurabilityPolicy.DURABLE_MIN_STATE);
+    public PkiSigningBus(PkiStore store, SignatureWorkflow signer, Path durableLineStorePath,
+            X509AuthoritySnapshot authority) {
+        this(store, signer, durableLineStorePath, resolveDisplaySuffixMaxLen(Optional.empty()),
+                OrchestrationDurabilityPolicy.DURABLE_MIN_STATE, authority);
     }
 
     /**
-     * Creates a signing bus with explicit workflow continuation durability policy.
+     * Creates a signing bus bound to one immutable algorithm authority snapshot.
      *
-     * @param store                persistent store (source of truth for
-     *                             continuation state)
-     * @param signer               signature workflow
-     * @param durableLineStorePath path to append-only line store file
-     * @param displaySuffixMaxLen  maximum number of characters after {@code '#'}
-     * @param durabilityPolicy     durability policy used when persisting workflow
-     *                             state
+     * <p>
+     * The authority must already bind every signing identity declared by
+     * {@code signer} to that exact workflow instance for the {@code SIGN}
+     * direction. Validation occurs before registration or durable-state
+     * activation. The constructor does not derive an authority from provider
+     * strings, accept cross-runtime workflow ownership, or access private key
+     * material.
+     * </p>
+     *
+     * @param store                persistent store
+     * @param signer               exact workflow represented by the snapshot
+     *                             capability
+     * @param durableLineStorePath durable bus path
+     * @param displaySuffixMaxLen  display suffix bound
+     * @param durabilityPolicy     continuation durability policy
+     * @param authority            immutable runtime authority
+     * @throws NullPointerException     if any reference argument is {@code null}
+     * @throws IllegalArgumentException if the display suffix bound is invalid or
+     *                                  the authority does not own the exact
+     *                                  workflow for every declared signing
+     *                                  identity and the {@code SIGN} direction
      */
     public PkiSigningBus(PkiStore store, SignatureWorkflow signer, Path durableLineStorePath, int displaySuffixMaxLen,
-            OrchestrationDurabilityPolicy durabilityPolicy) {
+            OrchestrationDurabilityPolicy durabilityPolicy, X509AuthoritySnapshot authority) {
         Objects.requireNonNull(store, "store");
         Objects.requireNonNull(signer, "signer");
         Objects.requireNonNull(durableLineStorePath, "durableLineStorePath");
         Objects.requireNonNull(durabilityPolicy, "durabilityPolicy");
+        X509AuthoritySnapshot exactAuthority = Objects.requireNonNull(authority, "authority");
+        validateSigningAuthority(signer, exactAuthority);
 
         this.store = store;
         this.signer = signer;
+        this.authority = exactAuthority;
         this.random = new SecureRandom();
         this.namespace = store.signingNamespace() + "." + signer.id();
         signer.validateSigningDomain(this.namespace, store.signingHorizon(), store.signingPermittedSkew());
@@ -189,13 +212,21 @@ public final class PkiSigningBus implements AutoCloseable {
         for (WorkflowStateRecord state : store.listWorkflowStates()) {
             if (TYPE_SIGN.equals(state.type()) && state.payload().isPresent()) {
                 try {
-                    SignContinuation.decode(state.payload().orElseThrow());
+                    SignContinuation continuation = SignContinuation.decode(state.payload().orElseThrow(),
+                            store.stagedContent());
+                    X509ExecutionPlan<SignatureWorkflow> plan = authority.planSigning(continuation.algorithmId,
+                            workflowImplementationId(signer), SignatureWorkflow.class);
+                    authority.authorize(plan, signer, AlgorithmExecutionCapability.Direction.SIGN);
+                    AlgorithmIdentity identity = plan.selection().requested();
+                    if (!identity.canonicalForm().equals(continuation.algorithmId)) {
+                        throw new IllegalArgumentException("Persisted sign continuation is not canonical");
+                    }
                 } catch (RuntimeException ex) { // NOPMD - malformed persisted state must fail closed
                     throw new PkiException("Invalid persisted sign continuation: code=CONTINUATION_INVALID");
                 }
             }
         }
-        this.endpoint = new SignatureWorkflowEndpoint(store, signer, coordinator, externalActions);
+        this.endpoint = new SignatureWorkflowEndpoint(store, signer, coordinator, externalActions, authority);
         this.bus.registerEndpoint(ENDPOINT_SIGNER, endpoint);
         this.signerRegistration = signer.register(endpoint::onProviderStatusChanged);
         for (SignWorkflowStore.Record record : store.listSignRecords()) {
@@ -203,6 +234,109 @@ public final class PkiSigningBus implements AutoCloseable {
                     || record.state() == SignWorkflowStore.State.CANCELLING) {
                 project(record);
             }
+        }
+    }
+
+    /**
+     * Returns the immutable authority used by this workflow graph.
+     *
+     * @return authority snapshot
+     */
+    public X509AuthoritySnapshot authority() {
+        return authority;
+    }
+
+    /**
+     * Begins runtime-owned durable staging for one signing input.
+     *
+     * @param encoding content encoding
+     * @return atomic staged-content sink
+     */
+    public ContentSink beginSigningContent(Encoding encoding) {
+        return beginContent(encoding, DurableContentReference.Lifecycle.OPERATION);
+    }
+
+    /**
+     * Begins atomic runtime-owned content staging.
+     *
+     * <p>
+     * The sink writes to the injected staged-content store and never retains an
+     * aggregate payload in the bus. ZeroEcho core imposes no arbitrary
+     * product-wide aggregate size limit.
+     * </p>
+     *
+     * @param encoding content encoding
+     * @param lifecycle ownership and retirement class
+     * @return atomic streamed sink
+     * @throws PkiException if staging cannot begin
+     */
+    public ContentSink beginContent(Encoding encoding, DurableContentReference.Lifecycle lifecycle) {
+        try {
+            return store.stagedContent().beginContent(Objects.requireNonNull(encoding, "encoding"),
+                    Objects.requireNonNull(lifecycle, "lifecycle"));
+        } catch (java.io.IOException ex) {
+            throw new PkiException("Content staging failed: code=SPOOL_STORAGE_FAILED");
+        }
+    }
+
+    /**
+     * Opens immutable repeatable content owned by this runtime.
+     *
+     * @param reference opaque durable content reference
+     * @return repeatable content
+     * @throws PkiException if the content is missing, incomplete, corrupt, or
+     *                      belongs to another runtime store
+     */
+    public RepeatableContent openContent(DurableContentReference reference) {
+        try {
+            return store.stagedContent().openContent(Objects.requireNonNull(reference, "reference"));
+        } catch (java.io.IOException ex) {
+            throw new PkiException("Content open failed: code=CONTENT_INTEGRITY_FAILED");
+        }
+    }
+
+    /**
+     * Releases staged content from this runtime.
+     *
+     * @param reference content reference
+     * @throws PkiException if cleanup fails
+     */
+    public void releaseContent(DurableContentReference reference) {
+        try {
+            store.stagedContent().retireUnownedContent(Objects.requireNonNull(reference, "reference"));
+        } catch (java.io.IOException ex) {
+            throw new PkiException("Content cleanup failed: code=SPOOL_STORAGE_FAILED");
+        }
+    }
+
+    /**
+     * Begins a runtime-owned file-backed uniqueness index.
+     *
+     * @return temporary uniqueness index
+     * @throws PkiException if temporary storage cannot be created
+     */
+    public TemporaryUniqueIndex beginUniqueIndex() {
+        try {
+            return store.stagedContent().beginUniqueIndex();
+        } catch (java.io.IOException ex) {
+            throw new PkiException("Temporary index failed: code=SPOOL_STORAGE_FAILED");
+        }
+    }
+
+    private static String workflowImplementationId(SignatureWorkflow workflow) {
+        return "workflow." + workflow.id();
+    }
+
+    private static void validateSigningAuthority(SignatureWorkflow workflow, X509AuthoritySnapshot authority) {
+        Set<String> supportedAlgorithms = Set.copyOf(
+                Objects.requireNonNull(workflow.supportedAlgorithms(), "workflow.supportedAlgorithms"));
+        if (supportedAlgorithms.isEmpty()) {
+            throw new IllegalArgumentException("Signature workflow must declare a signing identity");
+        }
+        for (String algorithm : supportedAlgorithms) {
+            X509ExecutionPlan<SignatureWorkflow> plan = authority.planSigning(algorithm,
+                    workflowImplementationId(workflow), SignatureWorkflow.class);
+            authority.authorize(plan, workflow, AlgorithmExecutionCapability.Direction.SIGN);
         }
     }
 
@@ -242,24 +376,29 @@ public final class PkiSigningBus implements AutoCloseable {
      * @param owner           owner principal
      * @param keyRef          signing key reference
      * @param algorithmId     signature algorithm id
-     * @param payload         bytes to sign
+     * @param content         durable repeatable content to sign
      * @param ttl             time-to-live
      * @param workflowPayload minimal continuation payload
      */
-    public void submitSign(PkiId opId, Principal owner, KeyRef keyRef, String algorithmId, EncodedObject payload,
+    public void submitSign(PkiId opId, Principal owner, KeyRef keyRef, String algorithmId,
+            DurableContentReference content,
             Duration ttl, Optional<EncodedObject> workflowPayload) {
 
         Objects.requireNonNull(opId, "opId");
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(keyRef, "keyRef");
         Objects.requireNonNull(algorithmId, "algorithmId");
-        Objects.requireNonNull(payload, "payload");
+        Objects.requireNonNull(content, "content");
         Objects.requireNonNull(ttl, "ttl");
         Objects.requireNonNull(workflowPayload, "workflowPayload");
 
         if (algorithmId.isBlank()) {
             throw new IllegalArgumentException("algorithmId must not be blank");
         }
+        X509ExecutionPlan<SignatureWorkflow> submittedPlan = authority.planSigning(algorithmId,
+                workflowImplementationId(signer), SignatureWorkflow.class);
+        authority.authorize(submittedPlan, signer, AlgorithmExecutionCapability.Direction.SIGN);
+        AlgorithmIdentity submittedIdentity = submittedPlan.selection().requested();
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException("ttl must be positive");
         }
@@ -272,25 +411,50 @@ public final class PkiSigningBus implements AutoCloseable {
         try (OperationCoordinator.Lease ignored = coordinator.acquire(baseOpId)) {
             SigningSubmissionId parsed = SigningSubmissionId.parse(baseOpId);
             Instant deadline = parsed.createdAt().plus(ttl);
-            SignContinuation continuation = SignContinuation.decode(workflowPayload.get());
+            SignContinuation continuation = SignContinuation.decode(workflowPayload.get(), store.stagedContent());
+            X509ExecutionPlan<SignatureWorkflow> continuationPlan = authority.planSigning(continuation.algorithmId,
+                    workflowImplementationId(signer), SignatureWorkflow.class);
+            authority.authorize(continuationPlan, signer, AlgorithmExecutionCapability.Direction.SIGN);
+            AlgorithmIdentity continuationIdentity = continuationPlan.selection().requested();
             if (!owner.equals(continuation.accessContext.principal()) || !keyRef.equals(continuation.keyRef)
-                    || !algorithmId.equals(continuation.algorithmId)
-                    || payload.encoding() != continuation.payload.encoding()
-                    || !java.util.Arrays.equals(payload.bytes(), continuation.payload.bytes())) {
+                    || !submittedIdentity.equals(continuationIdentity)
+                    || !content.equals(continuation.content())) {
                 throw new IllegalArgumentException("Sign continuation does not match the submitted request");
             }
+            continuation = continuation.withAlgorithmId(submittedIdentity.canonicalForm());
             String fingerprint = continuation.semanticFingerprint(namespace, deadline);
             EncodedObject persistedRequest = continuation.withSignerOpId(baseOpId).encode();
             SignWorkflowStore.Record intent = new SignWorkflowStore.Record(baseOpId, namespace, fingerprint, owner,
                     parsed.createdAt(), deadline, persistedRequest, SignWorkflowStore.State.INTENT, 0L, 0L,
                     Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty());
-            SignWorkflowStore.CreateResult created = store.createSignIntent(intent);
-            if (created == SignWorkflowStore.CreateResult.CONFLICT) {
-                throw new PkiException("Signing submission identifier conflicts with a different request");
+            DurableContentOwner contentOwner = DurableContentOwner.signingOperation(baseOpId);
+            boolean retained = false;
+            boolean recordVisible = false;
+            try {
+                retained = store.stagedContent().retainContent(content, contentOwner);
+                SignWorkflowStore.CreateResult created = store.createSignIntent(intent);
+                if (created == SignWorkflowStore.CreateResult.CONFLICT) {
+                    throw new PkiException("Signing submission identifier conflicts with a different request");
+                }
+                recordVisible = true;
+                authoritative = store.getSignRecord(baseOpId).orElseThrow();
+            } catch (java.io.IOException exception) {
+                throw new PkiException("Signing content retention failed: code=SPOOL_STORAGE_FAILED", exception);
+            } finally {
+                if (retained && !recordVisible) {
+                    rollbackSigningOwner(content, contentOwner);
+                }
             }
-            authoritative = store.getSignRecord(baseOpId).orElseThrow();
         }
         project(authoritative);
+    }
+
+    private void rollbackSigningOwner(DurableContentReference content, DurableContentOwner owner) {
+        try {
+            store.stagedContent().releaseContent(content, owner);
+        } catch (java.io.IOException exception) {
+            throw new PkiException("Signing content rollback failed: code=SPOOL_STORAGE_FAILED", exception);
+        }
     }
 
     /**
@@ -400,13 +564,31 @@ public final class PkiSigningBus implements AutoCloseable {
             if (!isTerminalSignState(state.state())) {
                 return;
             }
+            Optional<DurableContentReference> releaseReference = Optional.empty();
+            if (state.state() != SignWorkflowStore.State.RETIRED) {
+                releaseReference = Optional.of(SignContinuation.decode(state.request(), store.stagedContent()).content());
+            }
             state = confirmRetirement(baseOpId, state);
             store.deleteWorkflowState(baseOpId);
+            if (releaseReference.isPresent()) {
+                releaseRetiredOperationContent(baseOpId, releaseReference.get());
+            }
         }
         AsyncState advisoryState = state.result().isPresent() ? AsyncState.SUCCEEDED : AsyncState.CANCELLED;
         bus.update(baseOpId, new AsyncStatus(advisoryState, store.signingNow(), Optional.of("RETIRED"),
                 Map.of("reason", "local-retirement")), state.result());
         bus.retire(baseOpId);
+    }
+
+    private void releaseRetiredOperationContent(PkiId operationId, DurableContentReference reference) {
+        if (reference.lifecycle() != DurableContentReference.Lifecycle.OPERATION) {
+            return;
+        }
+        try {
+            store.stagedContent().releaseContent(reference, DurableContentOwner.signingOperation(operationId));
+        } catch (java.io.IOException exception) {
+            throw new PkiException("Signing content retirement failed: code=SPOOL_STORAGE_FAILED", exception);
+        }
     }
 
     private void reconcileExpiredOperations() {
@@ -813,6 +995,7 @@ public final class PkiSigningBus implements AutoCloseable {
         private final SignatureWorkflow signer;
         private final OperationCoordinator coordinator;
         private final ExternalActionCoordinator externalActions;
+        private final X509AuthoritySnapshot authority;
         private final ConcurrentMap<PkiId, Boolean> pendingAdvisories;
         private final AtomicInteger pendingAdvisoryCount;
         private final AtomicBoolean closed;
@@ -826,11 +1009,12 @@ public final class PkiSigningBus implements AutoCloseable {
          *               operation and to query its status; must not be {@code null}
          */
         private SignatureWorkflowEndpoint(PkiStore store, SignatureWorkflow signer, OperationCoordinator coordinator,
-                ExternalActionCoordinator externalActions) {
+                ExternalActionCoordinator externalActions, X509AuthoritySnapshot authority) {
             this.store = store;
             this.signer = signer;
             this.coordinator = coordinator;
             this.externalActions = externalActions;
+            this.authority = authority;
             this.pendingAdvisories = new ConcurrentHashMap<>();
             this.pendingAdvisoryCount = new AtomicInteger();
             this.closed = new AtomicBoolean();
@@ -877,7 +1061,8 @@ public final class PkiSigningBus implements AutoCloseable {
             SubmissionCall call = prepared.get();
             PkiId returned;
             try (ExternalActionCoordinator.Reservation ignored = call.reservation()) {
-                returned = signer.submitSign(call.request());
+                authority.authorize(call.plan(), signer, AlgorithmExecutionCapability.Direction.SIGN);
+                returned = call.plan().executor().submitSign(call.request());
             } catch (RuntimeException ambiguousFailure) { // NOPMD - provider acceptance is unknown
                 return;
             }
@@ -917,17 +1102,27 @@ public final class PkiSigningBus implements AutoCloseable {
                 ExternalActionCoordinator.Reservation reservation = reserved.get();
                 boolean reservationTransferred = false;
                 try {
-                    SignContinuation continuation = SignContinuation.decode(claimed.request());
+                    SignContinuation continuation = SignContinuation.decode(claimed.request(), store.stagedContent());
+                    DurableContentOwner contentOwner = DurableContentOwner.signingOperation(opId);
+                    requireSigningOwner(continuation.content(), contentOwner);
+                    X509ExecutionPlan<SignatureWorkflow> plan = authority.planSigning(continuation.algorithmId,
+                            workflowImplementationId(signer), SignatureWorkflow.class);
+                    authority.authorize(plan, signer, AlgorithmExecutionCapability.Direction.SIGN);
+                    AlgorithmIdentity persistedIdentity = plan.selection().requested();
+                    if (!persistedIdentity.canonicalForm().equals(continuation.algorithmId)) {
+                        throw new IllegalArgumentException("Persisted sign continuation is not canonical");
+                    }
+                    RepeatableContent content = openContent(continuation.content());
                     SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(opId,
                             claimed.namespace(), claimed.fence(), continuation.accessContext, continuation.keyRef,
-                            continuation.algorithmId, continuation.payload,
-                            Optional.of(continuation.preferredSignatureEncoding), Optional.of(claimed.deadline()));
+                            continuation.algorithmId, content, Optional.of(continuation.preferredSignatureEncoding),
+                            Optional.of(claimed.deadline()));
                     if (!constantTimeAsciiEquals(claimed.fingerprint(), request.semanticFingerprint())) {
                         store.transitionSign(opId, claimed.revision(), claimed.fence(), SignWorkflowStore.State.FAILED,
                                 Optional.of("REQUEST_INTEGRITY_FAILURE"), Optional.empty(), Optional.empty());
                         return Optional.empty();
                     }
-                    SubmissionCall call = new SubmissionCall(claimed, request, reservation);
+                    SubmissionCall call = new SubmissionCall(claimed, request, reservation, plan);
                     reservationTransferred = true;
                     return Optional.of(call);
                 } finally {
@@ -935,6 +1130,24 @@ public final class PkiSigningBus implements AutoCloseable {
                         reservation.close();
                     }
                 }
+            }
+        }
+
+        private void requireSigningOwner(DurableContentReference reference, DurableContentOwner owner) {
+            try {
+                if (!store.stagedContent().contentOwners(reference).contains(owner)) {
+                    throw new PkiException("Signing content owner missing: code=STAGED_CONTENT_INCOMPLETE");
+                }
+            } catch (java.io.IOException exception) {
+                throw new PkiException("Signing content ownership failed: code=CONTENT_INTEGRITY_FAILED", exception);
+            }
+        }
+
+        private RepeatableContent openContent(DurableContentReference reference) {
+            try {
+                return store.stagedContent().openContent(reference);
+            } catch (java.io.IOException ex) {
+                throw new PkiException("Signing content unavailable: code=STAGED_CONTENT_MISSING");
             }
         }
 
@@ -970,7 +1183,7 @@ public final class PkiSigningBus implements AutoCloseable {
         }
 
         private record SubmissionCall(SignWorkflowStore.Record record, SignatureWorkflow.SignRequest request,
-                ExternalActionCoordinator.Reservation reservation) {
+                ExternalActionCoordinator.Reservation reservation, X509ExecutionPlan<SignatureWorkflow> plan) {
         }
 
         /**
@@ -1260,7 +1473,8 @@ public final class PkiSigningBus implements AutoCloseable {
      * <h2>Encoding model</h2>
      * <p>
      * Instances are encoded into a compact binary representation through
-     * {@link #encode()} and reconstructed through {@link #decode(EncodedObject)}.
+     * {@link #encode()} and reconstructed through
+     * {@link #decode(EncodedObject, StagedContentStore)}.
      * The binary format is versioned by {@link #VERSION}. The current version
      * persists the algorithm identifier, payload encoding and bytes, key reference,
      * preferred signature encoding, and the optional downstream signer operation
@@ -1271,7 +1485,7 @@ public final class PkiSigningBus implements AutoCloseable {
      * <p>
      * The current binary encoding does not persist the original
      * {@link zeroecho.pki.api.audit.AccessContext} losslessly. During
-     * {@link #decode(EncodedObject)}, a synthetic system access context is created
+     * {@link #decode(EncodedObject, StagedContentStore)}, a synthetic system access context is created
      * instead. This is sufficient for the current continuation flow, but callers
      * must not assume that {@code decode(encode(x))} preserves the original access
      * context exactly.
@@ -1284,11 +1498,13 @@ public final class PkiSigningBus implements AutoCloseable {
      */
     public static final class SignContinuation {
 
-        private static final byte VERSION = 2;
+        private static final byte VERSION = 4;
+        private static final long MINIMUM_CONTENT_LENGTH = 0L;
 
         private final zeroecho.pki.api.audit.AccessContext accessContext;
         private final String algorithmId;
-        private final EncodedObject payload;
+        private final Optional<DurableContentReference> content;
+        private final ContentCommitment commitment;
         private final KeyRef keyRef;
         private final Encoding preferredSignatureEncoding;
         private final Optional<PkiId> signerOpId;
@@ -1300,7 +1516,7 @@ public final class PkiSigningBus implements AutoCloseable {
          *                                   sign request; must not be {@code null}
          * @param algorithmId                non-blank signature algorithm identifier;
          *                                   must not be {@code null} or blank
-         * @param payload                    to-be-signed payload; must not be
+         * @param content                    durable to-be-signed content reference
          *                                   {@code null}
          * @param keyRef                     signing key reference; must not be
          *                                   {@code null}
@@ -1313,16 +1529,35 @@ public final class PkiSigningBus implements AutoCloseable {
          * @throws IllegalArgumentException if {@code algorithmId} is blank
          */
         public SignContinuation(zeroecho.pki.api.audit.AccessContext accessContext, String algorithmId,
-                EncodedObject payload, KeyRef keyRef, Encoding preferredSignatureEncoding, Optional<PkiId> signerOpId) {
+                DurableContentReference content, KeyRef keyRef, Encoding preferredSignatureEncoding,
+                Optional<PkiId> signerOpId) {
             this.accessContext = Objects.requireNonNull(accessContext, "accessContext");
             this.algorithmId = Objects.requireNonNull(algorithmId, "algorithmId");
-            this.payload = Objects.requireNonNull(payload, "payload");
+            DurableContentReference exactContent = Objects.requireNonNull(content, "content");
+            this.content = Optional.of(exactContent);
+            this.commitment = ContentCommitment.of(exactContent);
             this.keyRef = Objects.requireNonNull(keyRef, "keyRef");
             this.preferredSignatureEncoding = Objects.requireNonNull(preferredSignatureEncoding,
                     "preferredSignatureEncoding");
             this.signerOpId = Objects.requireNonNull(signerOpId, "signerOpId");
             if (algorithmId.isBlank()) {
                 throw new IllegalArgumentException("algorithmId must not be blank");
+            }
+        }
+
+        private SignContinuation(zeroecho.pki.api.audit.AccessContext accessContext, String algorithmId,
+                Optional<DurableContentReference> content, ContentCommitment commitment, KeyRef keyRef,
+                Encoding preferredSignatureEncoding, Optional<PkiId> signerOpId) {
+            this.accessContext = Objects.requireNonNull(accessContext, "accessContext");
+            this.algorithmId = Objects.requireNonNull(algorithmId, "algorithmId");
+            this.content = Objects.requireNonNull(content, "content");
+            this.commitment = Objects.requireNonNull(commitment, "commitment");
+            this.keyRef = Objects.requireNonNull(keyRef, "keyRef");
+            this.preferredSignatureEncoding = Objects.requireNonNull(preferredSignatureEncoding,
+                    "preferredSignatureEncoding");
+            this.signerOpId = Objects.requireNonNull(signerOpId, "signerOpId");
+            if (algorithmId.isBlank() || content.isPresent() && !commitment.matches(content.get())) {
+                throw new IllegalArgumentException("Invalid sign continuation content commitment");
             }
         }
 
@@ -1343,8 +1578,19 @@ public final class PkiSigningBus implements AutoCloseable {
          * @throws NullPointerException if {@code opId} is {@code null}
          */
         public SignContinuation withSignerOpId(PkiId opId) {
-            return new SignContinuation(accessContext, algorithmId, payload, keyRef, preferredSignatureEncoding,
-                    Optional.of(opId));
+            return new SignContinuation(accessContext, algorithmId, content, commitment, keyRef,
+                    preferredSignatureEncoding, Optional.of(opId));
+        }
+
+        private SignContinuation withAlgorithmId(String canonicalAlgorithmId) {
+            return new SignContinuation(accessContext, canonicalAlgorithmId, content, commitment, keyRef,
+                    preferredSignatureEncoding, signerOpId);
+        }
+
+        /** Returns a terminal continuation retaining only immutable content commitment metadata. */
+        public SignContinuation withoutLiveContent() {
+            return new SignContinuation(accessContext, algorithmId, Optional.empty(), commitment, keyRef,
+                    preferredSignatureEncoding, signerOpId);
         }
 
         /**
@@ -1364,6 +1610,31 @@ public final class PkiSigningBus implements AutoCloseable {
         }
 
         /**
+         * Returns the payload-free durable reference used for recovery.
+         *
+         * @return staged content reference; never a live handle or payload
+         */
+        public DurableContentReference content() {
+            return content.orElseThrow(() -> new IllegalStateException("Retired continuation has no live content"));
+        }
+
+        /** Returns whether this continuation still requires live staged content. */
+        public boolean hasLiveContent() {
+            return content.isPresent();
+        }
+
+        /** Restores the committed reference through its owning store for delayed cleanup. */
+        public DurableContentReference restoreContent(zeroecho.pki.spi.store.StagedContentStore stagedContent)
+                throws java.io.IOException {
+            Objects.requireNonNull(stagedContent, "stagedContent");
+            if (content.isPresent()) {
+                return content.get();
+            }
+            return stagedContent.restoreReference(commitment.storeId(), commitment.contentId(), commitment.encoding(),
+                    commitment.length(), commitment.sha256(), commitment.lifecycle());
+        }
+
+        /**
          * Computes the canonical semantic fingerprint for this persisted request.
          *
          * <p>
@@ -1380,7 +1651,8 @@ public final class PkiSigningBus implements AutoCloseable {
          */
         public String semanticFingerprint(String namespace, Instant deadline) {
             Objects.requireNonNull(deadline, "deadline");
-            return SignatureWorkflow.SignRequest.fingerprint(namespace, accessContext, keyRef, algorithmId, payload,
+            return SignatureWorkflow.SignRequest.fingerprint(namespace, accessContext, keyRef, algorithmId,
+                    new ReferenceContent(commitment),
                     Optional.of(preferredSignatureEncoding), Optional.of(deadline));
         }
 
@@ -1411,7 +1683,7 @@ public final class PkiSigningBus implements AutoCloseable {
          * <ul>
          * <li>format version,</li>
          * <li>algorithm identifier,</li>
-         * <li>payload encoding and bytes,</li>
+         * <li>store-issued staged-content reference metadata,</li>
          * <li>key reference,</li>
          * <li>preferred signature encoding,</li>
          * <li>presence marker and optional downstream signer workflow operation
@@ -1427,7 +1699,6 @@ public final class PkiSigningBus implements AutoCloseable {
          */
         public EncodedObject encode() {
             WipeableByteArrayOutputStream bytes = new WipeableByteArrayOutputStream();
-            byte[] payloadBytes = payload.bytes();
             byte[] encoded = null;
             try {
                 try (java.io.DataOutputStream output = new java.io.DataOutputStream(bytes)) {
@@ -1445,9 +1716,13 @@ public final class PkiSigningBus implements AutoCloseable {
                     }
                     output.writeUTF(algorithmId);
                     output.writeUTF(keyRef.value());
-                    output.writeByte(payload.encoding().ordinal());
-                    output.writeInt(payloadBytes.length);
-                    output.write(payloadBytes);
+                    output.writeBoolean(content.isPresent());
+                    output.writeUTF(commitment.storeId());
+                    output.writeUTF(commitment.contentId());
+                    output.writeByte(commitment.encoding().ordinal());
+                    output.writeLong(commitment.length());
+                    output.writeUTF(commitment.sha256());
+                    output.writeByte(commitment.lifecycle().ordinal());
                     output.writeByte(preferredSignatureEncoding.ordinal());
                     output.writeBoolean(signerOpId.isPresent());
                     if (signerOpId.isPresent()) {
@@ -1459,7 +1734,6 @@ public final class PkiSigningBus implements AutoCloseable {
             } catch (java.io.IOException ex) {
                 throw new PkiException("Failed to encode sign continuation: code=CONTINUATION_ENCODE_FAILED");
             } finally {
-                java.util.Arrays.fill(payloadBytes, (byte) 0);
                 if (encoded != null) {
                     java.util.Arrays.fill(encoded, (byte) 0);
                 }
@@ -1489,6 +1763,8 @@ public final class PkiSigningBus implements AutoCloseable {
          * </p>
          *
          * @param obj binary encoded continuation payload; must not be {@code null}
+         * @param stagedContent owning store used to restore and validate the persisted
+         *        content reference
          * @return decoded continuation instance
          * @throws NullPointerException     if {@code obj} is {@code null}
          * @throws IllegalArgumentException if {@code obj} does not use
@@ -1496,13 +1772,14 @@ public final class PkiSigningBus implements AutoCloseable {
          *                                  format version is not supported, or if the
          *                                  binary payload is malformed
          */
-        public static SignContinuation decode(EncodedObject obj) {
+        public static SignContinuation decode(EncodedObject obj,
+                zeroecho.pki.spi.store.StagedContentStore stagedContent) {
             Objects.requireNonNull(obj, "obj");
+            Objects.requireNonNull(stagedContent, "stagedContent");
             if (obj.encoding() != Encoding.BINARY) {
                 throw new IllegalArgumentException("Expected BINARY continuation payload");
             }
             byte[] encoded = obj.bytes();
-            byte[] payloadBytes = null;
             try (java.io.DataInputStream input = new java.io.DataInputStream(
                     new java.io.ByteArrayInputStream(encoded))) {
                 int version = input.readUnsignedByte();
@@ -1518,29 +1795,84 @@ public final class PkiSigningBus implements AutoCloseable {
                         : Optional.empty();
                 String algId = input.readUTF();
                 KeyRef key = new KeyRef(input.readUTF());
-                Encoding payloadEncoding = Encoding.values()[input.readUnsignedByte()];
-                int payloadLength = input.readInt();
-                if (payloadLength <= 0 || payloadLength > 16 * 1024 * 1024) {
-                    throw new PkiException("Invalid sign continuation payload length");
-                }
-                payloadBytes = input.readNBytes(payloadLength);
-                if (payloadBytes.length != payloadLength) {
-                    throw new PkiException("Truncated sign continuation payload");
-                }
+                boolean liveContent = input.readBoolean();
+                String storeId = input.readUTF();
+                String contentId = input.readUTF();
+                Encoding contentEncoding = Encoding.values()[input.readUnsignedByte()];
+                long contentLength = input.readLong();
+                String sha256 = input.readUTF();
+                DurableContentReference.Lifecycle lifecycle = DurableContentReference.Lifecycle
+                        .values()[input.readUnsignedByte()];
+                ContentCommitment commitment = new ContentCommitment(storeId, contentId, contentEncoding,
+                        contentLength, sha256, lifecycle);
+                Optional<DurableContentReference> content = liveContent
+                        ? Optional.of(stagedContent.restoreReference(storeId, contentId, contentEncoding,
+                                contentLength, sha256, lifecycle))
+                        : Optional.empty();
                 Encoding preferred = Encoding.values()[input.readUnsignedByte()];
                 Optional<PkiId> signerId = input.readBoolean() ? Optional.of(new PkiId(input.readUTF()))
                         : Optional.empty();
+                requireCompleteInput(input);
                 zeroecho.pki.api.audit.AccessContext access = new zeroecho.pki.api.audit.AccessContext(principal,
                         purpose, objectId, formatId);
-                return new SignContinuation(access, algId, new EncodedObject(payloadEncoding, payloadBytes), key,
-                        preferred, signerId);
+                return new SignContinuation(access, algId, content, commitment, key, preferred, signerId);
             } catch (java.io.IOException | IndexOutOfBoundsException ex) {
                 throw new PkiException("Malformed sign continuation: code=CONTINUATION_MALFORMED");
             } finally {
                 java.util.Arrays.fill(encoded, (byte) 0);
-                if (payloadBytes != null) {
-                    java.util.Arrays.fill(payloadBytes, (byte) 0);
+            }
+        }
+
+        private record ContentCommitment(String storeId, String contentId, Encoding encoding, long length,
+                String sha256, DurableContentReference.Lifecycle lifecycle) {
+            private ContentCommitment {
+                Objects.requireNonNull(storeId, "storeId");
+                Objects.requireNonNull(contentId, "contentId");
+                Objects.requireNonNull(encoding, "encoding");
+                Objects.requireNonNull(sha256, "sha256");
+                Objects.requireNonNull(lifecycle, "lifecycle");
+                if (length < MINIMUM_CONTENT_LENGTH) {
+                    throw new IllegalArgumentException("Content length must not be negative");
                 }
+            }
+
+            private static ContentCommitment of(DurableContentReference reference) {
+                return new ContentCommitment(reference.storeId(), reference.contentId(), reference.encoding(),
+                        reference.length(), reference.sha256(), reference.lifecycle());
+            }
+
+            private boolean matches(DurableContentReference reference) {
+                return storeId.equals(reference.storeId()) && contentId.equals(reference.contentId())
+                        && encoding == reference.encoding() && length == reference.length()
+                        && sha256.equals(reference.sha256()) && lifecycle == reference.lifecycle();
+            }
+        }
+
+        private static void requireCompleteInput(java.io.DataInputStream input) throws java.io.IOException {
+            if (input.read() >= 0) {
+                throw new java.io.IOException("Trailing sign continuation data");
+            }
+        }
+
+        private record ReferenceContent(ContentCommitment reference) implements RepeatableContent {
+            @Override
+            public java.io.InputStream openStream() throws java.io.IOException {
+                throw new java.io.IOException("Content reference requires staged-content store");
+            }
+
+            @Override
+            public java.util.OptionalLong length() {
+                return java.util.OptionalLong.of(reference.length());
+            }
+
+            @Override
+            public String contentId() {
+                return "sha256:" + reference.sha256();
+            }
+
+            @Override
+            public void close() {
+                // Reference metadata owns no live resource.
             }
         }
 

@@ -33,11 +33,15 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.util.Map;
 import java.util.Objects;
 
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
+
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.pki.impl.framework.x509.StandardX509Bindings;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmIdentifier;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 
 /**
  * Internal mapper from X.509 and PKCS#10 signature algorithm identifiers to
@@ -67,11 +71,13 @@ import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
  *
  * <h2>Null and unsupported handling</h2>
  * <ul>
- * <li>{@link #toZeroEchoAlgorithmId(AlgorithmIdentifier)} returns {@code null}
+ * <li>{@link #toZeroEchoAlgorithmId(AlgorithmIdentifier, X509AuthoritySnapshot)}
+ * returns {@code null}
  * when the supplied identifier is {@code null}, when its embedded
- * {@link ASN1ObjectIdentifier} is {@code null}, when the OID string is blank,
+ * object identifier is {@code null}, when the OID string is blank,
  * or when the OID is not present in the mapping table.</li>
- * <li>{@link #toZeroEchoAlgorithmId(String)} requires a non-{@code null} OID
+ * <li>{@link #toZeroEchoAlgorithmId(String, X509AuthoritySnapshot)} requires a
+ * non-{@code null} OID
  * string but still returns {@code null} for blank or unsupported values.</li>
  * </ul>
  *
@@ -105,27 +111,6 @@ public final class OidAlgorithmMapper {
      * reviewable, and easy to maintain.
      * </p>
      */
-    @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
-    private static final Map<String, String> OID_TO_ZEROECHO_ALG = Map.ofEntries(
-            // RSA PKCS#1 v1.5 digests
-            Map.entry("1.2.840.113549.1.1.11", "SHA256withRSA"), // sha256WithRSAEncryption
-            Map.entry("1.2.840.113549.1.1.12", "SHA384withRSA"), // sha384WithRSAEncryption
-            Map.entry("1.2.840.113549.1.1.13", "SHA512withRSA"), // sha512WithRSAEncryption
-            Map.entry("1.2.840.113549.1.1.5", "SHA1withRSA"), // sha1WithRSAEncryption
-
-            // ECDSA digests
-            Map.entry("1.2.840.10045.4.3.2", "SHA256withECDSA"), // ecdsa-with-SHA256
-            Map.entry("1.2.840.10045.4.3.3", "SHA384withECDSA"), // ecdsa-with-SHA384
-            Map.entry("1.2.840.10045.4.3.4", "SHA512withECDSA"), // ecdsa-with-SHA512
-            Map.entry("1.2.840.10045.4.1", "SHA1withECDSA"), // ecdsa-with-SHA1
-
-            // EdDSA
-            Map.entry("1.3.101.112", "Ed25519"), // Ed25519
-            Map.entry("1.3.101.113", "Ed448") // Ed448
-
-    // PQC OIDs vary by provider/standard; extend as needed.
-    );
-
     /**
      * Creates no instances.
      */
@@ -137,29 +122,28 @@ public final class OidAlgorithmMapper {
      * signature algorithm identifier.
      *
      * <p>
-     * This method extracts the underlying {@link ASN1ObjectIdentifier}, converts it
-     * to its dotted-decimal string form, and performs a lookup in the immutable
-     * mapping table.
+     * This method extracts the underlying object identifier, converts it to its
+     * dotted-decimal string form, and resolves it through the injected authority.
      * </p>
      *
      * @param sigAlg ASN.1 signature algorithm identifier, possibly {@code null}
+     * @param authority immutable algorithm authority
      * @return ZeroEcho canonical signature algorithm identifier, or {@code null}
      *         when the input is {@code null}, structurally incomplete, blank, or
      *         unsupported
      */
-    public static String toZeroEchoAlgorithmId(AlgorithmIdentifier sigAlg) {
+    public static String toZeroEchoAlgorithmId(AlgorithmIdentifier sigAlg, X509AuthoritySnapshot authority) {
         if (sigAlg == null) {
             return null;
         }
-        ASN1ObjectIdentifier oid = sigAlg.getAlgorithm();
-        if (oid == null) {
+        try {
+            AlgorithmIdentity identity = new BcX509AlgorithmAdapter(
+                    Objects.requireNonNull(authority, "authority").bindings())
+                    .decode(sigAlg, X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            return identity.canonicalForm();
+        } catch (IllegalArgumentException exception) {
             return null;
         }
-        String id = oid.getId();
-        if (id == null || id.isBlank()) {
-            return null;
-        }
-        return OID_TO_ZEROECHO_ALG.get(id);
     }
 
     /**
@@ -174,15 +158,34 @@ public final class OidAlgorithmMapper {
      *
      * @param oid dotted-decimal signature algorithm OID string; must not be
      *            {@code null}
+     * @param authority immutable algorithm authority
      * @return ZeroEcho canonical signature algorithm identifier, or {@code null}
      *         when the supplied OID string is blank or unsupported
      * @throws NullPointerException if {@code oid} is {@code null}
      */
-    public static String toZeroEchoAlgorithmId(String oid) {
+    public static String toZeroEchoAlgorithmId(String oid, X509AuthoritySnapshot authority) {
         Objects.requireNonNull(oid, "oid");
-        if (oid.isBlank()) {
+        X509AlgorithmIdentifier identifier = null;
+        if (StandardX509Bindings.OID_RSA_SHA256.equals(oid)
+                || StandardX509Bindings.OID_RSA_SHA384.equals(oid)
+                || StandardX509Bindings.OID_RSA_SHA512.equals(oid)) {
+            identifier = X509AlgorithmIdentifier.derNull(oid);
+        } else if (StandardX509Bindings.OID_ECDSA_SHA256.equals(oid)
+                || StandardX509Bindings.OID_ECDSA_SHA384.equals(oid)
+                || StandardX509Bindings.OID_ECDSA_SHA512.equals(oid)
+                || StandardX509Bindings.OID_ED25519.equals(oid)
+                || StandardX509Bindings.OID_ED448.equals(oid)) {
+            identifier = X509AlgorithmIdentifier.absent(oid);
+        }
+        if (identifier == null) {
             return null;
         }
-        return OID_TO_ZEROECHO_ALG.get(oid);
+        try {
+            return Objects.requireNonNull(authority, "authority").bindings()
+                    .reverse(identifier, X509AlgorithmRole.SIGNATURE_ALGORITHM)
+                    .canonicalForm();
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
     }
 }

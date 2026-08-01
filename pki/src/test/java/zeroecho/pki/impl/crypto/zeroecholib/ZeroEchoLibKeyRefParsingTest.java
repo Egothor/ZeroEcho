@@ -45,6 +45,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
@@ -54,6 +55,7 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.core.io.ImmutableByteContent;
 
 public final class ZeroEchoLibKeyRefParsingTest {
 
@@ -75,7 +77,7 @@ public final class ZeroEchoLibKeyRefParsingTest {
 
             PkiId submissionId = SigningSubmissionId.create(NAMESPACE, Instant.now(), new SecureRandom()).id();
             SignatureWorkflow.SignRequest req = SignatureWorkflow.SignRequest.create(submissionId, NAMESPACE, 1L, ctx,
-                    new KeyRef("zeroecho-lib:abc"), "ECDSA", new EncodedObject(Encoding.BINARY, new byte[] { 0x01 }),
+                    new KeyRef("zeroecho-lib:abc"), "ECDSA", new ImmutableByteContent(new byte[] { 0x01 }),
                     Optional.of(Encoding.BINARY), Optional.of(Instant.now()));
 
             PkiId opId = wf.submitSign(req);
@@ -102,10 +104,10 @@ public final class ZeroEchoLibKeyRefParsingTest {
                     Optional.empty(), Optional.empty());
 
             SignatureWorkflow.VerifyRequest req = new SignatureWorkflow.VerifyRequest(ctx, "ECDSA",
-                    new EncodedObject(Encoding.BINARY, new byte[] { 0x01 }),
+                    new ImmutableByteContent(new byte[] { 0x01 }),
                     new EncodedObject(Encoding.BINARY, new byte[] { 0x02 }), Optional.empty(),
                     Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 0x03 })), // unsupported form
-                    Optional.of(Instant.now()));
+                    Optional.of(Instant.now()), CancellationSignal.NONE);
 
             PkiId opId = wf.submitVerify(req);
             SignatureWorkflow.OperationStatus st = wf.status(opId);

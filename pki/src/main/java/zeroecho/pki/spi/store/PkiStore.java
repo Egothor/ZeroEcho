@@ -77,6 +77,13 @@ import zeroecho.pki.api.status.StatusObject;
 public interface PkiStore extends SignWorkflowStore {
 
     /**
+     * Returns the runtime-owned durable streaming-content store.
+     *
+     * @return staged-content store used by this PKI store
+     */
+    StagedContentStore stagedContent();
+
+    /**
      * Persists or updates a Certificate Authority (CA) record.
      *
      * <p>
@@ -175,11 +182,12 @@ public interface PkiStore extends SignWorkflowStore {
     Optional<RevocationJournal> getRevocationJournal(PkiId credentialId);
 
     /**
-     * Lists authoritative revocation journals.
+     * Opens a stable restartable streaming snapshot of authoritative revocations.
      *
-     * @return immutable journal list
+     * @return revocation snapshot
+     * @throws IllegalStateException if the snapshot cannot be opened
      */
-    List<RevocationJournal> listRevocationJournals();
+    RevocationSnapshot openRevocationSnapshot();
 
     /**
      * Persists a status object.

@@ -112,8 +112,18 @@ public final class DefaultRevocationService implements RevocationService {
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public List<RevocationJournal> search(RevocationQuery query) {
         Objects.requireNonNull(query, "query");
-        try {
-            return store.listRevocationJournals().stream().filter(journal -> matches(journal, query)).toList();
+        try (zeroecho.pki.spi.store.RevocationSnapshot snapshot = store.openRevocationSnapshot();
+                zeroecho.pki.spi.store.RevocationSnapshot.Cursor cursor = snapshot.openCursor()) {
+            List<RevocationJournal> matching = new java.util.ArrayList<>();
+            while (cursor.next()) {
+                RevocationJournal journal = cursor.current();
+                if (matches(journal, query)) {
+                    matching.add(journal);
+                }
+            }
+            return List.copyOf(matching);
+        } catch (java.io.IOException failure) {
+            throw new PkiException("Revocation snapshot failed: code=STORE_FAILED", failure);
         } catch (RuntimeException failure) {
             throw sanitized(failure);
         }

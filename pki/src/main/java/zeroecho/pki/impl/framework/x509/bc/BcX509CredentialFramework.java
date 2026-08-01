@@ -41,6 +41,7 @@ import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.FrameworkAttributeMapper;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 import zeroecho.pki.spi.framework.StatusObjectGenerator;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 
 /**
  * Bouncy Castle backed X.509 implementation of {@link CredentialFramework}.
@@ -104,6 +105,7 @@ public final class BcX509CredentialFramework implements CredentialFramework {
     private final ProofOfPossessionVerifier popVerifier;
     private final StatusObjectGenerator status;
     private final FrameworkAttributeMapper attributeMapper;
+    private final X509AuthoritySnapshot authority;
 
     /**
      * Creates a partially wired X.509 framework instance with default components.
@@ -124,9 +126,9 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      * exposed by the framework facade.
      * </p>
      */
-    public BcX509CredentialFramework() {
-        this(new BcX509CertificationRequestParser(), new BcX509ProofOfPossessionVerifier(),
-                new UnsupportedStatusObjectGenerator(), new BcX509FrameworkAttributeMapper());
+    public BcX509CredentialFramework(X509AuthoritySnapshot authority, BcX509VerificationExecutor executor) {
+        this(new BcX509CertificationRequestParser(), new BcX509ProofOfPossessionVerifier(authority, executor),
+                new UnsupportedStatusObjectGenerator(), new BcX509FrameworkAttributeMapper(), authority);
     }
 
     /**
@@ -146,11 +148,12 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      * @throws NullPointerException if any component argument is {@code null}
      */
     private BcX509CredentialFramework(CertificationRequestParser requestParser, ProofOfPossessionVerifier popVerifier,
-            StatusObjectGenerator status, FrameworkAttributeMapper attributeMapper) {
+            StatusObjectGenerator status, FrameworkAttributeMapper attributeMapper, X509AuthoritySnapshot authority) {
         this.requestParser = Objects.requireNonNull(requestParser, "requestParser");
         this.popVerifier = Objects.requireNonNull(popVerifier, "popVerifier");
         this.status = Objects.requireNonNull(status, "status");
         this.attributeMapper = Objects.requireNonNull(attributeMapper, "attributeMapper");
+        this.authority = Objects.requireNonNull(authority, "authority");
     }
 
     /**
@@ -170,7 +173,8 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      */
     public BcX509CredentialFramework wired(BcX509StatusObjectGenerator statusObjectGenerator) {
         Objects.requireNonNull(statusObjectGenerator, "statusObjectGenerator");
-        return new BcX509CredentialFramework(requestParser, popVerifier, statusObjectGenerator, attributeMapper);
+        return new BcX509CredentialFramework(requestParser, popVerifier, statusObjectGenerator, attributeMapper,
+                authority);
     }
 
     /**
@@ -202,7 +206,16 @@ public final class BcX509CredentialFramework implements CredentialFramework {
         Objects.requireNonNull(statusObjectGenerator, "statusObjectGenerator");
         Objects.requireNonNull(proofOfPossessionVerifier, "proofOfPossessionVerifier");
         return new BcX509CredentialFramework(requestParser, proofOfPossessionVerifier, statusObjectGenerator,
-                attributeMapper);
+                attributeMapper, authority);
+    }
+
+    /**
+     * Returns the immutable algorithm authority owned by this framework graph.
+     *
+     * @return shared authority snapshot
+     */
+    public X509AuthoritySnapshot authority() {
+        return authority;
     }
 
     /**
@@ -283,9 +296,9 @@ public final class BcX509CredentialFramework implements CredentialFramework {
          * @throws UnsupportedOperationException always
          */
         @Override
-        public zeroecho.pki.api.status.StatusObject generate(
+        public zeroecho.pki.impl.framework.x509.X509SignedObjectCompletion generate(
                 zeroecho.pki.api.status.StatusObjectGenerateCommand command,
-                java.util.List<zeroecho.pki.spi.framework.CrlEntry> crlEntries) {
+                zeroecho.pki.spi.framework.CrlEntrySource crlEntries) {
             throw new UnsupportedOperationException("X.509 status object generator not wired");
         }
     }

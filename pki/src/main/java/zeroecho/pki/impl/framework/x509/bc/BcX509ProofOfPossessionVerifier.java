@@ -35,17 +35,20 @@ package zeroecho.pki.impl.framework.x509.bc;
 
 import java.util.Optional;
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.operator.ContentVerifierProvider;
 import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.io.ImmutableByteContent;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 
 /**
@@ -94,21 +97,38 @@ import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
  * authorization checks, or profile compliance checks.</li>
  * <li>The presence of a valid PKCS#10 self-signature does not by itself imply
  * that the requester is entitled to receive the requested certificate.</li>
- * <li>This verifier accepts signature algorithms supported by its Bouncy Castle
- * provider, including RSASSA-PSS. Deployments requiring a narrower or stronger
- * algorithm policy must enforce it in the issuance policy layer.</li>
+ * <li>Algorithm identity, X.509 binding, immutable security-floor, capability,
+ * and configured-policy decisions are taken from one injected
+ * {@link X509AuthoritySnapshot}. Bouncy Castle remains only the structural and
+ * cryptographic adapter at this Phase A boundary.</li>
  * <li>The CSR payload carried under {@link BcX509Attributes#CSR_DER} may be
  * operationally sensitive and must not be logged unsafely.</li>
  * </ul>
  *
  * <h2>Thread-safety</h2>
  * <p>
- * This class is stateless and thread-safe.
+ * This class is immutable and thread-safe when its authority snapshot is shared
+ * as part of one immutable runtime graph.
  * </p>
  */
 public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionVerifier {
 
-    private static final BouncyCastleProvider BC_PROVIDER = new BouncyCastleProvider();
+    private final X509AuthoritySnapshot authority;
+    private final BcX509VerificationExecutor executor;
+
+    /**
+     * Creates a verifier backed by one runtime authority and its exact executor.
+     *
+     * @param authority identity, binding, capability, floor, and policy authority;
+     *                  must not be {@code null}
+     * @param executor process-local verification executor bound into
+     *                 {@code authority}
+     * @throws NullPointerException if {@code authority} is {@code null}
+     */
+    public BcX509ProofOfPossessionVerifier(X509AuthoritySnapshot authority, BcX509VerificationExecutor executor) {
+        this.authority = java.util.Objects.requireNonNull(authority, "authority");
+        this.executor = java.util.Objects.requireNonNull(executor, "executor");
+    }
 
     /**
      * Verifies proof of possession for a parsed PKCS#10 certification request.
@@ -123,7 +143,7 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
      * Otherwise, the method expects the original CSR DER payload to be present in
      * {@code request.attributes()} under {@link BcX509Attributes#CSR_DER} as an
      * {@link AttributeValue.BytesValue}. It then parses the CSR, creates a Bouncy
-     * Castle {@link ContentVerifierProvider} from the CSR's embedded subject public
+     * Castle content verifier from the CSR's embedded subject public
      * key information, and validates the PKCS#10 signature.
      * </p>
      *
@@ -179,17 +199,33 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
         try {
             PKCS10CertificationRequest csr;
             try {
+                BcX509AlgorithmAdapter.requireCanonicalDer(csrDer);
                 csr = new PKCS10CertificationRequest(csrDer);
             } catch (Exception ex) {
                 return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("Invalid CSR"));
             }
-            ContentVerifierProvider cvp = new JcaContentVerifierProviderBuilder().setProvider(BC_PROVIDER)
-                    .build(csr.getSubjectPublicKeyInfo());
-            boolean ok = csr.isSignatureValid(cvp);
-            if (ok) {
-                return new ProofOfPossessionResult(ProofOfPossessionStatus.VERIFIED, Optional.empty());
+            BcX509AlgorithmAdapter algorithmAdapter = new BcX509AlgorithmAdapter(authority.bindings());
+            try {
+                AlgorithmIdentity signatureIdentity = algorithmAdapter.decode(csr.getSignatureAlgorithm(),
+                        X509AlgorithmRole.SIGNATURE_ALGORITHM);
+                AlgorithmIdentity keyIdentity = algorithmAdapter.decode(csr.getSubjectPublicKeyInfo().getAlgorithm(),
+                        X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+                X509ExecutionPlan<BcX509VerificationExecutor> plan = authority.plan(signatureIdentity, keyIdentity,
+                        AlgorithmExecutionCapability.Direction.VERIFY,
+                        Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "csr-proof",
+                        BcX509VerificationExecutor.class);
+                byte[] signedBytes = csr.toASN1Structure().getCertificationRequestInfo().getEncoded();
+                boolean valid = executor.verify(authority, plan, csr.getSubjectPublicKeyInfo(),
+                        csr.getSignatureAlgorithm(), new ImmutableByteContent(signedBytes), csr.getSignature());
+                if (!valid) {
+                    return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED,
+                            Optional.of("CSR signature invalid"));
+                }
+            } catch (IllegalArgumentException unsupported) {
+                return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED,
+                        Optional.of("Unsupported CSR algorithm"));
             }
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("CSR signature invalid"));
+            return new ProofOfPossessionResult(ProofOfPossessionStatus.VERIFIED, Optional.empty());
         } catch (OperatorCreationException ex) {
             return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("Verifier unavailable"));
         } catch (Exception ex) {

@@ -80,12 +80,12 @@ final class CaCertificateProfileValidator {
             ActiveCertificateProfile activeProfile, CertificateProfileKind expectedKind, FormatId formatId,
             PkiId issuerCaId, PkiId subjectCaId, SubjectRef requestedSubject, EncodedObject exactPublicKey,
             Optional<Validity> requestedValidity, Instant evaluationTime, Optional<Instant> issuerNotAfter,
-            BigInteger serial) {
+            BigInteger serial, zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot authority) {
         CertificateProfileDefinition definition = activeProfile.definition();
         requireProfileShape(definition, expectedKind, formatId);
         List<SubjectRdn> approvedSubject = validateSubject(requestedSubject, definition);
         return validateApprovedSubject(operation, activeProfile, expectedKind, formatId, issuerCaId, subjectCaId,
-                approvedSubject, exactPublicKey, requestedValidity, evaluationTime, issuerNotAfter, serial);
+                approvedSubject, exactPublicKey, requestedValidity, evaluationTime, issuerNotAfter, serial, authority);
     }
 
     /*
@@ -97,12 +97,13 @@ final class CaCertificateProfileValidator {
             ValidatedCaCertificateRequest.Operation operation, ActiveCertificateProfile activeProfile,
             CertificateProfileKind expectedKind, FormatId formatId, PkiId issuerCaId, PkiId subjectCaId,
             List<SubjectRdn> approvedSubject, EncodedObject exactPublicKey, Optional<Validity> requestedValidity,
-            Instant evaluationTime, Optional<Instant> issuerNotAfter, BigInteger serial) {
+            Instant evaluationTime, Optional<Instant> issuerNotAfter, BigInteger serial,
+            zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot authority) {
         CertificateProfileDefinition definition = activeProfile.definition();
         requireProfileShape(definition, expectedKind, formatId);
         List<SubjectRdn> subjectSnapshot = requireApprovedSubject(approvedSubject);
         CertificateProfileValidator.requireSubjectKeyAllowed(exactPublicKey,
-                definition.caPolicy().allowedSubjectKeyAlgorithmIds());
+                definition.caPolicy().allowedSubjectKeyAlgorithmIds(), authority);
         Validity validity = approvedValidity(requestedValidity, definition, evaluationTime, issuerNotAfter,
                 operation == ValidatedCaCertificateRequest.Operation.IMPORT_ROOT);
         SubjectRef canonicalSubject = new SubjectRef(BcX509ProfileSupport.subject(subjectSnapshot).toString());

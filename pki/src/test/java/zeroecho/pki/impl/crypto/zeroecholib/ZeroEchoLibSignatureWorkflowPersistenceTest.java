@@ -68,6 +68,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.storage.KeyringStore;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
@@ -134,23 +136,21 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
 
             AccessContext access = signRequest.accessContext();
             SignatureWorkflow.VerifyRequest verifyRequest = new SignatureWorkflow.VerifyRequest(access, "SHA256withRSA",
-                    new EncodedObject(Encoding.BINARY, message), signature,
-                    Optional.of(new KeyRef("zeroecho-lib:test.pub")), Optional.empty(), Optional.empty());
+                    new ImmutableByteContent(message), signature, Optional.of(new KeyRef("zeroecho-lib:test.pub")),
+                    Optional.empty(), Optional.empty(), CancellationSignal.NONE);
             PkiId verifyId = workflow.submitVerify(verifyRequest);
             assertEquals(Optional.of(true), workflow.status(verifyId).result().orElseThrow().verified());
 
             byte[] invalidBytes = signature.bytes();
             invalidBytes[0] ^= 0x01;
             SignatureWorkflow.VerifyRequest invalidRequest = new SignatureWorkflow.VerifyRequest(access,
-                    "SHA256withRSA", new EncodedObject(Encoding.BINARY, message),
+                    "SHA256withRSA", new ImmutableByteContent(message),
                     new EncodedObject(Encoding.BINARY, invalidBytes), Optional.of(new KeyRef("zeroecho-lib:test.pub")),
-                    Optional.empty(), Optional.empty());
+                    Optional.empty(), Optional.empty(), CancellationSignal.NONE);
             PkiId invalidId = workflow.submitVerify(invalidRequest);
             assertEquals(Optional.of(false), workflow.status(invalidId).result().orElseThrow().verified());
 
-            assertTrue(cleared.stream().anyMatch(value -> "sign-payload".equals(value.category())));
             assertTrue(cleared.stream().anyMatch(value -> "sign-result-copy".equals(value.category())));
-            assertTrue(cleared.stream().anyMatch(value -> "verify-payload".equals(value.category())));
             assertTrue(cleared.stream().anyMatch(value -> "verify-signature".equals(value.category())));
             assertTrue(cleared.stream().anyMatch(value -> "persisted-operation-buffer".equals(value.category())));
             assertTrue(cleared.stream().allMatch(value -> isCleared(value.bytes())));
@@ -248,12 +248,12 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         PkiId id = SigningSubmissionId.create(NAMESPACE, Instant.parse("2026-02-03T04:05:06Z"), new SecureRandom())
                 .id();
         SignatureWorkflow.SignRequest request = request(id, 1L, encoded.bytes());
-        byte[] requestBytes = request.payload().bytes();
+        byte[] requestBytes = ((ImmutableByteContent) request.content()).copyBytes();
         requestBytes[2] = 9;
-        assertEquals(3, request.payload().bytes()[2]);
+        assertEquals(3, ((ImmutableByteContent) request.content()).copyBytes()[2]);
         assertEquals(request.semanticFingerprint(),
                 SignatureWorkflow.SignRequest.fingerprint(NAMESPACE, request.accessContext(), request.keyRef(),
-                        request.algorithmId(), request.payload(), request.preferredSignatureEncoding(),
+                        request.algorithmId(), request.content(), request.preferredSignatureEncoding(),
                         request.deadline()));
     }
 
@@ -372,7 +372,7 @@ final class ZeroEchoLibSignatureWorkflowPersistenceTest {
         AccessContext access = new AccessContext(new Principal("TEST", "owner"), new Purpose("TEST"), Optional.empty(),
                 Optional.empty());
         return SignatureWorkflow.SignRequest.create(id, NAMESPACE, fence, access, keyRef, "SHA256withRSA",
-                new EncodedObject(Encoding.BINARY, payload), Optional.of(Encoding.BINARY), deadline);
+                new ImmutableByteContent(payload), Optional.of(Encoding.BINARY), deadline);
     }
 
     private static void forcePersistedStateCode(Path operations, int from, int to) {

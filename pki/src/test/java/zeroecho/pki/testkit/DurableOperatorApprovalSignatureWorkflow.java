@@ -310,7 +310,8 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
         if (key == null) {
             return new OperationStatus(State.FAILED, Instant.now(), Optional.of("UNKNOWN_KEY"), Optional.empty());
         }
-        if (!supportedAlgorithms().contains(req.algorithmId)) {
+        String jcaAlgorithm = InMemorySignatureWorkflow.jcaName(req.algorithmId);
+        if (!supportedAlgorithms().contains(jcaAlgorithm)) {
             return new OperationStatus(State.FAILED, Instant.now(), Optional.of("UNSUPPORTED_ALG"), Optional.empty());
         }
 
@@ -324,7 +325,7 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
         }
 
         try {
-            Signature sig = Signature.getInstance(req.algorithmId);
+            Signature sig = Signature.getInstance(jcaAlgorithm);
             sig.initSign(key);
             sig.update(req.payload);
             byte[] signature = sig.sign();
@@ -362,10 +363,16 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
         try {
             Files.createDirectories(dir);
             String line = req.keyRef().value() + "\n" + req.algorithmId() + "\n"
-                    + Base64.getEncoder().encodeToString(req.payload().bytes());
+                    + Base64.getEncoder().encodeToString(readContent(req.content()));
             Files.writeString(dir.resolve(FILE_REQUEST), line, StandardCharsets.UTF_8);
         } catch (IOException ex) {
             throw new IllegalStateException("Cannot persist request", ex);
+        }
+    }
+
+    private static byte[] readContent(zeroecho.core.io.RepeatableContent content) throws IOException {
+        try (java.io.InputStream input = content.openStream()) {
+            return input.readAllBytes();
         }
     }
 

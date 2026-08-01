@@ -34,16 +34,25 @@
 package zeroecho.pki.testkit;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.PublicKey;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spec.AlgorithmSuite;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
+import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
 import zeroecho.pki.api.CaService;
 import zeroecho.pki.api.CertificationRequestService;
 import zeroecho.pki.api.EncodedObject;
@@ -53,6 +62,7 @@ import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.RevocationService;
 import zeroecho.pki.api.StatusObjectService;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.impl.audit.InMemoryAuditSink;
@@ -65,9 +75,13 @@ import zeroecho.pki.impl.core.DefaultStatusObjectService;
 import zeroecho.pki.impl.core.StoreBackedEffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialIssuerBackend;
 import zeroecho.pki.impl.framework.x509.bc.BcX509StatusObjectGenerator;
+import zeroecho.pki.impl.framework.x509.bc.BcX509ProofOfPossessionVerifier;
+import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
@@ -75,6 +89,8 @@ import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.spi.store.ContentSink;
+import zeroecho.pki.spi.store.StagedContentStore;
 
 /**
  * Test-only PKI runtime wiring helper.
@@ -86,6 +102,113 @@ import zeroecho.pki.spi.store.PkiStore;
  * </p>
  */
 public final class PkiTestRuntime implements AutoCloseable {
+
+    /**
+     * Stages one small test payload through the production streaming boundary.
+     *
+     * @param bus owning signing bus
+     * @param payload small test payload
+     * @return durable operation-content reference
+     * @throws IOException if staging fails
+     */
+    public static DurableContentReference stage(PkiSigningBus bus, EncodedObject payload) throws IOException {
+        try (ContentSink sink = bus.beginSigningContent(payload.encoding());
+                OutputStream output = sink.outputStream()) {
+            output.write(payload.bytes());
+            return sink.complete();
+        }
+    }
+
+    /**
+     * Materializes one test fixture from runtime-owned staged content.
+     *
+     * @param bus owning signing bus
+     * @param reference content reference
+     * @return fixture bytes
+     * @throws IOException if reading fails
+     */
+    public static byte[] readContent(PkiSigningBus bus, DurableContentReference reference) throws IOException {
+        try (zeroecho.core.io.RepeatableContent content = bus.openContent(reference);
+                java.io.InputStream input = content.openStream()) {
+            return input.readAllBytes();
+        }
+    }
+
+    /**
+     * Stages one small credential fixture in the supplied test store.
+     *
+     * @param store owning test store
+     * @param encoded encoded fixture bytes
+     * @return durable credential-content reference
+     * @throws IOException if staging fails
+     */
+    public static DurableContentReference stageCredential(PkiStore store, byte[] encoded) throws IOException {
+        try (ContentSink sink = store.stagedContent().beginContent(Encoding.DER, DurableContentReference.Lifecycle.PERSISTED);
+                OutputStream output = sink.outputStream()) {
+            output.write(encoded);
+            return sink.complete();
+        }
+    }
+
+    /**
+     * Creates payload-free metadata for tests that exercise value semantics only.
+     *
+     * <p>
+     * The returned reference is intentionally not resolvable. Tests that read
+     * content must stage it through an owning store instead.
+     * </p>
+     *
+     * @param encoding fixture encoding
+     * @param bytes fixture bytes used only to derive immutable metadata
+     * @return non-resolvable fixture reference
+     */
+    public static DurableContentReference fixtureReference(StagedContentStore store, Encoding encoding, byte[] bytes)
+            throws IOException {
+        try (ContentSink sink = store.beginContent(encoding, DurableContentReference.Lifecycle.PERSISTED);
+                OutputStream output = sink.outputStream()) {
+            output.write(bytes);
+            return sink.complete();
+        }
+    }
+
+    /**
+     * Creates an explicitly untrusted reference implementation for hostile tests.
+     *
+     * @param source source metadata
+     * @param encoding substituted encoding
+     * @return non-store-issued reference that an owning store must reject
+     */
+    public static DurableContentReference untrustedReference(DurableContentReference source, Encoding encoding) {
+        return new UntrustedReference(source.storeId(), source.contentId(), encoding, source.length(), source.sha256(),
+                source.lifecycle());
+    }
+
+    /**
+     * Materializes one small fixture from store-owned content.
+     *
+     * @param store owning test store
+     * @param reference content reference
+     * @return fixture bytes
+     * @throws IOException if reading fails
+     */
+    public static byte[] readContent(PkiStore store, DurableContentReference reference) throws IOException {
+        try (zeroecho.core.io.RepeatableContent content = store.stagedContent().openContent(reference);
+                java.io.InputStream input = content.openStream()) {
+            return input.readAllBytes();
+        }
+    }
+
+    public DurableContentReference stageCredential(byte[] encoded) throws IOException {
+        return stageCredential(store, encoded);
+    }
+
+    public byte[] credentialBytes(zeroecho.pki.api.credential.Credential credential) throws IOException {
+        return readContent(store, credential.content());
+    }
+
+    private record UntrustedReference(String storeId, String contentId, Encoding encoding, long length, String sha256,
+            DurableContentReference.Lifecycle lifecycle) implements DurableContentReference {
+    }
 
     private final FilesystemPkiStore store;
     private final PkiSigningBus signingBus;
@@ -128,7 +251,8 @@ public final class PkiTestRuntime implements AutoCloseable {
         this.issuanceService = new DefaultIssuanceService(store, framework, issuerBackend, auditSink, statusResolver,
                 profileService, clock);
         this.revocationService = new DefaultRevocationService(store, clock, auditSink);
-        this.statusObjectService = new DefaultStatusObjectService(store, framework, auditSink, statusResolver);
+        this.statusObjectService = new DefaultStatusObjectService(store, framework, auditSink, statusResolver,
+                signingBus.authority());
 
         this.caService = new DefaultCaService(store, framework, issuerBackend, this::resolvePublicKeyInfo, signingBus,
                 auditSink, statusResolver, profileService, clock, "SHA256withRSA", signingTtl);
@@ -189,15 +313,20 @@ public final class PkiTestRuntime implements AutoCloseable {
         }
 
         SignatureWorkflow signer = new InMemorySignatureWorkflow(byRef);
-        PkiSigningBus signingBus = new PkiSigningBus(store, signer, busFile);
+        BcX509VerificationExecutor verificationExecutor = new BcX509VerificationExecutor();
+        X509AuthoritySnapshot authority = signingAuthority(signer, List.of(verificationExecutor),
+                List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                        AlgorithmExecutionCapability.Direction.VERIFY, verificationExecutor)));
+        PkiSigningBus signingBus = new PkiSigningBus(store, signer, busFile, authority);
 
         BcX509CredentialIssuerBackend issuerBackend = new BcX509CredentialIssuerBackend(signingBus, "SHA256withRSA",
                 Duration.ofSeconds(2));
         BcX509StatusObjectGenerator statusGen = new BcX509StatusObjectGenerator(signingBus, "SHA256withRSA",
                 Duration.ofSeconds(2));
-        BcX509CredentialFramework baseFramework = new BcX509CredentialFramework();
-        CredentialFramework framework = proofVerifier.map(verifier -> baseFramework.wired(statusGen, verifier))
-                .orElseGet(() -> baseFramework.wired(statusGen));
+        BcX509CredentialFramework baseFramework = new BcX509CredentialFramework(authority, verificationExecutor);
+        ProofOfPossessionVerifier effectiveVerifier = proofVerifier
+                .orElseGet(() -> new BcX509ProofOfPossessionVerifier(authority, verificationExecutor));
+        CredentialFramework framework = baseFramework.wired(statusGen, effectiveVerifier);
 
         return new PkiTestRuntime(store, signingBus, signer, framework, issuerBackend, publicByRef,
                 Duration.ofSeconds(2));
@@ -215,13 +344,94 @@ public final class PkiTestRuntime implements AutoCloseable {
             publicByRef.put(entry.getKey().value(), entry.getValue().getPublic());
         }
         SignatureWorkflow signer = new InMemorySignatureWorkflow(byRef, false);
-        PkiSigningBus signingBus = new PkiSigningBus(store, signer, busFile);
+        BcX509VerificationExecutor verificationExecutor = new BcX509VerificationExecutor();
+        X509AuthoritySnapshot authority = signingAuthority(signer, List.of(verificationExecutor),
+                List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                        AlgorithmExecutionCapability.Direction.VERIFY, verificationExecutor)));
+        PkiSigningBus signingBus = new PkiSigningBus(store, signer, busFile, authority);
         BcX509CredentialIssuerBackend issuerBackend = new BcX509CredentialIssuerBackend(signingBus, "SHA256withRSA",
                 signingTtl);
         BcX509StatusObjectGenerator statusGen = new BcX509StatusObjectGenerator(signingBus, "SHA256withRSA",
                 signingTtl);
-        CredentialFramework framework = new BcX509CredentialFramework().wired(statusGen);
+        CredentialFramework framework = new BcX509CredentialFramework(authority, verificationExecutor).wired(statusGen,
+                new BcX509ProofOfPossessionVerifier(authority, verificationExecutor));
         return new PkiTestRuntime(store, signingBus, signer, framework, issuerBackend, publicByRef, signingTtl);
+    }
+
+    /**
+     * Composes a test authority that owns the exact supplied signing workflow.
+     *
+     * <p>
+     * This test helper makes runtime composition explicit. The returned snapshot
+     * binds only the signing identities declared by {@code workflow}, contains no
+     * key material, and cannot authorize a different workflow instance.
+     * </p>
+     *
+     * @param workflow exact test signing workflow
+     * @return immutable authority snapshot owning {@code workflow}
+     * @throws NullPointerException if {@code workflow} or its supported-algorithm
+     *                              set is {@code null}
+     */
+    public static X509AuthoritySnapshot signingAuthority(SignatureWorkflow workflow) {
+        return signingAuthority(workflow, List.of(), List.of());
+    }
+
+    private static X509AuthoritySnapshot signingAuthority(SignatureWorkflow workflow,
+            List<AlgorithmExecutionCapabilityProvider> additionalCapabilities,
+            List<X509AuthoritySnapshot.ExecutorBinding> additionalExecutors) {
+        Objects.requireNonNull(workflow, "workflow");
+        Objects.requireNonNull(additionalCapabilities, "additionalCapabilities");
+        Objects.requireNonNull(additionalExecutors, "additionalExecutors");
+        Set<String> supported = Set.copyOf(
+                Objects.requireNonNull(workflow.supportedAlgorithms(), "workflow.supportedAlgorithms"));
+        Set<AlgorithmIdentity> exact = BootstrapAlgorithmIdentities.catalog().identities().stream()
+                .filter(identity -> identity.kind() == AlgorithmIdentity.Kind.SIGNATURE)
+                .filter(identity -> supported.contains(identity.canonicalForm())
+                        || BootstrapAlgorithmIdentities.compatibilityAliases().entrySet().stream()
+                                .anyMatch(entry -> entry.getValue().equals(identity)
+                                        && supported.contains(entry.getKey())))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        AlgorithmExecutionCapability capability = new AlgorithmExecutionCapability() {
+            @Override
+            public String implementationId() {
+                return workflowImplementationId(workflow);
+            }
+
+            @Override
+            public String domainFingerprint() {
+                return "test-workflow-v1:" + workflow.id() + ":" + exact.stream()
+                        .map(AlgorithmIdentity::canonicalForm).sorted().reduce("", (left, right) -> left + right);
+            }
+
+            @Override
+            public boolean supports(AlgorithmIdentity identity, AlgorithmSuite suite, Direction direction) {
+                return direction == Direction.SIGN && exact.contains(identity) && identity.equals(suite.signature());
+            }
+        };
+        AlgorithmExecutionCapabilityProvider provider = () -> List.of(capability);
+        X509AlgorithmResolver.Policy policy = new X509AlgorithmResolver.Policy() {
+            @Override
+            public boolean permits(AlgorithmSuite suite, AlgorithmExecutionCapability.Direction direction) {
+                return true;
+            }
+
+            @Override
+            public String semanticFingerprint() {
+                return "pki-test-runtime-policy-v1:allow-authorized-capability";
+            }
+        };
+        List<AlgorithmExecutionCapabilityProvider> providers = new ArrayList<>();
+        providers.add(provider);
+        providers.addAll(additionalCapabilities);
+        List<X509AuthoritySnapshot.ExecutorBinding> executors = new ArrayList<>();
+        executors.add(X509AuthoritySnapshot.bindExecutor(capability.implementationId(),
+                AlgorithmExecutionCapability.Direction.SIGN, workflow));
+        executors.addAll(additionalExecutors);
+        return X509AuthoritySnapshot.compose(List.of(), providers, executors, policy);
+    }
+
+    private static String workflowImplementationId(SignatureWorkflow workflow) {
+        return "workflow." + workflow.id();
     }
 
     private EncodedObject resolvePublicKeyInfo(KeyRef keyRef) {
@@ -377,7 +587,7 @@ public final class PkiTestRuntime implements AutoCloseable {
 
     public StatusObjectService statusObjectService(EffectiveCredentialStatusResolver resolver) {
         return new DefaultStatusObjectService(store, framework, auditSink,
-                Objects.requireNonNull(resolver, "resolver"));
+                Objects.requireNonNull(resolver, "resolver"), signingBus.authority());
     }
 
     /**

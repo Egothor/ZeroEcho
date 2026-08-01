@@ -49,12 +49,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.DERNull;
-import org.bouncycastle.asn1.edec.EdECObjectIdentifiers;
-import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.asn1.x9.X9ObjectIdentifiers;
 
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
@@ -74,6 +69,11 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.api.request.SubjectRdn;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
+import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport;
 
 /**
@@ -83,18 +83,20 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport;
 @SuppressWarnings("PMD.CyclomaticComplexity")
 final class CertificateProfileValidator {
 
+    private static final String EC_FAMILY = "ec";
+
     private CertificateProfileValidator() {
     }
 
     /* package */ static ValidatedCertificateRequest validate(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
-            Instant evaluationTime) {
+            Instant evaluationTime, X509AuthoritySnapshot authority) {
         ParsedCertificationRequest request = candidate.request();
         LeafCertificatePolicy policy = profile.leafPolicy();
         requireCanonicalRequestAttributes(request);
         List<SubjectRdn> approvedSubject = validateSubject(request, profile);
         List<SubjectAlternativeName> approvedSans = validateSans(request, policy, approvedSubject.isEmpty());
-        requireSubjectKeyAllowed(candidate.exactPublicKey(), policy.allowedSubjectKeyAlgorithmIds());
+        requireSubjectKeyAllowed(candidate.exactPublicKey(), policy.allowedSubjectKeyAlgorithmIds(), authority);
         Validity validity = approvedValidity(candidate, request, profile, issuerCredential, evaluationTime);
         boolean sanCritical = approvedSubject.isEmpty()
                 || policy.subjectAlternativeNamePolicy().criticalWithNonemptySubject();
@@ -225,15 +227,24 @@ final class CertificateProfileValidator {
     // The public exception deliberately redacts ASN.1 parser details.
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.AvoidRethrowingException" })
     /* package */ static void requireSubjectKeyAllowed(zeroecho.pki.api.EncodedObject exactPublicKey,
-            Set<String> allowedAlgorithms) {
+            Set<String> allowedAlgorithms, X509AuthoritySnapshot authority) {
         if (exactPublicKey.encoding() != Encoding.DER) {
             throw reject("SUBJECT_KEY_UNSUPPORTED");
         }
         byte[] encoded = exactPublicKey.bytes();
         try {
             SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(encoded);
-            SubjectKeyAlgorithm algorithm = subjectKeyAlgorithm(spki.getAlgorithm().getAlgorithm());
-            requireSupportedParameters(spki, algorithm);
+            AlgorithmIdentity identity;
+            try {
+                identity = new BcX509AlgorithmAdapter(authority.bindings()).decode(spki.getAlgorithm(),
+                        X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            } catch (IllegalArgumentException invalidBinding) {
+                boolean knownOid = authority.bindings().rules().stream()
+                        .filter(rule -> rule.role() == X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM)
+                        .anyMatch(rule -> rule.oid().equals(spki.getAlgorithm().getAlgorithm().getId()));
+                throw reject(knownOid ? "SUBJECT_KEY_PARAMETERS_UNSUPPORTED" : "SUBJECT_KEY_ALGORITHM_UNKNOWN");
+            }
+            SubjectKeyAlgorithm algorithm = subjectKeyAlgorithm(identity);
             if (!allowedAlgorithms.contains(algorithm.profileId())) {
                 throw reject("SUBJECT_KEY_ALGORITHM_FORBIDDEN");
             }
@@ -258,33 +269,20 @@ final class CertificateProfileValidator {
         }
     }
 
-    private static SubjectKeyAlgorithm subjectKeyAlgorithm(ASN1ObjectIdentifier oid) {
-        if (PKCSObjectIdentifiers.rsaEncryption.equals(oid)) {
+    private static SubjectKeyAlgorithm subjectKeyAlgorithm(AlgorithmIdentity identity) {
+        if (identity.equals(BootstrapAlgorithmIdentities.RSA_PUBLIC_KEY)) {
             return new SubjectKeyAlgorithm("RSA", "RSA");
         }
-        if (X9ObjectIdentifiers.id_ecPublicKey.equals(oid)) {
+        if (EC_FAMILY.equals(identity.family().name())) {
             return new SubjectKeyAlgorithm("ECDSA", "EC");
         }
-        if (EdECObjectIdentifiers.id_Ed25519.equals(oid)) {
+        if (identity.equals(BootstrapAlgorithmIdentities.ED25519_PUBLIC_KEY)) {
             return new SubjectKeyAlgorithm("Ed25519", "Ed25519");
         }
-        if (EdECObjectIdentifiers.id_Ed448.equals(oid)) {
+        if (identity.equals(BootstrapAlgorithmIdentities.ED448_PUBLIC_KEY)) {
             return new SubjectKeyAlgorithm("Ed448", "Ed448");
         }
         throw reject("SUBJECT_KEY_ALGORITHM_UNKNOWN");
-    }
-
-    private static void requireSupportedParameters(SubjectPublicKeyInfo spki, SubjectKeyAlgorithm algorithm) {
-        org.bouncycastle.asn1.ASN1Encodable parameters = spki.getAlgorithm().getParameters();
-        boolean supported = switch (algorithm.profileId()) {
-            case "RSA" -> DERNull.INSTANCE.equals(parameters);
-            case "ECDSA" -> parameters instanceof ASN1ObjectIdentifier;
-            case "Ed25519", "Ed448" -> parameters == null;
-            default -> false;
-        };
-        if (!supported) {
-            throw reject("SUBJECT_KEY_PARAMETERS_UNSUPPORTED");
-        }
     }
 
     // The public exception deliberately redacts temporal arithmetic details.

@@ -281,7 +281,7 @@ public final class PkiCoreE2eTest {
             assertNotNull(bundle);
             System.out.println("...issuedCredentialId=" + bundle.credential().credentialId().value());
 
-            X509CertificateHolder eeCert = new X509CertificateHolder(bundle.credential().encoded().bytes());
+            X509CertificateHolder eeCert = new X509CertificateHolder(runtime.credentialBytes(bundle.credential()));
             assertEquals("CN=Root", eeCert.getIssuer().toString());
             assertEquals("CN=Alice", eeCert.getSubject().toString());
 
@@ -293,7 +293,8 @@ public final class PkiCoreE2eTest {
             assertNotNull(crl);
             System.out.println("...crlId=" + crl.statusObjectId().value());
 
-            X509CRLHolder crlHolder = new X509CRLHolder(crl.encoded().bytes());
+            X509CRLHolder crlHolder = new X509CRLHolder(
+                    PkiTestRuntime.readContent(runtime.signingBus(), crl.content()));
             assertTrue(crlHolder.getRevokedCertificate(eeCert.getSerialNumber()) != null);
         }
 
@@ -390,7 +391,7 @@ public final class PkiCoreE2eTest {
     private static Credential copyWithId(Credential source, PkiId id) {
         return new Credential(id, source.formatId(), source.issuerRef(), source.subjectRef(), source.validity(),
                 source.serialOrUniqueId(), source.publicKeyId(), source.profileBinding(), source.status(),
-                source.encoded(), source.attributes());
+                source.content(), source.attributes());
     }
 
     private static final class CountingIssuerBackend implements CredentialIssuerBackend {
@@ -405,7 +406,7 @@ public final class PkiCoreE2eTest {
         }
 
         @Override
-        public CredentialBundle issueEndEntity(ValidatedCertificateRequest candidate, EncodedObject issuerCertificate,
+        public CredentialBundle issueEndEntity(ValidatedCertificateRequest candidate, zeroecho.pki.api.content.DurableContentReference issuerCertificate,
                 KeyRef issuerKeyRef, BigInteger serial) {
             endEntityCalls.incrementAndGet();
             return delegate.issueEndEntity(candidate, issuerCertificate, issuerKeyRef, serial);
@@ -413,7 +414,7 @@ public final class PkiCoreE2eTest {
 
         @Override
         public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
-                EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
             intermediateCalls.incrementAndGet();
             return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
         }

@@ -55,6 +55,8 @@ import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.ImmutableByteContent;
 
 public final class ZeroEchoLibSignatureWorkflowVerifyEncodedTest {
 
@@ -90,8 +92,9 @@ public final class ZeroEchoLibSignatureWorkflowVerifyEncodedTest {
             AccessContext ac = new AccessContext(new Principal("TEST", "verify"), new Purpose("UNIT"), Optional.empty(),
                     Optional.empty());
 
-            SignatureWorkflow.VerifyRequest vr = new SignatureWorkflow.VerifyRequest(ac, "SHA256withRSA", payloadObj,
-                    sigObj, Optional.empty(), Optional.of(spkiObj), Optional.of(Instant.now().plusSeconds(5)));
+            SignatureWorkflow.VerifyRequest vr = new SignatureWorkflow.VerifyRequest(ac, "SHA256withRSA",
+                    new ImmutableByteContent(payload), sigObj, Optional.empty(), Optional.of(spkiObj),
+                    Optional.of(Instant.now().plusSeconds(5)), CancellationSignal.NONE);
 
             PkiId opId = wf.submitVerify(vr);
             SignatureWorkflow.OperationStatus st = wf.status(opId);

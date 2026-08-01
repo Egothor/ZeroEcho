@@ -37,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static zeroecho.pki.testkit.PkiTestRuntime.signingAuthority;
 
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -62,6 +63,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
@@ -82,17 +84,19 @@ final class FilesystemSignWorkflowStoreTest {
     private static final String TEST_ALGORITHM = "SHA256withRSA";
 
     @Test
-    void currentRecordCodecRequiresExactShapeAndRedactsStructuralFailures() throws Exception {
+    void currentRecordCodecRequiresExactShapeAndRedactsStructuralFailures(@TempDir Path root) throws Exception {
         System.out.println("currentRecordCodecRequiresExactShapeAndRedactsStructuralFailures");
         Instant createdAt = Instant.parse("2026-01-02T03:04:05.123Z");
         PkiId id = SigningSubmissionId
                 .create("0123456789abcdef0123456789abcdef.test-signer", createdAt, new SecureRandom()).id();
-        SignWorkflowStore.Record current = intent(id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { 7 }),
-                TEST_ALGORITHM);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+        SignWorkflowStore.Record current = intent(store, id, createdAt,
+                new EncodedObject(Encoding.BINARY, new byte[] { 7 }), TEST_ALGORITHM);
         String fingerprint = current.fingerprint();
         byte[] encoded = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, current);
 
-        SignWorkflowStore.Record decoded = FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, encoded);
+        SignWorkflowStore.Record decoded = FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, encoded,
+                store.stagedContent());
         assertEquals(current.submissionId(), decoded.submissionId());
         assertEquals(current.providerUpdatedAt(), decoded.providerUpdatedAt());
 
@@ -105,6 +109,7 @@ final class FilesystemSignWorkflowStoreTest {
 
         byte[] missingProviderUpdatedAt = Arrays.copyOf(encoded, encoded.length - 3);
         assertRedactedStructuralFailure(missingProviderUpdatedAt, fingerprint);
+        }
         System.out.println("...ok");
     }
 
@@ -118,7 +123,7 @@ final class FilesystemSignWorkflowStoreTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
             String namespace = store.signingNamespace() + ".test-signer";
             id = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
-            intent = intent(id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { 9 }), TEST_ALGORITHM);
+            intent = intent(store, id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { 9 }), TEST_ALGORITHM);
             store.createSignIntent(intent);
         }
         String fingerprint = intent.fingerprint();
@@ -130,7 +135,7 @@ final class FilesystemSignWorkflowStoreTest {
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock);
                 InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false)) {
             RuntimeException activationFailure = assertThrows(RuntimeException.class,
-                    () -> new PkiSigningBus(reopened, signer, root.resolve("bus.log")));
+                    () -> new PkiSigningBus(reopened, signer, root.resolve("bus.log"), signingAuthority(signer)));
             assertFalse(activationFailure.toString().contains(fingerprint));
             RuntimeException attachFailure = assertThrows(RuntimeException.class,
                     () -> reopened.createSignIntent(intent));
@@ -150,7 +155,7 @@ final class FilesystemSignWorkflowStoreTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
             String namespace = store.signingNamespace() + ".test-signer";
             id = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
-            SignWorkflowStore.Record current = intent(id, createdAt,
+            SignWorkflowStore.Record current = intent(store, id, createdAt,
                     new EncodedObject(Encoding.BINARY, new byte[] { 10 }), TEST_ALGORITHM);
             fingerprint = current.fingerprint();
             store.createSignIntent(current);
@@ -164,7 +169,8 @@ final class FilesystemSignWorkflowStoreTest {
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock);
                 InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false)) {
             RuntimeException failure = assertThrows(RuntimeException.class,
-                    () -> new PkiSigningBus(reopened, signer, root.resolve("unsupported-version-bus.log")));
+                    () -> new PkiSigningBus(reopened, signer, root.resolve("unsupported-version-bus.log"),
+                            signingAuthority(signer)));
             assertTrue(failure.toString().contains("Unsupported signing record version"));
             assertFalse(failure.toString().contains(fingerprint));
             assertFalse(failure.toString().contains(id.value()));
@@ -186,11 +192,11 @@ final class FilesystemSignWorkflowStoreTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options, clock)) {
             String namespace = store.signingNamespace() + ".test-signer";
             id = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
-            intent = intent(id, createdAt, request, TEST_ALGORITHM);
+            intent = intent(store, id, createdAt, request, TEST_ALGORITHM);
             assertEquals(SignWorkflowStore.CreateResult.CREATED, store.createSignIntent(intent));
             assertEquals(SignWorkflowStore.CreateResult.ATTACHED, store.createSignIntent(intent));
             assertEquals(SignWorkflowStore.CreateResult.CONFLICT,
-                    store.createSignIntent(intent(id, createdAt, request, "SHA512withRSA")));
+                    store.createSignIntent(intent(store, id, createdAt, request, "SHA512withRSA")));
 
             SignWorkflowStore.Record claimed = store.tryClaimSign(id, 0L, Duration.ofSeconds(30)).orElseThrow();
             assertEquals(1L, claimed.revision());
@@ -230,7 +236,7 @@ final class FilesystemSignWorkflowStoreTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
             namespace = store.signingNamespace() + ".test-signer";
             id = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
-            SignWorkflowStore.Record created = intent(id, createdAt,
+            SignWorkflowStore.Record created = intent(store, id, createdAt,
                     new EncodedObject(Encoding.BINARY, new byte[] { 4 }), TEST_ALGORITHM);
             store.createSignIntent(created);
             SignWorkflowStore.Record claimed = store.tryClaimSign(id, 0L, Duration.ofSeconds(10)).orElseThrow();
@@ -271,8 +277,8 @@ final class FilesystemSignWorkflowStoreTest {
             String namespace = store.signingNamespace() + ".test-signer";
             PkiId first = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
             PkiId second = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
-            store.createSignIntent(intent(first, createdAt, request, TEST_ALGORITHM));
-            store.createSignIntent(intent(second, createdAt, request, TEST_ALGORITHM));
+            store.createSignIntent(intent(store, first, createdAt, request, TEST_ALGORITHM));
+            store.createSignIntent(intent(store, second, createdAt, request, TEST_ALGORITHM));
             Callable<Boolean> claim = () -> store.tryClaimSign(first, 0L, Duration.ofSeconds(30)).isPresent();
             long winners = executor.invokeAll(java.util.Collections.nCopies(32, claim)).stream().filter(future -> {
                 try {
@@ -317,7 +323,7 @@ final class FilesystemSignWorkflowStoreTest {
             String namespace = store.signingNamespace() + ".test-signer";
             id = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
             store.createSignIntent(
-                    intent(id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { 8 }), TEST_ALGORITHM));
+                    intent(store, id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { 8 }), TEST_ALGORITHM));
             SignWorkflowStore.Record claimed = store.tryClaimSign(id, 0L, Duration.ofSeconds(30)).orElseThrow();
             SignWorkflowStore.Record dispatched = store.transitionSign(id, claimed.revision(), claimed.fence(),
                     SignWorkflowStore.State.DISPATCHED, Optional.of("DISPATCHED"), Optional.empty(), Optional.empty())
@@ -416,83 +422,84 @@ final class FilesystemSignWorkflowStoreTest {
         System.out.println("semanticCorruptionCannotActivateRecoverOrExposeInjectedResult");
         List<CorruptionCase> cases = List.of(
                 new CorruptionCase("request-changed",
-                        record -> copy(record, request(record.submissionId(), new byte[] { 99 }, TEST_ALGORITHM),
+                        (record, store) -> copy(record,
+                                request(store, record.submissionId(), new byte[] { 99 }, TEST_ALGORITHM),
                                 record.fingerprint(), record.state(), record.revision(), record.fence(),
                                 record.leaseUntil(), record.detailCode(), record.result(), record.providerUpdatedAt()),
                         "FINGERPRINT_MISMATCH"),
                 new CorruptionCase("fingerprint-changed",
-                        record -> copy(record, record.request(), flipFingerprint(record.fingerprint()), record.state(),
+                        (record, store) -> copy(record, record.request(), flipFingerprint(record.fingerprint()), record.state(),
                                 record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
                                 record.result(), record.providerUpdatedAt()),
                         "FINGERPRINT_MISMATCH"),
                 new CorruptionCase("fingerprint-length",
-                        record -> copy(record, record.request(), "signfp:v1:00", record.state(), record.revision(),
+                        (record, store) -> copy(record, record.request(), "signfp:v1:00", record.state(), record.revision(),
                                 record.fence(), record.leaseUntil(), record.detailCode(), record.result(),
                                 record.providerUpdatedAt()),
                         "FINGERPRINT_FORMAT_INVALID"),
                 new CorruptionCase("success-no-result",
-                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), record.state(),
                                 record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
                                 Optional.empty(), record.providerUpdatedAt()),
                         "SUCCESS_EVIDENCE_MISSING"),
                 new CorruptionCase("success-no-provider-time",
-                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), record.state(),
                                 record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
                                 record.result(), Optional.empty()),
                         "SUCCESS_EVIDENCE_MISSING"),
                 new CorruptionCase("success-at-deadline",
-                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), record.state(),
                                 record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
                                 record.result(), Optional.of(record.deadline())),
                         "PROVIDER_TIME_INVALID"),
                 new CorruptionCase("success-after-deadline",
-                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), record.state(),
                                 record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
                                 record.result(), Optional.of(record.deadline().plusNanos(1))),
                         "PROVIDER_TIME_INVALID"),
                 new CorruptionCase("success-active-lease",
-                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), record.state(),
                                 record.revision(), record.fence(), Optional.of(record.createdAt().plusSeconds(30)),
                                 record.detailCode(), record.result(), record.providerUpdatedAt()),
                         "SUCCESS_EVIDENCE_MISSING"),
                 new CorruptionCase("success-expiry-code",
-                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), record.state(),
                                 record.revision(), record.fence(), record.leaseUntil(), Optional.of("EXPIRED"),
                                 record.result(), record.providerUpdatedAt()),
                         "SUCCESS_DETAIL_CONTRADICTORY"),
                 new CorruptionCase("success-stale-fence",
-                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), record.state(),
                                 record.revision(), record.revision(), record.leaseUntil(), record.detailCode(),
                                 record.result(), record.providerUpdatedAt()),
                         "SUCCESS_REVISION_INVALID"),
                 new CorruptionCase("injected-result-fingerprint-mismatch",
-                        record -> copy(record, record.request(), flipFingerprint(record.fingerprint()), record.state(),
+                        (record, store) -> copy(record, record.request(), flipFingerprint(record.fingerprint()), record.state(),
                                 record.revision(), record.fence(), record.leaseUntil(), record.detailCode(),
                                 Optional.of(new EncodedObject(Encoding.BINARY,
                                         "injected-signature".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
                                 record.providerUpdatedAt()),
                         "FINGERPRINT_MISMATCH"),
                 new CorruptionCase("failed-with-result",
-                        record -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.FAILED,
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.FAILED,
                                 record.revision(), record.fence(), record.leaseUntil(), Optional.of("FAILED"),
                                 record.result(), record.providerUpdatedAt()),
                         "FAILURE_RESULT_OR_LEASE_PRESENT"),
                 new CorruptionCase("claim-without-lease",
-                        record -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.INTENT,
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.INTENT,
                                 1L, 1L, Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty()),
                         "INTENT_CLAIM_INVALID"),
                 new CorruptionCase("terminal-with-lease",
-                        record -> copy(record, record.request(), record.fingerprint(), record.state(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), record.state(),
                                 record.revision(), record.fence(), Optional.of(record.createdAt().plusSeconds(30)),
                                 record.detailCode(), record.result(), record.providerUpdatedAt()),
                         "SUCCESS_EVIDENCE_MISSING"),
                 new CorruptionCase("lease-before-creation",
-                        record -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.INTENT,
+                        (record, store) -> copy(record, record.request(), record.fingerprint(), SignWorkflowStore.State.INTENT,
                                 1L, 1L, Optional.of(record.createdAt().minusNanos(1)), Optional.of("INTENT"),
                                 Optional.empty(), Optional.empty()),
                         "LEASE_TIME_INVALID"),
                 new CorruptionCase("dispatched-zero-fence",
-                        record -> copy(record, record.request(), record.fingerprint(),
+                        (record, store) -> copy(record, record.request(), record.fingerprint(),
                                 SignWorkflowStore.State.DISPATCHED, 1L, 0L, Optional.empty(), Optional.of("DISPATCHED"),
                                 Optional.empty(), Optional.empty()),
                         "DISPATCH_REVISION_INVALID"));
@@ -506,10 +513,11 @@ final class FilesystemSignWorkflowStoreTest {
         System.out.println("...ok");
     }
 
-    private static SignWorkflowStore.Record intent(PkiId id, Instant createdAt, EncodedObject request,
+    private static SignWorkflowStore.Record intent(FilesystemPkiStore store, PkiId id, Instant createdAt,
+            EncodedObject request,
             String algorithmId) {
         Instant deadline = createdAt.plusSeconds(60);
-        PkiSigningBus.SignContinuation continuation = continuation(id, request, algorithmId);
+        PkiSigningBus.SignContinuation continuation = continuation(store, id, request, algorithmId);
         String namespace = SigningSubmissionId.parse(id).namespace();
         String fingerprint = continuation.semanticFingerprint(namespace, deadline);
         return new SignWorkflowStore.Record(id, namespace, fingerprint, TEST_OWNER, createdAt, deadline,
@@ -520,8 +528,8 @@ final class FilesystemSignWorkflowStoreTest {
     private static PkiId persistIntent(FilesystemPkiStore store, Instant createdAt, int marker) {
         String namespace = store.signingNamespace() + ".test-signer";
         PkiId id = SigningSubmissionId.create(namespace, createdAt, new SecureRandom()).id();
-        store.createSignIntent(intent(id, createdAt, new EncodedObject(Encoding.BINARY, new byte[] { (byte) marker }),
-                TEST_ALGORITHM));
+        store.createSignIntent(intent(store, id, createdAt,
+                new EncodedObject(Encoding.BINARY, new byte[] { (byte) marker }), TEST_ALGORITHM));
         return id;
     }
 
@@ -539,13 +547,29 @@ final class FilesystemSignWorkflowStoreTest {
         return id;
     }
 
-    private static PkiSigningBus.SignContinuation continuation(PkiId id, EncodedObject payload, String algorithmId) {
-        return new PkiSigningBus.SignContinuation(TEST_ACCESS, algorithmId, payload, TEST_KEY, Encoding.BINARY,
+    private static PkiSigningBus.SignContinuation continuation(FilesystemPkiStore store, PkiId id,
+            EncodedObject payload, String algorithmId) {
+        DurableContentReference content;
+        try {
+            content = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(), payload.encoding(),
+                    payload.bytes());
+        } catch (java.io.IOException exception) {
+            throw new AssertionError("Unable to stage signing fixture", exception);
+        }
+        return new PkiSigningBus.SignContinuation(TEST_ACCESS, algorithmId, content, TEST_KEY, Encoding.BINARY,
                 Optional.of(id));
     }
 
-    private static EncodedObject request(PkiId id, byte[] payload, String algorithmId) {
-        return continuation(id, new EncodedObject(Encoding.BINARY, payload), algorithmId).encode();
+    private static String sha256(byte[] bytes) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 unavailable", exception);
+        }
+    }
+
+    private static EncodedObject request(FilesystemPkiStore store, PkiId id, byte[] payload, String algorithmId) {
+        return continuation(store, id, new EncodedObject(Encoding.BINARY, payload), algorithmId).encode();
     }
 
     private static SignWorkflowStore.Record copy(SignWorkflowStore.Record source, EncodedObject request,
@@ -566,19 +590,18 @@ final class FilesystemSignWorkflowStoreTest {
         Instant createdAt = Instant.parse("2026-01-02T03:04:05.123Z");
         MutableClock clock = new MutableClock(createdAt);
         PkiId id;
-        SignWorkflowStore.Record succeeded;
+        SignWorkflowStore.Record corrupted;
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
             id = persistDispatched(store, createdAt, 42);
             SignWorkflowStore.Record dispatched = store.getSignRecord(id).orElseThrow();
             clock.set(createdAt.plusSeconds(1));
-            succeeded = store.transitionSign(id, dispatched.revision(), dispatched.fence(),
+            SignWorkflowStore.Record succeeded = store.transitionSign(id, dispatched.revision(), dispatched.fence(),
                     SignWorkflowStore.State.SUCCEEDED, Optional.of("SIGNED"),
                     Optional.of(new EncodedObject(Encoding.BINARY,
                             "valid-signature".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
                     Optional.of(createdAt.plusSeconds(1))).orElseThrow();
+            corrupted = corruption.mutation().apply(succeeded, store);
         }
-
-        SignWorkflowStore.Record corrupted = corruption.mutation().apply(succeeded);
         writeRawCurrentRecord(root, id, corrupted);
         String sensitiveRequest = "injected-signature";
         String sensitiveFingerprint = corrupted.fingerprint();
@@ -592,7 +615,7 @@ final class FilesystemSignWorkflowStoreTest {
             assertFalse(readFailure.toString().contains(sensitiveFingerprint));
 
             IllegalStateException activationFailure = assertThrows(IllegalStateException.class,
-                    () -> new PkiSigningBus(reopened, signer, busLog));
+                    () -> new PkiSigningBus(reopened, signer, busLog, signingAuthority(signer)));
             assertTrue(activationFailure.getMessage().contains("code=" + corruption.expectedCode()));
             assertEquals(0, signer.submittedSignCount());
             assertThrows(IllegalStateException.class, () -> reopened.listSignRecords());
@@ -616,7 +639,8 @@ final class FilesystemSignWorkflowStoreTest {
         assertFalse(failure.toString().contains(sensitiveFingerprint));
     }
 
-    private record CorruptionCase(String name, java.util.function.UnaryOperator<SignWorkflowStore.Record> mutation,
+    private record CorruptionCase(String name,
+            java.util.function.BiFunction<SignWorkflowStore.Record, FilesystemPkiStore, SignWorkflowStore.Record> mutation,
             String expectedCode) {
     }
 

@@ -45,7 +45,7 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
-import zeroecho.pki.api.EncodedObject;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
@@ -56,27 +56,26 @@ import zeroecho.pki.api.audit.Purpose;
 final class SignRequestCleanupTest {
 
     @Test
-    void fingerprintClearsPayloadAndDigestCopiesAfterSuccessAndRepeatedUse() throws Exception {
-        System.out.println("fingerprintClearsPayloadAndDigestCopiesAfterSuccessAndRepeatedUse");
+    void fingerprintClearsDigestCopiesWithoutMaterializingContent() throws Exception {
+        System.out.println("fingerprintClearsDigestCopiesWithoutMaterializingContent");
         List<byte[]> cleared = new ArrayList<>();
         String first = fingerprint(MessageDigest.getInstance("SHA-256"), cleared);
         String second = fingerprint(MessageDigest.getInstance("SHA-256"), cleared);
         System.out.println("...fingerprint=" + first.substring(0, 20) + "...");
         assertEquals(first, second);
-        assertEquals(4, cleared.size());
+        assertEquals(2, cleared.size());
         assertTrue(cleared.stream().allMatch(SignRequestCleanupTest::isCleared));
-        System.out.println("fingerprintClearsPayloadAndDigestCopiesAfterSuccessAndRepeatedUse...ok");
+        System.out.println("fingerprintClearsDigestCopiesWithoutMaterializingContent...ok");
     }
 
     @Test
-    void fingerprintClearsPayloadCopyAfterDigestFailure() {
-        System.out.println("fingerprintClearsPayloadCopyAfterDigestFailure");
+    void fingerprintFailureCreatesNoPayloadCopy() {
+        System.out.println("fingerprintFailureCreatesNoPayloadCopy");
         List<byte[]> cleared = new ArrayList<>();
         assertThrows(IllegalStateException.class, () -> fingerprint(new FailingDigest(), cleared));
-        assertEquals(1, cleared.size());
-        assertTrue(isCleared(cleared.get(0)));
+        assertEquals(0, cleared.size());
         System.out.println("...clearedBuffers=" + cleared.size());
-        System.out.println("fingerprintClearsPayloadCopyAfterDigestFailure...ok");
+        System.out.println("fingerprintFailureCreatesNoPayloadCopy...ok");
     }
 
     private static String fingerprint(MessageDigest digest, List<byte[]> cleared) {
@@ -84,7 +83,7 @@ final class SignRequestCleanupTest {
                 Optional.of(new PkiId("cleanup-operation")), Optional.empty());
         return SignatureWorkflow.SignRequest.fingerprintWithDigest("cleanup.namespace", context,
                 new KeyRef("provider:key"), "SHA256withRSA",
-                new EncodedObject(Encoding.BINARY, new byte[] { 1, 2, 3, 4 }), Optional.of(Encoding.BINARY),
+                new ImmutableByteContent(new byte[] { 1, 2, 3, 4 }), Optional.of(Encoding.BINARY),
                 Optional.of(Instant.parse("2026-08-01T00:00:00Z")), digest, cleared::add);
     }
 

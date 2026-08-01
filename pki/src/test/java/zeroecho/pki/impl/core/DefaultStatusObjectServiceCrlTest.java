@@ -71,6 +71,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuanceService;
@@ -100,10 +101,12 @@ import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectGenerateCommand;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
+import zeroecho.pki.impl.framework.x509.X509SignedObjectCompletion;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CrlEntry;
+import zeroecho.pki.spi.framework.CrlEntrySource;
 import zeroecho.pki.spi.framework.StatusObjectGenerator;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.testkit.PkiTestRuntime;
@@ -120,7 +123,7 @@ final class DefaultStatusObjectServiceCrlTest {
                 Map.of(rootKeyRef, rootKey))) {
             PkiId caId = createRoot(runtime, rootKeyRef, "CRL Generator Root");
             Credential issuer = runtime.caService().getCa(caId).caCredentials().get(0);
-            StatusObjectGenerateCommand command = crlCommand(caId, issuer, rootKeyRef);
+            StatusObjectGenerateCommand command = crlCommand(runtime, caId, issuer, rootKeyRef);
             List<RevocationReason> reasons = activeReasons();
             List<BigInteger> serials = serials(reasons.size());
             List<CrlEntry> entries = new ArrayList<>();
@@ -129,8 +132,10 @@ final class DefaultStatusObjectServiceCrlTest {
                         EVALUATION_TIME.minusSeconds(index + 1L).plusNanos(987_654_321L), reasons.get(index)));
             }
 
-            StatusObject status = runtime.framework().statusObjectGenerator().generate(command, entries);
-            X509CRLHolder crl = new X509CRLHolder(status.encoded().bytes());
+            X509SignedObjectCompletion completion = runtime.framework().statusObjectGenerator().generate(command,
+                    entrySource(entries));
+            StatusObject status = runtime.signingBus().authority().requireStatusCompletion(completion);
+            X509CRLHolder crl = new X509CRLHolder(PkiTestRuntime.readContent(runtime.signingBus(), status.content()));
             for (CrlEntry entry : entries) {
                 X509CRLEntryHolder encoded = crl.getRevokedCertificate(entry.serialNumber());
                 assertTrue(encoded != null, () -> "missing serial " + entry.serialNumber().bitLength());
@@ -165,10 +170,10 @@ final class DefaultStatusObjectServiceCrlTest {
 
             StatusObject status = runtime.statusObjectService().generate(new StatusObjectGenerateCommand(caId,
                     StatusObjectType.CRL, runtime.framework().formatId(), emptyAttributes()));
-            X509CRLHolder crl = new X509CRLHolder(status.encoded().bytes());
-            X509CertificateHolderView heldCertificate = certificate(held);
-            X509CertificateHolderView permanentCertificate = certificate(permanent);
-            X509CertificateHolderView clearCertificate = certificate(clear);
+            X509CRLHolder crl = new X509CRLHolder(PkiTestRuntime.readContent(runtime.signingBus(), status.content()));
+            X509CertificateHolderView heldCertificate = certificate(runtime, held);
+            X509CertificateHolderView permanentCertificate = certificate(runtime, permanent);
+            X509CertificateHolderView clearCertificate = certificate(runtime, clear);
             assertEntry(crl, heldCertificate.serial(), heldJournal.latest().time(), RevocationReason.CERTIFICATE_HOLD);
             assertEntry(crl, permanentCertificate.serial(), permanentJournal.latest().time(),
                     RevocationReason.AA_COMPROMISE);
@@ -190,30 +195,33 @@ final class DefaultStatusObjectServiceCrlTest {
             assertCrlFailure(runtime, command, List.of(journal(new PkiId("credential:missing"), RevocationState.HELD,
                     EVALUATION_TIME.minusSeconds(1), Optional.empty())), Map.of(), false);
 
-            Credential wrongFormat = copy(template, "wrong-format", new FormatId("not-x509"), template.encoded());
+            Credential wrongFormat = copy(template, "wrong-format", new FormatId("not-x509"), template.content());
             assertCrlFailure(
                     runtime, command, List.of(journal(wrongFormat.credentialId(), RevocationState.HELD,
                             EVALUATION_TIME.minusSeconds(1), Optional.empty())),
                     Map.of(wrongFormat.credentialId(), wrongFormat), false);
 
+            zeroecho.pki.api.content.DurableContentReference originalContent = template.content();
+            zeroecho.pki.api.content.DurableContentReference wrongEncodingContent =
+                    zeroecho.pki.testkit.PkiTestRuntime.untrustedReference(originalContent, Encoding.PEM);
             Credential wrongEncoding = copy(template, "wrong-encoding", BcX509CredentialFramework.FORMAT_ID,
-                    new EncodedObject(Encoding.PEM, template.encoded().bytes()));
+                    wrongEncodingContent);
             assertCrlFailure(
                     runtime, command, List.of(journal(wrongEncoding.credentialId(), RevocationState.HELD,
                             EVALUATION_TIME.minusSeconds(1), Optional.empty())),
                     Map.of(wrongEncoding.credentialId(), wrongEncoding), false);
 
             Credential malformed = copy(template, "malformed", BcX509CredentialFramework.FORMAT_ID,
-                    new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }));
+                    runtime.stageCredential(new byte[] { 1, 2, 3 }));
             assertCrlFailure(
                     runtime, command, List.of(journal(malformed.credentialId(), RevocationState.HELD,
                             EVALUATION_TIME.minusSeconds(1), Optional.empty())),
                     Map.of(malformed.credentialId(), malformed), false);
 
             Credential duplicateOne = copy(template, "duplicate-one", BcX509CredentialFramework.FORMAT_ID,
-                    template.encoded());
+                    template.content());
             Credential duplicateTwo = copy(template, "duplicate-two", BcX509CredentialFramework.FORMAT_ID,
-                    template.encoded());
+                    template.content());
             assertCrlFailure(runtime, command,
                     List.of(journal(duplicateOne.credentialId(), RevocationState.HELD, EVALUATION_TIME.minusSeconds(1),
                             Optional.empty()),
@@ -222,7 +230,7 @@ final class DefaultStatusObjectServiceCrlTest {
                     Map.of(duplicateOne.credentialId(), duplicateOne, duplicateTwo.credentialId(), duplicateTwo),
                     false);
 
-            Credential future = copy(template, "future", BcX509CredentialFramework.FORMAT_ID, template.encoded());
+            Credential future = copy(template, "future", BcX509CredentialFramework.FORMAT_ID, template.content());
             assertCrlFailure(
                     runtime, command, List.of(journal(future.credentialId(), RevocationState.HELD,
                             EVALUATION_TIME.plusSeconds(1), Optional.empty())),
@@ -250,7 +258,8 @@ final class DefaultStatusObjectServiceCrlTest {
                 throw new IllegalStateException(SENTINEL);
             };
             DefaultStatusObjectService generatorFailureService = new DefaultStatusObjectService(runtime.store(),
-                    frameworkView(runtime.framework(), hostileGenerator), runtime.auditSink(), usableResolver());
+                    frameworkView(runtime.framework(), hostileGenerator), runtime.auditSink(), usableResolver(),
+                    runtime.signingBus().authority());
             AtomicReference<StatusObject> generatorResult = new AtomicReference<>();
             PkiException generatorFailure = assertThrows(PkiException.class,
                     () -> generatorResult.set(generatorFailureService.generate(command)));
@@ -261,13 +270,11 @@ final class DefaultStatusObjectServiceCrlTest {
             assertEquals(signCount, runtime.submittedSignCount());
 
             AtomicInteger persistenceCalls = new AtomicInteger();
-            StatusObject generated = new StatusObject(new PkiId("status:controlled-crl"), command.formatId(), caId,
-                    StatusObjectType.CRL, EVALUATION_TIME, Optional.empty(),
-                    new EncodedObject(Encoding.DER, new byte[] { 1 }), emptyAttributes());
-            StatusObjectGenerator controlledGenerator = (ignoredCommand, ignoredEntries) -> generated;
+            StatusObjectGenerator controlledGenerator = runtime.framework().statusObjectGenerator();
             DefaultStatusObjectService persistenceFailureService = new DefaultStatusObjectService(
                     failingPersistenceStore(runtime.store(), persistenceCalls),
-                    frameworkView(runtime.framework(), controlledGenerator), runtime.auditSink(), usableResolver());
+                    frameworkView(runtime.framework(), controlledGenerator), runtime.auditSink(), usableResolver(),
+                    runtime.signingBus().authority());
             AtomicReference<StatusObject> persistenceResult = new AtomicReference<>();
             PkiException persistenceFailure = assertThrows(PkiException.class,
                     () -> persistenceResult.set(persistenceFailureService.generate(command)));
@@ -275,7 +282,7 @@ final class DefaultStatusObjectServiceCrlTest {
             assertNull(persistenceResult.get());
             assertEquals(1, persistenceCalls.get());
             assertEquals(statusCount, runtime.store().listStatusObjects(caId).size());
-            assertEquals(signCount, runtime.submittedSignCount());
+            assertEquals(signCount + 1, runtime.submittedSignCount());
         }
     }
 
@@ -285,7 +292,7 @@ final class DefaultStatusObjectServiceCrlTest {
         int statusCount = runtime.store().listStatusObjects(command.issuerCaId()).size();
         PkiStore view = storeView(runtime.store(), journals, credentials, failListing);
         DefaultStatusObjectService service = new DefaultStatusObjectService(view, runtime.framework(),
-                runtime.auditSink(), usableResolver());
+                runtime.auditSink(), usableResolver(), runtime.signingBus().authority());
 
         PkiException failure = assertThrows(PkiException.class, () -> service.generate(command));
         assertTrue(failure.getMessage().contains("code=CRL_GENERATION_FAILED"));
@@ -299,11 +306,55 @@ final class DefaultStatusObjectServiceCrlTest {
             Map<PkiId, Credential> credentials, boolean failListing) {
         return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
                 (proxy, method, arguments) -> {
-                    if (method.getName().equals("listRevocationJournals")) {
+                    if (method.getName().equals("openRevocationSnapshot")) {
                         if (failListing) {
                             throw new IllegalStateException(SENTINEL);
                         }
-                        return journals;
+                        List<RevocationJournal> snapshot = List.copyOf(journals);
+                        return new zeroecho.pki.spi.store.RevocationSnapshot() {
+                            @Override
+                            public String snapshotId() {
+                                return "test-snapshot";
+                            }
+
+                            @Override
+                            public java.util.OptionalLong count() {
+                                return java.util.OptionalLong.of(snapshot.size());
+                            }
+
+                            @Override
+                            public Cursor openCursor() {
+                                return new Cursor() {
+                                    private int index = -1;
+
+                                    @Override
+                                    public boolean next() {
+                                        index++;
+                                        return index < snapshot.size();
+                                    }
+
+                                    @Override
+                                    public RevocationJournal current() {
+                                        return snapshot.get(index);
+                                    }
+
+                                    @Override
+                                    public long ordinal() {
+                                        return index;
+                                    }
+
+                                    @Override
+                                    public void close() {
+                                        // No resources.
+                                    }
+                                };
+                            }
+
+                            @Override
+                            public void close() {
+                                // No resources.
+                            }
+                        };
                     }
                     if (method.getName().equals("getCredential")) {
                         PkiId id = (PkiId) arguments[0];
@@ -380,16 +431,19 @@ final class DefaultStatusObjectServiceCrlTest {
                 List.of(new RevocationTransition(1L, state, time, reason, emptyAttributes())));
     }
 
-    private static Credential copy(Credential template, String suffix, FormatId formatId, EncodedObject encoded) {
+    private static Credential copy(Credential template, String suffix, FormatId formatId,
+            zeroecho.pki.api.content.DurableContentReference content) {
         CaProfileBinding binding = assertInstanceOf(CaProfileBinding.class, template.profileBinding());
         return new Credential(new PkiId("credential:" + suffix), formatId, template.issuerRef(), template.subjectRef(),
                 template.validity(), template.serialOrUniqueId(), template.publicKeyId(),
-                new CaProfileBinding(binding.reference()), CredentialStatus.ISSUED, encoded, template.attributes());
+                new CaProfileBinding(binding.reference()), CredentialStatus.ISSUED, content, template.attributes());
     }
 
-    private static StatusObjectGenerateCommand crlCommand(PkiId caId, Credential issuer, KeyRef keyRef) {
+    private static StatusObjectGenerateCommand crlCommand(PkiTestRuntime runtime, PkiId caId, Credential issuer,
+            KeyRef keyRef) throws Exception {
         AttributeSet attributes = SimpleAttributeSet.builder()
-                .put(BcX509Attributes.ISSUER_CERT_DER, new AttributeValue.BytesValue(issuer.encoded().bytes()))
+                .put(BcX509Attributes.ISSUER_CERT_DER,
+                        new AttributeValue.BytesValue(runtime.credentialBytes(issuer)))
                 .put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(keyRef.value())).build();
         return new StatusObjectGenerateCommand(caId, StatusObjectType.CRL, BcX509CredentialFramework.FORMAT_ID,
                 attributes);
@@ -440,6 +494,49 @@ final class DefaultStatusObjectServiceCrlTest {
         return List.copyOf(values);
     }
 
+    private static CrlEntrySource entrySource(List<CrlEntry> entries) {
+        List<CrlEntry> snapshot = List.copyOf(entries);
+        return new CrlEntrySource() {
+            @Override
+            public Cursor openCursor() {
+                return new Cursor() {
+                    private int index = -1;
+
+                    @Override
+                    public boolean next() {
+                        index++;
+                        return index < snapshot.size();
+                    }
+
+                    @Override
+                    public CrlEntry current() {
+                        return snapshot.get(index);
+                    }
+
+                    @Override
+                    public long ordinal() {
+                        return index;
+                    }
+
+                    @Override
+                    public void close() {
+                        // No resources.
+                    }
+                };
+            }
+
+            @Override
+            public java.util.OptionalLong count() {
+                return java.util.OptionalLong.of(snapshot.size());
+            }
+
+            @Override
+            public void close() {
+                // No resources.
+            }
+        };
+    }
+
     private static int encodedReason(X509CRLEntryHolder entry) {
         org.bouncycastle.asn1.x509.Extension extension = entry.getExtension(Extension.reasonCode);
         if (extension == null) {
@@ -470,8 +567,9 @@ final class DefaultStatusObjectServiceCrlTest {
         assertEquals(reasonCode(reason), encodedReason(entry));
     }
 
-    private static X509CertificateHolderView certificate(Credential credential) throws Exception {
-        byte[] encoded = credential.encoded().bytes();
+    private static X509CertificateHolderView certificate(PkiTestRuntime runtime, Credential credential)
+            throws Exception {
+        byte[] encoded = runtime.credentialBytes(credential);
         try {
             return new X509CertificateHolderView(
                     new org.bouncycastle.cert.X509CertificateHolder(encoded).getSerialNumber());

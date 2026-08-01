@@ -33,10 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.spi.framework;
 
-import java.util.List;
-
-import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectGenerateCommand;
+import zeroecho.pki.impl.framework.x509.X509SignedObjectCompletion;
 
 /**
  * Generates status objects for a credential framework (e.g., CRL/delta CRL/OCSP
@@ -49,11 +47,11 @@ public interface StatusObjectGenerator {
      * Generates a status object.
      *
      * @param command    generation command
-     * @param crlEntries structured CRL entries; empty for non-CRL objects
+     * @param crlEntries stable streamed CRL entries
      * @return generated status object
      * @throws IllegalArgumentException if {@code command} or {@code crlEntries} is
      *                                  invalid
      * @throws RuntimeException         if generation fails
      */
-    StatusObject generate(StatusObjectGenerateCommand command, List<CrlEntry> crlEntries);
+    X509SignedObjectCompletion generate(StatusObjectGenerateCommand command, CrlEntrySource crlEntries);
 }

@@ -131,8 +131,8 @@ final class CaProfileIssuanceEnforcementTest {
 
             CaRecord intermediate = runtime.caService().getCa(intermediateId);
             Credential credential = intermediate.caCredentials().get(0);
-            X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
-            X509CertificateHolder additionalHolder = new X509CertificateHolder(additional.encoded().bytes());
+            X509CertificateHolder holder = new X509CertificateHolder(runtime.credentialBytes(credential));
+            X509CertificateHolder additionalHolder = new X509CertificateHolder(runtime.credentialBytes(additional));
             assertEquals("Fixed Organization",
                     holder.getSubject().getRDNs(BCStyle.O)[0].getFirst().getValue().toString());
             assertEquals("Fixed Organization",
@@ -170,8 +170,8 @@ final class CaProfileIssuanceEnforcementTest {
             rootProfile = ((CaProfileBinding) runtime.caService().getCa(rootId).caCredentials().get(0).profileBinding())
                     .reference();
             intermediateProfile = ((CaProfileBinding) additional.profileBinding()).reference();
-            assertCaCertificate(runtime.caService().getCa(rootId).caCredentials().get(0), 1);
-            assertCaCertificate(additional, 0);
+            assertCaCertificate(runtime, runtime.caService().getCa(rootId).caCredentials().get(0), 1);
+            assertCaCertificate(runtime, additional, 0);
         }
         try (PkiTestRuntime reopened = PkiTestRuntime.create(store, directory.resolve("reopened-bus.log"),
                 Map.of(rootRef, rootKey, intermediateRef, intermediateKey))) {
@@ -261,7 +261,7 @@ final class CaProfileIssuanceEnforcementTest {
 
             caA = createRoot(runtime, keyRefA, "CN=Version Switch Root A", profileId);
             Credential issuedA = onlyCredential(runtime.caService(), caA);
-            assertCaProfileCredential("A", issuedA, versionOne, 1);
+            assertCaProfileCredential(runtime, "A", issuedA, versionOne, 1);
             credentialA = issuedA.credentialId();
 
             ImportedCertificateProfileVersion storedOne = runtime.profileService().getImportedVersion(profileId, 1)
@@ -277,18 +277,18 @@ final class CaProfileIssuanceEnforcementTest {
 
             caB = createRoot(runtime, keyRefB, "CN=Version Switch Root B", profileId);
             Credential issuedB = onlyCredential(runtime.caService(), caB);
-            assertCaProfileCredential("B", issuedB, versionOne, 1);
+            assertCaProfileCredential(runtime, "B", issuedB, versionOne, 1);
             credentialB = issuedB.credentialId();
 
             assertEquals(versionTwo, runtime.profileService().activateProfile(profileId, 2));
             caC = createRoot(runtime, keyRefC, "CN=Version Switch Root C", profileId);
             Credential issuedC = onlyCredential(runtime.caService(), caC);
-            assertCaProfileCredential("C", issuedC, versionTwo, 2);
+            assertCaProfileCredential(runtime, "C", issuedC, versionTwo, 2);
             credentialC = issuedC.credentialId();
 
-            assertCaProfileCredential("A-reread", runtime.store().getCredential(credentialA).orElseThrow(), versionOne,
+            assertCaProfileCredential(runtime, "A-reread", runtime.store().getCredential(credentialA).orElseThrow(), versionOne,
                     1);
-            assertCaProfileCredential("B-reread", runtime.store().getCredential(credentialB).orElseThrow(), versionOne,
+            assertCaProfileCredential(runtime, "B-reread", runtime.store().getCredential(credentialB).orElseThrow(), versionOne,
                     1);
             ImportedCertificateProfileVersion unchanged = runtime.profileService().getImportedVersion(profileId, 1)
                     .orElseThrow();
@@ -298,11 +298,11 @@ final class CaProfileIssuanceEnforcementTest {
 
         try (PkiTestRuntime reopened = PkiTestRuntime.create(store, directory.resolve("reopened-bus.log"), keys)) {
             assertEquals(versionTwo, reopened.profileService().getActiveReference(profileId).orElseThrow());
-            assertCaProfileCredential("A-restart", reopened.store().getCredential(credentialA).orElseThrow(),
+            assertCaProfileCredential(reopened, "A-restart", reopened.store().getCredential(credentialA).orElseThrow(),
                     versionOne, 1);
-            assertCaProfileCredential("B-restart", reopened.store().getCredential(credentialB).orElseThrow(),
+            assertCaProfileCredential(reopened, "B-restart", reopened.store().getCredential(credentialB).orElseThrow(),
                     versionOne, 1);
-            assertCaProfileCredential("C-restart", reopened.store().getCredential(credentialC).orElseThrow(),
+            assertCaProfileCredential(reopened, "C-restart", reopened.store().getCredential(credentialC).orElseThrow(),
                     versionTwo, 2);
             ImportedCertificateProfileVersion unchanged = reopened.profileService().getImportedVersion(profileId, 1)
                     .orElseThrow();
@@ -348,7 +348,7 @@ final class CaProfileIssuanceEnforcementTest {
             runtime.profileService().activateProfile(rootProfileId, 1);
             rootId = createRoot(runtime, rootKeyRef, "CN=Version Switch Issuer Root", rootProfileId);
             Credential rootCredential = onlyCredential(runtime.caService(), rootId);
-            assertCaProfileCredential("issuer", rootCredential, rootProfile, 2);
+            assertCaProfileCredential(runtime, "issuer", rootCredential, rootProfile, 2);
 
             versionOne = runtime.profileService().importProfile(versionOneDocument);
             assertEquals(intermediateProfileId, versionOne.profileId());
@@ -358,9 +358,9 @@ final class CaProfileIssuanceEnforcementTest {
             caA = createIntermediate(runtime, rootId, keyRefA, "CN=Version Switch Intermediate A",
                     intermediateProfileId);
             Credential issuedA = onlyCredential(runtime.caService(), caA);
-            assertCaProfileCredential("A", issuedA, versionOne, 0);
+            assertCaProfileCredential(runtime, "A", issuedA, versionOne, 0);
             credentialA = issuedA.credentialId();
-            assertCaProfileCredential("issuer-after-A", onlyCredential(runtime.caService(), rootId), rootProfile, 2);
+            assertCaProfileCredential(runtime, "issuer-after-A", onlyCredential(runtime.caService(), rootId), rootProfile, 2);
 
             ImportedCertificateProfileVersion storedOne = runtime.profileService()
                     .getImportedVersion(intermediateProfileId, 1).orElseThrow();
@@ -376,21 +376,21 @@ final class CaProfileIssuanceEnforcementTest {
             caB = createIntermediate(runtime, rootId, keyRefB, "CN=Version Switch Intermediate B",
                     intermediateProfileId);
             Credential issuedB = onlyCredential(runtime.caService(), caB);
-            assertCaProfileCredential("B", issuedB, versionOne, 0);
+            assertCaProfileCredential(runtime, "B", issuedB, versionOne, 0);
             credentialB = issuedB.credentialId();
 
             assertEquals(versionTwo, runtime.profileService().activateProfile(intermediateProfileId, 2));
             caC = createIntermediate(runtime, rootId, keyRefC, "CN=Version Switch Intermediate C",
                     intermediateProfileId);
             Credential issuedC = onlyCredential(runtime.caService(), caC);
-            assertCaProfileCredential("C", issuedC, versionTwo, 1);
+            assertCaProfileCredential(runtime, "C", issuedC, versionTwo, 1);
             credentialC = issuedC.credentialId();
 
-            assertCaProfileCredential("A-reread", runtime.store().getCredential(credentialA).orElseThrow(), versionOne,
+            assertCaProfileCredential(runtime, "A-reread", runtime.store().getCredential(credentialA).orElseThrow(), versionOne,
                     0);
-            assertCaProfileCredential("B-reread", runtime.store().getCredential(credentialB).orElseThrow(), versionOne,
+            assertCaProfileCredential(runtime, "B-reread", runtime.store().getCredential(credentialB).orElseThrow(), versionOne,
                     0);
-            assertCaProfileCredential("issuer-reread", onlyCredential(runtime.caService(), rootId), rootProfile, 2);
+            assertCaProfileCredential(runtime, "issuer-reread", onlyCredential(runtime.caService(), rootId), rootProfile, 2);
             ImportedCertificateProfileVersion unchanged = runtime.profileService()
                     .getImportedVersion(intermediateProfileId, 1).orElseThrow();
             assertArrayEquals(persistedVersionOne, unchanged.canonicalJson());
@@ -399,13 +399,14 @@ final class CaProfileIssuanceEnforcementTest {
 
         try (PkiTestRuntime reopened = PkiTestRuntime.create(store, directory.resolve("reopened-bus.log"), keys)) {
             assertEquals(versionTwo, reopened.profileService().getActiveReference(intermediateProfileId).orElseThrow());
-            assertCaProfileCredential("A-restart", reopened.store().getCredential(credentialA).orElseThrow(),
+            assertCaProfileCredential(reopened, "A-restart", reopened.store().getCredential(credentialA).orElseThrow(),
                     versionOne, 0);
-            assertCaProfileCredential("B-restart", reopened.store().getCredential(credentialB).orElseThrow(),
+            assertCaProfileCredential(reopened, "B-restart", reopened.store().getCredential(credentialB).orElseThrow(),
                     versionOne, 0);
-            assertCaProfileCredential("C-restart", reopened.store().getCredential(credentialC).orElseThrow(),
+            assertCaProfileCredential(reopened, "C-restart", reopened.store().getCredential(credentialC).orElseThrow(),
                     versionTwo, 1);
-            assertCaProfileCredential("issuer-restart", onlyCredential(reopened.caService(), rootId), rootProfile, 2);
+            assertCaProfileCredential(reopened, "issuer-restart", onlyCredential(reopened.caService(), rootId),
+                    rootProfile, 2);
             ImportedCertificateProfileVersion unchanged = reopened.profileService()
                     .getImportedVersion(intermediateProfileId, 1).orElseThrow();
             assertArrayEquals(persistedVersionOne, unchanged.canonicalJson());
@@ -431,7 +432,7 @@ final class CaProfileIssuanceEnforcementTest {
             Credential original = root.caCredentials().get(0);
             Credential mutated = new Credential(original.credentialId(), original.formatId(), original.issuerRef(),
                     original.subjectRef(), original.validity(), original.serialOrUniqueId(), original.publicKeyId(),
-                    new CaProfileBinding(wrongFormat), original.status(), original.encoded(), original.attributes());
+                    new CaProfileBinding(wrongFormat), original.status(), original.content(), original.attributes());
             runtime.store().putCa(new CaRecord(root.caId(), root.kind(), root.state(), root.issuerKeyRef(),
                     root.subjectRef(), List.of(mutated)));
 
@@ -490,7 +491,7 @@ final class CaProfileIssuanceEnforcementTest {
             service.issueIntermediateCertificate(new IntermediateCertIssueCommand(runtime.framework().formatId(),
                     rootId, intermediateId, "intermediate-ca", Optional.empty(), new SimpleAttributeSet()));
             profiles.assertAndReset("intermediate-ca");
-            rootCertificate = service.getCa(rootId).caCredentials().get(0).encoded().bytes();
+            rootCertificate = runtime.credentialBytes(service.getCa(rootId).caCredentials().get(0));
         }
         try (PkiTestRuntime target = PkiTestRuntime.create(directory.resolve("import"),
                 directory.resolve("import-bus.log"), Map.of(rootRef, rootKey))) {
@@ -498,7 +499,7 @@ final class CaProfileIssuanceEnforcementTest {
             CountingProfileService profiles = new CountingProfileService(target.profileService());
             CaService service = target.caService(profiles);
             service.importRoot(new CaImportCommand(target.framework().formatId(), new SubjectRef("CN=Lookup Root"),
-                    "root-ca", rootRef, new EncodedObject(Encoding.DER, rootCertificate), new SimpleAttributeSet()));
+                    "root-ca", rootRef, target.stageCredential(rootCertificate), new SimpleAttributeSet()));
             profiles.assertAndReset("root-ca");
         }
     }
@@ -557,13 +558,13 @@ final class CaProfileIssuanceEnforcementTest {
                 directory.resolve("source-bus.log"), Map.of(rootRef, rootKey))) {
             PkiId rootId = source.caService().createRoot(new CaCreateCommand(source.framework().formatId(),
                     new SubjectRef("CN=Imported Root"), "root-ca", Optional.of(rootRef), new SimpleAttributeSet()));
-            encoded = source.caService().getCa(rootId).caCredentials().get(0).encoded().bytes();
+            encoded = source.credentialBytes(source.caService().getCa(rootId).caCredentials().get(0));
         }
         try (PkiTestRuntime target = PkiTestRuntime.create(directory.resolve("target"),
                 directory.resolve("target-bus.log"), Map.of(rootRef, rootKey))) {
             PkiId imported = target.caService()
                     .importRoot(new CaImportCommand(target.framework().formatId(), new SubjectRef("CN=Imported Root"),
-                            "root-ca", rootRef, new EncodedObject(Encoding.DER, encoded), new SimpleAttributeSet()));
+                            "root-ca", rootRef, target.stageCredential(encoded), new SimpleAttributeSet()));
             Credential credential = target.caService().getCa(imported).caCredentials().get(0);
             assertEquals(target.profileService().getActiveReference("root-ca").orElseThrow(),
                     ((CaProfileBinding) credential.profileBinding()).reference());
@@ -583,7 +584,7 @@ final class CaProfileIssuanceEnforcementTest {
                             new SubjectRef("CN=Import Mutation Root"), "root-ca", Optional.of(rootRef),
                             new SimpleAttributeSet()));
             Credential sourceCredential = source.caService().getCa(rootId).caCredentials().get(0);
-            encoded = mutation.mutate(sourceCredential, rootKey);
+            encoded = mutation.mutate(source, sourceCredential, rootKey);
         }
         try (PkiTestRuntime target = PkiTestRuntime.create(directory.resolve("target"),
                 directory.resolve("target-bus.log"), Map.of(rootRef, rootKey))) {
@@ -610,14 +611,14 @@ final class CaProfileIssuanceEnforcementTest {
             CredentialIssuerBackend backend = new CredentialIssuerBackend() {
                 @Override
                 public CredentialBundle issueEndEntity(ValidatedCertificateRequest request,
-                        EncodedObject issuerCertificate, KeyRef issuerKeyRef, java.math.BigInteger serial) {
+                        zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef, java.math.BigInteger serial) {
                     return delegate.issueEndEntity(request, issuerCertificate, issuerKeyRef, serial);
                 }
 
                 @Override
                 public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
-                        EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
-                    return mutation.apply(
+                        zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
+                    return mutation.apply(runtime,
                             delegate.issueIntermediateCertificate(request, issuerCertificate, issuerKeyRef), rootKey);
                 }
             };
@@ -630,8 +631,9 @@ final class CaProfileIssuanceEnforcementTest {
         }
     }
 
-    private static void assertCaCertificate(Credential credential, int pathLength) throws Exception {
-        X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
+    private static void assertCaCertificate(PkiTestRuntime runtime, Credential credential, int pathLength)
+            throws Exception {
+        X509CertificateHolder holder = new X509CertificateHolder(runtime.credentialBytes(credential));
         BasicConstraints constraints = BasicConstraints
                 .getInstance(holder.getExtension(Extension.basicConstraints).getParsedValue());
         KeyUsage usage = KeyUsage.getInstance(holder.getExtension(Extension.keyUsage).getParsedValue());
@@ -642,11 +644,11 @@ final class CaProfileIssuanceEnforcementTest {
         assertEquals(2, holder.getExtensions().getExtensionOIDs().length);
     }
 
-    private static void assertCaProfileCredential(String label, Credential credential,
+    private static void assertCaProfileCredential(PkiTestRuntime runtime, String label, Credential credential,
             CertificateProfileRef expectedProfile, int pathLength) throws Exception {
         assertTrue(credential.profileBinding() instanceof CaProfileBinding);
         assertEquals(expectedProfile, ((CaProfileBinding) credential.profileBinding()).reference());
-        assertCaCertificate(credential, pathLength);
+        assertCaCertificate(runtime, credential, pathLength);
         System.out.println("..." + label + " profileVersion=" + expectedProfile.profileVersion() + " hash="
                 + abbreviatedHash(expectedProfile) + " credentialId=" + credential.credentialId().value()
                 + " pathLength=" + pathLength);
@@ -761,79 +763,79 @@ final class CaProfileIssuanceEnforcementTest {
     private enum MetadataMutation {
         PROFILE {
             @Override
-            Credential apply(Credential value, KeyPair issuerKey) {
+            Credential apply(PkiTestRuntime runtime, Credential value, KeyPair issuerKey) {
                 return copy(value, value.serialOrUniqueId(), value.validity(),
                         new CaProfileBinding(new CertificateProfileRef("other", 1, new byte[32])));
             }
         },
         SERIAL {
             @Override
-            Credential apply(Credential value, KeyPair issuerKey) {
+            Credential apply(PkiTestRuntime runtime, Credential value, KeyPair issuerKey) {
                 return copy(value, value.serialOrUniqueId() + "1", value.validity(), value.profileBinding());
             }
         },
         VALIDITY {
             @Override
-            Credential apply(Credential value, KeyPair issuerKey) {
+            Credential apply(PkiTestRuntime runtime, Credential value, KeyPair issuerKey) {
                 return copy(value, value.serialOrUniqueId(), new zeroecho.pki.api.Validity(value.validity().notBefore(),
                         value.validity().notAfter().minusSeconds(1)), value.profileBinding());
             }
         },
         SUBJECT {
             @Override
-            Credential apply(Credential value, KeyPair issuerKey) {
+            Credential apply(PkiTestRuntime runtime, Credential value, KeyPair issuerKey) {
                 return new Credential(value.credentialId(), value.formatId(), value.issuerRef(),
                         new SubjectRef("CN=Substituted"), value.validity(), value.serialOrUniqueId(),
-                        value.publicKeyId(), value.profileBinding(), value.status(), value.encoded(),
+                        value.publicKeyId(), value.profileBinding(), value.status(), value.content(),
                         value.attributes());
             }
         },
         ATTRIBUTES {
             @Override
-            Credential apply(Credential value, KeyPair issuerKey) {
+            Credential apply(PkiTestRuntime runtime, Credential value, KeyPair issuerKey) {
                 zeroecho.pki.api.attr.AttributeSet attributes = SimpleAttributeSet.builder()
                         .put(new zeroecho.pki.api.attr.AttributeId("test.unexpected"),
                                 new zeroecho.pki.api.attr.AttributeValue.StringValue("unexpected"))
                         .build();
                 return new Credential(value.credentialId(), value.formatId(), value.issuerRef(), value.subjectRef(),
                         value.validity(), value.serialOrUniqueId(), value.publicKeyId(), value.profileBinding(),
-                        value.status(), value.encoded(), attributes);
+                        value.status(), value.content(), attributes);
             }
         },
         EXTRA_EXTENSION {
             @Override
-            Credential apply(Credential value, KeyPair issuerKey) {
-                return rebuild(value, issuerKey, null, true);
+            Credential apply(PkiTestRuntime runtime, Credential value, KeyPair issuerKey) {
+                return rebuild(runtime, value, issuerKey, null, true);
             }
         },
         SUBJECT_DER {
             @Override
-            Credential apply(Credential value, KeyPair issuerKey) {
+            Credential apply(PkiTestRuntime runtime, Credential value, KeyPair issuerKey) {
                 X500Name alternate = new X500Name(
                         new RDN[] { new RDN(BCStyle.CN, new DERPrintableString("Mutation Intermediate")) });
-                return rebuild(value, issuerKey, alternate, false);
+                return rebuild(runtime, value, issuerKey, alternate, false);
             }
         };
 
-        abstract Credential apply(Credential value, KeyPair issuerKey);
+        abstract Credential apply(PkiTestRuntime runtime, Credential value, KeyPair issuerKey);
 
         private static Credential copy(Credential value, String serial, zeroecho.pki.api.Validity validity,
                 zeroecho.pki.api.credential.CredentialProfileBinding binding) {
             return new Credential(value.credentialId(), value.formatId(), value.issuerRef(), value.subjectRef(),
-                    validity, serial, value.publicKeyId(), binding, value.status(), value.encoded(),
+                    validity, serial, value.publicKeyId(), binding, value.status(), value.content(),
                     value.attributes());
         }
 
-        private static Credential rebuild(Credential value, KeyPair issuerKey, X500Name alternateSubject,
+        private static Credential rebuild(PkiTestRuntime runtime, Credential value, KeyPair issuerKey, X500Name alternateSubject,
                 boolean extraExtension) {
-            return rebuild(value, issuerKey, alternateSubject, extraExtension, null, null, null);
+            return rebuild(runtime, value, issuerKey, alternateSubject, extraExtension, null, null, null);
         }
 
-        private static Credential rebuild(Credential value, KeyPair issuerKey, X500Name alternateSubject,
+        private static Credential rebuild(PkiTestRuntime runtime, Credential value, KeyPair issuerKey, X500Name alternateSubject,
                 boolean extraExtension, BasicConstraints alternateConstraints, KeyUsage alternateKeyUsage,
                 Date alternateNotAfter) {
             try {
-                X509CertificateHolder original = new X509CertificateHolder(value.encoded().bytes());
+                X509CertificateHolder original = new X509CertificateHolder(runtime.credentialBytes(value));
                 X500Name subject = alternateSubject == null ? original.getSubject() : alternateSubject;
                 X509v3CertificateBuilder builder = new X509v3CertificateBuilder(original.getIssuer(),
                         original.getSerialNumber(), Date.from(original.getNotBefore().toInstant()),
@@ -856,7 +858,7 @@ final class CaProfileIssuanceEnforcementTest {
                         .build(new JcaContentSignerBuilder("SHA256withRSA").build(issuerKey.getPrivate())).getEncoded();
                 return new Credential(new PkiId("x509:" + sha256(encoded)), value.formatId(), value.issuerRef(),
                         value.subjectRef(), value.validity(), value.serialOrUniqueId(), value.publicKeyId(),
-                        value.profileBinding(), value.status(), new EncodedObject(Encoding.DER, encoded),
+                        value.profileBinding(), value.status(), runtime.stageCredential(encoded),
                         value.attributes());
             } catch (Exception exception) {
                 throw new IllegalStateException("test certificate mutation failed", exception);
@@ -896,8 +898,9 @@ final class CaProfileIssuanceEnforcementTest {
             }
 
             @Override
-            byte[] mutate(Credential credential, KeyPair issuerKey) {
-                return MetadataMutation.rebuild(credential, issuerKey, null, true).encoded().bytes();
+            byte[] mutate(PkiTestRuntime runtime, Credential credential, KeyPair issuerKey) {
+                Credential rebuilt = MetadataMutation.rebuild(runtime, credential, issuerKey, null, true);
+                return readCredential(runtime, rebuilt);
             }
         },
         BASIC_CONSTRAINTS {
@@ -907,10 +910,10 @@ final class CaProfileIssuanceEnforcementTest {
             }
 
             @Override
-            byte[] mutate(Credential credential, KeyPair issuerKey) {
-                return MetadataMutation
-                        .rebuild(credential, issuerKey, null, false, new BasicConstraints(false), null, null).encoded()
-                        .bytes();
+            byte[] mutate(PkiTestRuntime runtime, Credential credential, KeyPair issuerKey) {
+                Credential rebuilt = MetadataMutation.rebuild(runtime, credential, issuerKey, null, false,
+                        new BasicConstraints(false), null, null);
+                return readCredential(runtime, rebuilt);
             }
         },
         KEY_USAGE {
@@ -920,9 +923,10 @@ final class CaProfileIssuanceEnforcementTest {
             }
 
             @Override
-            byte[] mutate(Credential credential, KeyPair issuerKey) {
-                return MetadataMutation.rebuild(credential, issuerKey, null, false, null,
-                        new KeyUsage(KeyUsage.digitalSignature), null).encoded().bytes();
+            byte[] mutate(PkiTestRuntime runtime, Credential credential, KeyPair issuerKey) {
+                Credential rebuilt = MetadataMutation.rebuild(runtime, credential, issuerKey, null, false, null,
+                        new KeyUsage(KeyUsage.digitalSignature), null);
+                return readCredential(runtime, rebuilt);
             }
         },
         VALIDITY {
@@ -932,23 +936,41 @@ final class CaProfileIssuanceEnforcementTest {
             }
 
             @Override
-            byte[] mutate(Credential credential, KeyPair issuerKey) {
+            byte[] mutate(PkiTestRuntime runtime, Credential credential, KeyPair issuerKey) {
                 Date extended = Date.from(credential.validity().notAfter().plusSeconds(1));
-                return MetadataMutation.rebuild(credential, issuerKey, null, false, null, null, extended).encoded()
-                        .bytes();
+                Credential rebuilt = MetadataMutation.rebuild(runtime, credential, issuerKey, null, false, null,
+                        null, extended);
+                return readCredential(runtime, rebuilt);
             }
         };
 
         abstract CaImportCommand command(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded);
 
-        byte[] mutate(Credential credential, KeyPair issuerKey) {
-            return credential.encoded().bytes();
+        byte[] mutate(PkiTestRuntime runtime, Credential credential, KeyPair issuerKey) {
+            return readCredential(runtime, credential);
         }
 
         private static CaImportCommand importCommand(PkiTestRuntime runtime, KeyRef keyRef, byte[] encoded,
                 SubjectRef subject, String profileId) {
             return new CaImportCommand(runtime.framework().formatId(), subject, profileId, keyRef,
-                    new EncodedObject(Encoding.DER, encoded), new SimpleAttributeSet());
+                    stageCredential(runtime, encoded), new SimpleAttributeSet());
+        }
+
+        private static byte[] readCredential(PkiTestRuntime runtime, Credential credential) {
+            try {
+                return runtime.credentialBytes(credential);
+            } catch (java.io.IOException exception) {
+                throw new IllegalStateException("test credential read failed", exception);
+            }
+        }
+
+        private static zeroecho.pki.api.content.DurableContentReference stageCredential(PkiTestRuntime runtime,
+                byte[] encoded) {
+            try {
+                return runtime.stageCredential(encoded);
+            } catch (java.io.IOException exception) {
+                throw new IllegalStateException("test credential staging failed", exception);
+            }
         }
     }
 }

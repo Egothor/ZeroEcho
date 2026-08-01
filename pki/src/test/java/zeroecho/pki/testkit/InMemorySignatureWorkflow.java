@@ -123,9 +123,17 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
                 return opId;
             }
 
-            java.security.Signature sig = java.security.Signature.getInstance(request.algorithmId());
+            java.security.Signature sig = java.security.Signature.getInstance(jcaName(request.algorithmId()));
             sig.initSign(kp.getPrivate());
-            sig.update(request.payload().bytes());
+            try (java.io.InputStream input = request.content().openStream()) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) >= 0) {
+                    if (read != 0) {
+                        sig.update(buffer, 0, read);
+                    }
+                }
+            }
             byte[] s = sig.sign();
 
             Instant completedAt = Instant.now();
@@ -145,6 +153,22 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
             complete(request, st);
             return opId;
         }
+    }
+
+    static String jcaName(String identityOrAlias) {
+        return zeroecho.core.alg.BootstrapAlgorithmIdentities.resolve(identityOrAlias)
+                .map(identity -> {
+                    if (identity.equals(zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256)) {
+                        return "SHA256withRSA";
+                    }
+                    if (identity.equals(zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384)) {
+                        return "SHA384withRSA";
+                    }
+                    if (identity.equals(zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512)) {
+                        return "SHA512withRSA";
+                    }
+                    throw new IllegalArgumentException("Unsupported test signature identity");
+                }).orElse(identityOrAlias);
     }
 
     private void complete(SignRequest request, OperationStatus terminal) {

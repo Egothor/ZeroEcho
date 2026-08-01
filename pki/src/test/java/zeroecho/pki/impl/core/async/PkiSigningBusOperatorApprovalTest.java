@@ -35,6 +35,8 @@ package zeroecho.pki.impl.core.async;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static zeroecho.pki.testkit.PkiTestRuntime.signingAuthority;
+import static zeroecho.pki.testkit.PkiTestRuntime.stage;
 
 import java.nio.file.Path;
 import java.security.KeyPair;
@@ -59,6 +61,8 @@ import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.core.io.ImmutableByteContent;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.testkit.DurableOperatorApprovalSignatureWorkflow;
 import zeroecho.pki.util.async.AsyncState;
 import zeroecho.pki.util.async.AsyncStatus;
@@ -78,7 +82,7 @@ public final class PkiSigningBusOperatorApprovalTest {
             AccessContext access = new AccessContext(new Principal("USER", "late"), new Purpose("ISSUANCE"),
                     Optional.empty(), Optional.empty());
             SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(new PkiId("late-approval"),
-                    "test", 1L, access, keyRef, "SHA256withRSA", new EncodedObject(Encoding.BINARY, new byte[] { 1 }),
+                    "test", 1L, access, keyRef, "SHA256withRSA", new ImmutableByteContent(new byte[] { 1 }),
                     Optional.of(Encoding.BINARY), Optional.of(Instant.EPOCH));
 
             PkiId operationId = signer.submitSign(request);
@@ -106,7 +110,7 @@ public final class PkiSigningBusOperatorApprovalTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(100), Map.of(keyRef.value(), kp.getPrivate()));
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile)) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile, signingAuthority(signer))) {
 
             Principal owner = new Principal("USER", "alice");
             PkiId clientOpId = new PkiId("approve-1");
@@ -115,13 +119,14 @@ public final class PkiSigningBusOperatorApprovalTest {
 
             byte[] payload = "approval".getBytes(java.nio.charset.StandardCharsets.UTF_8);
             EncodedObject payloadObj = new EncodedObject(Encoding.BINARY, payload);
+            DurableContentReference content = stage(bus, payloadObj);
 
             AccessContext ac = new AccessContext(owner, new Purpose("ISSUANCE"), Optional.empty(), Optional.empty());
-            PkiSigningBus.SignContinuation cont = new PkiSigningBus.SignContinuation(ac, "SHA256withRSA", payloadObj,
+            PkiSigningBus.SignContinuation cont = new PkiSigningBus.SignContinuation(ac, "SHA256withRSA", content,
                     keyRef, Encoding.BINARY, Optional.empty());
 
             Instant t0 = Instant.now();
-            bus.submitSign(opId, owner, keyRef, "SHA256withRSA", payloadObj, Duration.ofSeconds(30),
+            bus.submitSign(opId, owner, keyRef, "SHA256withRSA", content, Duration.ofSeconds(30),
                     Optional.of(cont.encode()));
             long submitMs = Duration.between(t0, Instant.now()).toMillis();
             System.out.println("...submitMs=" + submitMs);
@@ -167,7 +172,7 @@ public final class PkiSigningBusOperatorApprovalTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(0), Map.of(keyRef.value(), kp.getPrivate()));
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile)) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile, signingAuthority(signer))) {
 
             Principal owner = new Principal("USER", "bob");
             PkiId clientOpId = new PkiId("deny-1");
@@ -176,12 +181,13 @@ public final class PkiSigningBusOperatorApprovalTest {
 
             byte[] payload = "deny".getBytes(java.nio.charset.StandardCharsets.UTF_8);
             EncodedObject payloadObj = new EncodedObject(Encoding.BINARY, payload);
+            DurableContentReference content = stage(bus, payloadObj);
 
             AccessContext ac = new AccessContext(owner, new Purpose("ISSUANCE"), Optional.empty(), Optional.empty());
-            PkiSigningBus.SignContinuation cont = new PkiSigningBus.SignContinuation(ac, "SHA256withRSA", payloadObj,
+            PkiSigningBus.SignContinuation cont = new PkiSigningBus.SignContinuation(ac, "SHA256withRSA", content,
                     keyRef, Encoding.BINARY, Optional.empty());
 
-            bus.submitSign(opId, owner, keyRef, "SHA256withRSA", payloadObj, Duration.ofSeconds(30),
+            bus.submitSign(opId, owner, keyRef, "SHA256withRSA", content, Duration.ofSeconds(30),
                     Optional.of(cont.encode()));
 
             PkiId signerOpId = waitSignerOpId(store, bus, opId);
@@ -237,7 +243,7 @@ public final class PkiSigningBusOperatorApprovalTest {
             Optional<zeroecho.pki.api.orch.WorkflowStateRecord> wsOpt = store.getWorkflowState(new PkiId(base));
             if (wsOpt.isPresent() && wsOpt.get().payload().isPresent()) {
                 PkiSigningBus.SignContinuation cont = PkiSigningBus.SignContinuation
-                        .decode(wsOpt.get().payload().get());
+                        .decode(wsOpt.get().payload().get(), store.stagedContent());
                 if (cont.signerOpId().isPresent()) {
                     return cont.signerOpId().get();
                 }

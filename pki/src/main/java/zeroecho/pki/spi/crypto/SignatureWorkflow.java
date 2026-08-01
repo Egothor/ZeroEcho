@@ -47,6 +47,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
@@ -66,7 +68,7 @@ import zeroecho.pki.api.audit.AccessContext;
  * <h2>Trust boundary</h2>
  * <ul>
  * <li><strong>PKI (caller):</strong> works only with {@link KeyRef}, algorithm
- * id and payload bytes; it must never parse {@code KeyRef} nor access private
+     * id and repeatable content; it must never parse {@code KeyRef} nor access private
  * key bytes.</li>
  * <li><strong>Provider (callee):</strong> resolves {@code KeyRef} into an
  * internal runtime key handle, enforces policy (including multi-hop approvals),
@@ -269,13 +271,14 @@ public interface SignatureWorkflow extends Closeable {
      *                                   {@code null})
      * @param algorithmId                requested signature algorithm id (never
      *                                   blank)
-     * @param payload                    payload bytes (never {@code null})
+     * @param content                    immutable repeatable content
      * @param preferredSignatureEncoding preferred signature encoding (optional)
      * @param deadline                   optional absolute deadline
      */
     record SignRequest(PkiId submissionId, String namespace, String semanticFingerprint, long fencingToken,
-            AccessContext accessContext, KeyRef keyRef, String algorithmId, EncodedObject payload,
-            Optional<Encoding> preferredSignatureEncoding, Optional<Instant> deadline) {
+            AccessContext accessContext, KeyRef keyRef, String algorithmId, RepeatableContent content,
+            Optional<Encoding> preferredSignatureEncoding, Optional<Instant> deadline,
+            CancellationSignal cancellation) {
 
         private static final long MIN_FENCING_TOKEN = 1L;
 
@@ -286,16 +289,17 @@ public interface SignatureWorkflow extends Closeable {
             Objects.requireNonNull(accessContext, "accessContext");
             Objects.requireNonNull(keyRef, "keyRef");
             Objects.requireNonNull(algorithmId, "algorithmId");
-            Objects.requireNonNull(payload, "payload");
+            Objects.requireNonNull(content, "content");
             Objects.requireNonNull(preferredSignatureEncoding, "preferredSignatureEncoding");
             Objects.requireNonNull(deadline, "deadline");
+            Objects.requireNonNull(cancellation, "cancellation");
             if (algorithmId.isBlank()) {
                 throw new IllegalArgumentException("algorithmId must not be blank");
             }
             if (fencingToken < MIN_FENCING_TOKEN) {
                 throw new IllegalArgumentException("fencingToken must be positive");
             }
-            String expected = fingerprint(namespace, accessContext, keyRef, algorithmId, payload,
+            String expected = fingerprint(namespace, accessContext, keyRef, algorithmId, content,
                     preferredSignatureEncoding, deadline);
             if (!constantTimeFingerprintEquals(expected, semanticFingerprint)) {
                 throw new IllegalArgumentException("semanticFingerprint does not match signing request");
@@ -306,12 +310,12 @@ public interface SignatureWorkflow extends Closeable {
          * Creates a request with its canonical versioned fingerprint.
          */
         public static SignRequest create(PkiId submissionId, String namespace, long fencingToken,
-                AccessContext accessContext, KeyRef keyRef, String algorithmId, EncodedObject payload,
+                AccessContext accessContext, KeyRef keyRef, String algorithmId, RepeatableContent content,
                 Optional<Encoding> preferredSignatureEncoding, Optional<Instant> deadline) {
-            String fingerprint = fingerprint(namespace, accessContext, keyRef, algorithmId, payload,
+            String fingerprint = fingerprint(namespace, accessContext, keyRef, algorithmId, content,
                     preferredSignatureEncoding, deadline);
             return new SignRequest(submissionId, namespace, fingerprint, fencingToken, accessContext, keyRef,
-                    algorithmId, payload, preferredSignatureEncoding, deadline);
+                    algorithmId, content, preferredSignatureEncoding, deadline, CancellationSignal.NONE);
         }
 
         /**
@@ -320,17 +324,17 @@ public interface SignatureWorkflow extends Closeable {
          * constant-size digest state.
          */
         public static String fingerprint(String namespace, AccessContext accessContext, KeyRef keyRef,
-                String algorithmId, EncodedObject payload, Optional<Encoding> preferredSignatureEncoding,
+                String algorithmId, RepeatableContent content, Optional<Encoding> preferredSignatureEncoding,
                 Optional<Instant> deadline) {
             Objects.requireNonNull(namespace, "namespace");
             Objects.requireNonNull(accessContext, "accessContext");
             Objects.requireNonNull(keyRef, "keyRef");
             Objects.requireNonNull(algorithmId, "algorithmId");
-            Objects.requireNonNull(payload, "payload");
+            Objects.requireNonNull(content, "content");
             Objects.requireNonNull(preferredSignatureEncoding, "preferredSignatureEncoding");
             Objects.requireNonNull(deadline, "deadline");
             try {
-                return fingerprintWithDigest(namespace, accessContext, keyRef, algorithmId, payload,
+                return fingerprintWithDigest(namespace, accessContext, keyRef, algorithmId, content,
                         preferredSignatureEncoding, deadline, MessageDigest.getInstance("SHA-256"), ignored -> {
                         });
             } catch (NoSuchAlgorithmException ex) {
@@ -339,16 +343,15 @@ public interface SignatureWorkflow extends Closeable {
         }
 
         /* default */ static String fingerprintWithDigest(String namespace, AccessContext accessContext, KeyRef keyRef,
-                String algorithmId, EncodedObject payload, Optional<Encoding> preferredSignatureEncoding,
+                String algorithmId, RepeatableContent content, Optional<Encoding> preferredSignatureEncoding,
                 Optional<Instant> deadline, MessageDigest digest, Consumer<byte[]> cleanupObserver) {
             Objects.requireNonNull(digest, "digest");
             Objects.requireNonNull(cleanupObserver, "cleanupObserver");
-            byte[] payloadBytes = payload.bytes();
             byte[] digestBytes = null;
             try {
                 try (DataOutputStream output = new DataOutputStream(
                         new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
-                    output.writeUTF("sign-request-v1");
+                    output.writeUTF("sign-request-v2");
                     output.writeUTF(namespace);
                     output.writeUTF(accessContext.principal().type());
                     output.writeUTF(accessContext.principal().name());
@@ -357,9 +360,8 @@ public interface SignatureWorkflow extends Closeable {
                     output.writeUTF(accessContext.formatId().map(zeroecho.pki.api.FormatId::value).orElse(""));
                     output.writeUTF(keyRef.value());
                     output.writeUTF(algorithmId);
-                    output.writeUTF(payload.encoding().name());
-                    output.writeInt(payloadBytes.length);
-                    output.write(payloadBytes);
+                    output.writeUTF(content.contentId());
+                    output.writeLong(content.length().orElse(-1L));
                     output.writeUTF(preferredSignatureEncoding.map(Enum::name).orElse(""));
                     output.writeUTF(deadline.map(Instant::toString).orElse(""));
                 }
@@ -368,7 +370,6 @@ public interface SignatureWorkflow extends Closeable {
             } catch (IOException ex) {
                 throw new IllegalStateException("Unable to compute signing request fingerprint");
             } finally {
-                clearOwned(payloadBytes, cleanupObserver);
                 clearOwned(digestBytes, cleanupObserver);
             }
         }
@@ -405,25 +406,26 @@ public interface SignatureWorkflow extends Closeable {
      *
      * @param accessContext    audit/governance context (never {@code null})
      * @param algorithmId      requested signature algorithm id (never blank)
-     * @param payload          signed payload bytes (never {@code null})
+     * @param content          immutable repeatable signed content
      * @param signature        signature bytes (never {@code null})
      * @param publicKeyRef     optional public key reference (preferred)
      * @param publicKeyEncoded optional encoded public key bytes (provider-specific;
      *                         may be unsupported)
      * @param deadline         optional absolute deadline
      */
-    record VerifyRequest(AccessContext accessContext, String algorithmId, EncodedObject payload,
+    record VerifyRequest(AccessContext accessContext, String algorithmId, RepeatableContent content,
             EncodedObject signature, Optional<KeyRef> publicKeyRef, Optional<EncodedObject> publicKeyEncoded,
-            Optional<Instant> deadline) {
+            Optional<Instant> deadline, CancellationSignal cancellation) {
 
         public VerifyRequest {
             Objects.requireNonNull(accessContext, "accessContext");
             Objects.requireNonNull(algorithmId, "algorithmId");
-            Objects.requireNonNull(payload, "payload");
+            Objects.requireNonNull(content, "content");
             Objects.requireNonNull(signature, "signature");
             Objects.requireNonNull(publicKeyRef, "publicKeyRef");
             Objects.requireNonNull(publicKeyEncoded, "publicKeyEncoded");
             Objects.requireNonNull(deadline, "deadline");
+            Objects.requireNonNull(cancellation, "cancellation");
             if (algorithmId.isBlank()) {
                 throw new IllegalArgumentException("algorithmId must not be blank");
             }

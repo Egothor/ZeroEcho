@@ -33,17 +33,19 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.io.IOException;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
+import java.util.OptionalLong;
 
 import org.bouncycastle.cert.X509CertificateHolder;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
@@ -51,6 +53,7 @@ import zeroecho.pki.api.StatusObjectService;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
@@ -65,11 +68,18 @@ import zeroecho.pki.api.status.StatusObjectQuery;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
+import zeroecho.pki.impl.framework.x509.bc.BcX509SignedObjectValidator;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.impl.framework.x509.X509SignedObjectCompletion;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CrlEntry;
+import zeroecho.pki.spi.framework.CrlEntrySource;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.spi.store.RevocationSnapshot;
 
 /**
  * Default implementation of {@link StatusObjectService}.
@@ -126,6 +136,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
     private final CredentialFramework framework;
     private final AuditSink auditSink;
     private final EffectiveCredentialStatusResolver statusResolver;
+    private final X509AuthoritySnapshot authority;
 
     /**
      * Creates a status object service bound to the supplied persistence and
@@ -141,11 +152,12 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      * @throws NullPointerException if an argument is {@code null}
      */
     public DefaultStatusObjectService(PkiStore store, CredentialFramework framework, AuditSink auditSink,
-            EffectiveCredentialStatusResolver statusResolver) {
+            EffectiveCredentialStatusResolver statusResolver, X509AuthoritySnapshot authority) {
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
         this.statusResolver = Objects.requireNonNull(statusResolver, "statusResolver");
+        this.authority = Objects.requireNonNull(authority, "authority");
     }
 
     /**
@@ -193,6 +205,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      *                                  generated status object fails
      */
     @Override
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public StatusObject generate(StatusObjectGenerateCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("command must not be null");
@@ -206,59 +219,79 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         }
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCred = selectIssuerCredential(ca, command, statusEvaluation);
-        List<CrlEntry> crlEntries = command.type() == StatusObjectType.CRL
-                ? collectCrlEntries(command.issuerCaId(), statusEvaluation.evaluationTime())
-                : List.of();
 
         SimpleAttributeSet.Builder b = SimpleAttributeSet.builder();
         b.putAll(command.attributes());
-        b.put(BcX509Attributes.ISSUER_CERT_DER, new AttributeValue.BytesValue(issuerCred.encoded().bytes()));
+        b.put(BcX509Attributes.ISSUER_CERT_DER,
+                new AttributeValue.BytesValue(CredentialContent.materializeForBc(store, issuerCred.content())));
         b.put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(ca.issuerKeyRef().value()));
 
         StatusObjectGenerateCommand wired = new StatusObjectGenerateCommand(command.issuerCaId(), command.type(),
                 command.formatId(), b.build());
-        if (command.type() == StatusObjectType.CRL) {
-            return generateAndPersistCrl(wired, crlEntries);
-        }
-        StatusObject obj = framework.statusObjectGenerator().generate(wired, crlEntries);
-        store.putStatusObject(obj);
-        return obj;
-    }
-
-    // Framework, signing, and store failures may carry provider or persisted
-    // material. CRL generation deliberately replaces the complete boundary with
-    // one fresh cause-free and suppressed-free exception.
-    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
-    private StatusObject generateAndPersistCrl(StatusObjectGenerateCommand command, List<CrlEntry> entries) {
-        try {
-            StatusObject generated = framework.statusObjectGenerator().generate(command, entries);
-            store.putStatusObject(generated);
-            return generated;
-        } catch (RuntimeException exception) {
-            throw crlGenerationFailure();
-        }
-    }
-
-    // Store and parser failures may contain persisted material; the complete
-    // collection boundary deliberately replaces every cause with one stable code.
-    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
-    private List<CrlEntry> collectCrlEntries(PkiId issuerCaId, Instant evaluationTime) {
-        try {
-            List<RevocationJournal> journals = Objects.requireNonNull(store.listRevocationJournals(),
-                    "revocation journals");
-            List<CrlEntry> entries = new java.util.ArrayList<>();
-            Set<BigInteger> serials = new HashSet<>();
-            for (RevocationJournal journal : journals) {
-                collectCrlEntry(issuerCaId, evaluationTime, journal, serials).ifPresent(entries::add);
+        try (CrlEntrySource entries = command.type() == StatusObjectType.CRL
+                ? openCrlEntries(command.issuerCaId(), statusEvaluation.evaluationTime())
+                : new EmptyCrlEntrySource()) {
+            if (command.type() == StatusObjectType.CRL) {
+                return generateAndPersistCrl(wired, entries, issuerCred);
             }
-            return List.copyOf(entries);
-        } catch (RuntimeException exception) {
+            return generateAndPersistOther();
+        } catch (IOException | RuntimeException exception) {
             throw crlGenerationFailure();
         }
     }
 
-    private Optional<CrlEntry> collectCrlEntry(PkiId issuerCaId, Instant evaluationTime, RevocationJournal journal,
-            Set<BigInteger> serials) {
+    private StatusObject generateAndPersistCrl(StatusObjectGenerateCommand command, CrlEntrySource entries,
+            Credential issuer) {
+        X509SignedObjectCompletion completion = framework.statusObjectGenerator().generate(command, entries);
+        StatusObject generated = authority.requireStatusCompletion(completion);
+        X509ExecutionPlan<SignatureWorkflow> signingPlan = authority.requireStatusSigningPlan(completion);
+        requirePersistableContent(generated.content());
+        boolean accepted = false;
+        try {
+            byte[] issuerDer = CredentialContent.materializeForBc(store, issuer.content());
+            try (RepeatableContent content = store.stagedContent().openContent(generated.content())) {
+                X509CertificateHolder holder = new X509CertificateHolder(issuerDer);
+                new BcX509SignedObjectValidator(authority).validateGeneratedCrl(content, signingPlan,
+                        holder.getSubjectPublicKeyInfo(), CancellationSignal.NONE);
+            } finally {
+                Arrays.fill(issuerDer, (byte) 0);
+            }
+            store.putStatusObject(generated);
+            accepted = true;
+            return generated;
+        } catch (IOException exception) {
+            throw new PkiException("Status postcondition validation failed: code=CONTENT_IO_FAILED", exception);
+        } finally {
+            if (!accepted) {
+                releaseRejectedContent(generated.content());
+            }
+        }
+    }
+
+    private StatusObject generateAndPersistOther() {
+        throw new PkiException("Unsupported status object type");
+    }
+
+    private void requirePersistableContent(DurableContentReference content) {
+        if (content.lifecycle() != DurableContentReference.Lifecycle.PERSISTED
+                || !store.stagedContent().contentStoreId().equals(content.storeId())) {
+            throw new PkiException("Status content lifecycle invalid: code=STAGED_CONTENT_FOREIGN_RUNTIME");
+        }
+    }
+
+    private void releaseRejectedContent(DurableContentReference content) {
+        try {
+            store.stagedContent().retireUnownedContent(content);
+        } catch (IOException cleanupFailure) {
+            throw new PkiException("Rejected status content cleanup failed: code=CONTENT_IO_FAILED", cleanupFailure);
+        }
+    }
+
+    private CrlEntrySource openCrlEntries(PkiId issuerCaId, Instant evaluationTime) {
+        return new JournalCrlEntrySource(store.openRevocationSnapshot(), issuerCaId, evaluationTime);
+    }
+
+    private Optional<CrlEntry> collectCrlEntry(PkiId issuerCaId, Instant evaluationTime, RevocationJournal journal) {
         Objects.requireNonNull(journal, "journal");
         RevocationTransition latest = Objects.requireNonNull(journal.latest(), "latest transition");
         if (latest.time().isAfter(evaluationTime)) {
@@ -273,13 +306,10 @@ public final class DefaultStatusObjectService implements StatusObjectService {
             return Optional.empty();
         }
         if (!BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())
-                || credential.encoded().encoding() != Encoding.DER) {
+                || credential.content().encoding() != Encoding.DER) {
             throw crlGenerationFailure();
         }
         BigInteger serial = certificateSerial(credential);
-        if (!serials.add(serial)) {
-            throw crlGenerationFailure();
-        }
         RevocationReason reason = switch (latest.state()) {
             case HELD -> RevocationReason.CERTIFICATE_HOLD;
             case PERMANENTLY_REVOKED ->
@@ -289,11 +319,131 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         return Optional.of(new CrlEntry(serial, latest.time(), reason));
     }
 
+    /** Stable restartable view over one revocation-store snapshot. */
+    private final class JournalCrlEntrySource implements CrlEntrySource {
+        private final RevocationSnapshot snapshot;
+        private final PkiId issuerCaId;
+        private final Instant evaluationTime;
+
+        private JournalCrlEntrySource(RevocationSnapshot snapshot, PkiId issuerCaId, Instant evaluationTime) {
+            this.snapshot = snapshot;
+            this.issuerCaId = issuerCaId;
+            this.evaluationTime = evaluationTime;
+        }
+
+        @Override
+        public Cursor openCursor() throws IOException {
+            return new JournalCrlCursor(snapshot.openCursor(), issuerCaId, evaluationTime);
+        }
+
+        @Override
+        public OptionalLong count() {
+            return OptionalLong.empty();
+        }
+
+        @Override
+        public void close() throws IOException {
+            snapshot.close();
+        }
+    }
+
+    /** Bounded cursor translating authoritative journals into CRL entries. */
+    private final class JournalCrlCursor implements CrlEntrySource.Cursor {
+        private final RevocationSnapshot.Cursor cursor;
+        private final PkiId issuerCaId;
+        private final Instant evaluationTime;
+        private CrlEntry current;
+        private long ordinal = -1L;
+
+        private JournalCrlCursor(RevocationSnapshot.Cursor cursor, PkiId issuerCaId, Instant evaluationTime) {
+            this.cursor = cursor;
+            this.issuerCaId = issuerCaId;
+            this.evaluationTime = evaluationTime;
+        }
+
+        @Override
+        public boolean next() throws IOException {
+            while (cursor.next()) {
+                Optional<CrlEntry> candidate = collectCrlEntry(issuerCaId, evaluationTime, cursor.current());
+                if (candidate.isPresent()) {
+                    current = candidate.orElseThrow();
+                    ordinal = Math.addExact(ordinal, 1L);
+                    return true;
+                }
+            }
+            current = null;
+            return false;
+        }
+
+        @Override
+        public CrlEntry current() {
+            if (current == null) {
+                throw new IllegalStateException("CRL entry cursor is not positioned");
+            }
+            return current;
+        }
+
+        @Override
+        public long ordinal() {
+            if (current == null) {
+                throw new IllegalStateException("CRL entry cursor is not positioned");
+            }
+            return ordinal;
+        }
+
+        @Override
+        public void close() throws IOException {
+            cursor.close();
+            current = null;
+        }
+    }
+
+    /** Empty source used for status formats without revocation entries. */
+    private static final class EmptyCrlEntrySource implements CrlEntrySource {
+        @Override
+        public Cursor openCursor() {
+            return new EmptyCrlCursor();
+        }
+
+        @Override
+        public OptionalLong count() {
+            return OptionalLong.of(0L);
+        }
+
+        @Override
+        public void close() {
+            // No resources.
+        }
+    }
+
+    /** Resource-free cursor for an empty status-entry source. */
+    private static final class EmptyCrlCursor implements CrlEntrySource.Cursor {
+        @Override
+        public boolean next() {
+            return false;
+        }
+
+        @Override
+        public CrlEntry current() {
+            throw new IllegalStateException("Empty CRL cursor has no entry");
+        }
+
+        @Override
+        public long ordinal() {
+            throw new IllegalStateException("Empty CRL cursor has no ordinal");
+        }
+
+        @Override
+        public void close() {
+            // No resources.
+        }
+    }
+
     // Parser failures can contain persisted certificate details; the original
     // cause is intentionally removed at this public service boundary.
     @SuppressWarnings("PMD.PreserveStackTrace")
-    private static BigInteger certificateSerial(Credential credential) {
-        byte[] der = credential.encoded().bytes();
+    private BigInteger certificateSerial(Credential credential) {
+        byte[] der = CredentialContent.materializeForBc(store, credential.content());
         BigInteger serial;
         try {
             serial = new X509CertificateHolder(der).getSerialNumber();

@@ -58,6 +58,8 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -87,11 +89,16 @@ import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.impl.ProfileLifecycleFailure;
 import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
+import zeroecho.pki.spi.store.TemporaryUniqueIndex;
+import zeroecho.pki.spi.store.RevocationSnapshot;
 
 /**
  * Filesystem-based reference implementation of {@link PkiStore}.
@@ -167,6 +174,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private final ConcurrentMap<PkiId, RevocationLockEntry> revocationLocks;
     private final ConcurrentMap<String, ProfileLockEntry> profileLocks;
     private final AtomicBoolean durabilityUncertain;
+    private final FilesystemStagedContentStore stagedContent;
+    private final CredentialContentTransaction credentialContentTransactions;
 
     private final StoreOwnership ownership;
 
@@ -221,8 +230,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         try {
             ensureVersionFile();
             this.signingNamespace = ensureSigningNamespace();
+            this.stagedContent = new FilesystemStagedContentStore(this.paths.stagedContentRoot(),
+                    this.signingNamespace);
+            this.credentialContentTransactions = new CredentialContentTransaction(this.paths, this.stagedContent);
             this.signingTimeWatermark = new AtomicLong(loadSigningTimeWatermark());
             this.historySeq = new AtomicLong(0L);
+            recoverStagedContent();
 
             LOG.log(Level.INFO, "running in {0}", root);
             this.ownership = acquiredOwnership;
@@ -234,6 +247,101 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 acquiredOwnership.closeSilently();
             }
         }
+    }
+
+    @Override
+    public StagedContentStore stagedContent() {
+        return stagedContent;
+    }
+
+    private void recoverStagedContent() throws IOException {
+        credentialContentTransactions.recover();
+        try (TemporaryUniqueIndex retained = stagedContent.beginUniqueIndex();
+                TemporaryUniqueIndex retainedOwners = stagedContent.beginOwnerIndex()) {
+            try {
+                addPersistedCredentialReferences(retained, retainedOwners);
+                addPersistedStatusReferences(retained);
+                addPendingSigningReferences(retained, retainedOwners);
+                stagedContent.recoverContent(retained, retainedOwners);
+            } catch (IllegalStateException | PkiException malformedDurableState) {
+                // Recovery cannot prove abandonment while durable metadata is
+                // corrupt. Preserve content so the normal owning subsystem can
+                // report the authoritative corruption without destructive loss.
+                LOG.log(Level.WARNING, "Staged-content reclamation skipped: code=DURABLE_METADATA_INVALID");
+            }
+        }
+    }
+
+    private void addPersistedCredentialReferences(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners)
+            throws IOException {
+        Path root = paths.root().resolve("credentials").resolve("by-id");
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try (Stream<Path> pathsStream = Files.list(root)) {
+            java.util.Iterator<Path> iterator = pathsStream
+                    .filter(path -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(".bin"))
+                    .iterator();
+            while (iterator.hasNext()) {
+                Credential credential = FsCodec.decode(FsCodec.CREDENTIAL, FsOperations.readAll(iterator.next()),
+                        stagedContent);
+                addRetained(retained, credential.content());
+                DurableContentOwner owner = DurableContentOwner.credentialRecord(credential.credentialId());
+                retainedOwners.add(owner.canonicalForm().getBytes(StandardCharsets.UTF_8));
+            }
+        }
+    }
+
+    private void addPersistedStatusReferences(TemporaryUniqueIndex retained) throws IOException {
+        Path root = paths.root().resolve("status").resolve("by-id");
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try (Stream<Path> pathsStream = Files.list(root)) {
+            java.util.Iterator<Path> iterator = pathsStream.filter(Files::isRegularFile).iterator();
+            while (iterator.hasNext()) {
+                StatusObject status = FsCodec.decode(FsCodec.STATUS_OBJECT, FsOperations.readAll(iterator.next()),
+                        stagedContent);
+                addRetained(retained, status.content());
+            }
+        }
+    }
+
+    private void addPendingSigningReferences(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners)
+            throws IOException {
+        Path root = paths.signWorkflowRoot();
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try (Stream<Path> pathsStream = Files.walk(root)) {
+            java.util.Iterator<Path> iterator = pathsStream
+                    .filter(path -> Files.isRegularFile(path)
+                            && FsPaths.CURRENT_FILE.equals(path.getFileName().toString()))
+                    .iterator();
+            while (iterator.hasNext()) {
+                SignWorkflowStore.Record record = readSignRecordFile(iterator.next());
+                PkiSigningBus.SignContinuation continuation = PkiSigningBus.SignContinuation.decode(record.request(),
+                        stagedContent);
+                if (record.state() == SignWorkflowStore.State.RETIRED) {
+                    if (continuation.hasLiveContent()) {
+                        throw new IllegalStateException("Retired signing record retains live content");
+                    }
+                    continue;
+                }
+                DurableContentReference reference = continuation.content();
+                DurableContentOwner owner = DurableContentOwner.signingOperation(record.submissionId());
+                if (!stagedContent.contentOwners(reference).contains(owner)) {
+                    throw new IllegalStateException("Signing content owner is missing");
+                }
+                addRetained(retained, reference);
+                retainedOwners.add(owner.canonicalForm().getBytes(StandardCharsets.UTF_8));
+            }
+        }
+    }
+
+    private static void addRetained(TemporaryUniqueIndex retained, DurableContentReference reference)
+            throws IOException {
+        retained.add(reference.contentId().getBytes(StandardCharsets.US_ASCII));
     }
 
     /**
@@ -292,16 +400,23 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public void putCredential(final Credential credential) {
         requireStoreUsable();
         Objects.requireNonNull(credential, "credential");
-        PkiId id = credential.credentialId();
-        Path p = this.paths.credentialPath(id);
-        writeOnce(p, FsCodec.encode(FsCodec.CREDENTIAL, credential), "CREDENTIAL", FsUtil.safeId(id));
+        credentialContentTransactions.put(credential);
     }
 
     @Override
     public Optional<Credential> getCredential(final PkiId credentialId) {
         requireStoreUsable();
         Objects.requireNonNull(credentialId, "credentialId");
-        return readOptional(this.paths.credentialPath(credentialId), FsCodec.CREDENTIAL);
+        Path path = this.paths.credentialPath(credentialId);
+        if (!Files.exists(path)) {
+            return Optional.empty();
+        }
+        try {
+            Credential credential = FsCodec.decode(FsCodec.CREDENTIAL, FsOperations.readAll(path), stagedContent);
+            return Optional.of(credentialContentTransactions.validateLoaded(credentialId, credential));
+        } catch (IOException failure) {
+            throw new IllegalStateException("Credential read failed", failure);
+        }
     }
 
     @Override
@@ -369,28 +484,29 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
-    // Listing failures are intentionally replaced by one stable redacted boundary.
+    // Snapshot failures are intentionally replaced by one stable redacted boundary.
     @SuppressWarnings("PMD.PreserveStackTrace")
-    public List<RevocationJournal> listRevocationJournals() {
+    public RevocationSnapshot openRevocationSnapshot() {
         requireStoreUsable();
         Path root = this.paths.root().resolve("revocations").resolve("by-credential");
-        if (!Files.isDirectory(root)) {
-            return List.of();
-        }
-        try (Stream<Path> directories = Files.list(root)) {
-            List<RevocationJournal> journals = new ArrayList<>();
-            for (Path entityDir : directories.filter(Files::isDirectory)
-                    .sorted(Comparator.comparing(path -> path.getFileName().toString())).toList()) {
-                Path journalPath = entityDir.resolve("journal.bin");
-                if (Files.exists(journalPath)) {
-                    RevocationJournal journal = decodeRevocationJournal(journalPath);
-                    if (!entityDir.getFileName().toString().equals(FsUtil.safeId(journal.credentialId()))) {
-                        throw corruptRevocationState();
+        String snapshotId = UUID.randomUUID().toString();
+        Path snapshotRoot = paths.revocationSnapshotRoot().resolve(snapshotId);
+        long count = 0L;
+        try {
+            Files.createDirectories(snapshotRoot);
+            if (Files.isDirectory(root)) {
+                try (Stream<Path> journals = Files.walk(root)) {
+                    java.util.Iterator<Path> iterator = journals
+                            .filter(path -> Files.isRegularFile(path)
+                                    && "journal.bin".equals(path.getFileName().toString()))
+                            .iterator();
+                    while (iterator.hasNext()) {
+                        Files.copy(iterator.next(), snapshotRoot.resolve(Long.toUnsignedString(count) + ".bin"));
+                        count = Math.addExact(count, 1L);
                     }
-                    journals.add(journal);
                 }
             }
-            return List.copyOf(journals);
+            return new FilesystemRevocationSnapshot(snapshotId, snapshotRoot, count);
         } catch (IOException ex) {
             throw corruptRevocationState();
         }
@@ -835,9 +951,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     || !isRetirableSignState(current.state())) {
                 return Optional.empty();
             }
-            SignWorkflowStore.Record retired = copySignRecord(current, SignWorkflowStore.State.RETIRED,
-                    current.revision() + 1L, fence, Optional.empty(), Optional.of("RETIRED"), current.result(),
-                    current.providerUpdatedAt());
+            PkiSigningBus.SignContinuation continuation = PkiSigningBus.SignContinuation.decode(current.request(),
+                    stagedContent);
+            EncodedObject retiredRequest = continuation.withoutLiveContent().encode();
+            SignWorkflowStore.Record retired = new SignWorkflowStore.Record(current.submissionId(),
+                    current.namespace(), current.fingerprint(), current.owner(), current.createdAt(),
+                    current.deadline(), retiredRequest, SignWorkflowStore.State.RETIRED, current.revision() + 1L,
+                    fence, Optional.empty(), Optional.of("RETIRED"), current.result(), current.providerUpdatedAt());
             writeSignRecord(retired);
             return Optional.of(retired);
         } finally {
@@ -1054,6 +1174,105 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return Optional.of(journal);
     }
 
+    /** Stable file-backed revocation snapshot isolated from later store writes. */
+    private static final class FilesystemRevocationSnapshot implements RevocationSnapshot {
+        private final String snapshotId;
+        private final Path root;
+        private final long count;
+        private final AtomicBoolean closed;
+
+        private FilesystemRevocationSnapshot(String snapshotId, Path root, long count) {
+            this.snapshotId = snapshotId;
+            this.root = root;
+            this.count = count;
+            this.closed = new AtomicBoolean();
+        }
+
+        @Override
+        public String snapshotId() {
+            return snapshotId;
+        }
+
+        @Override
+        public OptionalLong count() {
+            return OptionalLong.of(count);
+        }
+
+        @Override
+        public Cursor openCursor() {
+            if (closed.get()) {
+                throw new IllegalStateException("Revocation snapshot is closed");
+            }
+            return new FilesystemRevocationCursor(root, count);
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (!closed.compareAndSet(false, true)) {
+                return;
+            }
+            if (Files.isDirectory(root)) {
+                try (Stream<Path> files = Files.list(root)) {
+                    java.util.Iterator<Path> iterator = files.iterator();
+                    while (iterator.hasNext()) {
+                        Files.deleteIfExists(iterator.next());
+                    }
+                }
+                Files.deleteIfExists(root);
+            }
+        }
+    }
+
+    /** Sequential bounded-memory cursor over one immutable snapshot directory. */
+    private static final class FilesystemRevocationCursor implements RevocationSnapshot.Cursor {
+        private final Path root;
+        private final long count;
+        private long nextOrdinal;
+        private RevocationJournal current;
+        private boolean closed;
+
+        private FilesystemRevocationCursor(Path root, long count) {
+            this.root = root;
+            this.count = count;
+        }
+
+        @Override
+        public boolean next() throws IOException {
+            if (closed) {
+                throw new IllegalStateException("Revocation cursor is closed");
+            }
+            if (nextOrdinal >= count) {
+                current = null;
+                return false;
+            }
+            current = decodeRevocationJournal(root.resolve(Long.toUnsignedString(nextOrdinal) + ".bin"));
+            nextOrdinal = Math.addExact(nextOrdinal, 1L);
+            return true;
+        }
+
+        @Override
+        public RevocationJournal current() {
+            if (current == null) {
+                throw new IllegalStateException("Revocation cursor is not positioned");
+            }
+            return current;
+        }
+
+        @Override
+        public long ordinal() {
+            if (current == null) {
+                throw new IllegalStateException("Revocation cursor is not positioned");
+            }
+            return nextOrdinal - 1L;
+        }
+
+        @Override
+        public void close() {
+            current = null;
+            closed = true;
+        }
+    }
+
     // Codec and filesystem failures are external persisted-state boundaries; raw
     // causes are deliberately removed from the stable corruption exception.
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
@@ -1156,7 +1375,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
             byte[] payload = new byte[input.remaining()];
             input.get(payload);
-            return FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, payload);
+            return FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, payload, stagedContent);
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to read authoritative signing record", ex);
         }
@@ -1176,7 +1395,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         Instant futureLimit;
         try {
             parsed = SigningSubmissionId.parse(record.submissionId());
-            continuation = PkiSigningBus.SignContinuation.decode(record.request());
+            continuation = PkiSigningBus.SignContinuation.decode(record.request(), stagedContent);
             horizonEnd = record.createdAt().plus(options.signingOperationHorizon());
             futureLimit = signingNow().plus(options.signingIdPermittedSkew());
         } catch (RuntimeException ex) {
@@ -1193,6 +1412,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 record, "DEADLINE_INVALID");
         requireValidSignRecord(continuation.isBoundTo(record.submissionId(), record.owner()), record,
                 "CONTINUATION_IDENTITY_MISMATCH");
+        requireValidSignRecord(record.state() == SignWorkflowStore.State.RETIRED != continuation.hasLiveContent(),
+                record, "CONTINUATION_LIFECYCLE_MISMATCH");
 
         byte[] storedRequest = record.request().bytes();
         byte[] canonicalRequest = null;
@@ -1609,19 +1830,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private static <T> Optional<T> readOptional(final Path path, final FsCodec.Schema<T> schema) {
+    private <T> Optional<T> readOptional(final Path path, final FsCodec.Schema<T> schema) {
         try {
             if (!Files.exists(path)) {
                 return Optional.empty();
             }
             byte[] data = FsOperations.readAll(path);
-            return Optional.of(FsCodec.decode(schema, data));
+            return Optional.of(FsCodec.decode(schema, data, stagedContent));
         } catch (IOException e) {
             throw new IllegalStateException("read failed: " + path, e);
         }
     }
 
-    private static <T> List<T> listBinaryFiles(final Path byIdDir, final FsCodec.Schema<T> schema) {
+    private <T> List<T> listBinaryFiles(final Path byIdDir, final FsCodec.Schema<T> schema) {
         if (!Files.isDirectory(byIdDir)) {
             return List.of();
         }
@@ -1629,7 +1850,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             return Files.list(byIdDir).filter(Files::isRegularFile)
                     .sorted(Comparator.comparing(p -> p.getFileName().toString())).map(p -> {
                         try {
-                            return FsCodec.decode(schema, FsOperations.readAll(p));
+                            return FsCodec.decode(schema, FsOperations.readAll(p), stagedContent);
                         } catch (IOException e) {
                             throw new IllegalStateException("read failed: " + p, e);
                         }
@@ -1639,7 +1860,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private static <T> List<T> listCurrentRecords(final Path byIdDir, final FsCodec.Schema<T> schema) {
+    private <T> List<T> listCurrentRecords(final Path byIdDir, final FsCodec.Schema<T> schema) {
         if (!Files.isDirectory(byIdDir)) {
             return List.of();
         }
@@ -1651,7 +1872,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             for (Path entityDir : entityDirs) {
                 Path current = entityDir.resolve(FsPaths.CURRENT_FILE);
                 if (Files.exists(current)) {
-                    out.add(FsCodec.decode(schema, FsOperations.readAll(current)));
+                    out.add(FsCodec.decode(schema, FsOperations.readAll(current), stagedContent));
                 }
             }
             return out;

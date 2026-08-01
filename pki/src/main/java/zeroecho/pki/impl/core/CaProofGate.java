@@ -33,7 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.security.MessageDigest;
@@ -49,24 +48,30 @@ import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.operator.ContentSigner;
-import org.bouncycastle.operator.ContentVerifier;
-import org.bouncycastle.operator.DefaultSignatureAlgorithmIdentifierFinder;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.io.ImmutableByteContent;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
+import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.util.async.AsyncState;
 import zeroecho.pki.util.async.AsyncStatus;
+import zeroecho.pki.spi.store.ContentSink;
 
 /**
  * Internal fail-closed proof gate for CA signing keys.
@@ -85,20 +90,27 @@ final class CaProofGate {
     private final PublicKeyInfoResolver publicKeyResolver;
     private final PkiSigningBus signingBus;
     private final AuditSink auditSink;
-    private final String signatureAlgorithmId;
+    private final AlgorithmIdentity signatureIdentity;
     private final Duration signingTtl;
 
     /* default */ CaProofGate(PublicKeyInfoResolver publicKeyResolver, PkiSigningBus signingBus, AuditSink auditSink,
             String signatureAlgorithmId, Duration signingTtl) {
+        this(publicKeyResolver, signingBus, auditSink,
+                signingBus.authority().resolveIdentity(Objects.requireNonNull(signatureAlgorithmId,
+                        "signatureAlgorithmId")), signingTtl);
+    }
+
+    /* default */ CaProofGate(PublicKeyInfoResolver publicKeyResolver, PkiSigningBus signingBus, AuditSink auditSink,
+            AlgorithmIdentity signatureIdentity, Duration signingTtl) {
         this.publicKeyResolver = Objects.requireNonNull(publicKeyResolver, "publicKeyResolver");
         this.signingBus = Objects.requireNonNull(signingBus, "signingBus");
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
-        this.signatureAlgorithmId = Objects.requireNonNull(signatureAlgorithmId, "signatureAlgorithmId");
+        this.signatureIdentity = Objects.requireNonNull(signatureIdentity, "signatureIdentity");
         this.signingTtl = Objects.requireNonNull(signingTtl, "signingTtl");
     }
 
     /* default */ ContentSigner signer(ManagedKeyProof proof) {
-        return new BusBackedContentSigner(signingBus, proof.keyRef(), signatureAlgorithmId, signingTtl);
+        return new BusBackedContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
     }
 
     /* default */ SubjectPublicKeyInfo parseRootSpki(EncodedObject spki, FormatId formatId) {
@@ -115,8 +127,24 @@ final class CaProofGate {
         }
         try {
             byte[] embeddedSpki = certificate.getSubjectPublicKeyInfo().getEncoded();
-            return MessageDigest.isEqual(expectedSpki.bytes(), embeddedSpki) && certificate.isSignatureValid(
-                    new JcaContentVerifierProviderBuilder().build(certificate.getSubjectPublicKeyInfo()));
+            BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(signingBus.authority().bindings());
+            AlgorithmIdentity outer = adapter.decode(certificate.getSignatureAlgorithm(),
+                    X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            AlgorithmIdentity inner = adapter.decode(
+                    certificate.toASN1Structure().getTBSCertificate().getSignature(),
+                    X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            AlgorithmIdentity key = adapter.decode(certificate.getSubjectPublicKeyInfo().getAlgorithm(),
+                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            X509ExecutionPlan<BcX509VerificationExecutor> plan = signingBus.authority().plan(outer, key,
+                    AlgorithmExecutionCapability.Direction.VERIFY,
+                    Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "root-proof",
+                    BcX509VerificationExecutor.class);
+            BcX509VerificationExecutor executor = plan.executor();
+            boolean verified = executor.verify(signingBus.authority(), plan, certificate.getSubjectPublicKeyInfo(),
+                    certificate.getSignatureAlgorithm(),
+                    new ImmutableByteContent(certificate.toASN1Structure().getTBSCertificate().getEncoded()),
+                    certificate.getSignature());
+            return MessageDigest.isEqual(expectedSpki.bytes(), embeddedSpki) && verified && outer.equals(inner);
         } catch (Exception ex) {
             return false;
         }
@@ -174,7 +202,7 @@ final class CaProofGate {
     }
 
     private byte[] signManagedKeyChallenge(KeyRef keyRef, byte[] challenge) {
-        ContentSigner contentSigner = new BusBackedContentSigner(signingBus, keyRef, signatureAlgorithmId, signingTtl);
+        ContentSigner contentSigner = new BusBackedContentSigner(signingBus, keyRef, signatureIdentity, signingTtl);
         try {
             contentSigner.getOutputStream().write(challenge);
         } catch (IOException ex) {
@@ -186,10 +214,17 @@ final class CaProofGate {
     private boolean verifyChallenge(byte[] spkiDer, byte[] challenge, byte[] signature) {
         try {
             SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(spkiDer);
-            ContentVerifier verifier = new JcaContentVerifierProviderBuilder().build(spki)
-                    .get(new DefaultSignatureAlgorithmIdentifierFinder().find(signatureAlgorithmId));
-            verifier.getOutputStream().write(challenge);
-            return verifier.verify(signature);
+            BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(signingBus.authority().bindings());
+            AlgorithmIdentity keyIdentity = adapter.decode(spki.getAlgorithm(),
+                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            X509ExecutionPlan<BcX509VerificationExecutor> plan = signingBus.authority().plan(signatureIdentity,
+                    keyIdentity, AlgorithmExecutionCapability.Direction.VERIFY,
+                    Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "managed-key-proof",
+                    BcX509VerificationExecutor.class);
+            BcX509VerificationExecutor executor = plan.executor();
+            return executor.verify(signingBus.authority(), plan, spki,
+                    adapter.encode(signatureIdentity, X509AlgorithmRole.SIGNATURE_ALGORITHM),
+                    new ImmutableByteContent(challenge), signature);
         } catch (Exception ex) {
             return false;
         }
@@ -231,21 +266,30 @@ final class CaProofGate {
 
         private final PkiSigningBus bus;
         private final KeyRef keyRef;
-        private final String algorithmId;
+        private final AlgorithmIdentity algorithmIdentity;
         private final Duration ttl;
-        private final ByteArrayOutputStream output;
+        private final ContentSink sink;
+        private final OutputStream output;
 
-        private BusBackedContentSigner(PkiSigningBus bus, KeyRef keyRef, String algorithmId, Duration ttl) {
+        private BusBackedContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
+                Duration ttl) {
             this.bus = bus;
             this.keyRef = keyRef;
-            this.algorithmId = algorithmId;
+            this.algorithmIdentity = algorithmIdentity;
             this.ttl = ttl;
-            this.output = new ByteArrayOutputStream();
+            this.sink = bus.beginSigningContent(Encoding.BINARY);
+            try {
+                this.output = sink.outputStream();
+            } catch (IOException exception) {
+                closeSinkPreserving(exception);
+                throw new PkiException("Signing content staging failed: code=SPOOL_STORAGE_FAILED", exception);
+            }
         }
 
         @Override
         public AlgorithmIdentifier getAlgorithmIdentifier() {
-            return new DefaultSignatureAlgorithmIdentifierFinder().find(algorithmId);
+            return new BcX509AlgorithmAdapter(bus.authority().bindings()).encode(algorithmIdentity,
+                    X509AlgorithmRole.SIGNATURE_ALGORITHM);
         }
 
         @Override
@@ -255,24 +299,40 @@ final class CaProofGate {
 
         @Override
         public byte[] getSignature() {
-            byte[] tbs = output.toByteArray();
+            DurableContentReference content;
             try {
-                Principal owner = new Principal("SYSTEM", "pki");
-                PkiId opId = bus.newSubmissionId();
-                EncodedObject payload = new EncodedObject(Encoding.BINARY, tbs);
-                AccessContext accessContext = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(),
-                        Optional.empty());
-                PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(accessContext,
-                        algorithmId, payload, keyRef, Encoding.BINARY, Optional.empty());
-                try {
-                    bus.submitSign(opId, owner, keyRef, algorithmId, payload, ttl, Optional.of(continuation.encode()));
-                } catch (RuntimeException failure) { // NOPMD - delete state if submission partially persisted it
-                    deletePreservingFailure(opId);
-                    throw failure;
-                }
-                return awaitSignature(opId);
+                output.close();
+                content = sink.complete();
+            } catch (IOException exception) {
+                closeSinkPreserving(exception);
+                throw new PkiException("Signing content staging failed: code=SPOOL_STORAGE_FAILED", exception);
+            }
+            Principal owner = new Principal("SYSTEM", "pki");
+            PkiId opId = bus.newSubmissionId();
+            AccessContext accessContext = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(),
+                    Optional.empty());
+            String canonicalIdentity = algorithmIdentity.canonicalForm();
+            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(accessContext,
+                    canonicalIdentity, content, keyRef, Encoding.BINARY, Optional.empty());
+            boolean submitted = false;
+            try {
+                bus.submitSign(opId, owner, keyRef, canonicalIdentity, content, ttl,
+                        Optional.of(continuation.encode()));
+                submitted = true;
             } finally {
-                Arrays.fill(tbs, (byte) 0);
+                if (!submitted) {
+                    deletePreservingFailure(opId);
+                    bus.releaseContent(content);
+                }
+            }
+            return awaitSignature(opId);
+        }
+
+        private void closeSinkPreserving(IOException primaryFailure) {
+            try {
+                sink.close();
+            } catch (IOException cleanupFailure) {
+                primaryFailure.addSuppressed(cleanupFailure);
             }
         }
 

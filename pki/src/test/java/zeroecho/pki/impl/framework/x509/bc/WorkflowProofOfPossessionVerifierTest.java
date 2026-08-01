@@ -39,6 +39,7 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 
 import org.bouncycastle.asn1.x500.X500Name;
@@ -97,7 +98,15 @@ public final class WorkflowProofOfPossessionVerifierTest {
                 "operationRoot", tempDir.resolve("signing-operations").toString()));
         SignatureWorkflow wf = provider.allocate(cfg);
 
-        WorkflowProofOfPossessionVerifier verifier = new WorkflowProofOfPossessionVerifier(wf);
+        zeroecho.pki.impl.framework.x509.X509AlgorithmResolver.Policy algorithmPolicy =
+                (suite, direction) -> true;
+        zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot authority =
+                zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot.compose(List.of(), List.of(provider),
+                        List.of(zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot.bindExecutor(
+                                "zeroecho-lib.signature-workflow",
+                                zeroecho.core.spi.AlgorithmExecutionCapability.Direction.VERIFY, wf)),
+                        algorithmPolicy);
+        WorkflowProofOfPossessionVerifier verifier = new WorkflowProofOfPossessionVerifier(wf, authority);
         VerificationPolicy policy = new VerificationPolicy(true, Optional.empty());
 
         ProofOfPossessionResult res = verifier.verify(parsed, policy);

@@ -35,7 +35,7 @@ package zeroecho.pki.api.credential;
 
 import java.util.List;
 
-import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.content.DurableContentReference;
 
 /**
  * Bundle of a primary credential and supporting objects.
@@ -49,7 +49,7 @@ import zeroecho.pki.api.EncodedObject;
  * @param credential        primary credential
  * @param supportingObjects supporting artifacts (framework-defined ordering)
  */
-public record CredentialBundle(Credential credential, List<EncodedObject> supportingObjects) {
+public record CredentialBundle(Credential credential, List<DurableContentReference> supportingObjects) {
 
     /**
      * Creates a bundle.

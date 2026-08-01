@@ -38,8 +38,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.alg.ecdsa.EcdsaCurveSpec;
 import zeroecho.core.alg.rsa.RsaSigSpec;
+import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spec.VoidSpec;
 
 /**
@@ -96,6 +98,10 @@ public final class SignatureInteropProfiles {
                     new SignatureInteropProfile("SHA512withRSA", "RSA", "RSA",
                             RsaSigSpec.pkcs1v15(RsaSigSpec.Hash.SHA512),
                             SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SHA256withRSAandMGF1",
+                    new SignatureInteropProfile("SHA256withRSAandMGF1", "RSA", "RSA",
+                            RsaSigSpec.pss(RsaSigSpec.Hash.SHA256, 32),
+                            SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
             Map.entry("SHA256withECDSA", new SignatureInteropProfile("SHA256withECDSA", "ECDSA", "ECDSA", // NOPMD
                     EcdsaCurveSpec.P256,
                     SignatureInteropProfile.SignatureRepresentation.ECDSA_DER_EXTERNAL_P1363_INTERNAL,
@@ -114,6 +120,17 @@ public final class SignatureInteropProfiles {
             Map.entry("Ed448", new SignatureInteropProfile("Ed448", "Ed448", "Ed448", VoidSpec.INSTANCE,
                     SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)));
 
+    private static final Map<String, SignatureInteropProfile> CANONICAL_PROFILES = Map.ofEntries(
+            canonical(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, "SHA256withRSA"),
+            canonical(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384, "SHA384withRSA"),
+            canonical(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512, "SHA512withRSA"),
+            canonical(BootstrapAlgorithmIdentities.RSA_PSS_SHA256, "SHA256withRSAandMGF1"),
+            canonical(BootstrapAlgorithmIdentities.ECDSA_SHA256, "SHA256withECDSA"),
+            canonical(BootstrapAlgorithmIdentities.ECDSA_SHA384, "SHA384withECDSA"),
+            canonical(BootstrapAlgorithmIdentities.ECDSA_SHA512, "SHA512withECDSA"),
+            canonical(BootstrapAlgorithmIdentities.ED25519_SIGNATURE, "Ed25519"),
+            canonical(BootstrapAlgorithmIdentities.ED448_SIGNATURE, "Ed448"));
+
     private SignatureInteropProfiles() {
     }
 
@@ -129,7 +146,8 @@ public final class SignatureInteropProfiles {
         if (algorithmId.isBlank()) {
             return Optional.empty();
         }
-        return Optional.ofNullable(PROFILES.get(algorithmId));
+        SignatureInteropProfile profile = CANONICAL_PROFILES.get(algorithmId);
+        return Optional.ofNullable(profile == null ? PROFILES.get(algorithmId) : profile);
     }
 
     /**
@@ -139,7 +157,9 @@ public final class SignatureInteropProfiles {
      * @return immutable set of supported standard signature names
      */
     public static Set<String> algorithmIds() {
-        return PROFILES.keySet();
+        Set<String> identifiers = new java.util.LinkedHashSet<>(PROFILES.keySet());
+        identifiers.addAll(CANONICAL_PROFILES.keySet());
+        return Set.copyOf(identifiers);
     }
 
     /**
@@ -163,5 +183,9 @@ public final class SignatureInteropProfiles {
             return profile.get().keyAlgorithmId();
         }
         return algorithmId;
+    }
+
+    private static Map.Entry<String, SignatureInteropProfile> canonical(AlgorithmIdentity identity, String alias) {
+        return Map.entry(identity.canonicalForm(), PROFILES.get(alias));
     }
 }

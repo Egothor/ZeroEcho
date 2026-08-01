@@ -33,13 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.crypto.zeroecholib;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
@@ -87,6 +85,8 @@ import zeroecho.core.alg.rsa.RsaPublicKeySpec;
 import zeroecho.core.alg.slhdsa.SlhDsaPublicKeySpec;
 import zeroecho.core.alg.sphincsplus.SphincsPlusPublicKeySpec;
 import zeroecho.core.context.SignatureContext;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
 import zeroecho.core.io.TailStrippingInputStream;
 import zeroecho.core.spec.AlgorithmKeySpec;
 import zeroecho.core.spec.ContextSpec;
@@ -266,7 +266,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
 
     private static final OperationStatus UNKNOWN_OPERATION_STATUS = new OperationStatus(State.FAILED, Instant.EPOCH,
             Optional.of(DC_UNKNOWN_OPERATION), Optional.empty());
-    private static final int OPERATION_RECORD_VERSION = 3;
+    private static final int OPERATION_RECORD_VERSION = 4;
     private static final long MIN_FENCING_TOKEN = 1L;
 
     private final String id;
@@ -488,7 +488,6 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             return opId;
         }
 
-        byte[] payloadBytes = null;
         byte[] signatureBytes = null;
         try {
             KeyRefParts parts = parseKeyRefOrThrow(request.keyRef(), true);
@@ -514,8 +513,9 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
                 completeSign(request, expiredStatus());
                 return opId;
             }
-            payloadBytes = request.payload().bytes();
-            signatureBytes = signStreaming(request.algorithmId(), prv.key(), pub.key(), payloadBytes);
+            request.cancellation().throwIfCancelled();
+            signatureBytes = signStreaming(request.algorithmId(), prv.key(), pub.key(), request.content(),
+                    request.cancellation());
 
             Encoding outEnc = request.preferredSignatureEncoding().orElse(Encoding.BINARY);
             EncodedObject signature = encodeSignatureOrThrow(outEnc, signatureBytes);
@@ -553,7 +553,6 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             logSafeFailure("SIGN", DC_CRYPTO_FAILURE, ex);
             return opId;
         } finally {
-            clearOwned("sign-payload", payloadBytes);
             clearOwned("sign-result-copy", signatureBytes);
         }
     }
@@ -670,7 +669,6 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         putStatus(opId, new OperationStatus(State.RUNNING, now(), Optional.of(DC_SUBMITTED), Optional.empty()));
 
         byte[] signatureBytes = null;
-        byte[] payloadBytes = null;
         try {
             if (request.algorithmId() == null || request.algorithmId().isBlank()) {
                 throw new InvalidRequestException(DC_INVALID_ALGORITHM_ID);
@@ -683,8 +681,9 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
                 putStatus(opId, expiredStatus());
                 return opId;
             }
-            payloadBytes = request.payload().bytes();
-            boolean ok = verifyStreaming(request.algorithmId(), pub, payloadBytes, signatureBytes);
+            request.cancellation().throwIfCancelled();
+            boolean ok = verifyStreaming(request.algorithmId(), pub, request.content(), signatureBytes,
+                    request.cancellation());
 
             Instant completedAt = now();
             if (deadlineReached(request.deadline(), completedAt)) {
@@ -716,7 +715,6 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             logSafeFailure("VERIFY", DC_CRYPTO_FAILURE, ex);
             return opId;
         } finally {
-            clearOwned("verify-payload", payloadBytes);
             clearOwned("verify-signature", signatureBytes);
         }
     }
@@ -1061,7 +1059,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         return a;
     }
 
-    private byte[] signStreaming(String algorithmId, PrivateKey prv, PublicKey pub, byte[] msg)
+    private byte[] signStreaming(String algorithmId, PrivateKey prv, PublicKey pub, RepeatableContent content,
+            CancellationSignal cancellation)
             throws GeneralSecurityException, IOException {
 
         Optional<SignatureInteropProfile> profile = SignatureInteropProfiles.resolve(algorithmId);
@@ -1075,14 +1074,14 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
 
         try (SignatureContext signer = session.createContext(contextAlgorithmId, KeyUsage.SIGN, prv, contextSpec)) {
             final byte[][] sigHolder = new byte[1][];
-            try (InputStream in = new TailStrippingInputStream(signer.wrap(new ByteArrayInputStream(msg)), sigLen,
-                    8192) {
+            try (InputStream source = content.openStream();
+                    InputStream in = new TailStrippingInputStream(signer.wrap(source), sigLen, 8192) {
                 @Override
                 protected void processTail(byte[] tail) throws IOException {
                     sigHolder[0] = (tail == null) ? null : tail.clone();
                 }
             }) {
-                in.transferTo(OutputStream.nullOutputStream());
+                consume(in, cancellation);
             }
 
             byte[] internalSignature = sigHolder[0];
@@ -1101,7 +1100,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         }
     }
 
-    private boolean verifyStreaming(String algorithmId, PublicKey pub, byte[] msg, byte[] signature)
+    private boolean verifyStreaming(String algorithmId, PublicKey pub, RepeatableContent content, byte[] signature,
+            CancellationSignal cancellation)
             throws GeneralSecurityException, IOException {
 
         Optional<SignatureInteropProfile> profile = SignatureInteropProfiles.resolve(algorithmId);
@@ -1116,8 +1116,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
 
         try (SignatureContext verifier = session.createContext(contextAlgorithmId, KeyUsage.VERIFY, pub, contextSpec)) {
             verifier.setExpectedTag(internalSignature);
-            try (InputStream in = verifier.wrap(new ByteArrayInputStream(msg))) {
-                in.transferTo(OutputStream.nullOutputStream());
+            try (InputStream source = content.openStream(); InputStream in = verifier.wrap(source)) {
+                consume(in, cancellation);
             }
             return true;
         } catch (Exception mismatch) {
@@ -1126,6 +1126,17 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             if (convertedSignature) {
                 clearOwned("verify-internal-signature", internalSignature);
             }
+        }
+    }
+
+    private static void consume(InputStream input, CancellationSignal cancellation) throws IOException {
+        byte[] buffer = new byte[16 * 1024];
+        try {
+            while (input.read(buffer) >= 0) {
+                cancellation.throwIfCancelled();
+            }
+        } finally {
+            Arrays.fill(buffer, (byte) 0);
         }
     }
 
@@ -1482,14 +1493,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         }
         output.writeUTF(request.keyRef().value());
         output.writeUTF(request.algorithmId());
-        output.writeInt(encodingCode(request.payload().encoding()));
-        byte[] payload = request.payload().bytes();
-        try {
-            output.writeInt(payload.length);
-            output.write(payload);
-        } finally {
-            clearOwned("persisted-request-payload", payload);
-        }
+        output.writeUTF(request.content().contentId());
+        output.writeLong(request.content().length().orElse(-1L));
         output.writeBoolean(request.preferredSignatureEncoding().isPresent());
         if (request.preferredSignatureEncoding().isPresent()) {
             output.writeInt(encodingCode(request.preferredSignatureEncoding().orElseThrow()));
@@ -1516,25 +1521,38 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
                 objectId, formatId);
         KeyRef keyRef = new KeyRef(input.readUTF());
         String algorithmId = input.readUTF();
-        Encoding payloadEncoding = encodingFromCode(input.readInt());
-        int payloadLength = input.readInt();
-        if (payloadLength < 1 || payloadLength > 16 * 1024 * 1024) {
-            throw new IllegalStateException("Invalid persisted signing payload length");
+        String contentId = input.readUTF();
+        long contentLength = input.readLong();
+        if (contentId.isBlank() || contentLength < -1L) {
+            throw new IllegalStateException("Invalid persisted signing content metadata");
         }
-        byte[] payload = input.readNBytes(payloadLength);
-        if (payload.length != payloadLength) {
-            throw new IllegalStateException("Truncated persisted signing payload");
+        Optional<Encoding> preferred = input.readBoolean() ? Optional.of(encodingFromCode(input.readInt()))
+                : Optional.empty();
+        Optional<Instant> deadline = input.readBoolean()
+                ? Optional.of(Instant.ofEpochSecond(input.readLong(), input.readInt()))
+                : Optional.empty();
+        return SignRequest.create(submissionId, namespace, 1L, access, keyRef, algorithmId,
+                new RecoveredContentMetadata(contentId, contentLength), preferred, deadline);
+    }
+
+    /**
+     * Metadata-only view retained for terminal request identity after restart.
+     * Recovered non-terminal operations fail closed before this content can execute.
+     */
+    private record RecoveredContentMetadata(String contentId, long persistedLength) implements RepeatableContent {
+        @Override
+        public InputStream openStream() throws IOException {
+            throw new IOException("Recovered content requires staged-content resolution");
         }
-        try {
-            Optional<Encoding> preferred = input.readBoolean() ? Optional.of(encodingFromCode(input.readInt()))
-                    : Optional.empty();
-            Optional<Instant> deadline = input.readBoolean()
-                    ? Optional.of(Instant.ofEpochSecond(input.readLong(), input.readInt()))
-                    : Optional.empty();
-            return SignRequest.create(submissionId, namespace, 1L, access, keyRef, algorithmId,
-                    new EncodedObject(payloadEncoding, payload), preferred, deadline);
-        } finally {
-            clearOwned("loaded-request-payload", payload);
+
+        @Override
+        public java.util.OptionalLong length() {
+            return persistedLength < 0L ? java.util.OptionalLong.empty() : java.util.OptionalLong.of(persistedLength);
+        }
+
+        @Override
+        public void close() {
+            // Metadata owns no live resource.
         }
     }
 

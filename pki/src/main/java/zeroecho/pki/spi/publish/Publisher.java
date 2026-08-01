@@ -33,7 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.spi.publish;
 
-import zeroecho.pki.api.EncodedObject;
+import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.publication.PublicationTarget;
 
 /**
@@ -50,5 +50,5 @@ public interface Publisher {
      * @throws IllegalArgumentException if inputs are null
      * @throws RuntimeException         if publishing fails
      */
-    void publish(PublicationTarget target, EncodedObject payload);
+    void publish(PublicationTarget target, RepeatableContent payload);
 }

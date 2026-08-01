@@ -167,7 +167,7 @@ final class H7EndEntityAcceptanceE2eTest {
                         .credential();
                 EndEntityProfileBinding binding = (EndEntityProfileBinding) issued.profileBinding();
                 assertEquals(imported, binding.reference());
-                X509CertificateHolder holder = new X509CertificateHolder(issued.encoded().bytes());
+                X509CertificateHolder holder = new X509CertificateHolder(runtime.credentialBytes(issued));
                 GeneralName[] names = GeneralNames
                         .fromExtensions(holder.getExtensions(), Extension.subjectAlternativeName).getNames();
                 assertEquals(1, names.length);
@@ -268,7 +268,7 @@ final class H7EndEntityAcceptanceE2eTest {
                 BigInteger allocatedSerial = allocatedSerials.get(allocatedSerials.size() - 1);
                 PersistedExpectation expectation = new PersistedExpectation(issuanceCase, allocatedSerial,
                         credential.validity(), credential.publicKeyId());
-                assertExactLeaf(credential, rootKey, leafKey, expectation);
+                assertExactLeaf(runtime, credential, rootKey, leafKey, expectation);
                 durableCredentials.put(credential.credentialId(), expectation);
             }
         }
@@ -285,7 +285,7 @@ final class H7EndEntityAcceptanceE2eTest {
         try (PkiTestRuntime reopened = PkiTestRuntime.create(tempDir, busFile, Map.of(rootKeyRef, rootKey))) {
             for (Map.Entry<PkiId, PersistedExpectation> entry : durableCredentials.entrySet()) {
                 Credential persisted = reopened.store().getCredential(entry.getKey()).orElseThrow();
-                assertExactLeaf(persisted, rootKey, leafKey, entry.getValue());
+                assertExactLeaf(reopened, persisted, rootKey, leafKey, entry.getValue());
             }
         }
     }
@@ -450,27 +450,28 @@ final class H7EndEntityAcceptanceE2eTest {
         return new CredentialIssuerBackend() {
             @Override
             public CredentialBundle issueEndEntity(ValidatedCertificateRequest candidate,
-                    EncodedObject issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
+                    zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
                 allocatedSerials.add(serial);
                 return delegate.issueEndEntity(candidate, issuerCertificate, issuerKeyRef, serial);
             }
 
             @Override
             public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
-                    EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                    zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
                 return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
     }
 
-    private static void assertExactLeaf(Credential credential, KeyPair rootKey, KeyPair leafKey,
+    private static void assertExactLeaf(PkiTestRuntime runtime, Credential credential, KeyPair rootKey,
+            KeyPair leafKey,
             PersistedExpectation expectation) throws Exception {
-        assertEquals(Encoding.DER, credential.encoded().encoding());
+        assertEquals(Encoding.DER, credential.content().encoding());
         EndEntityProfileBinding binding = assertInstanceOf(EndEntityProfileBinding.class, credential.profileBinding());
         assertEquals(expectation.issuanceCase().profileId(), binding.reference().profileId());
         assertEquals(expectation.validity(), credential.validity());
         assertEquals(expectation.publicKeyId(), credential.publicKeyId());
-        X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
+        X509CertificateHolder holder = new X509CertificateHolder(runtime.credentialBytes(credential));
         assertEquals(expectation.issuanceCase().subject(), holder.getSubject());
         SubjectRef expectedSubjectRef = expectation.issuanceCase().subject().getRDNs().length == 0
                 ? new SubjectRef("x509:empty-subject")
@@ -548,14 +549,14 @@ final class H7EndEntityAcceptanceE2eTest {
         return new CredentialIssuerBackend() {
             @Override
             public CredentialBundle issueEndEntity(ValidatedCertificateRequest candidate,
-                    EncodedObject issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
+                    zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
                 backendCalls.incrementAndGet();
                 return delegate.issueEndEntity(candidate, issuerCertificate, issuerKeyRef, serial);
             }
 
             @Override
             public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
-                    EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                    zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
                 return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
@@ -568,8 +569,8 @@ final class H7EndEntityAcceptanceE2eTest {
         AtomicReference<Credential> baselineCredential = new AtomicReference<>();
         AtomicReference<BigInteger> deliveredSerial = new AtomicReference<>();
         AtomicInteger backendCalls = new AtomicInteger();
-        CredentialIssuerBackend backend = mutatingBackend(runtime.issuerBackend(), rootKey, substituteKey, mutation,
-                baselineCredential, maliciousCredential, deliveredSerial, backendCalls);
+        CredentialIssuerBackend backend = mutatingBackend(runtime, runtime.issuerBackend(), rootKey, substituteKey,
+                mutation, baselineCredential, maliciousCredential, deliveredSerial, backendCalls);
         int auditBefore = runtime.auditSink().snapshot().size();
 
         PkiException rejection = assertThrows(PkiException.class,
@@ -590,35 +591,36 @@ final class H7EndEntityAcceptanceE2eTest {
         assertFalse(runtime.auditSink().snapshot().toString().contains(REDACTION_SENTINEL), mutation.name());
     }
 
-    private static CredentialIssuerBackend mutatingBackend(CredentialIssuerBackend delegate, KeyPair rootKey,
-            KeyPair substituteKey, LeafMutation mutation, AtomicReference<Credential> baselineCredential,
-            AtomicReference<Credential> maliciousCredential, AtomicReference<BigInteger> deliveredSerial,
-            AtomicInteger backendCalls) {
+    private static CredentialIssuerBackend mutatingBackend(PkiTestRuntime runtime,
+            CredentialIssuerBackend delegate, KeyPair rootKey, KeyPair substituteKey, LeafMutation mutation,
+            AtomicReference<Credential> baselineCredential, AtomicReference<Credential> maliciousCredential,
+            AtomicReference<BigInteger> deliveredSerial, AtomicInteger backendCalls) {
         return new CredentialIssuerBackend() {
             @Override
             public CredentialBundle issueEndEntity(ValidatedCertificateRequest candidate,
-                    EncodedObject issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
+                    zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
                 backendCalls.incrementAndGet();
                 deliveredSerial.set(serial);
                 CredentialBundle baseline = delegate.issueEndEntity(candidate, issuerCertificate, issuerKeyRef, serial);
                 baselineCredential.set(baseline.credential());
-                Credential mutated = mutateCredential(baseline.credential(), rootKey, substituteKey, mutation);
+                Credential mutated = mutateCredential(runtime, baseline.credential(), rootKey, substituteKey,
+                        mutation);
                 maliciousCredential.set(mutated);
                 return new CredentialBundle(mutated, baseline.supportingObjects());
             }
 
             @Override
             public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
-                    EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                    zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
                 return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };
     }
 
-    private static Credential mutateCredential(Credential credential, KeyPair rootKey, KeyPair substituteKey,
-            LeafMutation mutation) {
+    private static Credential mutateCredential(PkiTestRuntime runtime, Credential credential, KeyPair rootKey,
+            KeyPair substituteKey, LeafMutation mutation) {
         try {
-            X509CertificateHolder original = new X509CertificateHolder(credential.encoded().bytes());
+            X509CertificateHolder original = new X509CertificateHolder(runtime.credentialBytes(credential));
             X500Name issuer = mutation == LeafMutation.ISSUER ? new X500Name("CN=Wrong H7 Issuer")
                     : original.getIssuer();
             X500Name subject = mutatedSubject(original.getSubject(), mutation);
@@ -681,8 +683,12 @@ final class H7EndEntityAcceptanceE2eTest {
             CredentialStatus status = mutation == LeafMutation.STATUS_METADATA ? CredentialStatus.REVOKED
                     : credential.status();
             Encoding encoding = mutation == LeafMutation.ENCODING_METADATA ? Encoding.PEM : Encoding.DER;
+            zeroecho.pki.api.content.DurableContentReference content = runtime.stageCredential(der);
+            if (encoding != Encoding.DER) {
+                content = zeroecho.pki.testkit.PkiTestRuntime.untrustedReference(content, encoding);
+            }
             return new Credential(credentialId, formatId, issuerRef, subjectRef, metadataValidity, metadataSerial,
-                    publicKeyId, profileBinding, status, new EncodedObject(encoding, der), credential.attributes());
+                    publicKeyId, profileBinding, status, content, credential.attributes());
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to build controlled H7 mutation " + mutation.name());
         }

@@ -42,6 +42,11 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spec.AlgorithmSuite;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
+import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringPassword;
 import zeroecho.core.storage.KeyringStore;
@@ -75,7 +80,8 @@ import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
  * performs no value logging.
  * </p>
  */
-public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWorkflowProvider {
+public final class ZeroEchoLibSignatureWorkflowProvider
+        implements SignatureWorkflowProvider, AlgorithmExecutionCapabilityProvider {
     /** Stable failure code for a missing explicit keyring unlock provider. */
     public static final String DC_KEYRING_UNLOCK_PROVIDER_REQUIRED = "KEYRING_UNLOCK_PROVIDER_REQUIRED";
     /** Stable failure code for an unlock-provider acquisition failure. */
@@ -125,6 +131,42 @@ public final class ZeroEchoLibSignatureWorkflowProvider implements SignatureWork
     public Set<String> supportedKeys() {
         return Set.of(KEY_KEYRING_PATH, KEY_OPERATION_ROOT, KEY_OPERATION_HORIZON, KEY_KEYREF_PREFIX,
                 KEY_REQUIRE_SUFFIX);
+    }
+
+    /**
+     * Declares the exact classic signature domain implemented by the workflow.
+     *
+     * <p>
+     * This metadata describes the same workflow implementation allocated by this
+     * provider. It does not select an OID, redefine an identity, or claim key
+     * availability.
+     * </p>
+     *
+     * @return immutable execution capability contribution
+     */
+    @Override
+    public java.util.List<AlgorithmExecutionCapability> capabilities() {
+        Set<AlgorithmIdentity> signatures = Set.of(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512,
+                BootstrapAlgorithmIdentities.RSA_PSS_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA256,
+                BootstrapAlgorithmIdentities.ECDSA_SHA384, BootstrapAlgorithmIdentities.ECDSA_SHA512,
+                BootstrapAlgorithmIdentities.ED25519_SIGNATURE, BootstrapAlgorithmIdentities.ED448_SIGNATURE);
+        return java.util.List.of(new AlgorithmExecutionCapability() {
+            @Override
+            public String implementationId() {
+                return "zeroecho-lib.signature-workflow";
+            }
+
+            @Override
+            public String domainFingerprint() {
+                return "zeroecho-lib-signature-v1:bootstrap-classic:sign,verify";
+            }
+
+            @Override
+            public boolean supports(AlgorithmIdentity identity, AlgorithmSuite suite, Direction direction) {
+                return signatures.contains(identity) && identity.equals(suite.signature());
+            }
+        });
     }
 
     /**

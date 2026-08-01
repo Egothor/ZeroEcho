@@ -412,14 +412,14 @@ final class H7EndEntityCsrRejectionE2eTest {
         return new CredentialIssuerBackend() {
             @Override
             public CredentialBundle issueEndEntity(ValidatedCertificateRequest candidate,
-                    EncodedObject issuerCertificate, KeyRef issuerKeyRef, java.math.BigInteger serial) {
+                    zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef, java.math.BigInteger serial) {
                 backendCalls.incrementAndGet();
                 return delegate.issueEndEntity(candidate, issuerCertificate, issuerKeyRef, serial);
             }
 
             @Override
             public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest issuance,
-                    EncodedObject issuerCertificate, KeyRef issuerKeyRef) {
+                    zeroecho.pki.api.content.DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
                 return delegate.issueIntermediateCertificate(issuance, issuerCertificate, issuerKeyRef);
             }
         };

@@ -80,6 +80,7 @@ import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.util.async.AsyncBus;
@@ -330,7 +331,7 @@ public final class PkiBootstrapTest {
             PkiId submissionId = SigningSubmissionId.create(SIGNING_NAMESPACE, Instant.now(), new SecureRandom()).id();
             SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(submissionId,
                     SIGNING_NAMESPACE, 1L, access, new KeyRef("test-prefix:bootstrap"), "SHA256withRSA",
-                    new EncodedObject(Encoding.BINARY, payload), Optional.of(Encoding.BINARY), Optional.empty());
+                    new ImmutableByteContent(payload), Optional.of(Encoding.BINARY), Optional.empty());
             workflow.submitSign(request);
             assertEquals(SignatureWorkflow.State.SUCCEEDED, workflow.status(submissionId).state());
             assertTrue(

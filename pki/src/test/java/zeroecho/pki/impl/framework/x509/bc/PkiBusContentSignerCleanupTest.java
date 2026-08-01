@@ -37,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static zeroecho.pki.testkit.PkiTestRuntime.signingAuthority;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -49,12 +50,16 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.testkit.InMemorySignatureWorkflow;
 
 final class PkiBusContentSignerCleanupTest {
@@ -69,6 +74,39 @@ final class PkiBusContentSignerCleanupTest {
         assertCleanup(tempDir, true);
     }
 
+    @Test
+    void crlPostconditionRejectsEqualFingerprintForeignPlan(@TempDir Path tempDir) throws Exception {
+        System.out.println("crlPostconditionRejectsEqualFingerprintForeignPlan");
+        KeyRef issuerKeyRef = new KeyRef("kref:v1:keyring:test:issuer");
+        InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(
+                Map.of(issuerKeyRef.value(), generateRsa()));
+        X509AuthoritySnapshot owning = signingAuthority(signer);
+        X509AuthoritySnapshot foreign = signingAuthority(signer);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults());
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"), owning)) {
+            PkiBusContentSigner contentSigner = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
+                    Duration.ofSeconds(5));
+            X509ExecutionPlan<SignatureWorkflow> plan = contentSigner.executionPlan();
+
+            BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(owning, plan,
+                    plan.selection().requested());
+            assertEquals(owning.semanticFingerprint(), foreign.semanticFingerprint());
+            assertThrows(IllegalArgumentException.class,
+                    () -> BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(foreign, plan,
+                            plan.selection().requested()));
+            assertThrows(PkiException.class,
+                    () -> BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(owning, plan,
+                            BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384));
+            contentSigner.getOutputStream().write(1);
+            contentSigner.getSignature();
+            System.out.println("...fingerprint=" + owning.semanticFingerprint().substring(0, 16));
+            System.out.println("crlPostconditionRejectsEqualFingerprintForeignPlan...ok");
+        } finally {
+            signer.close();
+        }
+    }
+
     private static void assertCleanup(Path tempDir, boolean intermediate) throws Exception {
         KeyPair subjectKey = generateRsa();
         KeyRef issuerKeyRef = new KeyRef("kref:v1:keyring:test:issuer");
@@ -77,7 +115,7 @@ final class PkiBusContentSignerCleanupTest {
         Path busLog = tempDir.resolve("bus.log");
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog)) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog, signingAuthority(signer))) {
             PkiBusContentSigner contentSigner = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
                     Duration.ofSeconds(5));
             contentSigner.getOutputStream()
@@ -91,7 +129,7 @@ final class PkiBusContentSignerCleanupTest {
             assertFalse(Files.exists(storeRoot.resolve("credentials")));
 
             PkiId operationId = submittedOperation(busLog);
-            try (PkiSigningBus replayed = new PkiSigningBus(store, signer, busLog)) {
+            try (PkiSigningBus replayed = new PkiSigningBus(store, signer, busLog, signingAuthority(signer))) {
                 assertEquals(zeroecho.pki.util.async.AsyncState.CANCELLED,
                         replayed.status(operationId).orElseThrow().state());
             }

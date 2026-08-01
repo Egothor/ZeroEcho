@@ -34,6 +34,8 @@
 package zeroecho.pki.impl.core.async;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static zeroecho.pki.testkit.PkiTestRuntime.signingAuthority;
+import static zeroecho.pki.testkit.PkiTestRuntime.stage;
 
 import java.nio.file.Path;
 import java.security.KeyPair;
@@ -50,6 +52,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
@@ -96,17 +99,18 @@ public final class PkiSigningBusResilienceTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(100), Map.of(keyRef.value(), kp.getPrivate()));
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile)) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile, signingAuthority(signer))) {
 
             opId = bus.canonicalizeOperationId(clientOpId, owner);
             System.out.println("...opId=" + opId.value());
+            DurableContentReference content = stage(bus, payloadObj);
 
             AccessContext ac = new AccessContext(owner, new Purpose("ISSUANCE"), Optional.empty(), Optional.empty());
-            PkiSigningBus.SignContinuation cont = new PkiSigningBus.SignContinuation(ac, "SHA256withRSA", payloadObj,
+            PkiSigningBus.SignContinuation cont = new PkiSigningBus.SignContinuation(ac, "SHA256withRSA", content,
                     keyRef, Encoding.BINARY, Optional.empty());
 
             Instant t0 = Instant.now();
-            bus.submitSign(opId, owner, keyRef, "SHA256withRSA", payloadObj, Duration.ofSeconds(30),
+            bus.submitSign(opId, owner, keyRef, "SHA256withRSA", content, Duration.ofSeconds(30),
                     Optional.of(cont.encode()));
             long submitMs = Duration.between(t0, Instant.now()).toMillis();
             System.out.println("...submitMs=" + submitMs);
@@ -135,7 +139,7 @@ public final class PkiSigningBusResilienceTest {
         try (FilesystemPkiStore store2 = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer2 = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(0), Map.of(keyRef.value(), kp.getPrivate()));
-                PkiSigningBus bus2 = new PkiSigningBus(store2, signer2, busFile)) {
+                PkiSigningBus bus2 = new PkiSigningBus(store2, signer2, busFile, signingAuthority(signer2))) {
 
             PkiId opId2 = opId;
             System.out.println("...opIdReattach=" + opId2.value());
@@ -181,7 +185,7 @@ public final class PkiSigningBusResilienceTest {
                     .getWorkflowState(new PkiId(opId.value().split("#")[0]));
             if (wsOpt.isPresent() && wsOpt.get().payload().isPresent()) {
                 PkiSigningBus.SignContinuation cont = PkiSigningBus.SignContinuation
-                        .decode(wsOpt.get().payload().get());
+                        .decode(wsOpt.get().payload().get(), store.stagedContent());
                 if (cont.signerOpId().isPresent()) {
                     return cont.signerOpId().get();
                 }

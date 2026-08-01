@@ -34,12 +34,15 @@
 package zeroecho.pki.impl.framework.x509.bc;
 
 import java.util.Set;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialFrameworkProvider;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 
 /**
  * ServiceLoader provider for the Bouncy Castle backed X.509 credential
@@ -162,6 +165,12 @@ public final class BcX509CredentialFrameworkProvider implements CredentialFramew
     @Override
     public CredentialFramework allocate(ProviderConfig config) {
         validateConfig(config);
-        return new BcX509CredentialFramework();
+        BcX509VerificationExecutor executor = new BcX509VerificationExecutor();
+        X509AlgorithmResolver.Policy policy = (suite, direction) -> true;
+        X509AuthoritySnapshot authority = X509AuthoritySnapshot.compose(List.of(), List.of(executor),
+                List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                        zeroecho.core.spi.AlgorithmExecutionCapability.Direction.VERIFY, executor)),
+                policy);
+        return new BcX509CredentialFramework(authority, executor);
     }
 }

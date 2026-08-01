@@ -33,13 +33,13 @@
  ******************************************************************************/
 package zeroecho.pki.api.credential;
 
-import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuerRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeSet;
+import zeroecho.pki.api.content.DurableContentReference;
 
 /**
  * Issued credential with mandatory core metadata and universal attributes.
@@ -70,12 +70,12 @@ import zeroecho.pki.api.attr.AttributeSet;
  *                         current revocation state and evaluation time are
  *                         external runtime inputs. Security-sensitive callers
  *                         must use {@link EffectiveCredentialStatusResolver}.
- * @param encoded          encoded credential bytes
+ * @param content          immutable store-owned credential content
  * @param attributes       universal attribute set
  */
 public record Credential(PkiId credentialId, FormatId formatId, IssuerRef issuerRef, SubjectRef subjectRef,
         Validity validity, String serialOrUniqueId, PkiId publicKeyId, CredentialProfileBinding profileBinding,
-        CredentialStatus status, EncodedObject encoded, AttributeSet attributes) {
+        CredentialStatus status, DurableContentReference content, AttributeSet attributes) {
 
     /**
      * Creates a credential record.
@@ -110,8 +110,8 @@ public record Credential(PkiId credentialId, FormatId formatId, IssuerRef issuer
         if (status == null) {
             throw new IllegalArgumentException("status must not be null");
         }
-        if (encoded == null) {
-            throw new IllegalArgumentException("encoded must not be null");
+        if (content == null) {
+            throw new IllegalArgumentException("content must not be null");
         }
         if (attributes == null) {
             throw new IllegalArgumentException("attributes must not be null");

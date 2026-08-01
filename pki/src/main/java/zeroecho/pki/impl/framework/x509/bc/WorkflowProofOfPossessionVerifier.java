@@ -54,7 +54,12 @@ import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 
 /**
@@ -133,16 +138,17 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
     private static final Principal SYSTEM = new Principal("SYSTEM", "pki");
 
     private final SignatureWorkflow workflow;
+    private final X509AuthoritySnapshot authority;
 
     /**
-     * Creates the workflow-backed proof-of-possession verifier.
+     * Creates a verifier bound to the runtime's immutable authority snapshot.
      *
-     * @param workflow signature workflow used to perform cryptographic signature
-     *                 verification; must not be {@code null}
-     * @throws NullPointerException if {@code workflow} is {@code null}
+     * @param workflow selected verification workflow
+     * @param authority matching authority snapshot
      */
-    public WorkflowProofOfPossessionVerifier(SignatureWorkflow workflow) {
+    public WorkflowProofOfPossessionVerifier(SignatureWorkflow workflow, X509AuthoritySnapshot authority) {
         this.workflow = Objects.requireNonNull(workflow, "workflow");
+        this.authority = Objects.requireNonNull(authority, "authority");
     }
 
     /**
@@ -207,22 +213,34 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
         }
 
         CertificationRequest csrAsn1 = csr.get().toASN1Structure();
+        BcX509AlgorithmAdapter algorithmAdapter = new BcX509AlgorithmAdapter(authority.bindings());
+        zeroecho.core.spec.AlgorithmIdentity signatureIdentity;
+        X509ExecutionPlan<SignatureWorkflow> executionPlan;
+        try {
+            signatureIdentity = algorithmAdapter.decode(
+                    csrAsn1.getSignatureAlgorithm(), X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            zeroecho.core.spec.AlgorithmIdentity keyIdentity = algorithmAdapter.decode(
+                    csr.get().getSubjectPublicKeyInfo().getAlgorithm(),
+                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            executionPlan = authority.plan(signatureIdentity, keyIdentity,
+                    zeroecho.core.spi.AlgorithmExecutionCapability.Direction.VERIFY,
+                    Optional.empty(), "csr-proof", SignatureWorkflow.class);
+        } catch (IllegalArgumentException unsupported) {
+            return new ProofOfPossessionResult(ProofOfPossessionStatus.NOT_SUPPORTED,
+                    Optional.of("Unsupported CSR algorithm"));
+        }
         Optional<byte[]> tbs = encodeCertificationRequestInfo(csrAsn1.getCertificationRequestInfo());
         if (tbs.isEmpty()) {
             return failed("CSR TBS encoding failed");
         }
 
-        String algorithmId = OidAlgorithmMapper.toZeroEchoAlgorithmId(csrAsn1.getSignatureAlgorithm());
-        if (algorithmId == null) {
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.NOT_SUPPORTED,
-                    Optional.of("Unsupported CSR algorithm"));
-        }
+        String algorithmId = signatureIdentity.canonicalForm();
 
         byte[] signature = extractSignatureBytes(csrAsn1.getSignature());
         SignatureWorkflow.VerifyRequest verifyRequest = toVerifyRequest(request, algorithmId, tbs.get(), signature,
                 spkiDer.get());
 
-        return verifyWithWorkflow(verifyRequest);
+        return verifyWithWorkflow(verifyRequest, executionPlan);
     }
 
     /**
@@ -249,6 +267,7 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
      */
     private static Optional<PKCS10CertificationRequest> parseCsr(byte[] csrDer) {
         try {
+            BcX509AlgorithmAdapter.requireCanonicalDer(csrDer);
             return Optional.of(new PKCS10CertificationRequest(csrDer));
         } catch (IOException | IllegalArgumentException ex) {
             return Optional.empty();
@@ -315,9 +334,10 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
         AccessContext accessContext = new AccessContext(SYSTEM, PURPOSE, Optional.of(request.requestId()),
                 Optional.of(request.formatId()));
 
-        return new SignatureWorkflow.VerifyRequest(accessContext, algorithmId, new EncodedObject(Encoding.DER, tbsDer),
+        return new SignatureWorkflow.VerifyRequest(accessContext, algorithmId, new ImmutableByteContent(tbsDer),
                 new EncodedObject(Encoding.BINARY, signature), Optional.empty(),
-                Optional.of(new EncodedObject(Encoding.DER, spkiDer)), Optional.of(Instant.now().plusSeconds(30)));
+                Optional.of(new EncodedObject(Encoding.DER, spkiDer)), Optional.of(Instant.now().plusSeconds(30)),
+                CancellationSignal.NONE);
     }
 
     /**
@@ -327,9 +347,12 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
      * @param verifyRequest workflow verification request; must not be {@code null}
      * @return mapped proof-of-possession result
      */
-    private ProofOfPossessionResult verifyWithWorkflow(SignatureWorkflow.VerifyRequest verifyRequest) {
-        PkiId verifyOperationId = workflow.submitVerify(verifyRequest);
-        SignatureWorkflow.OperationStatus status = workflow.status(verifyOperationId);
+    private ProofOfPossessionResult verifyWithWorkflow(SignatureWorkflow.VerifyRequest verifyRequest,
+            X509ExecutionPlan<SignatureWorkflow> executionPlan) {
+        authority.authorize(executionPlan, workflow,
+                zeroecho.core.spi.AlgorithmExecutionCapability.Direction.VERIFY);
+        PkiId verifyOperationId = executionPlan.executor().submitVerify(verifyRequest);
+        SignatureWorkflow.OperationStatus status = executionPlan.executor().status(verifyOperationId);
         if (status == null) {
             return failed("Verifier returned no status");
         }

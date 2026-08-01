@@ -37,9 +37,13 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static zeroecho.pki.testkit.PkiTestRuntime.signingAuthority;
+import static zeroecho.pki.testkit.PkiTestRuntime.stage;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
@@ -49,6 +53,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -64,7 +70,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spec.AlgorithmSuite;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
@@ -76,6 +87,8 @@ import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
@@ -85,10 +98,73 @@ import zeroecho.pki.util.async.AsyncState;
 final class PkiSigningBusFailureTest {
 
     @Test
+    void constructorsRequireExplicitOwningSignAuthority(@TempDir Path tempDir) throws Exception {
+        System.out.println("constructorsRequireExplicitOwningSignAuthority");
+        Constructor<?>[] constructors = PkiSigningBus.class.getConstructors();
+        assertEquals(2, constructors.length);
+        assertTrue(Arrays.stream(constructors)
+                .allMatch(constructor -> constructor.getParameterTypes()[constructor.getParameterCount() - 1]
+                        == X509AuthoritySnapshot.class));
+
+        InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false);
+        InMemorySignatureWorkflow foreignSigner = new InMemorySignatureWorkflow(Map.of(), false);
+        X509AuthoritySnapshot owning = signingAuthority(signer);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults());
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("owning.log"), owning)) {
+            assertSame(owning, bus.authority());
+            assertThrows(NullPointerException.class,
+                    () -> new PkiSigningBus(store, signer, tempDir.resolve("null.log"), null));
+
+            X509AuthoritySnapshot foreign = signingAuthority(foreignSigner);
+            assertThrows(IllegalArgumentException.class,
+                    () -> new PkiSigningBus(store, signer, tempDir.resolve("foreign.log"), foreign));
+
+            X509AuthoritySnapshot missing = X509AuthoritySnapshot.compose(List.of(), List.of(),
+                    allowPolicy("constructor-missing"));
+            assertThrows(IllegalArgumentException.class,
+                    () -> new PkiSigningBus(store, signer, tempDir.resolve("missing.log"), missing));
+
+            String implementationId = "workflow." + signer.id();
+            AlgorithmExecutionCapability verifyOnly = exactWorkflowCapability(implementationId,
+                    AlgorithmExecutionCapability.Direction.VERIFY);
+            X509AuthoritySnapshot verifyAuthority = X509AuthoritySnapshot.compose(List.of(),
+                    List.of(() -> List.of(verifyOnly)),
+                    List.of(X509AuthoritySnapshot.bindExecutor(implementationId,
+                            AlgorithmExecutionCapability.Direction.VERIFY, signer)),
+                    allowPolicy("constructor-verify-only"));
+            assertThrows(IllegalArgumentException.class,
+                    () -> new PkiSigningBus(store, signer, tempDir.resolve("verify.log"), verifyAuthority));
+
+            AlgorithmExecutionCapability mismatched = exactWorkflowCapability("workflow.other",
+                    AlgorithmExecutionCapability.Direction.SIGN);
+            X509AuthoritySnapshot mismatchedAuthority = X509AuthoritySnapshot.compose(List.of(),
+                    List.of(() -> List.of(mismatched)),
+                    List.of(X509AuthoritySnapshot.bindExecutor("workflow.other",
+                            AlgorithmExecutionCapability.Direction.SIGN, signer)),
+                    allowPolicy("constructor-mismatch"));
+            assertThrows(IllegalArgumentException.class,
+                    () -> new PkiSigningBus(store, signer, tempDir.resolve("mismatch.log"), mismatchedAuthority));
+
+            assertThrows(X509AlgorithmResolver.ResolutionException.class,
+                    () -> owning.plan(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+                            BootstrapAlgorithmIdentities.RSA_PUBLIC_KEY,
+                            AlgorithmExecutionCapability.Direction.VERIFY, Optional.of(implementationId), "test",
+                            SignatureWorkflow.class));
+        } finally {
+            foreignSigner.close();
+            signer.close();
+        }
+        System.out.println("...constructors=" + constructors.length);
+        System.out.println("...ok");
+    }
+
+    @Test
     void acceptedCancellationWaitsForObservedTerminalProviderState(@TempDir Path tempDir) throws Exception {
         AcceptedDelayedCancellationWorkflow signer = new AcceptedDelayedCancellationWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
             PkiId id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
 
@@ -114,7 +190,8 @@ final class PkiSigningBusFailureTest {
         MutableClock clock = new MutableClock(createdAt);
         ControlledWorkflow signer = new ControlledWorkflow(clock);
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults(),
-                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
             PkiId id = submit(bus, Duration.ofSeconds(10));
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
             clock.set(createdAt.plusSeconds(10));
@@ -140,7 +217,7 @@ final class PkiSigningBusFailureTest {
         PkiId exact;
         PkiId late;
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults(), clock);
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog)) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog, signingAuthority(signer))) {
             PkiId onTime = submit(bus, Duration.ofSeconds(10));
             assertEquals(AsyncState.RUNNING, bus.status(onTime).orElseThrow().state());
             signer.succeedAt(onTime, deadline.minusNanos(1), (byte) 31);
@@ -162,7 +239,7 @@ final class PkiSigningBusFailureTest {
         }
 
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults(), clock);
-                PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog)) {
+                PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog, signingAuthority(signer))) {
             assertEquals(AsyncState.EXPIRED, replayed.status(exact).orElseThrow().state());
             assertTrue(replayed.consumeResult(exact).isEmpty());
             assertEquals(AsyncState.EXPIRED, replayed.status(late).orElseThrow().state());
@@ -179,7 +256,7 @@ final class PkiSigningBusFailureTest {
         Path busLog = tempDir.resolve("bus.log");
         PkiId id;
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog)) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog, signingAuthority(signer))) {
             id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
             bus.retireSignOperation(id, "provider completed");
@@ -189,7 +266,7 @@ final class PkiSigningBusFailureTest {
             assertEquals(1, signer.cancellations.get());
         }
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
-                PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog)) {
+                PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog, signingAuthority(signer))) {
             assertEquals(AsyncState.SUCCEEDED, replayed.status(id).orElseThrow().state());
             assertArrayEquals(new byte[] { 11, 12 }, replayed.consumeResult(id).orElseThrow().bytes());
         }
@@ -199,7 +276,8 @@ final class PkiSigningBusFailureTest {
     void providerCallbackReturnsWhileSameOperationSubmissionIsBlocked(@TempDir Path tempDir) throws Exception {
         BlockingWorkflow signer = new BlockingWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId id = submit(bus);
             Future<?> submission = executor.submit(() -> bus.status(id));
@@ -220,7 +298,7 @@ final class PkiSigningBusFailureTest {
         Path busLog = tempDir.resolve("bus.log");
         PkiId id;
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog)) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog, signingAuthority(signer))) {
             id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
             SignWorkflowStore.Record dispatched = store.getSignRecord(id).orElseThrow();
@@ -228,7 +306,7 @@ final class PkiSigningBusFailureTest {
                     Optional.of("CANCEL_REQUESTED"), Optional.empty(), Optional.empty()).orElseThrow();
         }
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
-                PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog)) {
+                PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog, signingAuthority(signer))) {
             assertEquals(AsyncState.RUNNING, replayed.status(id).orElseThrow().state());
             replayed.retireSignOperation(id, "restart cancellation");
             assertEquals(SignWorkflowStore.State.RETIRED, reopened.getSignRecord(id).orElseThrow().state());
@@ -240,7 +318,8 @@ final class PkiSigningBusFailureTest {
     void retirementReconcilesCompletionAndAdvisoryCallbackWithoutResultLoss(@TempDir Path tempDir) throws Exception {
         RetirementRaceWorkflow signer = new RetirementRaceWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
@@ -265,7 +344,8 @@ final class PkiSigningBusFailureTest {
     void pollAndRetirementSerializeAndPreserveProviderCompletion(@TempDir Path tempDir) throws Exception {
         RetirementRaceWorkflow signer = new RetirementRaceWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
@@ -288,7 +368,8 @@ final class PkiSigningBusFailureTest {
     void consumeAndRetirementShareCoordinatorWithoutResultLoss(@TempDir Path tempDir) throws Exception {
         RetirementRaceWorkflow signer = new RetirementRaceWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
@@ -318,7 +399,8 @@ final class PkiSigningBusFailureTest {
         MutableClock clock = new MutableClock(createdAt);
         ControlledWorkflow signer = new ControlledWorkflow(clock);
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults(),
-                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
             PkiId id = submit(bus, Duration.ofSeconds(10));
             assertEquals(1, store.listWorkflowStates().size());
             clock.set(createdAt.plusSeconds(10));
@@ -341,7 +423,8 @@ final class PkiSigningBusFailureTest {
         MutableClock clock = new MutableClock(createdAt);
         AcceptedDelayedCancellationWorkflow signer = new AcceptedDelayedCancellationWorkflow(clock);
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults(),
-                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+                clock); PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
             PkiId id = submit(bus, Duration.ofSeconds(10));
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
             assertEquals(1, signer.submissions.get());
@@ -376,15 +459,17 @@ final class PkiSigningBusFailureTest {
         BlockingWorkflow signer = new BlockingWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults(),
                 clock);
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Principal owner = new Principal("TEST", "owner");
             PkiId id = bus.newSubmissionId();
             EncodedObject payload = new EncodedObject(Encoding.BINARY, new byte[] { 1 });
+            DurableContentReference content = stage(bus, payload);
             AccessContext access = new AccessContext(owner, new Purpose("TEST"), Optional.empty(), Optional.empty());
             PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access, "SHA256withRSA",
-                    payload, new KeyRef("test"), Encoding.BINARY, Optional.empty());
-            bus.submitSign(id, owner, new KeyRef("test"), "SHA256withRSA", payload, Duration.ofMinutes(5),
+                    content, new KeyRef("test"), Encoding.BINARY, Optional.empty());
+            bus.submitSign(id, owner, new KeyRef("test"), "SHA256withRSA", content, Duration.ofMinutes(5),
                     Optional.of(continuation.encode()));
             Future<?> first = executor.submit(() -> bus.status(id));
             assertTrue(signer.entered.await(5, TimeUnit.SECONDS));
@@ -407,7 +492,8 @@ final class PkiSigningBusFailureTest {
     void providerCallsPermitCrossThreadReentryOutsideOperationLock(@TempDir Path tempDir) throws Exception {
         CrossThreadReentrantWorkflow signer = new CrossThreadReentrantWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
             signer.attach(bus);
             PkiId id = submit(bus);
             assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
@@ -425,7 +511,8 @@ final class PkiSigningBusFailureTest {
     void blockedSubmissionDoesNotBlockAnotherOperation(@TempDir Path tempDir) throws Exception {
         SelectiveBlockingWorkflow signer = new SelectiveBlockingWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"));
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer));
                 ExecutorService executor = Executors.newFixedThreadPool(2)) {
             PkiId blocked = submit(bus);
             Future<?> first = executor.submit(() -> bus.status(blocked));
@@ -446,7 +533,8 @@ final class PkiSigningBusFailureTest {
     void providerStatusExceptionReleasesSingleFlightReservation(@TempDir Path tempDir) throws Exception {
         ThrowOnceStatusWorkflow signer = new ThrowOnceStatusWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
-                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"))) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
             PkiId id = submit(bus);
             PkiException sanitized = assertThrows(PkiException.class, () -> bus.status(id));
             assertTrue(sanitized.getMessage().contains("PROVIDER_STATUS_FAILED"));
@@ -471,7 +559,8 @@ final class PkiSigningBusFailureTest {
             InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false);
             try {
                 assertThrows(PkiException.class,
-                        () -> new PkiSigningBus(store, signer, tempDir.resolve("unsupported-bus.log")));
+                        () -> new PkiSigningBus(store, signer, tempDir.resolve("unsupported-bus.log"),
+                                signingAuthority(signer)));
             } finally {
                 signer.close();
             }
@@ -500,13 +589,14 @@ final class PkiSigningBusFailureTest {
         Path busLog = tempDir.resolve("bus.log");
         Principal owner = new Principal("SYSTEM", "pki");
         PkiId operationId;
-        try (PkiSigningBus bus = new PkiSigningBus(failingStore, signer, busLog)) {
+        try (PkiSigningBus bus = new PkiSigningBus(failingStore, signer, busLog, signingAuthority(signer))) {
             operationId = bus.canonicalizeOperationId(new PkiId("sign:failure"), owner);
             EncodedObject payload = new EncodedObject(Encoding.BINARY, new byte[] { 1, 2, 3 });
+            DurableContentReference content = stage(bus, payload);
             AccessContext access = new AccessContext(owner, new Purpose("TEST"), Optional.empty(), Optional.empty());
             PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access, "SHA256withRSA",
-                    payload, keyRef, Encoding.BINARY, Optional.empty());
-            bus.submitSign(operationId, owner, keyRef, "SHA256withRSA", payload, Duration.ofSeconds(5),
+                    content, keyRef, Encoding.BINARY, Optional.empty());
+            bus.submitSign(operationId, owner, keyRef, "SHA256withRSA", content, Duration.ofSeconds(5),
                     Optional.of(continuation.encode()));
             bus.sweep(java.time.Instant.now());
 
@@ -517,7 +607,7 @@ final class PkiSigningBusFailureTest {
             assertFalse(signer.hasRunningOperations());
         }
 
-        try (PkiSigningBus replayed = new PkiSigningBus(delegate, signer, busLog)) {
+        try (PkiSigningBus replayed = new PkiSigningBus(delegate, signer, busLog, signingAuthority(signer))) {
             assertEquals(AsyncState.CANCELLED, replayed.status(operationId).orElseThrow().state());
         } finally {
             signer.close();
@@ -533,12 +623,54 @@ final class PkiSigningBusFailureTest {
         Principal owner = new Principal("TEST", "owner");
         PkiId id = bus.newSubmissionId();
         EncodedObject payload = new EncodedObject(Encoding.BINARY, new byte[] { 1 });
+        DurableContentReference content;
+        try {
+            content = stage(bus, payload);
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException("Test content staging failed", exception);
+        }
         AccessContext access = new AccessContext(owner, new Purpose("TEST"), Optional.empty(), Optional.empty());
         PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access, "SHA256withRSA",
-                payload, new KeyRef("test"), Encoding.BINARY, Optional.empty());
-        bus.submitSign(id, owner, new KeyRef("test"), "SHA256withRSA", payload, ttl,
+                content, new KeyRef("test"), Encoding.BINARY, Optional.empty());
+        bus.submitSign(id, owner, new KeyRef("test"), "SHA256withRSA", content, ttl,
                 Optional.of(continuation.encode()));
         return id;
+    }
+
+    private static AlgorithmExecutionCapability exactWorkflowCapability(String implementationId,
+            AlgorithmExecutionCapability.Direction supportedDirection) {
+        return new AlgorithmExecutionCapability() {
+            @Override
+            public String implementationId() {
+                return implementationId;
+            }
+
+            @Override
+            public String domainFingerprint() {
+                return "constructor-test-v1:" + supportedDirection;
+            }
+
+            @Override
+            public boolean supports(AlgorithmIdentity identity, AlgorithmSuite suite, Direction direction) {
+                return direction == supportedDirection
+                        && BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.equals(identity)
+                        && BootstrapAlgorithmIdentities.RSA_PUBLIC_KEY.equals(suite.publicKey());
+            }
+        };
+    }
+
+    private static X509AlgorithmResolver.Policy allowPolicy(String fingerprint) {
+        return new X509AlgorithmResolver.Policy() {
+            @Override
+            public boolean permits(AlgorithmSuite suite, AlgorithmExecutionCapability.Direction direction) {
+                return true;
+            }
+
+            @Override
+            public String semanticFingerprint() {
+                return fingerprint;
+            }
+        };
     }
 
     private static final class AcceptedDelayedCancellationWorkflow implements SignatureWorkflow {

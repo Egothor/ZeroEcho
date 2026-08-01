@@ -184,6 +184,7 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         try {
             PKCS10CertificationRequest csr;
             try {
+                BcX509AlgorithmAdapter.requireCanonicalDer(csrDer);
                 csr = new PKCS10CertificationRequest(csrDer);
             } catch (Exception ex) {
                 throw new PkiException("Invalid PKCS#10 certification request: code=CSR_MALFORMED");

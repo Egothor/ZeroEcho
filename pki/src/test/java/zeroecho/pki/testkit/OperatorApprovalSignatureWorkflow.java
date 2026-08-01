@@ -153,7 +153,10 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
 
         try {
             Files.createDirectories(dir);
-            Files.write(dir.resolve(FILE_REQUEST), request.payload().bytes());
+            try (java.io.InputStream input = request.content().openStream();
+                    java.io.OutputStream output = Files.newOutputStream(dir.resolve(FILE_REQUEST))) {
+                input.transferTo(output);
+            }
 
             java.util.Properties p = new java.util.Properties();
             Instant now = Instant.now();

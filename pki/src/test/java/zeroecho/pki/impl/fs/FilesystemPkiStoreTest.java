@@ -56,6 +56,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuerRef;
@@ -100,6 +101,7 @@ import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
+import zeroecho.pki.spi.store.PkiStore;
 
 /**
  * Tests for {@link FilesystemPkiStore}.
@@ -130,18 +132,10 @@ public final class FilesystemPkiStoreTest {
         Path root = tmp.resolve("store-all-schemas");
         Instant now = Instant.parse("2026-01-02T03:04:05Z");
         AttributeSet attributes = TestObjects.emptyAttributes();
-        CaRecord ca = TestObjects.minimalCaRecord("ca-all", CaState.ACTIVE);
-        Credential credential = TestObjects.minimalCredential("SERIAL-ALL", "profile-all");
         ParsedCertificationRequest request = new ParsedCertificationRequest(new PkiId("request-all"),
                 new FormatId("fmt-x509"), new SubjectRef("CN=request-all"),
                 new EncodedObject(Encoding.DER, new byte[] { 4, 5, 6 }), Optional.empty(), Optional.of("profile-all"),
                 attributes);
-        StatusObject status = new StatusObject(new PkiId("status-all"), new FormatId("fmt-x509"), ca.caId(),
-                StatusObjectType.CRL, now, Optional.of(now.plusSeconds(60L)),
-                new EncodedObject(Encoding.DER, new byte[] { 7, 8 }), attributes);
-        PublicationRecord publication = new PublicationRecord(new PkiId("publication-all"), now,
-                new PublicationTarget(PublicationTargetType.FILESYSTEM, "target-all", attributes),
-                credential.credentialId(), "CREDENTIAL", PublicationStatus.PUBLISHED);
         CertificateProfile profile = TestObjects.minimalProfile("profile-all");
         PolicyTrace trace = new PolicyTrace(new PkiId("decision-all"),
                 List.of(new PolicyTraceStep("rule-all", "ALLOW", List.of("approved"))));
@@ -151,6 +145,16 @@ public final class FilesystemPkiStoreTest {
                 Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 9 })));
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            CaRecord ca = TestObjects.minimalCaRecord(store, "ca-all", CaState.ACTIVE);
+            Credential credential = TestObjects.minimalCredential(store, "SERIAL-ALL", "profile-all");
+            StatusObject status = new StatusObject(new PkiId("status-all"), new FormatId("fmt-x509"), ca.caId(),
+                    StatusObjectType.CRL, now, Optional.of(now.plusSeconds(60L)),
+                    zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(), Encoding.DER,
+                            new byte[] { 1, 2 }),
+                    attributes);
+            PublicationRecord publication = new PublicationRecord(new PkiId("publication-all"), now,
+                    new PublicationTarget(PublicationTargetType.FILESYSTEM, "target-all", attributes),
+                    credential.credentialId(), "CREDENTIAL", PublicationStatus.PUBLISHED);
             store.putCa(ca);
             store.putCredential(credential);
             store.putRequest(request);
@@ -189,7 +193,7 @@ public final class FilesystemPkiStoreTest {
         FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            Credential c1 = TestObjects.minimalCredential("SERIAL-1", "profile-1");
+            Credential c1 = TestObjects.minimalCredential(store, "SERIAL-1", "profile-1");
             store.putCredential(c1);
 
             RuntimeException ex = assertThrows(RuntimeException.class, () -> store.putCredential(c1));
@@ -210,7 +214,7 @@ public final class FilesystemPkiStoreTest {
         FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            CaRecord ca1 = TestObjects.minimalCaRecord("ca-1", CaState.ACTIVE);
+            CaRecord ca1 = TestObjects.minimalCaRecord(store, "ca-1", CaState.ACTIVE);
             store.putCa(ca1);
 
             CaRecord ca2 = new CaRecord(ca1.caId(), ca1.kind(), CaState.DISABLED, ca1.issuerKeyRef(), ca1.subjectRef(),
@@ -236,7 +240,7 @@ public final class FilesystemPkiStoreTest {
         FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            Credential credential = TestObjects.minimalCredential("SERIAL-REV", "profile-rev");
+            Credential credential = TestObjects.minimalCredential(store, "SERIAL-REV", "profile-rev");
             store.putCredential(credential);
             store.transitionRevocation(
                     new RevocationCommand.Hold(credential.credentialId(), TestObjects.emptyAttributes()),
@@ -266,7 +270,7 @@ public final class FilesystemPkiStoreTest {
         FsPkiStoreOptions options = nonStrictSnapshotOptions();
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            CaRecord ca1 = TestObjects.minimalCaRecord("ca-snap-1", CaState.ACTIVE);
+            CaRecord ca1 = TestObjects.minimalCaRecord(store, "ca-snap-1", CaState.ACTIVE);
             store.putCa(ca1);
 
             Instant at = Instant.now();
@@ -297,9 +301,6 @@ public final class FilesystemPkiStoreTest {
 
         FsPkiStoreOptions options = nonStrictSnapshotOptions();
 
-        CaRecord caA = TestObjects.minimalCaRecord("ca-a", CaState.ACTIVE);
-        CaRecord caB = TestObjects.minimalCaRecord("ca-b", CaState.ACTIVE);
-
         CertificateProfile pA = TestObjects.minimalProfile("profile-a");
         CertificateProfile pB = TestObjects.minimalProfile("profile-b");
 
@@ -307,6 +308,8 @@ public final class FilesystemPkiStoreTest {
         Instant at2;
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
+            CaRecord caA = TestObjects.minimalCaRecord(store, "ca-a", CaState.ACTIVE);
+            CaRecord caB = TestObjects.minimalCaRecord(store, "ca-b", CaState.ACTIVE);
             store.putCa(caA);
             at1 = Instant.now();
 
@@ -364,7 +367,7 @@ public final class FilesystemPkiStoreTest {
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
             // Create CA first.
-            store.putCa(TestObjects.minimalCaRecord("ca-strict-1", CaState.ACTIVE));
+            store.putCa(TestObjects.minimalCaRecord(store, "ca-strict-1", CaState.ACTIVE));
 
             // "at" is before the profile exists.
             Instant at = Instant.now();
@@ -393,7 +396,7 @@ public final class FilesystemPkiStoreTest {
         FsPkiStoreOptions options = strictSnapshotOptions();
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
-            store.putCa(TestObjects.minimalCaRecord("ca-strict-ok", CaState.ACTIVE));
+            store.putCa(TestObjects.minimalCaRecord(store, "ca-strict-ok", CaState.ACTIVE));
             importProfile(store, TestObjects.minimalProfile("profile-strict-ok"), Instant.now());
 
             // "at" after all writes: strict export should succeed.
@@ -543,13 +546,13 @@ public final class FilesystemPkiStoreTest {
 
         private static final AtomicLong SEQ = new AtomicLong(1L);
 
-        static CaRecord minimalCaRecord(String caId, CaState state) {
+        static CaRecord minimalCaRecord(PkiStore store, String caId, CaState state) throws IOException {
             PkiId id = new PkiId(caId);
 
             KeyRef issuerKeyRef = new KeyRef("issuer-key-" + caId);
             SubjectRef subjectRef = new SubjectRef("CN=" + caId);
 
-            Credential cred = minimalCredential("CA-" + caId, "profile-ca");
+            Credential cred = minimalCredential(store, "CA-" + caId, "profile-ca");
             List<Credential> caCredentials = List.of(cred);
 
             return new CaRecord(id, CaKind.ROOT, state, issuerKeyRef, subjectRef, caCredentials);
@@ -568,7 +571,7 @@ public final class FilesystemPkiStoreTest {
                     leaf);
         }
 
-        static Credential minimalCredential(String serial, String profileId) {
+        static Credential minimalCredential(PkiStore store, String serial, String profileId) throws IOException {
             PkiId credentialId = new PkiId("cred-" + nextSeq());
             FormatId formatId = new FormatId("fmt-x509");
 
@@ -583,7 +586,7 @@ public final class FilesystemPkiStoreTest {
 
             CredentialStatus status = CredentialStatus.ISSUED;
 
-            EncodedObject encoded = minimalEncodedObject();
+            zeroecho.pki.api.content.DurableContentReference encoded = minimalEncodedObject(store);
             AttributeSet attrs = emptyAttributes();
 
             return new Credential(credentialId, formatId, issuerRef, subjectRef, validity, serial, publicKeyId,
@@ -596,8 +599,10 @@ public final class FilesystemPkiStoreTest {
             return new TestAttributeSet(List.of());
         }
 
-        private static EncodedObject minimalEncodedObject() {
-            return new EncodedObject(Encoding.DER, new byte[] { 0x01, 0x02, 0x03 });
+        private static zeroecho.pki.api.content.DurableContentReference minimalEncodedObject(PkiStore store)
+                throws IOException {
+            return zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(), Encoding.DER,
+                    new byte[] { 0x01, 0x02, 0x03 });
         }
 
         private static String nextSeq() {

@@ -60,6 +60,8 @@ import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.pki.api.CaService;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -91,6 +93,8 @@ import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.framework.CredentialFramework;
@@ -167,10 +171,12 @@ public final class DefaultCaService implements CaService {
     private final CredentialFramework framework;
     private final CredentialIssuerBackend issuerBackend;
     private final CaProofGate proofGate;
+    private final zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot authority;
     private final AuditSink auditSink;
     private final EffectiveCredentialStatusResolver statusResolver;
     private final ProfileService profileService;
     private final Clock clock;
+    private final AlgorithmIdentity signatureIdentity;
 
     /**
      * Creates a CA service bound to a specific store, credential framework, and
@@ -232,6 +238,7 @@ public final class DefaultCaService implements CaService {
         this.issuerBackend = Objects.requireNonNull(issuerBackend, "issuerBackend");
         Objects.requireNonNull(publicKeyResolver, "publicKeyResolver");
         Objects.requireNonNull(signingBus, "signingBus");
+        this.authority = signingBus.authority();
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
         this.statusResolver = Objects.requireNonNull(statusResolver, "statusResolver");
         this.profileService = Objects.requireNonNull(profileService, "profileService");
@@ -242,7 +249,12 @@ public final class DefaultCaService implements CaService {
         if (signingTtl == null || signingTtl.isZero() || signingTtl.isNegative()) {
             throw new IllegalArgumentException("signingTtl must be positive");
         }
-        this.proofGate = new CaProofGate(publicKeyResolver, signingBus, auditSink, signatureAlgorithmId, signingTtl);
+        AlgorithmIdentity signatureIdentity = signingBus.authority().resolveIdentity(signatureAlgorithmId);
+        X509ExecutionPlan<SignatureWorkflow> plan = signingBus.authority()
+                .planSigning(signatureIdentity.canonicalForm(), SignatureWorkflow.class);
+        signingBus.authority().authorize(plan, plan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
+        this.signatureIdentity = signatureIdentity;
+        this.proofGate = new CaProofGate(publicKeyResolver, signingBus, auditSink, signatureIdentity, signingTtl);
     }
 
     /**
@@ -294,7 +306,7 @@ public final class DefaultCaService implements CaService {
         ValidatedCaCertificateRequest request = CaCertificateProfileValidator.validate(
                 ValidatedCaCertificateRequest.Operation.CREATE_ROOT, activeProfile, CertificateProfileKind.ROOT_CA,
                 command.formatId(), new PkiId("ca:pending-root"), new PkiId("ca:pending-root"), command.subjectRef(),
-                spki, Optional.empty(), evaluationTime, Optional.empty(), serial);
+                spki, Optional.empty(), evaluationTime, Optional.empty(), serial, authority);
         SubjectPublicKeyInfo rootPublicKeyInfo = proofGate.parseRootSpki(spki, command.formatId());
         CaProofGate.ManagedKeyProof proof = proofGate.proveManagedKey(keyRef, command.formatId(), CREATE_ROOT_REJECTED,
                 Optional.empty());
@@ -342,7 +354,7 @@ public final class DefaultCaService implements CaService {
 
         Credential credential = new Credential(credId, command.formatId(), new IssuerRef(caId), request.subjectRef(),
                 validity, serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
-                CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, certDer),
+                CredentialStatus.ISSUED, CredentialContent.stage(store, certDer),
                 SimpleAttributeSet.builder().build());
         CredentialProfileBindings.requireCaBinding(credential.profileBinding(), request.profileReference());
 
@@ -394,7 +406,8 @@ public final class DefaultCaService implements CaService {
             throw new PkiException("Only DER import supported by this runtime");
         }
 
-        byte[] certDer = command.existingCaCredential().bytes().clone();
+        CredentialContent.validateCertificate(store, command.existingCaCredential(), authority, Optional.empty());
+        byte[] certDer = CredentialContent.materializeForBc(store, command.existingCaCredential());
         X509CertificateHolder holder;
         try {
             holder = new X509CertificateHolder(certDer);
@@ -423,10 +436,10 @@ public final class DefaultCaService implements CaService {
         ValidatedCaCertificateRequest request = CaCertificateProfileValidator.validate(
                 ValidatedCaCertificateRequest.Operation.IMPORT_ROOT, activeProfile, CertificateProfileKind.ROOT_CA,
                 command.formatId(), caId, caId, command.subjectRef(), spki, Optional.of(validity), evaluationTime,
-                Optional.empty(), serial);
+                Optional.empty(), serial, authority);
         Credential credential = new Credential(credId, command.formatId(), new IssuerRef(caId), request.subjectRef(),
                 validity, serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
-                CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, certDer),
+                CredentialStatus.ISSUED, command.existingCaCredential(),
                 SimpleAttributeSet.builder().build());
         CredentialProfileBindings.requireCaBinding(credential.profileBinding(), request.profileReference());
         requireCaCertificateMatches(credential, credential, request, caId, IMPORT_ROOT_REJECTED,
@@ -511,7 +524,7 @@ public final class DefaultCaService implements CaService {
                 ValidatedCaCertificateRequest.Operation.CREATE_INTERMEDIATE, activeProfile,
                 CertificateProfileKind.INTERMEDIATE_CA, command.formatId(), command.issuerCaId(), caId, approvedSubject,
                 subjectSpki, Optional.empty(), evaluationTime, Optional.of(issuerCredential.validity().notAfter()),
-                CertificateSerialAllocator.allocate());
+                CertificateSerialAllocator.allocate(), authority);
         CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(command.keyRef().get(), command.formatId(),
                 CREATE_INT_REJECTED, Optional.of(caId));
         requireSameManagedKey(subjectSpki, subjectProof.exactPublicKey(), CREATE_INT_REJECTED, command.formatId(),
@@ -520,7 +533,7 @@ public final class DefaultCaService implements CaService {
 
         Credential backendCredential;
         try {
-            backendCredential = issuerBackend.issueIntermediateCertificate(issue, issuerCredential.encoded(),
+            backendCredential = issuerBackend.issueIntermediateCertificate(issue, issuerCredential.content(),
                     issuer.issuerKeyRef());
         } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
             throw proofGate.rejection(CREATE_INT_REJECTED, command.formatId(), Optional.of(caId),
@@ -602,7 +615,8 @@ public final class DefaultCaService implements CaService {
                 ValidatedCaCertificateRequest.Operation.ISSUE_INTERMEDIATE, activeProfile,
                 CertificateProfileKind.INTERMEDIATE_CA, command.formatId(), command.issuerCaId(), command.subjectCaId(),
                 approvedSubject, subjectSpki, command.requestedValidity(), evaluationTime,
-                Optional.of(issuerCredential.validity().notAfter()), CertificateSerialAllocator.allocate());
+                Optional.of(issuerCredential.validity().notAfter()), CertificateSerialAllocator.allocate(),
+                authority);
         CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(subject.issuerKeyRef(), command.formatId(),
                 ISSUE_INT_REJECTED, Optional.of(subject.caId()));
         requireSameManagedKey(subjectSpki, subjectProof.exactPublicKey(), ISSUE_INT_REJECTED, command.formatId(),
@@ -612,7 +626,7 @@ public final class DefaultCaService implements CaService {
 
         Credential backendCredential;
         try {
-            backendCredential = issuerBackend.issueIntermediateCertificate(gated, issuerCredential.encoded(),
+            backendCredential = issuerBackend.issueIntermediateCertificate(gated, issuerCredential.content(),
                     issuer.issuerKeyRef());
         } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
             throw proofGate.rejection(ISSUE_INT_REJECTED, command.formatId(), Optional.of(subject.caId()),
@@ -833,10 +847,12 @@ public final class DefaultCaService implements CaService {
     private void requireIssuerKeyBinding(CaRecord issuer, Credential credential, FormatId formatId, String action,
             Optional<PkiId> objectId) {
         try {
-            if (credential.encoded().encoding() != Encoding.DER) {
+            if (credential.content().encoding() != Encoding.DER) {
                 throw proofGate.rejection(action, formatId, objectId, "ISSUER_CREDENTIAL_INVALID");
             }
-            X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
+            CredentialContent.validateCertificate(store, credential.content(), authority, Optional.empty());
+            X509CertificateHolder holder = new X509CertificateHolder(CredentialContent.materializeForBc(store,
+                    credential.content()));
             CaProofGate.ManagedKeyProof proof = proofGate.proveManagedKey(issuer.issuerKeyRef(), formatId, action,
                     objectId);
             if (!MessageDigest.isEqual(proof.exactPublicKey().bytes(), holder.getSubjectPublicKeyInfo().getEncoded())) {
@@ -855,8 +871,13 @@ public final class DefaultCaService implements CaService {
             if (!matchesCaCredentialEnvelope(credential, request, subjectCaId)) {
                 throw proofGate.rejection(action, framework.formatId(), Optional.of(subjectCaId), mismatchCode);
             }
-            X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
-            X509CertificateHolder issuerHolder = new X509CertificateHolder(issuerCredential.encoded().bytes());
+            CredentialContent.validateCertificate(store, credential.content(), authority,
+                    Optional.of(signatureIdentity));
+            CredentialContent.validateCertificate(store, issuerCredential.content(), authority, Optional.empty());
+            byte[] credentialDer = CredentialContent.materializeForBc(store, credential.content());
+            X509CertificateHolder holder = new X509CertificateHolder(credentialDer);
+            X509CertificateHolder issuerHolder = new X509CertificateHolder(CredentialContent.materializeForBc(store,
+                    issuerCredential.content()));
             byte[] actualSpki = holder.getSubjectPublicKeyInfo().getEncoded();
             Extension constraintsExtension = holder.getExtension(Extension.basicConstraints);
             BasicConstraints constraints = constraintsExtension == null ? null
@@ -872,7 +893,7 @@ public final class DefaultCaService implements CaService {
                     actualSpki)
                     || !matchesCaCertificatePolicy(holder, request, constraintsExtension, constraints,
                             keyUsageExtension, keyUsage)
-                    || !matchesCaCredentialMetadata(credential, holder, request, actualSpki)) {
+                    || !matchesCaCredentialMetadata(credential, holder, request, actualSpki, credentialDer)) {
                 throw proofGate.rejection(action, framework.formatId(), Optional.of(subjectCaId), mismatchCode);
             }
             CredentialProfileBindings.requireCaBinding(credential.profileBinding(), request.profileReference());
@@ -885,7 +906,7 @@ public final class DefaultCaService implements CaService {
 
     private boolean matchesCaCredentialEnvelope(Credential credential, ValidatedCaCertificateRequest request,
             PkiId subjectCaId) {
-        return framework.formatId().equals(credential.formatId()) && credential.encoded().encoding() == Encoding.DER
+        return framework.formatId().equals(credential.formatId()) && credential.content().encoding() == Encoding.DER
                 && credential.status() == CredentialStatus.ISSUED
                 && credential.subjectRef().equals(request.subjectRef())
                 && credential.issuerRef()
@@ -915,9 +936,9 @@ public final class DefaultCaService implements CaService {
     }
 
     private static boolean matchesCaCredentialMetadata(Credential credential, X509CertificateHolder holder,
-            ValidatedCaCertificateRequest request, byte[] actualSpki) {
+            ValidatedCaCertificateRequest request, byte[] actualSpki, byte[] credentialDer) {
         return credential.publicKeyId().equals(new PkiId("spki:" + sha256Hex(actualSpki)))
-                && credential.credentialId().equals(new PkiId("x509:" + sha256Hex(credential.encoded().bytes())))
+                && credential.credentialId().equals(new PkiId("x509:" + sha256Hex(credentialDer)))
                 && credential.serialOrUniqueId().equals(holder.getSerialNumber().toString())
                 && credential.validity().notBefore().getEpochSecond() == holder.getNotBefore().toInstant()
                         .getEpochSecond()

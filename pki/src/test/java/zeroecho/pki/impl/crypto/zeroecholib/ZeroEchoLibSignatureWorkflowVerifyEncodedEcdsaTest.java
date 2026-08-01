@@ -56,6 +56,8 @@ import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.ImmutableByteContent;
 
 /**
  * Verifies that workflow-based signature verification accepts standard X.509
@@ -96,8 +98,9 @@ public final class ZeroEchoLibSignatureWorkflowVerifyEncodedEcdsaTest {
             AccessContext ac = new AccessContext(new Principal("TEST", "verify-ecdsa"), new Purpose("UNIT"),
                     Optional.empty(), Optional.empty());
 
-            SignatureWorkflow.VerifyRequest vr = new SignatureWorkflow.VerifyRequest(ac, "SHA256withECDSA", payloadObj,
-                    sigObj, Optional.empty(), Optional.of(spkiObj), Optional.of(Instant.now().plusSeconds(5)));
+            SignatureWorkflow.VerifyRequest vr = new SignatureWorkflow.VerifyRequest(ac, "SHA256withECDSA",
+                    new ImmutableByteContent(payload), sigObj, Optional.empty(), Optional.of(spkiObj),
+                    Optional.of(Instant.now().plusSeconds(5)), CancellationSignal.NONE);
 
             PkiId opId = wf.submitVerify(vr);
             SignatureWorkflow.OperationStatus st = wf.status(opId);

@@ -68,6 +68,7 @@ import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialProfileBinding;
 import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
@@ -92,6 +93,7 @@ import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
+import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
@@ -118,7 +120,7 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 final class FsCodec {
 
     /* package */ static final int MAX_COMPONENT_BYTES = 256 * 1024;
-    /* package */ static final int CURRENT_CODEC_VERSION = 2;
+    /* package */ static final int CURRENT_CODEC_VERSION = 3;
 
     private static final int CODEC_MAGIC = 0x5A454346;
     private static final int MAX_COLLECTION_ELEMENTS = MAX_COMPONENT_BYTES;
@@ -132,6 +134,7 @@ final class FsCodec {
     private static final int TOP_POLICY_TRACE = 8;
     private static final int TOP_WORKFLOW_STATE = 9;
     private static final int TOP_SIGN_WORKFLOW_RECORD = 10;
+    private static final int DURABLE_CONTENT_VERSION = 1;
     private static final int TOP_PROFILE_VERSION = 11;
     private static final int TOP_ACTIVE_PROFILE_REF = 12;
 
@@ -174,6 +177,7 @@ final class FsCodec {
     private static final int TYPE_SAN = 66;
     private static final int TYPE_PROFILE_REF = 72;
     private static final int TYPE_PROFILE_BINDING = 73;
+    private static final int TYPE_DURABLE_CONTENT = 74;
 
     private static final int ATTRIBUTE_STRING = 1;
     private static final int ATTRIBUTE_BOOLEAN = 2;
@@ -392,6 +396,8 @@ final class FsCodec {
     }, reader -> new Validity(reader.readValue(INSTANT), reader.readValue(INSTANT)));
     private static final ValueSchema<EncodedObject> ENCODED_OBJECT = valueSchema(TYPE_ENCODED_OBJECT,
             FsCodec::writeEncodedObject, FsCodec::readEncodedObject);
+    private static final ValueSchema<DurableContentReference> DURABLE_CONTENT = valueSchema(TYPE_DURABLE_CONTENT,
+            FsCodec::writeDurableContent, FsCodec::readDurableContent);
     private static final ValueSchema<Principal> PRINCIPAL = valueSchema(TYPE_PRINCIPAL, (writer, value) -> {
         writer.writeValue(STRING, value.type());
         writer.writeValue(STRING, value.name());
@@ -495,39 +501,48 @@ final class FsCodec {
     }
 
     /* package */ static <T> T decode(final Schema<T> schema, final byte[] encoded) {
+        return decode(schema, encoded, null);
+    }
+
+    /* package */ static <T> T decode(final Schema<T> schema, final byte[] encoded,
+            final StagedContentStore stagedContent) {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(encoded, "encoded");
         try {
-            return decodeCurrentPayload(schema, encoded);
+            return PayloadDecoder.decode(schema, encoded, stagedContent);
         } catch (IOException | IllegalArgumentException ex) {
             throw new IllegalStateException("Decoding failed: schema=" + schema.name + " code=INVALID_CURRENT_PAYLOAD",
                     ex);
         }
     }
 
-    private static <T> T decodeCurrentPayload(Schema<T> schema, byte[] encoded) throws IOException {
-        ByteArrayInputStream input = new ByteArrayInputStream(encoded);
-        Reader reader = new Reader(input);
-        if (reader.readInt() != CODEC_MAGIC) {
-            throw new IOException("codec magic mismatch");
+    /** Strict current-schema payload decoder separated from the schema registry. */
+    private static final class PayloadDecoder {
+        private static <T> T decode(Schema<T> schema, byte[] encoded, StagedContentStore stagedContent)
+                throws IOException {
+            ByteArrayInputStream input = new ByteArrayInputStream(encoded);
+            Reader reader = new Reader(input, stagedContent);
+            if (reader.readInt() != CODEC_MAGIC) {
+                throw new IOException("codec magic mismatch");
+            }
+            int version = reader.readUnsignedByte();
+            if (version != CURRENT_CODEC_VERSION) {
+                throw new IOException("unsupported codec version");
+            }
+            int typeId = reader.readUnsignedByte();
+            Schema<?> encodedSchema = TOP_LEVEL_SCHEMAS.get(typeId);
+            if (encodedSchema == null) {
+                throw new IOException("unknown top-level type");
+            }
+            if (encodedSchema.typeId != schema.typeId) {
+                throw new IOException("top-level type mismatch");
+            }
+            T decoded = schema.valueSchema.decoder.decode(reader);
+            if (input.available() != 0) {
+                throw new IOException("trailing payload data");
+            }
+            return decoded;
         }
-        int version = reader.readUnsignedByte();
-        if (version != CURRENT_CODEC_VERSION) {
-            throw new IOException("unsupported codec version");
-        }
-        int typeId = reader.readUnsignedByte();
-        Schema<?> encodedSchema = TOP_LEVEL_SCHEMAS.get(typeId);
-        if (encodedSchema == null) {
-            throw new IOException("unknown top-level type");
-        }
-        if (encodedSchema.typeId != schema.typeId) {
-            throw new IOException("top-level type mismatch");
-        }
-        T decoded = schema.valueSchema.decoder.decode(reader);
-        if (input.available() != 0) {
-            throw new IOException("trailing payload data");
-        }
-        return decoded;
     }
 
     private static void writeEncodedObject(Writer writer, EncodedObject value) throws IOException {
@@ -548,6 +563,35 @@ final class FsCodec {
         } finally {
             Arrays.fill(bytes, (byte) 0);
         }
+    }
+
+    private static void writeDurableContent(Writer writer, DurableContentReference content) throws IOException {
+        writer.writeUnsignedByte(DURABLE_CONTENT_VERSION);
+        writer.writeValue(STRING, content.storeId());
+        writer.writeValue(STRING, content.contentId());
+        writer.writeValue(ENCODING, content.encoding());
+        writer.writeValue(LONG, content.length());
+        writer.writeValue(STRING, content.sha256());
+        writer.writeValue(STRING, content.lifecycle().name());
+    }
+
+    private static DurableContentReference readDurableContent(Reader reader) throws IOException {
+        int version = reader.readUnsignedByte();
+        if (version != DURABLE_CONTENT_VERSION) {
+            throw new IOException("unsupported durable content reference version");
+        }
+        String storeId = reader.readValue(STRING);
+        String contentId = reader.readValue(STRING);
+        Encoding encoding = reader.readValue(ENCODING);
+        long length = reader.readValue(LONG);
+        String sha256 = reader.readValue(STRING);
+        DurableContentReference.Lifecycle lifecycle;
+        try {
+            lifecycle = DurableContentReference.Lifecycle.valueOf(reader.readValue(STRING));
+        } catch (IllegalArgumentException exception) {
+            throw new IOException("unknown durable content lifecycle", exception);
+        }
+        return reader.restoreReference(storeId, contentId, encoding, length, sha256, lifecycle);
     }
 
     private static void writeAttributeValue(Writer writer, AttributeValue value) throws IOException {
@@ -629,7 +673,7 @@ final class FsCodec {
         writer.writeValue(PKI_ID, value.publicKeyId());
         writer.writeValue(PROFILE_BINDING, value.profileBinding());
         writer.writeValue(CREDENTIAL_STATUS, value.status());
-        writer.writeValue(ENCODED_OBJECT, value.encoded());
+        writer.writeValue(DURABLE_CONTENT, value.content());
         writer.writeValue(ATTRIBUTE_SET, value.attributes());
     }
 
@@ -637,7 +681,7 @@ final class FsCodec {
         return new Credential(reader.readValue(PKI_ID), reader.readValue(FORMAT_ID), reader.readValue(ISSUER_REF),
                 reader.readValue(SUBJECT_REF), reader.readValue(VALIDITY), reader.readValue(STRING),
                 reader.readValue(PKI_ID), reader.readValue(PROFILE_BINDING), reader.readValue(CREDENTIAL_STATUS),
-                reader.readValue(ENCODED_OBJECT), reader.readValue(ATTRIBUTE_SET));
+                reader.readValue(DURABLE_CONTENT), reader.readValue(ATTRIBUTE_SET));
     }
 
     private static void writeProfileBinding(Writer writer, CredentialProfileBinding value) throws IOException {
@@ -731,14 +775,20 @@ final class FsCodec {
         writer.writeValue(STATUS_OBJECT_TYPE, value.type());
         writer.writeValue(INSTANT, value.thisUpdate());
         writer.writeValue(OPTIONAL_INSTANT, value.nextUpdate());
-        writer.writeValue(ENCODED_OBJECT, value.encoded());
+        writer.writeValue(DURABLE_CONTENT, value.content());
         writer.writeValue(ATTRIBUTE_SET, value.attributes());
     }
 
     private static StatusObject readStatusObject(Reader reader) throws IOException {
-        return new StatusObject(reader.readValue(PKI_ID), reader.readValue(FORMAT_ID), reader.readValue(PKI_ID),
-                reader.readValue(STATUS_OBJECT_TYPE), reader.readValue(INSTANT), reader.readValue(OPTIONAL_INSTANT),
-                reader.readValue(ENCODED_OBJECT), reader.readValue(ATTRIBUTE_SET));
+        PkiId statusObjectId = reader.readValue(PKI_ID);
+        FormatId formatId = reader.readValue(FORMAT_ID);
+        PkiId issuerCaId = reader.readValue(PKI_ID);
+        StatusObjectType type = reader.readValue(STATUS_OBJECT_TYPE);
+        Instant thisUpdate = reader.readValue(INSTANT);
+        Optional<Instant> nextUpdate = reader.readValue(OPTIONAL_INSTANT);
+        DurableContentReference content = reader.readValue(DURABLE_CONTENT);
+        return new StatusObject(statusObjectId, formatId, issuerCaId, type, thisUpdate, nextUpdate, content,
+                reader.readValue(ATTRIBUTE_SET));
     }
 
     private static void writePublication(Writer writer, PublicationRecord value) throws IOException {
@@ -798,10 +848,11 @@ final class FsCodec {
     }
 
     private static int toInt(long value) throws IOException {
-        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
-            throw new IOException("integer value out of range");
+        try {
+            return Math.toIntExact(value);
+        } catch (ArithmeticException exception) {
+            throw new IOException("integer value out of range", exception);
         }
-        return (int) value;
     }
 
     private static void writePolicyTrace(Writer writer, PolicyTrace value) throws IOException {
@@ -1073,9 +1124,19 @@ final class FsCodec {
     private static final class Reader {
 
         private final InputStream input;
+        private final StagedContentStore stagedContent;
 
-        private Reader(InputStream input) {
+        private Reader(InputStream input, StagedContentStore stagedContent) {
             this.input = input;
+            this.stagedContent = stagedContent;
+        }
+
+        private DurableContentReference restoreReference(String storeId, String contentId, Encoding encoding,
+                long length, String sha256, DurableContentReference.Lifecycle lifecycle) throws IOException {
+            if (stagedContent == null) {
+                throw new IOException("durable content reference requires owning staged-content store");
+            }
+            return stagedContent.restoreReference(storeId, contentId, encoding, length, sha256, lifecycle);
         }
 
         private <T> T readValue(ValueSchema<T> schema) throws IOException {

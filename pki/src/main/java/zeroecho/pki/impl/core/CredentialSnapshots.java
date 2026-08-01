@@ -36,7 +36,6 @@ package zeroecho.pki.impl.core;
 import java.util.ArrayList;
 import java.util.List;
 
-import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
@@ -54,18 +53,13 @@ final class CredentialSnapshots {
 
     /* default */ static CredentialBundle copy(CredentialBundle source) {
         Credential credential = copy(source.credential());
-        List<EncodedObject> supporting = source.supportingObjects().stream().map(CredentialSnapshots::copy).toList();
-        return new CredentialBundle(credential, supporting);
+        return new CredentialBundle(credential, List.copyOf(source.supportingObjects()));
     }
 
     /* default */ static Credential copy(Credential source) {
         return new Credential(source.credentialId(), source.formatId(), source.issuerRef(), source.subjectRef(),
                 source.validity(), source.serialOrUniqueId(), source.publicKeyId(), source.profileBinding(),
-                source.status(), copy(source.encoded()), copy(source.attributes()));
-    }
-
-    private static EncodedObject copy(EncodedObject source) {
-        return new EncodedObject(source.encoding(), source.bytes().clone());
+                source.status(), source.content(), copy(source.attributes()));
     }
 
     private static AttributeSet copy(AttributeSet source) {

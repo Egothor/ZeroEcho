@@ -33,11 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.api.ca;
 
-import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.attr.AttributeSet;
+import zeroecho.pki.api.content.DurableContentReference;
 
 /**
  * Command to import an existing root CA credential into PKI inventory.
@@ -55,7 +55,7 @@ import zeroecho.pki.api.attr.AttributeSet;
  * @param attributes           universal attributes (may be empty but not null)
  */
 public record CaImportCommand(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
-        EncodedObject existingCaCredential, AttributeSet attributes) {
+        DurableContentReference existingCaCredential, AttributeSet attributes) {
 
     /**
      * Creates a CA import command.

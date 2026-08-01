@@ -493,13 +493,25 @@ final class FilesystemRevocationJournalTest {
         return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults());
     }
 
-    private static Credential credential(String suffix) {
+    private Credential credential(String suffix) {
         return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
                 new Validity(TIME.minusSeconds(60), TIME.plusSeconds(60)), suffix, new PkiId("key:" + suffix),
                 new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])),
-                CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }),
+                CredentialStatus.ISSUED,
+                fixtureReference(),
                 new SimpleAttributeSet());
+    }
+
+    private zeroecho.pki.api.content.DurableContentReference fixtureReference() {
+        try {
+            FilesystemStagedContentStore staged = new FilesystemStagedContentStore(
+                    temporaryDirectory.resolve("reference-fixtures"), "0123456789abcdef0123456789abcdef");
+            return zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(staged, Encoding.DER,
+                    new byte[] { 1, 2, 3 });
+        } catch (IOException exception) {
+            throw new AssertionError("Unable to stage credential fixture", exception);
+        }
     }
 
     private static byte[] journalPayload(PkiId credentialId, long journalVersion, RawTransition... transitions)

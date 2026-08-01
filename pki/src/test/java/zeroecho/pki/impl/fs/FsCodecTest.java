@@ -50,8 +50,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -92,6 +94,9 @@ final class FsCodecTest {
     private static final int VERSION_OFFSET = Integer.BYTES;
     private static final int TYPE_OFFSET = VERSION_OFFSET + 1;
     private static final int FIRST_FIELD_TYPE_OFFSET = TYPE_OFFSET + 1;
+
+    @TempDir
+    private Path temporaryDirectory;
 
     @Test
     void approvedSchemaRoundTripAndTypeBinding() {
@@ -210,23 +215,26 @@ final class FsCodecTest {
     }
 
     @Test
-    void credentialProfileBindingDiscriminatorRoundTripsExactly() {
+    void credentialProfileBindingDiscriminatorRoundTripsExactly() throws Exception {
+        FilesystemStagedContentStore staged = referenceStore("binding");
         CertificateProfileRef reference = new CertificateProfileRef("profile-a", 1,
                 new byte[CertificateProfileRef.HASH_BYTES]);
         List<CredentialProfileBinding> bindings = List.of(new EndEntityProfileBinding(reference),
                 new CaProfileBinding(reference));
 
         for (CredentialProfileBinding binding : bindings) {
-            Credential original = credential(binding);
-            Credential decoded = FsCodec.decode(FsCodec.CREDENTIAL, FsCodec.encode(FsCodec.CREDENTIAL, original));
+            Credential original = credential(staged, binding);
+            Credential decoded = FsCodec.decode(FsCodec.CREDENTIAL, FsCodec.encode(FsCodec.CREDENTIAL, original),
+                    staged);
             assertEquals(binding, decoded.profileBinding());
             assertEquals(binding.getClass(), decoded.profileBinding().getClass());
         }
     }
 
     @Test
-    void obsoleteBareStringCaBindingFailsStrictDecode() {
-        byte[] encoded = FsCodec.encode(FsCodec.CREDENTIAL, credential(new CaProfileBinding(
+    void obsoleteBareStringCaBindingFailsStrictDecode() throws Exception {
+        FilesystemStagedContentStore staged = referenceStore("obsolete-binding");
+        byte[] encoded = FsCodec.encode(FsCodec.CREDENTIAL, credential(staged, new CaProfileBinding(
                 new CertificateProfileRef("profile-a", 1, new byte[CertificateProfileRef.HASH_BYTES]))));
         int binding = indexOf(encoded, new byte[] { 73, 2, 72 });
         assertTrue(binding >= 0);
@@ -275,11 +283,18 @@ final class FsCodecTest {
                 subject, leaf);
     }
 
-    private static Credential credential(CredentialProfileBinding binding) {
+    private static Credential credential(FilesystemStagedContentStore staged, CredentialProfileBinding binding)
+            throws Exception {
         return new Credential(new PkiId("credential-1"), new FormatId("x509"), new IssuerRef(new PkiId("ca-1")),
                 new SubjectRef("subject-1"), new Validity(Instant.EPOCH, Instant.EPOCH.plusSeconds(1)), "1",
                 new PkiId("spki-1"), binding, CredentialStatus.ISSUED,
-                new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
+                zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(staged, Encoding.DER, new byte[] { 1 }),
+                new SimpleAttributeSet());
+    }
+
+    private FilesystemStagedContentStore referenceStore(String name) throws Exception {
+        return new FilesystemStagedContentStore(temporaryDirectory.resolve(name),
+                "0123456789abcdef0123456789abcdef");
     }
 
     private static ImportedCertificateProfileVersion profileVersion() {

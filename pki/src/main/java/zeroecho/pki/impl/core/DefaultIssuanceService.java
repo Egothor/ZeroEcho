@@ -78,6 +78,9 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509BuiltInDefaults;
 import zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.framework.CredentialFramework;
@@ -157,6 +160,8 @@ public final class DefaultIssuanceService implements IssuanceService {
     private final EffectiveCredentialStatusResolver statusResolver;
     private final ProfileService profileService;
     private final Clock clock;
+    private final X509AuthoritySnapshot authority;
+    private final zeroecho.core.spec.AlgorithmIdentity expectedSignature;
 
     /**
      * Creates the issuance service bound to the supplied persistence and framework
@@ -185,6 +190,11 @@ public final class DefaultIssuanceService implements IssuanceService {
         this.statusResolver = Objects.requireNonNull(statusResolver, "statusResolver");
         this.profileService = Objects.requireNonNull(profileService, "profileService");
         this.clock = Objects.requireNonNull(clock, "clock");
+        if (!(framework instanceof BcX509CredentialFramework x509Framework)) {
+            throw new IllegalArgumentException("X.509 issuance requires an algorithm authority");
+        }
+        this.authority = x509Framework.authority();
+        this.expectedSignature = authority.resolveDefault(X509BuiltInDefaults.PKI_SIGNATURE_DEFAULT_V1).signature();
     }
 
     /**
@@ -250,7 +260,7 @@ public final class DefaultIssuanceService implements IssuanceService {
         ValidatedCertificateRequest validated;
         try {
             validated = CertificateProfileValidator.validate(candidate, profile, active.reference(), issuerCred,
-                    evaluationTime);
+                    evaluationTime, authority);
         } catch (PkiException exception) {
             throw rejection(candidate.request(), statusCode(exception));
         }
@@ -259,7 +269,7 @@ public final class DefaultIssuanceService implements IssuanceService {
         CredentialBundle bundle;
         try {
             bundle = CredentialSnapshots
-                    .copy(issuerBackend.issueEndEntity(validated, issuerCred.encoded(), issuer.issuerKeyRef(), serial));
+                    .copy(issuerBackend.issueEndEntity(validated, issuerCred.content(), issuer.issuerKeyRef(), serial));
         } catch (RuntimeException ex) { // NOPMD - framework output must cross the snapshot boundary
             throw rejection(candidate.request(), "BACKEND_CREDENTIAL_MISMATCH");
         }
@@ -441,14 +451,19 @@ public final class DefaultIssuanceService implements IssuanceService {
         try {
             CredentialProfileBindings.requireEndEntityBinding(credential.profileBinding(),
                     validated.profileReference());
-            if (!framework.formatId().equals(credential.formatId()) || credential.encoded().encoding() != Encoding.DER
+            if (!framework.formatId().equals(credential.formatId()) || credential.content().encoding() != Encoding.DER
                     || !credential.subjectRef().equals(validated.subjectRef())
                     || !credential.issuerRef().equals(new zeroecho.pki.api.IssuerRef(validated.issuerCaId()))
                     || credential.status() != CredentialStatus.ISSUED) {
                 throw rejection(auditRequest, "BACKEND_CREDENTIAL_MISMATCH");
             }
-            X509CertificateHolder holder = new X509CertificateHolder(credential.encoded().bytes());
-            X509CertificateHolder issuerHolder = new X509CertificateHolder(issuerCredential.encoded().bytes());
+            CredentialContent.validateCertificate(store, credential.content(), authority,
+                    Optional.of(expectedSignature));
+            CredentialContent.validateCertificate(store, issuerCredential.content(), authority, Optional.empty());
+            byte[] credentialDer = CredentialContent.materializeForBc(store, credential.content());
+            X509CertificateHolder holder = new X509CertificateHolder(credentialDer);
+            X509CertificateHolder issuerHolder = new X509CertificateHolder(
+                    CredentialContent.materializeForBc(store, issuerCredential.content()));
             byte[] actualSpki = holder.getSubjectPublicKeyInfo().getEncoded();
             if (!MessageDigest.isEqual(validated.exactPublicKey().bytes(), actualSpki)
                     || !holder.getSubject().equals(BcX509ProfileSupport.subject(validated.subjectRdns()))
@@ -457,7 +472,7 @@ public final class DefaultIssuanceService implements IssuanceService {
                             new JcaContentVerifierProviderBuilder().build(issuerHolder.getSubjectPublicKeyInfo()))
                     || !holder.getSerialNumber().equals(allocatedSerial)
                     || !credential.publicKeyId().equals(new PkiId("spki:" + sha256Hex(actualSpki)))
-                    || !credential.credentialId().equals(new PkiId("x509:" + sha256Hex(credential.encoded().bytes())))
+                    || !credential.credentialId().equals(new PkiId("x509:" + sha256Hex(credentialDer)))
                     || !credential.serialOrUniqueId().equals(holder.getSerialNumber().toString())
                     || !credential.validity().equals(validated.validity())
                     || validated.validity().notBefore().getEpochSecond() != holder.getNotBefore().toInstant()

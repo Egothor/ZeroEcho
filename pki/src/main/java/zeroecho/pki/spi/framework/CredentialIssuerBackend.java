@@ -35,8 +35,8 @@ package zeroecho.pki.spi.framework;
 
 import java.math.BigInteger;
 
-import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
 import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
@@ -140,7 +140,7 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    CredentialBundle issueEndEntity(ValidatedCertificateRequest request, EncodedObject issuerCertificate,
+    CredentialBundle issueEndEntity(ValidatedCertificateRequest request, DurableContentReference issuerCertificate,
             KeyRef issuerKeyRef, BigInteger serial);
 
     /**
@@ -171,6 +171,7 @@ public interface CredentialIssuerBackend {
      *                                  or other framework-specific issuance
      *                                  processing fails
      */
-    Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request, EncodedObject issuerCertificate,
+    Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
+            DurableContentReference issuerCertificate,
             KeyRef issuerKeyRef);
 }

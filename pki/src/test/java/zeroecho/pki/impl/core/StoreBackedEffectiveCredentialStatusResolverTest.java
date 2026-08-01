@@ -39,6 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.lang.reflect.Proxy;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -50,6 +52,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -71,10 +74,14 @@ import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
+import zeroecho.pki.impl.fs.FilesystemStagedContentStore;
 import zeroecho.pki.spi.store.PkiStore;
 
 final class StoreBackedEffectiveCredentialStatusResolverTest {
     private static final Instant NOW = Instant.parse("2026-06-01T12:00:00Z");
+
+    @TempDir
+    private Path temporaryDirectory;
 
     @Test
     void resolvesInventoryValidityAndCurrentRevocationPrecedence() {
@@ -171,7 +178,9 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=Audit"),
                 new Validity(NOW.minusSeconds(60), NOW.plusSeconds(60)), "audit", new PkiId("key:audit"),
                 new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])),
-                CredentialStatus.ISSUED, new EncodedObject(Encoding.DER, new byte[] { 1 }), new SimpleAttributeSet());
+                CredentialStatus.ISSUED,
+                fixtureReference(),
+                new SimpleAttributeSet());
         AtomicReference<AuditEvent> recorded = new AtomicReference<>();
 
         CredentialTrustAudit.rejected(recorded::set, NOW, credential, CredentialUse.END_ENTITY_ISSUER,
@@ -228,12 +237,24 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
                 List.of(new RevocationTransition(1L, state, time, permanentReason, new SimpleAttributeSet()))));
     }
 
-    private static Credential credential(String suffix, CredentialStatus status, Instant notBefore, Instant notAfter) {
+    private Credential credential(String suffix, CredentialStatus status, Instant notBefore, Instant notAfter) {
         return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
                 new Validity(notBefore, notAfter), suffix, new PkiId("key:" + suffix),
                 new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])),
-                status, new EncodedObject(Encoding.DER, new byte[] { 1, 2, 3 }), new SimpleAttributeSet());
+                status, fixtureReference(),
+                new SimpleAttributeSet());
+    }
+
+    private zeroecho.pki.api.content.DurableContentReference fixtureReference() {
+        try {
+            FilesystemStagedContentStore staged = new FilesystemStagedContentStore(
+                    temporaryDirectory.resolve("references"), "0123456789abcdef0123456789abcdef");
+            return zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(staged, Encoding.DER,
+                    new byte[] { 1, 2, 3 });
+        } catch (IOException exception) {
+            throw new AssertionError("Unable to stage credential fixture", exception);
+        }
     }
 
     private static String messages(Throwable throwable) {

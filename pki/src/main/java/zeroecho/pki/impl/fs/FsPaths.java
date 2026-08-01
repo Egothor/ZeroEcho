@@ -90,6 +90,10 @@ final class FsPaths {
         return this.root.resolve("SIGNING_TIME_WATERMARK");
     }
 
+    /* default */ Path stagedContentRoot() {
+        return this.root.resolve("staged-content");
+    }
+
     /* default */ Path lockFile() {
         return this.root.resolve(LOCK_DIR).resolve(STORE_LOCK);
     }
@@ -173,6 +177,10 @@ final class FsPaths {
 
     /* default */ Path revocationJournal(final PkiId credentialId) {
         return revocationDir(credentialId).resolve("journal.bin");
+    }
+
+    /* default */ Path revocationSnapshotRoot() {
+        return this.root.resolve("revocation-snapshots");
     }
 
     // -------------------------------------------------------------------------
