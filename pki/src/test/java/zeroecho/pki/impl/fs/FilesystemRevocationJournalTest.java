@@ -64,8 +64,6 @@ import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.io.Util;
-import zeroecho.pki.api.EncodedObject;
-import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuerRef;
 import zeroecho.pki.api.PkiException;
@@ -109,9 +107,11 @@ final class FilesystemRevocationJournalTest {
 
     @Test
     void legalTransitionsAreContiguousDurableAndPermanentIsTerminal() throws Exception {
+        System.out.println("legalTransitionsAreContiguousDurableAndPermanentIsTerminal");
         Path root = temporaryDirectory.resolve("legal");
-        Credential credential = credential("legal");
+        Credential credential;
         try (FilesystemPkiStore store = store(root)) {
+            credential = credential(store, "legal");
             store.putCredential(credential);
             assertTransition(store, hold(credential), 1L, RevocationState.HELD);
             assertTransition(store, unhold(credential), 2L, RevocationState.CLEAR);
@@ -128,14 +128,16 @@ final class FilesystemRevocationJournalTest {
             assertEquals(RevocationState.PERMANENTLY_REVOKED, journal.latest().state());
             assertEquals(RevocationReason.KEY_COMPROMISE, journal.latest().permanentReason().orElseThrow());
         }
+        System.out.println("legalTransitionsAreContiguousDurableAndPermanentIsTerminal...ok");
     }
 
     @Test
     void everyLegalPermanentTransitionIsAccepted() throws Exception {
+        System.out.println("everyLegalPermanentTransitionIsAccepted");
         try (FilesystemPkiStore store = store(temporaryDirectory.resolve("legal-permanent"))) {
-            Credential direct = credential("permanent-from-none");
-            Credential fromClear = credential("permanent-from-clear");
-            Credential fromHeld = credential("permanent-from-held");
+            Credential direct = credential(store, "permanent-from-none");
+            Credential fromClear = credential(store, "permanent-from-clear");
+            Credential fromHeld = credential(store, "permanent-from-held");
             store.putCredential(direct);
             store.putCredential(fromClear);
             store.putCredential(fromHeld);
@@ -156,15 +158,17 @@ final class FilesystemRevocationJournalTest {
             assertEquals(List.of(RevocationState.HELD, RevocationState.PERMANENTLY_REVOKED), states(heldJournal));
             assertEquals(2L, heldJournal.latest().revision());
         }
+        System.out.println("everyLegalPermanentTransitionIsAccepted...ok");
     }
 
     @Test
     void illegalAndInvalidCommandsFailBeforeJournalMutation() throws Exception {
+        System.out.println("illegalAndInvalidCommandsFailBeforeJournalMutation");
         try (FilesystemPkiStore store = store(temporaryDirectory.resolve("illegal"))) {
-            Credential unknown = credential("unknown");
+            Credential unknown = credential(store, "unknown");
             assertCode("REVOCATION_CREDENTIAL_NOT_FOUND", () -> transition(store, hold(unknown)));
 
-            Credential credential = credential("known");
+            Credential credential = credential(store, "known");
             store.putCredential(credential);
             assertCode("REVOCATION_TRANSITION_ILLEGAL", () -> transition(store, unhold(credential)));
             assertThrows(IllegalArgumentException.class, () -> revoke(credential, RevocationReason.CERTIFICATE_HOLD));
@@ -190,17 +194,19 @@ final class FilesystemRevocationJournalTest {
                     () -> transition(store, revoke(credential, RevocationReason.CA_COMPROMISE)));
             assertArrayEquals(permanentBytes, FsOperations.readAll(journalPath));
 
-            Credential invalidRemove = credential("invalid-remove");
+            Credential invalidRemove = credential(store, "invalid-remove");
             store.putCredential(invalidRemove);
             assertThrows(IllegalArgumentException.class, () -> revoke(invalidRemove, RevocationReason.REMOVE_FROM_CRL));
             assertTrue(store.getRevocationJournal(invalidRemove.credentialId()).isEmpty());
         }
+        System.out.println("illegalAndInvalidCommandsFailBeforeJournalMutation...ok");
     }
 
     @Test
     void sameCredentialConcurrentHoldHasExactlyOneCommittedWinner() throws Exception {
+        System.out.println("sameCredentialConcurrentHoldHasExactlyOneCommittedWinner");
         try (FilesystemPkiStore store = store(temporaryDirectory.resolve("concurrent"))) {
-            Credential credential = credential("concurrent");
+            Credential credential = credential(store, "concurrent");
             store.putCredential(credential);
             CyclicBarrier barrier = new CyclicBarrier(2);
             ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -215,21 +221,23 @@ final class FilesystemRevocationJournalTest {
             assertEquals(1, journal.transitions().size());
             assertEquals(1L, journal.latest().revision());
         }
+        System.out.println("sameCredentialConcurrentHoldHasExactlyOneCommittedWinner...ok");
     }
 
     @Test
     void conflictingTransitionsSerializeWithoutLostUpdates() throws Exception {
+        System.out.println("conflictingTransitionsSerializeWithoutLostUpdates");
         try (FilesystemPkiStore store = store(temporaryDirectory.resolve("concurrent-conflicts"))) {
             ExecutorService executor = Executors.newFixedThreadPool(2);
             try {
-                Credential fromNone = credential("hold-vs-permanent");
+                Credential fromNone = credential(store, "hold-vs-permanent");
                 store.putCredential(fromNone);
                 runConcurrent(store, hold(fromNone), revoke(fromNone, RevocationReason.KEY_COMPROMISE), executor);
                 RevocationJournal fromNoneJournal = store.getRevocationJournal(fromNone.credentialId()).orElseThrow();
                 assertEquals(RevocationState.PERMANENTLY_REVOKED, fromNoneJournal.latest().state());
                 assertTrue(fromNoneJournal.transitions().size() == 1 || fromNoneJournal.transitions().size() == 2);
 
-                Credential fromHeld = credential("unhold-vs-permanent");
+                Credential fromHeld = credential(store, "unhold-vs-permanent");
                 store.putCredential(fromHeld);
                 transition(store, hold(fromHeld));
                 runConcurrent(store, unhold(fromHeld), revoke(fromHeld, RevocationReason.CA_COMPROMISE), executor);
@@ -237,7 +245,7 @@ final class FilesystemRevocationJournalTest {
                 assertEquals(RevocationState.PERMANENTLY_REVOKED, fromHeldJournal.latest().state());
                 assertTrue(fromHeldJournal.transitions().size() == 2 || fromHeldJournal.transitions().size() == 3);
 
-                Credential reasons = credential("competing-permanent-reasons");
+                Credential reasons = credential(store, "competing-permanent-reasons");
                 store.putCredential(reasons);
                 List<Boolean> results = runConcurrent(store, revoke(reasons, RevocationReason.KEY_COMPROMISE),
                         revoke(reasons, RevocationReason.CA_COMPROMISE), executor);
@@ -251,13 +259,15 @@ final class FilesystemRevocationJournalTest {
                 executor.shutdownNow();
             }
         }
+        System.out.println("conflictingTransitionsSerializeWithoutLostUpdates...ok");
     }
 
     @Test
     void unrelatedCredentialTransitionProgressesWhileAnotherCredentialLockIsHeld() throws Exception {
+        System.out.println("unrelatedCredentialTransitionProgressesWhileAnotherCredentialLockIsHeld");
         try (FilesystemPkiStore store = store(temporaryDirectory.resolve("independent-locks"))) {
-            Credential blocked = credential("blocked");
-            Credential independent = credential("independent");
+            Credential blocked = credential(store, "blocked");
+            Credential independent = credential(store, "independent");
             store.putCredential(blocked);
             store.putCredential(independent);
 
@@ -289,13 +299,15 @@ final class FilesystemRevocationJournalTest {
                 executor.shutdownNow();
             }
         }
+        System.out.println("unrelatedCredentialTransitionProgressesWhileAnotherCredentialLockIsHeld...ok");
     }
 
     @Test
     void copiedNamespaceJournalAndRegressingTransitionTimeFailClosed() throws Exception {
+        System.out.println("copiedNamespaceJournalAndRegressingTransitionTimeFailClosed");
         Path root = temporaryDirectory.resolve("corrupt");
-        Credential credential = credential("corrupt");
         try (FilesystemPkiStore store = store(root)) {
+            Credential credential = credential(store, "corrupt");
             store.putCredential(credential);
             transition(store, hold(credential));
             assertCode("REVOCATION_TRANSITION_CONFLICT",
@@ -308,6 +320,7 @@ final class FilesystemRevocationJournalTest {
                     FsCodec.encode(FsCodec.REVOCATION_JOURNAL, invalid));
             assertCode("REVOCATION_STATE_CORRUPT", () -> store.getRevocationJournal(credential.credentialId()));
         }
+        System.out.println("copiedNamespaceJournalAndRegressingTransitionTimeFailClosed...ok");
     }
 
     @Test
@@ -356,9 +369,11 @@ final class FilesystemRevocationJournalTest {
 
     @Test
     void obsoleteCurrentAndHistoryLayoutCannotInfluenceTrustedJournalOrResolver() throws Exception {
+        System.out.println("obsoleteCurrentAndHistoryLayoutCannotInfluenceTrustedJournalOrResolver");
         Path root = temporaryDirectory.resolve("obsolete-layout");
-        Credential credential = credential("obsolete-layout");
+        Credential credential;
         try (FilesystemPkiStore store = store(root)) {
+            credential = credential(store, "obsolete-layout");
             store.putCredential(credential);
         }
         Path legacyDirectory = new FsPaths(root).revocationDir(credential.credentialId());
@@ -378,12 +393,14 @@ final class FilesystemRevocationJournalTest {
             assertEquals(RevocationState.HELD,
                     reopened.getRevocationJournal(credential.credentialId()).orElseThrow().latest().state());
         }
+        System.out.println("obsoleteCurrentAndHistoryLayoutCannotInfluenceTrustedJournalOrResolver...ok");
     }
 
     @Test
     void durabilityUncertaintyMakesEveryStoreOperationFailClosed() throws Exception {
+        System.out.println("durabilityUncertaintyMakesEveryStoreOperationFailClosed");
         try (FilesystemPkiStore store = store(temporaryDirectory.resolve("uncertain"))) {
-            Credential credential = credential("uncertain");
+            Credential credential = credential(store, "uncertain");
             store.putCredential(credential);
             Field field = FilesystemPkiStore.class.getDeclaredField("durabilityUncertain");
             field.setAccessible(true);
@@ -393,6 +410,7 @@ final class FilesystemRevocationJournalTest {
             assertCode("STORE_DURABILITY_UNCONFIRMED", store::listCas);
             assertCode("STORE_DURABILITY_UNCONFIRMED", store::signingNow);
         }
+        System.out.println("durabilityUncertaintyMakesEveryStoreOperationFailClosed...ok");
     }
 
     private static CompletableFuture<Boolean> attemptHold(FilesystemPkiStore store, Credential credential,
@@ -437,12 +455,15 @@ final class FilesystemRevocationJournalTest {
     }
 
     private void assertPersistedCorruptionRejected(CorruptionCase corruption) throws Exception {
+        System.out.println("strictCodecCorruptionFailsReadAndTransitionWithoutOverwrite[" + corruption.description
+                + "]");
         String suffix = "corrupt-" + corruption.name().toLowerCase(java.util.Locale.ROOT);
         Path root = temporaryDirectory.resolve(suffix);
-        Credential credential = credential(suffix);
+        Credential credential;
         Path journalPath;
         byte[] corrupt;
         try (FilesystemPkiStore store = store(root)) {
+            credential = credential(store, suffix);
             store.putCredential(credential);
             journalPath = new FsPaths(root).revocationJournal(credential.credentialId());
             corrupt = corruption.bytes(credential.credentialId());
@@ -455,6 +476,7 @@ final class FilesystemRevocationJournalTest {
             assertCode("REVOCATION_STATE_CORRUPT", () -> transition(reopened, hold(credential)));
             assertArrayEquals(before, FsOperations.readAll(journalPath));
         }
+        System.out.println("strictCodecCorruptionFailsReadAndTransitionWithoutOverwrite...ok");
     }
 
     private static List<RevocationState> states(RevocationJournal journal) {
@@ -493,25 +515,14 @@ final class FilesystemRevocationJournalTest {
         return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults());
     }
 
-    private Credential credential(String suffix) {
+    private static Credential credential(FilesystemPkiStore store, String suffix) throws IOException {
         return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
                 new Validity(TIME.minusSeconds(60), TIME.plusSeconds(60)), suffix, new PkiId("key:" + suffix),
                 new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])),
                 CredentialStatus.ISSUED,
-                fixtureReference(),
+                zeroecho.pki.testkit.PkiTestRuntime.stageCredential(store, new byte[] { 1, 2, 3 }),
                 new SimpleAttributeSet());
-    }
-
-    private zeroecho.pki.api.content.DurableContentReference fixtureReference() {
-        try {
-            FilesystemStagedContentStore staged = new FilesystemStagedContentStore(
-                    temporaryDirectory.resolve("reference-fixtures"), "0123456789abcdef0123456789abcdef");
-            return zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(staged, Encoding.DER,
-                    new byte[] { 1, 2, 3 });
-        } catch (IOException exception) {
-            throw new AssertionError("Unable to stage credential fixture", exception);
-        }
     }
 
     private static byte[] journalPayload(PkiId credentialId, long journalVersion, RawTransition... transitions)
