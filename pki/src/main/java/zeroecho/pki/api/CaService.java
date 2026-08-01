@@ -152,6 +152,12 @@ public interface CaService {
     /**
      * Retrieves a CA record.
      *
+     * <p>
+     * The returned record contains ordered credential identifiers. Credential
+     * content and metadata remain authoritative only through the configured
+     * credential store.
+     * </p>
+     *
      * @param caId CA identifier
      * @return CA record
      * @throws IllegalArgumentException if {@code caId} is invalid
@@ -161,6 +167,11 @@ public interface CaService {
 
     /**
      * Lists CA records matching query constraints.
+     *
+     * <p>
+     * Returned records contain ordered credential identifiers rather than embedded
+     * credential values.
+     * </p>
      *
      * @param query query constraints
      * @return list of CA records

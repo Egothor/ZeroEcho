@@ -88,12 +88,15 @@ public interface PkiStore extends SignWorkflowStore {
      *
      * <p>
      * Implementations must store CA records atomically. Replacing an existing
-     * record should be either fully visible or not visible at all.
+     * record should be either fully visible or not visible at all. Every
+     * identifier in {@link CaRecord#credentialIds()} must resolve through
+     * {@link #getCredential(PkiId)} before the CA record is published.
      * </p>
      *
      * @param record CA record (never {@code null})
      * @throws NullPointerException  if {@code record} is {@code null}
-     * @throws IllegalStateException if persistence fails
+     * @throws IllegalStateException if persistence fails or a referenced
+     *                               credential is missing or invalid
      */
     void putCa(CaRecord record);
 
@@ -101,17 +104,22 @@ public interface PkiStore extends SignWorkflowStore {
      * Retrieves a CA record.
      *
      * @param caId CA identifier (never {@code null})
-     * @return CA record if present
+     * @return CA record if present; all credential identifiers have been validated
+     *         against the standalone credential authority
      * @throws NullPointerException  if {@code caId} is {@code null}
-     * @throws IllegalStateException if retrieval fails
+     * @throws IllegalStateException if retrieval fails or a referenced credential
+     *                               is missing or invalid
      */
     Optional<CaRecord> getCa(PkiId caId);
 
     /**
      * Lists all stored CA records.
      *
-     * @return list of CA records (never {@code null})
-     * @throws IllegalStateException if listing fails
+     * @return list of CA records (never {@code null}); every returned credential
+     *         identifier has been validated against the standalone credential
+     *         authority
+     * @throws IllegalStateException if listing fails or a referenced credential is
+     *                               missing or invalid
      */
     List<CaRecord> listCas();
 

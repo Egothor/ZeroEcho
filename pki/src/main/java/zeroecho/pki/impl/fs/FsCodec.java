@@ -448,7 +448,7 @@ final class FsCodec {
 
     private static final ValueSchema<Credential> CREDENTIAL_VALUE = valueSchema(TYPE_CREDENTIAL_RECORD,
             FsCodec::writeCredential, FsCodec::readCredential);
-    private static final ValueSchema<List<Credential>> CREDENTIALS = listOf(CREDENTIAL_VALUE);
+    private static final ValueSchema<List<PkiId>> PKI_IDS = listOf(PKI_ID);
 
     /* package */ static final Schema<CaRecord> CA_RECORD = topLevel(TOP_CA_RECORD, "CA_RECORD",
             valueSchema(100, FsCodec::writeCaRecord, FsCodec::readCaRecord));
@@ -711,12 +711,12 @@ final class FsCodec {
         writer.writeValue(CA_STATE, value.state());
         writer.writeValue(KEY_REF, value.issuerKeyRef());
         writer.writeValue(SUBJECT_REF, value.subjectRef());
-        writer.writeValue(CREDENTIALS, value.caCredentials());
+        writer.writeValue(PKI_IDS, value.credentialIds());
     }
 
     private static CaRecord readCaRecord(Reader reader) throws IOException {
         return new CaRecord(reader.readValue(PKI_ID), reader.readValue(CA_KIND), reader.readValue(CA_STATE),
-                reader.readValue(KEY_REF), reader.readValue(SUBJECT_REF), reader.readValue(CREDENTIALS));
+                reader.readValue(KEY_REF), reader.readValue(SUBJECT_REF), reader.readValue(PKI_IDS));
     }
 
     private static void writeParsedRequest(Writer writer, ParsedCertificationRequest value) throws IOException {

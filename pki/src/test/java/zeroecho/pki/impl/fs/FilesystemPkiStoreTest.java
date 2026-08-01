@@ -34,6 +34,7 @@
 package zeroecho.pki.impl.fs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -218,7 +219,7 @@ public final class FilesystemPkiStoreTest {
             store.putCa(ca1);
 
             CaRecord ca2 = new CaRecord(ca1.caId(), ca1.kind(), CaState.DISABLED, ca1.issuerKeyRef(), ca1.subjectRef(),
-                    ca1.caCredentials());
+                    ca1.credentialIds());
             store.putCa(ca2);
 
             Optional<CaRecord> loaded = store.getCa(ca1.caId());
@@ -230,6 +231,216 @@ public final class FilesystemPkiStoreTest {
         dumpTree(root);
 
         System.out.println("caHistoryCreatesCurrentAndHistory...ok");
+    }
+
+    @Test
+    void caReferencesRequireValidStandaloneCredentialsAndPreserveOrder() throws Exception {
+        System.out.println("caReferencesRequireValidStandaloneCredentialsAndPreserveOrder");
+        Path root = tmp.resolve("store-ca-authority");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            Credential first = TestObjects.minimalCredential(store, "SERIAL-FIRST", "profile-ca");
+            Credential second = TestObjects.minimalCredential(store, "SERIAL-SECOND", "profile-ca");
+            store.putCredential(first);
+            store.putCredential(second);
+            CaRecord ordered = new CaRecord(new PkiId("ca-ordered"), CaKind.ROOT, CaState.ACTIVE,
+                    new KeyRef("key-ordered"), new SubjectRef("CN=Ordered"),
+                    List.of(second.credentialId(), first.credentialId()));
+            store.putCa(ordered);
+
+            assertEquals(List.of(second.credentialId(), first.credentialId()),
+                    store.getCa(ordered.caId()).orElseThrow().credentialIds());
+            CaRecord missing = new CaRecord(new PkiId("ca-missing"), CaKind.ROOT, CaState.ACTIVE,
+                    new KeyRef("key-missing"), new SubjectRef("CN=Missing"),
+                    List.of(new PkiId("credential-missing")));
+            assertThrows(IllegalStateException.class, () -> store.putCa(missing));
+
+            Files.write(root.resolve("staged-content").resolve(first.content().contentId() + ".content"),
+                    new byte[] { 9, 9, 9 });
+            assertThrows(IllegalStateException.class, () -> store.getCa(ordered.caId()));
+            assertThrows(IllegalStateException.class, store::listCas);
+        }
+        System.out.println("caReferencesRequireValidStandaloneCredentialsAndPreserveOrder...ok");
+    }
+
+    @Test
+    void oldStoreVersionIsRejected() throws Exception {
+        System.out.println("oldStoreVersionIsRejected");
+        Path root = tmp.resolve("store-old-version");
+        Files.createDirectories(root);
+        Files.writeString(root.resolve(FsPaths.VERSION_FILE), "v2");
+
+        assertThrows(IllegalStateException.class,
+                () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
+        System.out.println("oldStoreVersionIsRejected...ok");
+    }
+
+    @Test
+    void snapshotReconstructsSharedCredentialOnceWithNewTargetReference() throws Exception {
+        System.out.println("snapshotReconstructsSharedCredentialOnceWithNewTargetReference");
+        Path root = tmp.resolve("store-snapshot-authority");
+        Path snapshot = tmp.resolve("snapshot-authority");
+        FsPkiStoreOptions options = nonStrictSnapshotOptions();
+        PkiId credentialId;
+        String sourceContentId;
+        try (FilesystemPkiStore source = new FilesystemPkiStore(root, options)) {
+            Credential shared = TestObjects.minimalCredential(source, "SERIAL-SHARED", "profile-ca");
+            source.putCredential(shared);
+            credentialId = shared.credentialId();
+            sourceContentId = shared.content().contentId();
+            source.putCa(new CaRecord(new PkiId("ca-shared-one"), CaKind.ROOT, CaState.ACTIVE,
+                    new KeyRef("key-shared-one"), new SubjectRef("CN=Shared One"), List.of(credentialId)));
+            source.putCa(new CaRecord(new PkiId("ca-shared-two"), CaKind.ROOT, CaState.ACTIVE,
+                    new KeyRef("key-shared-two"), new SubjectRef("CN=Shared Two"), List.of(credentialId)));
+            source.exportSnapshot(snapshot, Instant.now());
+        }
+
+        try (FilesystemPkiStore restored = new FilesystemPkiStore(snapshot, options)) {
+            assertEquals(2, restored.listCas().size());
+            Credential credential = restored.getCredential(credentialId).orElseThrow();
+            assertFalse(sourceContentId.equals(credential.content().contentId()));
+            assertEquals(List.of(credentialId),
+                    restored.getCa(new PkiId("ca-shared-one")).orElseThrow().credentialIds());
+        }
+        try (java.util.stream.Stream<Path> records = Files.list(snapshot.resolve("credentials").resolve("by-id"))) {
+            assertEquals(1, records.filter(Files::isRegularFile).count());
+        }
+        assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".content")));
+        assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".meta")));
+        assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".owners")));
+        System.out.println("snapshotReconstructsSharedCredentialOnceWithNewTargetReference...ok");
+    }
+
+    @Test
+    void snapshotPreservesStandaloneCredentialWithNewReferenceAndResolvableCa() throws Exception {
+        System.out.println("snapshotPreservesStandaloneCredentialWithNewReferenceAndResolvableCa");
+        Path root = tmp.resolve("store-snapshot-standalone");
+        Path snapshot = tmp.resolve("snapshot-standalone");
+        FsPkiStoreOptions options = nonStrictSnapshotOptions();
+        PkiId standaloneId;
+        String standaloneSourceContentId;
+        PkiId caId;
+        try (FilesystemPkiStore source = new FilesystemPkiStore(root, options)) {
+            Credential standalone = TestObjects.minimalCredential(source, "SERIAL-END-ENTITY", "profile-leaf");
+            source.putCredential(standalone);
+            standaloneId = standalone.credentialId();
+            standaloneSourceContentId = standalone.content().contentId();
+            CaRecord ca = TestObjects.minimalCaRecord(source, "ca-with-authority", CaState.ACTIVE);
+            source.putCa(ca);
+            caId = ca.caId();
+            source.exportSnapshot(snapshot, Instant.now());
+        }
+
+        try (FilesystemPkiStore restored = new FilesystemPkiStore(snapshot, options)) {
+            Credential standalone = restored.getCredential(standaloneId).orElseThrow();
+            assertFalse(standaloneSourceContentId.equals(standalone.content().contentId()));
+            CaRecord ca = restored.getCa(caId).orElseThrow();
+            assertTrue(restored.getCredential(ca.credentialIds().get(0)).isPresent());
+        }
+        System.out.println("snapshotPreservesStandaloneCredentialWithNewReferenceAndResolvableCa...ok");
+    }
+
+    @Test
+    void snapshotPreservesSharedStatusContentWithoutStaleCredentialOwner() throws Exception {
+        System.out.println("snapshotPreservesSharedStatusContentWithoutStaleCredentialOwner");
+        Path root = tmp.resolve("store-snapshot-shared-status");
+        Path snapshot = tmp.resolve("snapshot-shared-status");
+        FsPkiStoreOptions options = nonStrictSnapshotOptions();
+        PkiId credentialId;
+        PkiId statusId = new PkiId("status-shared-content");
+        String sourceContentId;
+        byte[] expected = new byte[] { 1, 2, 3 };
+        try (FilesystemPkiStore source = new FilesystemPkiStore(root, options)) {
+            Credential credential = TestObjects.minimalCredential(source, "SERIAL-SHARED-STATUS", "profile-ca");
+            source.putCredential(credential);
+            credentialId = credential.credentialId();
+            sourceContentId = credential.content().contentId();
+            StatusObject status = new StatusObject(statusId, credential.formatId(), credential.issuerRef().caId(),
+                    StatusObjectType.CRL, Instant.EPOCH, Optional.empty(), credential.content(),
+                    TestObjects.emptyAttributes());
+            source.putStatusObject(status);
+            source.exportSnapshot(snapshot, Instant.now());
+        }
+
+        try (FilesystemPkiStore restored = new FilesystemPkiStore(snapshot, options)) {
+            Credential credential = restored.getCredential(credentialId).orElseThrow();
+            StatusObject status = restored.getStatusObject(statusId).orElseThrow();
+            assertFalse(sourceContentId.equals(credential.content().contentId()));
+            assertEquals(sourceContentId, status.content().contentId());
+            assertArrayEquals(expected, zeroecho.pki.testkit.PkiTestRuntime.readContent(restored, credential.content()));
+            assertArrayEquals(expected, zeroecho.pki.testkit.PkiTestRuntime.readContent(restored, status.content()));
+        }
+        assertTrue(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".content")));
+        assertTrue(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".meta")));
+        assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".owners")));
+        System.out.println("snapshotPreservesSharedStatusContentWithoutStaleCredentialOwner...ok");
+    }
+
+    @Test
+    void snapshotBuildFailureCleansOwnedTemporaryRootAndPublishesNothing() throws Exception {
+        System.out.println("snapshotBuildFailureCleansOwnedTemporaryRootAndPublishesNothing");
+        Path root = tmp.resolve("store-snapshot-build-failure");
+        Path snapshot = tmp.resolve("snapshot-build-failure");
+        FsPkiStoreOptions options = nonStrictSnapshotOptions();
+        try (FilesystemPkiStore source = new FilesystemPkiStore(root, options)) {
+            Credential standalone = TestObjects.minimalCredential(source, "SERIAL-BUILD-FAIL", "profile-leaf");
+            source.putCredential(standalone);
+            Files.delete(root.resolve("SIGNING_TIME_WATERMARK"));
+
+            assertThrows(IllegalStateException.class, () -> source.exportSnapshot(snapshot, Instant.now()));
+            assertFalse(Files.exists(snapshot));
+        }
+        try (java.util.stream.Stream<Path> siblings = Files.list(tmp)) {
+            assertFalse(siblings.anyMatch(path -> path.getFileName().toString().startsWith(".zeroecho-snapshot-")));
+        }
+        System.out.println("snapshotBuildFailureCleansOwnedTemporaryRootAndPublishesNothing...ok");
+    }
+
+    @Test
+    void snapshotRejectsExistingTargetWithoutChangingIt() throws Exception {
+        System.out.println("snapshotRejectsExistingTargetWithoutChangingIt");
+        Path root = tmp.resolve("store-snapshot-existing-target");
+        Path snapshot = tmp.resolve("snapshot-existing-target");
+        Path sentinel = snapshot.resolve("sentinel.txt");
+        Files.createDirectories(snapshot);
+        Files.writeString(sentinel, "owner data");
+
+        try (FilesystemPkiStore source = new FilesystemPkiStore(root, nonStrictSnapshotOptions())) {
+            assertThrows(IllegalStateException.class, () -> source.exportSnapshot(snapshot, Instant.now()));
+        }
+
+        assertEquals("owner data", Files.readString(sentinel));
+        try (java.util.stream.Stream<Path> siblings = Files.list(tmp)) {
+            assertFalse(siblings.anyMatch(path -> path.getFileName().toString().startsWith(".zeroecho-snapshot-")));
+        }
+        System.out.println("snapshotRejectsExistingTargetWithoutChangingIt...ok");
+    }
+
+    @Test
+    void snapshotStrictFailsAndNonStrictOmitsOnlyInconsistentCa() throws Exception {
+        System.out.println("snapshotStrictFailsAndNonStrictOmitsOnlyInconsistentCa");
+        Path root = tmp.resolve("store-snapshot-inconsistent");
+        Path strictSnapshot = tmp.resolve("snapshot-inconsistent-strict");
+        Path nonStrictSnapshot = tmp.resolve("snapshot-inconsistent-nonstrict");
+        FsPkiStoreOptions nonStrict = nonStrictSnapshotOptions();
+        try (FilesystemPkiStore source = new FilesystemPkiStore(root, nonStrict)) {
+            CaRecord valid = TestObjects.minimalCaRecord(source, "ca-valid", CaState.ACTIVE);
+            CaRecord inconsistent = TestObjects.minimalCaRecord(source, "ca-inconsistent", CaState.ACTIVE);
+            source.putCa(valid);
+            source.putCa(inconsistent);
+            Files.delete(new FsPaths(root).credentialPath(inconsistent.credentialIds().get(0)));
+
+            FsPkiStoreOptions strict = strictSnapshotOptions();
+            assertThrows(IllegalStateException.class,
+                    () -> new FsSnapshotExporter(strict).exportSnapshot(source, strictSnapshot, Instant.now()));
+            assertFalse(Files.exists(strictSnapshot));
+
+            source.exportSnapshot(nonStrictSnapshot, Instant.now());
+        }
+        try (FilesystemPkiStore restored = new FilesystemPkiStore(nonStrictSnapshot, nonStrict)) {
+            assertEquals(List.of("ca-valid"), restored.listCas().stream()
+                    .map(ca -> ca.caId().value()).toList());
+        }
+        System.out.println("snapshotStrictFailsAndNonStrictOmitsOnlyInconsistentCa...ok");
     }
 
     @Test
@@ -553,9 +764,9 @@ public final class FilesystemPkiStoreTest {
             SubjectRef subjectRef = new SubjectRef("CN=" + caId);
 
             Credential cred = minimalCredential(store, "CA-" + caId, "profile-ca");
-            List<Credential> caCredentials = List.of(cred);
-
-            return new CaRecord(id, CaKind.ROOT, state, issuerKeyRef, subjectRef, caCredentials);
+            store.putCredential(cred);
+            return new CaRecord(id, CaKind.ROOT, state, issuerKeyRef, subjectRef,
+                    List.of(cred.credentialId()));
         }
 
         static CertificateProfile minimalProfile(String profileId) {

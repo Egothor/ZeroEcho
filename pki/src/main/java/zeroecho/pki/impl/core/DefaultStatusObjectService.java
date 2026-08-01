@@ -214,7 +214,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         if (ca.state() != CaState.ACTIVE) {
             throw new PkiException("Issuer CA not ACTIVE");
         }
-        if (ca.caCredentials().isEmpty()) {
+        if (ca.credentialIds().isEmpty()) {
             throw new PkiException("Issuer CA has no credentials");
         }
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
@@ -466,9 +466,10 @@ public final class DefaultStatusObjectService implements StatusObjectService {
             EffectiveCredentialStatusResolver.Evaluation evaluation) {
         Credential lastRejected = null;
         EffectiveCredentialStatus lastStatus = null;
-        List<Credential> credentials = ca.caCredentials();
-        for (int index = credentials.size() - 1; index >= 0; index--) {
-            Credential credential = credentials.get(index);
+        List<PkiId> credentialIds = ca.credentialIds();
+        for (int index = credentialIds.size() - 1; index >= 0; index--) {
+            Credential credential = store.getCredential(credentialIds.get(index))
+                    .orElseThrow(DefaultStatusObjectService::crlGenerationFailure);
             if (credential == null || !command.formatId().equals(credential.formatId())) {
                 continue;
             }

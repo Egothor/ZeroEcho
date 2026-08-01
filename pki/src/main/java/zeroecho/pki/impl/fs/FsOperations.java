@@ -159,6 +159,61 @@ final class FsOperations {
     }
 
     /**
+     * Copies one file through a bounded buffer and atomically replaces the target.
+     *
+     * @param source source file
+     * @param target target file
+     * @param bufferBytes positive transfer-buffer size
+     * @throws IOException if streaming or atomic publication fails
+     */
+    /* default */ static void copyAtomic(final Path source, final Path target, final int bufferBytes)
+            throws IOException {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(target, "target");
+        if (bufferBytes <= 0) {
+            throw new IllegalArgumentException("bufferBytes must be positive");
+        }
+        Path parent = requireParent(target);
+        ensureDir(parent);
+        Path temporary = Files.createTempFile(parent, ".snapshot-copy-", ".tmp", fileAttributesIfSupported());
+        byte[] buffer = new byte[bufferBytes];
+        boolean published = false;
+        try {
+            try (InputStream input = Files.newInputStream(source);
+                    OutputStream output = Files.newOutputStream(temporary, StandardOpenOption.WRITE,
+                            StandardOpenOption.TRUNCATE_EXISTING)) {
+                long transferred = 0L;
+                int read;
+                while ((read = input.read(buffer)) >= 0) {
+                    if (read == 0) {
+                        int value = input.read();
+                        if (value < 0) {
+                            break;
+                        }
+                        output.write(value);
+                        transferred = Math.addExact(transferred, 1L);
+                    } else {
+                        output.write(buffer, 0, read);
+                        transferred = Math.addExact(transferred, read);
+                    }
+                }
+                output.flush();
+            } catch (ArithmeticException failure) {
+                throw new IOException("File transfer length overflow", failure);
+            }
+            forceFileBestEffort(temporary);
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            published = true;
+            forceDirectoryBestEffort(parent);
+        } finally {
+            java.util.Arrays.fill(buffer, (byte) 0);
+            if (!published) {
+                Files.deleteIfExists(temporary);
+            }
+        }
+    }
+
+    /**
      * Strictly persists one authoritative revocation journal image.
      *
      * <p>

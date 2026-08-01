@@ -59,12 +59,16 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuerRef;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.ca.CaKind;
+import zeroecho.pki.api.ca.CaRecord;
+import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialProfileBinding;
@@ -242,6 +246,30 @@ final class FsCodecTest {
         assertInvalid(encoded);
     }
 
+    @Test
+    void caRecordRoundTripsOnlyOrderedCredentialIdentifiersAndRejectsEmbeddedValueTag() {
+        System.out.println("caRecordRoundTripsOnlyOrderedCredentialIdentifiersAndRejectsEmbeddedValueTag");
+        PkiId first = new PkiId("credential-first");
+        PkiId second = new PkiId("credential-second");
+        CaRecord original = new CaRecord(new PkiId("ca-codec"), CaKind.ROOT, CaState.ACTIVE,
+                new KeyRef("key-codec"), new SubjectRef("CN=Codec"), List.of(first, second));
+
+        byte[] encoded = FsCodec.encode(FsCodec.CA_RECORD, original);
+        CaRecord decoded = FsCodec.decode(FsCodec.CA_RECORD, encoded);
+        assertEquals(original, decoded);
+        assertEquals(List.of(first, second), decoded.credentialIds());
+
+        byte[] embeddedValueTag = encoded.clone();
+        int firstIdentifier = indexOf(embeddedValueTag, first.value().getBytes(StandardCharsets.UTF_8));
+        assertTrue(firstIdentifier > 0);
+        int pkiIdTag = findPrevious(embeddedValueTag, firstIdentifier, (byte) 20);
+        assertTrue(pkiIdTag >= 0);
+        embeddedValueTag[pkiIdTag] = 34;
+        assertThrows(IllegalStateException.class,
+                () -> FsCodec.decode(FsCodec.CA_RECORD, embeddedValueTag));
+        System.out.println("caRecordRoundTripsOnlyOrderedCredentialIdentifiersAndRejectsEmbeddedValueTag...ok");
+    }
+
     private static int indexOf(byte[] source, byte[] target) {
         for (int index = 0; index <= source.length - target.length; index++) {
             boolean matches = true;
@@ -252,6 +280,15 @@ final class FsCodecTest {
                 }
             }
             if (matches) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static int findPrevious(byte[] source, int startExclusive, byte value) {
+        for (int index = startExclusive - 1; index >= 0; index--) {
+            if (source[index] == value) {
                 return index;
             }
         }

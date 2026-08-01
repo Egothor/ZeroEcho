@@ -59,10 +59,12 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.IssuanceService;
 import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.RevocationService;
 import zeroecho.pki.api.StatusObjectService;
 import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.impl.audit.InMemoryAuditSink;
@@ -204,6 +206,11 @@ public final class PkiTestRuntime implements AutoCloseable {
 
     public byte[] credentialBytes(zeroecho.pki.api.credential.Credential credential) throws IOException {
         return readContent(store, credential.content());
+    }
+
+    public Credential caCredential(zeroecho.pki.api.ca.CaRecord ca, int index) {
+        PkiId credentialId = ca.credentialIds().get(index);
+        return store.getCredential(credentialId).orElseThrow();
     }
 
     private record UntrustedReference(String storeId, String contentId, Encoding encoding, long length, String sha256,

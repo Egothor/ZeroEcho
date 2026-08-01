@@ -186,6 +186,10 @@ final class FsPaths {
         return this.root.resolve("status").resolve(BY_ID).resolve(FsUtil.safeId(statusObjectId) + ".bin");
     }
 
+    /* default */ Path statusRoot() {
+        return this.root.resolve("status").resolve(BY_ID);
+    }
+
     // -------------------------------------------------------------------------
     // Policy traces (immutable .bin)
     // -------------------------------------------------------------------------

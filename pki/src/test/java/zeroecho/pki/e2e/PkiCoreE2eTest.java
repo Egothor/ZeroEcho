@@ -137,11 +137,12 @@ public final class PkiCoreE2eTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"), keys)) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
                     new SubjectRef("CN=Matrix Root"), "root-ca", Optional.of(rootKeyRef), emptyAttributes()));
-            Credential usable = runtime.caService().getCa(rootCaId).caCredentials().get(0);
+            Credential usable = runtime.caCredential(runtime.caService().getCa(rootCaId), 0);
             Credential unusable = copyWithId(usable, new PkiId("credential:matrix-unusable"));
+            runtime.store().putCredential(unusable);
             CaRecord root = runtime.caService().getCa(rootCaId);
             runtime.store().putCa(new CaRecord(root.caId(), root.kind(), root.state(), root.issuerKeyRef(),
-                    root.subjectRef(), List.of(unusable, usable)));
+                    root.subjectRef(), List.of(unusable.credentialId(), usable.credentialId())));
 
             List<PkiId> resolved = new ArrayList<>();
             EffectiveCredentialStatusResolver resolver = scriptedResolver(credential -> {
@@ -173,7 +174,7 @@ public final class PkiCoreE2eTest {
             resolved.clear();
 
             runtime.store().putCa(new CaRecord(root.caId(), root.kind(), root.state(), root.issuerKeyRef(),
-                    root.subjectRef(), List.of(usable, unusable)));
+                    root.subjectRef(), List.of(usable.credentialId(), unusable.credentialId())));
             statusService.generate(new StatusObjectGenerateCommand(rootCaId, StatusObjectType.CRL,
                     runtime.framework().formatId(), emptyAttributes()));
             assertEquals(List.of(unusable.credentialId(), usable.credentialId()), List.copyOf(resolved));
@@ -201,7 +202,7 @@ public final class PkiCoreE2eTest {
                     .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootCaId,
                             new SubjectRef("CN=H6 Intermediate"), "intermediate-ca", Optional.of(intermediateKeyRef),
                             emptyAttributes()));
-            PkiId rootCredentialId = runtime.caService().getCa(rootCaId).caCredentials().get(0).credentialId();
+            PkiId rootCredentialId = runtime.caService().getCa(rootCaId).credentialIds().get(0);
             runtime.revocationService().revokePermanently(new RevocationCommand.RevokePermanently(rootCredentialId,
                     RevocationReason.KEY_COMPROMISE, emptyAttributes()));
             int submissionsBeforeRejections = runtime.submittedSignCount();
@@ -230,7 +231,7 @@ public final class PkiCoreE2eTest {
 
             assertEquals(submissionsBeforeRejections, runtime.submittedSignCount());
             assertTrue(runtime.store().getCredential(rootCredentialId).isPresent());
-            assertTrue(runtime.caService().getCa(intermediateCaId).caCredentials().size() == 1);
+            assertTrue(runtime.caService().getCa(intermediateCaId).credentialIds().size() == 1);
         }
     }
 
@@ -320,7 +321,7 @@ public final class PkiCoreE2eTest {
                     .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootCaId,
                             new SubjectRef("CN=Rejected Intermediate"), "intermediate-ca",
                             Optional.of(intermediateKeyRef), emptyAttributes()));
-            Credential rootCredential = runtime.caService().getCa(rootCaId).caCredentials().get(0);
+            Credential rootCredential = runtime.caCredential(runtime.caService().getCa(rootCaId), 0);
             EffectiveCredentialStatusResolver resolver = scriptedResolver(credential -> status, resolutionFailure);
             CountingIssuerBackend backend = new CountingIssuerBackend(runtime.issuerBackend());
             IssuanceService issuance = runtime.issuanceService(backend, resolver);
@@ -332,7 +333,7 @@ public final class PkiCoreE2eTest {
             int signCount = runtime.submittedSignCount();
             int caCount = runtime.store().listCas().size();
             int statusCount = runtime.store().listStatusObjects(rootCaId).size();
-            int intermediateCredentialCount = runtime.caService().getCa(intermediateCaId).caCredentials().size();
+            int intermediateCredentialCount = runtime.caService().getCa(intermediateCaId).credentialIds().size();
 
             assertThrows(PkiException.class, () -> issuance
                     .issueEndEntity(new IssueEndEntityCommand(rootCaId, leafRequest, "default", Optional.empty())));
@@ -355,7 +356,7 @@ public final class PkiCoreE2eTest {
             assertEquals(caCount, runtime.store().listCas().size());
             assertEquals(statusCount, runtime.store().listStatusObjects(rootCaId).size());
             assertEquals(intermediateCredentialCount,
-                    runtime.caService().getCa(intermediateCaId).caCredentials().size());
+                    runtime.caService().getCa(intermediateCaId).credentialIds().size());
             assertTrue(runtime.store().getCredential(rootCredential.credentialId()).isPresent());
             assertFalse(runtime.auditSink().snapshot().toString().contains("DO_NOT_EXPOSE_REVOCATION_SENTINEL"));
         }

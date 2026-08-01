@@ -166,7 +166,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
 
-    /* package */ static final String CURRENT_STORE_VERSION = "v2";
+    /* package */ static final String CURRENT_STORE_VERSION = "v3";
     private static final String SIGN_RECORD_NAMESPACE = "io.zeroecho.pki.signing-record";
     private static final String SIGN_OWNER_NAMESPACE = "io.zeroecho.pki.signing-owner";
     private static final int CURRENT_SIGN_RECORD_VERSION = 2;
@@ -401,8 +401,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
      * <p>
      * This method is an implementation-only feature. It does not modify the current
      * store; it clones a new store layout and reconstructs {@code current.bin} for
-     * history-tracked entities. The signing namespace, monotonic signing-time
-     * watermark, and authoritative signing workflow records are safety metadata:
+     * history-tracked entities. Standalone credential authority is reconstructed by
+     * streaming validated live-source credential content into new target-owned
+     * references before publishing selected ID-only CA records. The signing namespace,
+     * monotonic signing-time watermark, and authoritative signing workflow records
+     * are safety metadata:
      * their current export-time values are copied regardless of {@code at}, because
      * historical reconstruction could permit identifier reuse or lose a terminal
      * result.
@@ -417,13 +420,30 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requireStoreUsable();
         Objects.requireNonNull(targetRoot, "targetRoot");
         Objects.requireNonNull(at, "at");
-        new FsSnapshotExporter(this.options).exportSnapshot(this.paths.root(), targetRoot, at);
+        new FsSnapshotExporter(this.options).exportSnapshot(this, targetRoot, at);
+    }
+
+    /* default */ Path snapshotRoot() {
+        return paths.root();
+    }
+
+    /* default */ Set<String> snapshotNonCredentialContentIds() {
+        requireStoreUsable();
+        Set<String> contentIds = new HashSet<>();
+        for (StatusObject status : listBinaryFiles(paths.statusRoot(), FsCodec.STATUS_OBJECT)) {
+            contentIds.add(status.content().contentId());
+        }
+        for (StoredSign stored : listStoredSigns()) {
+            stored.reference().map(DurableContentReference::contentId).ifPresent(contentIds::add);
+        }
+        return Set.copyOf(contentIds);
     }
 
     @Override
     public void putCa(final CaRecord record) {
         requireStoreUsable();
         Objects.requireNonNull(record, "record");
+        validateCaCredentialReferences(record);
         PkiId caId = record.caId();
         Path current = this.paths.caCurrent(caId);
 
@@ -436,14 +456,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requireStoreUsable();
         Objects.requireNonNull(caId, "caId");
         Path p = this.paths.caCurrent(caId);
-        return readOptional(p, FsCodec.CA_RECORD);
+        return readOptional(p, FsCodec.CA_RECORD).map(this::validateCaCredentialReferences);
     }
 
     @Override
     public List<CaRecord> listCas() {
         requireStoreUsable();
         Path casRoot = this.paths.root().resolve("cas").resolve("by-id");
-        return listCurrentRecords(casRoot, FsCodec.CA_RECORD);
+        return listCurrentRecords(casRoot, FsCodec.CA_RECORD).stream().map(this::validateCaCredentialReferences)
+                .toList();
     }
 
     @Override
@@ -467,6 +488,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         } catch (IOException failure) {
             throw new IllegalStateException("Credential read failed", failure);
         }
+    }
+
+    private CaRecord validateCaCredentialReferences(CaRecord record) {
+        for (PkiId credentialId : record.credentialIds()) {
+            if (getCredential(credentialId).isEmpty()) {
+                throw new IllegalStateException("CA credential reference is missing");
+            }
+        }
+        return record;
     }
 
     @Override

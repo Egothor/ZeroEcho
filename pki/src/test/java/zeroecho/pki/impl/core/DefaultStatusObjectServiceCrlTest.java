@@ -122,7 +122,7 @@ final class DefaultStatusObjectServiceCrlTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey))) {
             PkiId caId = createRoot(runtime, rootKeyRef, "CRL Generator Root");
-            Credential issuer = runtime.caService().getCa(caId).caCredentials().get(0);
+            Credential issuer = runtime.caCredential(runtime.caService().getCa(caId), 0);
             StatusObjectGenerateCommand command = crlCommand(runtime, caId, issuer, rootKeyRef);
             List<RevocationReason> reasons = activeReasons();
             List<BigInteger> serials = serials(reasons.size());
@@ -188,7 +188,7 @@ final class DefaultStatusObjectServiceCrlTest {
         try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
                 Map.of(rootKeyRef, rootKey))) {
             PkiId caId = createRoot(runtime, rootKeyRef, "CRL Failure Root");
-            Credential template = runtime.caService().getCa(caId).caCredentials().get(0);
+            Credential template = runtime.caCredential(runtime.caService().getCa(caId), 0);
             StatusObjectGenerateCommand command = new StatusObjectGenerateCommand(caId, StatusObjectType.CRL,
                     runtime.framework().formatId(), emptyAttributes());
 

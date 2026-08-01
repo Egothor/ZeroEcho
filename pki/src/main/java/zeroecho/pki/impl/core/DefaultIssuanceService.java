@@ -234,7 +234,7 @@ public final class DefaultIssuanceService implements IssuanceService {
         if (issuer.state() != CaState.ACTIVE) {
             throw new PkiException("Issuer CA not ACTIVE");
         }
-        if (issuer.caCredentials().isEmpty()) {
+        if (issuer.credentialIds().isEmpty()) {
             throw new PkiException("Issuer CA has no credentials");
         }
 
@@ -305,7 +305,8 @@ public final class DefaultIssuanceService implements IssuanceService {
 
         Credential lastRejected = null;
         EffectiveCredentialStatus lastStatus = null;
-        for (Credential c : issuer.caCredentials()) {
+        for (PkiId credentialId : issuer.credentialIds()) {
+            Credential c = requireIssuerCredential(credentialId);
             if (c == null || !formatId.equals(c.formatId())) {
                 continue;
             }
@@ -328,6 +329,11 @@ public final class DefaultIssuanceService implements IssuanceService {
                     "ISSUER_CREDENTIAL_UNAVAILABLE", lastStatus);
         }
         throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
+    }
+
+    private Credential requireIssuerCredential(PkiId credentialId) {
+        return store.getCredential(credentialId)
+                .orElseThrow(() -> new PkiException("Issuer CA credential not found"));
     }
 
     private VerifiedIssuanceCandidate verifyIssuanceCandidate(IssueEndEntityCommand command) {

@@ -359,10 +359,10 @@ public final class DefaultCaService implements CaService {
         CredentialProfileBindings.requireCaBinding(credential.profileBinding(), request.profileReference());
 
         requireCaCertificateMatches(credential, credential, request, caId, CREATE_ROOT_REJECTED, BACKEND_CRED_MISMATCH);
-        CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, keyRef, request.subjectRef(),
-                List.of(credential));
-        store.putCa(ca);
         store.putCredential(credential);
+        CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, keyRef, request.subjectRef(),
+                List.of(credential.credentialId()));
+        store.putCa(ca);
         return caId;
     }
 
@@ -447,7 +447,7 @@ public final class DefaultCaService implements CaService {
         requireValidImportedRoot(command, holder);
         store.putCredential(credential);
         CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, command.keyRef(), request.subjectRef(),
-                List.of(credential));
+                List.of(credential.credentialId()));
         store.putCa(ca);
         return caId;
     }
@@ -499,7 +499,7 @@ public final class DefaultCaService implements CaService {
 
         CaRecord issuer = getCa(command.issuerCaId());
         ensureActive(issuer, "issuer");
-        if (issuer.caCredentials().isEmpty()) {
+        if (issuer.credentialIds().isEmpty()) {
             throw new PkiException("Issuer CA has no credentials");
         }
         if (!framework.formatId().equals(command.formatId())) {
@@ -552,7 +552,7 @@ public final class DefaultCaService implements CaService {
         store.putCredential(cred);
 
         CaRecord subject = new CaRecord(caId, CaKind.INTERMEDIATE, CaState.ACTIVE, command.keyRef().get(),
-                issue.subjectRef(), List.of(cred));
+                issue.subjectRef(), List.of(cred.credentialId()));
         store.putCa(subject);
         return caId;
     }
@@ -645,8 +645,8 @@ public final class DefaultCaService implements CaService {
                 BACKEND_CRED_MISMATCH);
         store.putCredential(cred);
 
-        List<Credential> updated = new ArrayList<>(subject.caCredentials());
-        updated.add(cred);
+        List<PkiId> updated = new ArrayList<>(subject.credentialIds());
+        updated.add(cred.credentialId());
         CaRecord updatedCa = new CaRecord(subject.caId(), subject.kind(), subject.state(), subject.issuerKeyRef(),
                 subject.subjectRef(), List.copyOf(updated));
         store.putCa(updatedCa);
@@ -731,7 +731,7 @@ public final class DefaultCaService implements CaService {
         }
 
         CaRecord updated = new CaRecord(existing.caId(), existing.kind(), state, existing.issuerKeyRef(),
-                existing.subjectRef(), existing.caCredentials());
+                existing.subjectRef(), existing.credentialIds());
         store.putCa(updated);
 
         if (LOG.isLoggable(Level.INFO)) {
@@ -783,10 +783,11 @@ public final class DefaultCaService implements CaService {
                 return false;
             }
             if (query.formatId().isPresent()) {
-                if (r.caCredentials().isEmpty()) {
+                if (r.credentialIds().isEmpty()) {
                     return false;
                 }
-                Credential last = r.caCredentials().get(r.caCredentials().size() - 1);
+                PkiId lastId = r.credentialIds().get(r.credentialIds().size() - 1);
+                Credential last = requireCredential(lastId);
                 return query.formatId().get().equals(last.formatId());
             }
             return true;
@@ -803,7 +804,8 @@ public final class DefaultCaService implements CaService {
             EffectiveCredentialStatusResolver.Evaluation evaluation) {
         Credential lastRejected = null;
         EffectiveCredentialStatus lastStatus = null;
-        for (Credential credential : issuer.caCredentials()) {
+        for (PkiId credentialId : issuer.credentialIds()) {
+            Credential credential = requireCredential(credentialId);
             if (credential == null || !formatId.equals(credential.formatId())) {
                 continue;
             }
@@ -826,6 +828,11 @@ public final class DefaultCaService implements CaService {
                     "ISSUER_CREDENTIAL_UNAVAILABLE", lastStatus);
         }
         throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
+    }
+
+    private Credential requireCredential(PkiId credentialId) {
+        return store.getCredential(credentialId)
+                .orElseThrow(() -> new PkiException("CA credential not found"));
     }
 
     private void requireValidImportedRoot(CaImportCommand command, X509CertificateHolder holder) {
