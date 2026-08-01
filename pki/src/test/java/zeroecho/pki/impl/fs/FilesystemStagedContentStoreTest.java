@@ -146,13 +146,16 @@ final class FilesystemStagedContentStoreTest {
         FilesystemStagedContentStore store = new FilesystemStagedContentStore(directory, STORE_ID);
         DurableContentReference reference = stage(store, DurableContentReference.Lifecycle.OPERATION, "sign-input");
         DurableContentOwner authority = signingOwner("authority");
-        store.bindSigningOwnership(candidate -> candidate.equals(reference) ? Set.of(authority) : Set.of());
+        store.bindTransactionalOwnership(candidate -> candidate.equals(reference) ? Set.of(authority) : Set.of());
         assertThrows(IOException.class, () -> store.retireUnownedContent(reference));
         try (zeroecho.core.io.RepeatableContent content = store.openContent(reference)) {
             assertEquals(reference.length(), content.length().orElseThrow());
         }
         assertThrows(IllegalArgumentException.class,
                 () -> store.retainContent(reference, signingOwner("authority")));
+        assertThrows(IllegalArgumentException.class,
+                () -> store.retainContent(reference, new DurableContentOwner(
+                        DurableContentOwner.Category.STATUS_OBJECT_RECORD, "status-authority")));
         System.out.println("transactionalSigningOwnerPreventsGeneralRetirement...ok");
     }
 
@@ -161,8 +164,10 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("sharedSigningPublicationReservationsAreReferenceCounted");
         FilesystemStagedContentStore store = new FilesystemStagedContentStore(directory, STORE_ID);
         DurableContentReference reference = stage(store, DurableContentReference.Lifecycle.OPERATION, "shared");
-        try (FilesystemStagedContentStore.SigningReservation first = store.reserveSigningPublication(reference);
-                FilesystemStagedContentStore.SigningReservation second = store.reserveSigningPublication(reference)) {
+        try (FilesystemStagedContentStore.TransactionalReservation first =
+                store.reserveTransactionalPublication(reference);
+                FilesystemStagedContentStore.TransactionalReservation second =
+                        store.reserveTransactionalPublication(reference)) {
             first.close();
             assertThrows(IOException.class, () -> store.retireUnownedContent(reference));
         }

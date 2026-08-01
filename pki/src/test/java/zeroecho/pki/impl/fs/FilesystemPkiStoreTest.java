@@ -40,7 +40,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -49,6 +54,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -56,12 +62,16 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuerRef;
 import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
@@ -102,6 +112,10 @@ import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
+import zeroecho.pki.spi.store.MetadataCommitResult;
+import zeroecho.pki.spi.store.MetadataKey;
+import zeroecho.pki.spi.store.MetadataSnapshot;
+import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.PkiStore;
 
 /**
@@ -184,6 +198,317 @@ public final class FilesystemPkiStoreTest {
 
         System.out.println("...schemas round-tripped=9; signing schema covered separately");
         System.out.println("...ok");
+    }
+
+    @Test
+    void statusAuthorityIsAtomicDurableWriteOnceAndProtectsContent() throws Exception {
+        System.out.println("statusAuthorityIsAtomicDurableWriteOnceAndProtectsContent");
+        Path root = tmp.resolve("store-status-authority");
+        PkiId firstId = new PkiId("crl:status-authority-one");
+        PkiId secondId = new PkiId("crl:status-authority-two");
+        DurableContentReference firstReference;
+        StatusObject firstStatus;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            firstReference = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(), Encoding.DER,
+                    new byte[] { 1, 2, 3 });
+            firstStatus = new StatusObject(firstId, new FormatId("fmt-x509"), new PkiId("ca-status"),
+                    StatusObjectType.CRL, Instant.EPOCH, Optional.empty(), firstReference,
+                    TestObjects.emptyAttributes());
+            store.putStatusObject(firstStatus);
+            assertThrows(IllegalStateException.class, () -> store.putStatusObject(firstStatus));
+            assertThrows(IOException.class, () -> store.stagedContent().retireUnownedContent(firstReference));
+
+            DurableContentReference conflictingReference = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(
+                    store.stagedContent(), Encoding.DER, new byte[] { 7, 8, 9 });
+            StatusObject conflicting = new StatusObject(firstId, new FormatId("fmt-x509"),
+                    new PkiId("ca-status"), StatusObjectType.CRL, Instant.EPOCH.plusSeconds(2L), Optional.empty(),
+                    conflictingReference, TestObjects.emptyAttributes());
+            assertThrows(IllegalStateException.class, () -> store.putStatusObject(conflicting));
+            assertEquals(firstReference, store.getStatusObject(firstId).orElseThrow().content());
+            store.stagedContent().retireUnownedContent(conflictingReference);
+
+            DurableContentReference secondReference = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(
+                    store.stagedContent(), Encoding.DER, new byte[] { 4, 5, 6 });
+            store.putStatusObject(new StatusObject(secondId, new FormatId("fmt-x509"), new PkiId("ca-status"),
+                    StatusObjectType.CRL, Instant.EPOCH.plusSeconds(1L), Optional.empty(), secondReference,
+                    TestObjects.emptyAttributes()));
+            assertEquals(2, store.listStatusObjects(new PkiId("ca-status")).size());
+            assertTrue(store.listPublicationRecords().isEmpty());
+            assertFalse(Files.exists(root.resolve("staged-content").resolve(firstReference.contentId() + ".owners")));
+        }
+
+        PkiId legacyId = new PkiId("crl:legacy-distinct");
+        StatusObject legacy = new StatusObject(legacyId, firstStatus.formatId(), firstStatus.issuerCaId(),
+                firstStatus.type(), firstStatus.thisUpdate(), firstStatus.nextUpdate(), firstReference,
+                firstStatus.attributes());
+        Path obsolete = root.resolve("status").resolve("by-id").resolve(FsUtil.safeId(legacyId) + ".bin");
+        Files.createDirectories(obsolete.getParent());
+        Files.write(obsolete, FsCodec.encode(FsCodec.STATUS_OBJECT, legacy));
+        try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            assertEquals(firstId, reopened.getStatusObject(firstId).orElseThrow().statusObjectId());
+            assertEquals(secondId, reopened.getStatusObject(secondId).orElseThrow().statusObjectId());
+            assertTrue(reopened.getStatusObject(legacyId).isEmpty());
+            assertEquals(2, reopened.listStatusObjects(new PkiId("ca-status")).size());
+            assertThrows(IOException.class, () -> reopened.stagedContent().retireUnownedContent(firstReference));
+        }
+        System.out.println("...statusRecords=2");
+        System.out.println("statusAuthorityIsAtomicDurableWriteOnceAndProtectsContent...ok");
+    }
+
+    @Test
+    void statusRecoveryRejectsRecordOwnerAsymmetry() throws Exception {
+        System.out.println("statusRecoveryRejectsRecordOwnerAsymmetry");
+        Path missingOwnerRoot = tmp.resolve("store-status-missing-owner");
+        PkiId missingOwnerId = persistFixtureStatus(missingOwnerRoot, "missing-owner").statusObjectId();
+        deleteMetadataRecord(missingOwnerRoot,
+                new MetadataKey("io.zeroecho.pki.status-object-owner", missingOwnerId.value()));
+        assertThrows(IllegalStateException.class,
+                () -> new FilesystemPkiStore(missingOwnerRoot, FsPkiStoreOptions.defaults()));
+
+        Path orphanOwnerRoot = tmp.resolve("store-status-orphan-owner");
+        PkiId orphanOwnerId = persistFixtureStatus(orphanOwnerRoot, "orphan-owner").statusObjectId();
+        deleteMetadataRecord(orphanOwnerRoot,
+                new MetadataKey("io.zeroecho.pki.status-object-record", orphanOwnerId.value()));
+        assertThrows(IllegalStateException.class,
+                () -> new FilesystemPkiStore(orphanOwnerRoot, FsPkiStoreOptions.defaults()));
+        System.out.println("...rejected=missing-owner,orphan-owner");
+        System.out.println("statusRecoveryRejectsRecordOwnerAsymmetry...ok");
+    }
+
+    @Test
+    void statusRecoveryRejectsMalformedOrMismatchedMetadata() throws Exception {
+        System.out.println("statusRecoveryRejectsMalformedOrMismatchedMetadata");
+        Path wrongIdentityRoot = tmp.resolve("store-status-wrong-owner-id");
+        StatusObject wrongIdentity = persistFixtureStatus(wrongIdentityRoot, "wrong-owner-id");
+        replaceMetadataRecord(wrongIdentityRoot,
+                new MetadataKey("io.zeroecho.pki.status-object-owner", wrongIdentity.statusObjectId().value()),
+                encodeStatusOwner("crl:different", wrongIdentity.content()));
+        assertStoreOpenFails(wrongIdentityRoot);
+
+        Path wrongReferenceRoot = tmp.resolve("store-status-wrong-owner-reference");
+        StatusObject wrongReference;
+        DurableContentReference alternate;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(wrongReferenceRoot, FsPkiStoreOptions.defaults())) {
+            DurableContentReference original = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(
+                    store.stagedContent(), Encoding.DER, new byte[] { 1 });
+            wrongReference = new StatusObject(new PkiId("crl:wrong-owner-reference"), new FormatId("fmt-x509"),
+                    new PkiId("ca-status"), StatusObjectType.CRL, Instant.EPOCH, Optional.empty(), original,
+                    TestObjects.emptyAttributes());
+            store.putStatusObject(wrongReference);
+            alternate = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(), Encoding.DER,
+                    new byte[] { 2 });
+        }
+        replaceMetadataRecord(wrongReferenceRoot,
+                new MetadataKey("io.zeroecho.pki.status-object-owner", wrongReference.statusObjectId().value()),
+                encodeStatusOwner(wrongReference.statusObjectId().value(), alternate));
+        assertStoreOpenFails(wrongReferenceRoot);
+
+        Path malformedRecordRoot = tmp.resolve("store-status-malformed-record");
+        StatusObject malformedRecord = persistFixtureStatus(malformedRecordRoot, "malformed-record");
+        replaceMetadataRecord(malformedRecordRoot,
+                new MetadataKey("io.zeroecho.pki.status-object-record", malformedRecord.statusObjectId().value()),
+                new byte[] { 1, 2, 3 });
+        assertStoreOpenFails(malformedRecordRoot);
+
+        Path malformedOwnerRoot = tmp.resolve("store-status-malformed-owner");
+        StatusObject malformedOwner = persistFixtureStatus(malformedOwnerRoot, "malformed-owner");
+        replaceMetadataRecord(malformedOwnerRoot,
+                new MetadataKey("io.zeroecho.pki.status-object-owner", malformedOwner.statusObjectId().value()),
+                new byte[] { 4, 5, 6 });
+        assertStoreOpenFails(malformedOwnerRoot);
+        System.out.println("...rejected=identity,reference,record,owner");
+        System.out.println("statusRecoveryRejectsMalformedOrMismatchedMetadata...ok");
+    }
+
+    @Test
+    void statusRecoveryRejectsMissingOrCorruptContentAndSidecarRepair() throws Exception {
+        System.out.println("statusRecoveryRejectsMissingOrCorruptContentAndSidecarRepair");
+        Path missingMetadataRoot = tmp.resolve("store-status-missing-meta");
+        StatusObject missingMetadata = persistFixtureStatus(missingMetadataRoot, "missing-meta");
+        Files.delete(missingMetadataRoot.resolve("staged-content")
+                .resolve(missingMetadata.content().contentId() + ".meta"));
+        assertStoreOpenFails(missingMetadataRoot);
+
+        Path missingContentRoot = tmp.resolve("store-status-missing-content");
+        StatusObject missingContent = persistFixtureStatus(missingContentRoot, "missing-content");
+        Files.delete(missingContentRoot.resolve("staged-content")
+                .resolve(missingContent.content().contentId() + ".content"));
+        assertStoreOpenFails(missingContentRoot);
+
+        Path corruptContentRoot = tmp.resolve("store-status-corrupt-content");
+        StatusObject corruptContent = persistFixtureStatus(corruptContentRoot, "corrupt-content");
+        Files.write(corruptContentRoot.resolve("staged-content")
+                .resolve(corruptContent.content().contentId() + ".content"),
+                new byte[Math.toIntExact(corruptContent.content().length())]);
+        assertStoreOpenFails(corruptContentRoot);
+
+        Path sidecarRoot = tmp.resolve("store-status-sidecar-repair");
+        StatusObject sidecar = persistFixtureStatus(sidecarRoot, "sidecar-repair");
+        deleteMetadataRecord(sidecarRoot,
+                new MetadataKey("io.zeroecho.pki.status-object-owner", sidecar.statusObjectId().value()));
+        writeStatusSidecar(sidecarRoot, sidecar);
+        assertStoreOpenFails(sidecarRoot);
+        System.out.println("...rejected=missing-meta,missing-content,corrupt-content,sidecar-repair");
+        System.out.println("statusRecoveryRejectsMissingOrCorruptContentAndSidecarRepair...ok");
+    }
+
+    @Test
+    void statusCommitFaultsPreserveAtomicityAndUnknownRecovery() throws Exception {
+        System.out.println("statusCommitFaultsPreserveAtomicityAndUnknownRecovery");
+        Path beforeCommitRoot = tmp.resolve("store-status-before-commit-failure");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(beforeCommitRoot, FsPkiStoreOptions.defaults())) {
+            DurableContentReference reference = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(
+                    store.stagedContent(), Encoding.DER, new byte[] { 3, 4 });
+            StatusObject status = new StatusObject(new PkiId("crl:before-commit"), new FormatId("fmt-x509"),
+                    new PkiId("ca-status"), StatusObjectType.CRL, Instant.EPOCH, Optional.empty(), reference,
+                    TestObjects.emptyAttributes());
+            FilesystemPkiStore.installStatusCommitFault(
+                    FilesystemPkiStore.StatusCommitFaultPoint.BEFORE_COMMIT);
+            try {
+                assertThrows(IllegalStateException.class, () -> store.putStatusObject(status));
+            } finally {
+                FilesystemPkiStore.clearStatusCommitFault();
+            }
+            assertTrue(store.getStatusObject(status.statusObjectId()).isEmpty());
+            store.stagedContent().retireUnownedContent(reference);
+            assertThrows(IOException.class, () -> store.stagedContent().openContent(reference));
+        }
+
+        Path unknownRoot = tmp.resolve("store-status-after-commit-unknown");
+        PkiId unknownId = new PkiId("crl:after-commit-unknown");
+        DurableContentReference committedReference;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(unknownRoot, FsPkiStoreOptions.defaults())) {
+            committedReference = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(),
+                    Encoding.DER, new byte[] { 5, 6 });
+            StatusObject status = new StatusObject(unknownId, new FormatId("fmt-x509"),
+                    new PkiId("ca-status"), StatusObjectType.CRL, Instant.EPOCH, Optional.empty(),
+                    committedReference, TestObjects.emptyAttributes());
+            FilesystemPkiStore.installStatusCommitFault(
+                    FilesystemPkiStore.StatusCommitFaultPoint.AFTER_COMMIT_AS_UNKNOWN);
+            try {
+                PkiException unknown = assertThrows(PkiException.class, () -> store.putStatusObject(status));
+                assertTrue(unknown.getMessage().contains("STORE_DURABILITY_UNCONFIRMED"));
+            } finally {
+                FilesystemPkiStore.clearStatusCommitFault();
+            }
+            assertThrows(PkiException.class, () -> store.getStatusObject(unknownId));
+            assertThrows(IOException.class, () -> store.stagedContent().retireUnownedContent(committedReference));
+        } finally {
+            FilesystemPkiStore.clearStatusCommitFault();
+        }
+        try (FilesystemPkiStore reopened = new FilesystemPkiStore(unknownRoot, FsPkiStoreOptions.defaults())) {
+            assertEquals(committedReference,
+                    reopened.getStatusObject(unknownId).orElseThrow().content());
+        }
+        System.out.println("...faults=before-commit,after-commit-unknown");
+        System.out.println("statusCommitFaultsPreserveAtomicityAndUnknownRecovery...ok");
+    }
+
+    private StatusObject persistFixtureStatus(Path root, String suffix) throws Exception {
+        PkiId statusId = new PkiId("crl:" + suffix);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            DurableContentReference reference = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(
+                    store.stagedContent(), Encoding.DER, suffix.getBytes(StandardCharsets.US_ASCII));
+            StatusObject status = new StatusObject(statusId, new FormatId("fmt-x509"), new PkiId("ca-status"),
+                    StatusObjectType.CRL, Instant.EPOCH, Optional.empty(), reference, TestObjects.emptyAttributes());
+            store.putStatusObject(status);
+            return status;
+        }
+    }
+
+    private static void deleteMetadataRecord(Path root, MetadataKey key) throws Exception {
+        FsPaths paths = new FsPaths(root);
+        try (PosixTransactionalMetadataStore metadata = PosixTransactionalMetadataStore.open(
+                paths.transactionalMetadataLog())) {
+            long revision;
+            try (MetadataSnapshot snapshot = metadata.snapshot();
+                    MetadataSnapshot.Record record = snapshot.get(key).orElseThrow()) {
+                revision = record.recordRevision();
+            }
+            try (MetadataTransaction transaction = metadata.beginTransaction()) {
+                transaction.delete(key, revision);
+                assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
+            }
+        }
+    }
+
+    private static void replaceMetadataRecord(Path root, MetadataKey key, byte[] value) throws Exception {
+        FsPaths paths = new FsPaths(root);
+        try (PosixTransactionalMetadataStore metadata = PosixTransactionalMetadataStore.open(
+                paths.transactionalMetadataLog())) {
+            long revision;
+            try (MetadataSnapshot snapshot = metadata.snapshot();
+                    MetadataSnapshot.Record record = snapshot.get(key).orElseThrow()) {
+                revision = record.recordRevision();
+            }
+            try (MetadataTransaction transaction = metadata.beginTransaction()) {
+                transaction.replace(key, revision, byteContent(value), CancellationSignal.NONE);
+                assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
+            }
+        }
+    }
+
+    private static RepeatableContent byteContent(byte[] value) {
+        byte[] immutable = value.clone();
+        return new RepeatableContent() {
+            @Override
+            public InputStream openStream() {
+                return new ByteArrayInputStream(immutable);
+            }
+
+            @Override
+            public OptionalLong length() {
+                return OptionalLong.of(immutable.length);
+            }
+
+            @Override
+            public String contentId() {
+                return "test-status-metadata";
+            }
+
+            @Override
+            public void close() {
+                // Immutable in-memory test content owns no external resource.
+            }
+        };
+    }
+
+    private static byte[] encodeStatusOwner(String ownerId, DurableContentReference reference) {
+        byte[][] fields = {
+                DurableContentOwner.Category.STATUS_OBJECT_RECORD.name().getBytes(StandardCharsets.US_ASCII),
+                ownerId.getBytes(StandardCharsets.UTF_8), reference.storeId().getBytes(StandardCharsets.UTF_8),
+                reference.contentId().getBytes(StandardCharsets.UTF_8),
+                reference.encoding().name().getBytes(StandardCharsets.US_ASCII),
+                reference.sha256().getBytes(StandardCharsets.US_ASCII),
+                reference.lifecycle().name().getBytes(StandardCharsets.US_ASCII)
+        };
+        int size = Integer.BYTES + Long.BYTES;
+        for (byte[] field : fields) {
+            size = Math.addExact(size, Math.addExact(Integer.BYTES, field.length));
+        }
+        ByteBuffer output = ByteBuffer.allocate(size);
+        output.putInt(1);
+        for (byte[] field : fields) {
+            output.putInt(field.length).put(field);
+        }
+        output.putLong(reference.length());
+        return output.array();
+    }
+
+    private static void writeStatusSidecar(Path root, StatusObject status) throws IOException {
+        Path owners = root.resolve("staged-content").resolve(status.content().contentId() + ".owners");
+        DurableContentOwner owner = new DurableContentOwner(DurableContentOwner.Category.STATUS_OBJECT_RECORD,
+                status.statusObjectId().value());
+        try (DataOutputStream output = new DataOutputStream(Files.newOutputStream(owners))) {
+            output.writeByte(2);
+            output.writeUTF(status.content().contentId());
+            output.writeInt(1);
+            output.writeUTF(owner.canonicalForm());
+        }
+    }
+
+    private static void assertStoreOpenFails(Path root) {
+        assertThrows(IllegalStateException.class, () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
     }
 
     @Test
@@ -365,12 +690,13 @@ public final class FilesystemPkiStoreTest {
             Credential credential = restored.getCredential(credentialId).orElseThrow();
             StatusObject status = restored.getStatusObject(statusId).orElseThrow();
             assertFalse(sourceContentId.equals(credential.content().contentId()));
-            assertEquals(sourceContentId, status.content().contentId());
+            assertFalse(sourceContentId.equals(status.content().contentId()));
+            assertFalse(credential.content().contentId().equals(status.content().contentId()));
             assertArrayEquals(expected, zeroecho.pki.testkit.PkiTestRuntime.readContent(restored, credential.content()));
             assertArrayEquals(expected, zeroecho.pki.testkit.PkiTestRuntime.readContent(restored, status.content()));
         }
-        assertTrue(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".content")));
-        assertTrue(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".meta")));
+        assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".content")));
+        assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".meta")));
         assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".owners")));
         System.out.println("snapshotPreservesSharedStatusContentWithoutStaleCredentialOwner...ok");
     }

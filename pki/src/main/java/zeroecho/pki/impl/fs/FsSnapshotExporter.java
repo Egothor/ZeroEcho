@@ -60,6 +60,7 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.impl.ProfileLifecycleFailure;
 import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
 import zeroecho.pki.spi.store.ContentSink;
@@ -134,7 +135,7 @@ final class FsSnapshotExporter {
         }
     }
 
-    private static DurableContentReference transferCredentialContent(FilesystemPkiStore source,
+    private static DurableContentReference transferContent(FilesystemPkiStore source,
             FilesystemPkiStore target, DurableContentReference sourceReference) throws IOException {
         try (RepeatableContent content = source.stagedContent().openContent(sourceReference);
                 InputStream input = content.openStream();
@@ -212,7 +213,12 @@ final class FsSnapshotExporter {
         private SnapshotAuthority plan(Instant at) throws IOException {
             CredentialInventory inventory = inventoryCredentials();
             List<CaRecord> cas = selectCas(at, inventory.credentials());
-            return new SnapshotAuthority(cas, inventory.credentials(), inventory.contentIds());
+            List<StatusObject> statuses = source.snapshotStatusObjects();
+            Set<String> remintedContentIds = new HashSet<>(inventory.contentIds());
+            for (StatusObject status : statuses) {
+                remintedContentIds.add(status.content().contentId());
+            }
+            return new SnapshotAuthority(cas, inventory.credentials(), statuses, remintedContentIds);
         }
 
         private CredentialInventory inventoryCredentials() throws IOException {
@@ -336,12 +342,11 @@ final class FsSnapshotExporter {
             copyFile(sourceRoot.resolve("SIGNING_NAMESPACE"), targetRoot.resolve("SIGNING_NAMESPACE"));
             copyFile(sourceRoot.resolve("SIGNING_TIME_WATERMARK"), targetRoot.resolve("SIGNING_TIME_WATERMARK"));
             copyTreeIfExists(sourceRoot.resolve("requests"), targetRoot.resolve("requests"));
-            copyTreeIfExists(sourceRoot.resolve("status"), targetRoot.resolve("status"));
             copyTreeIfExists(sourceRoot.resolve("policy"), targetRoot.resolve("policy"));
             copyTreeIfExists(sourceRoot.resolve("publications"), targetRoot.resolve("publications"));
             copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
             copyStagedContent(sourceRoot.resolve("staged-content"), targetRoot.resolve("staged-content"),
-                    plan.authority().sourceCredentialContentIds(), plan.nonCredentialContentIds());
+                    plan.authority().remintedContentIds(), plan.nonCredentialContentIds());
             copyTreeIfExists(sourceRoot.resolve("revocations"), targetRoot.resolve("revocations"));
             copyImportedProfilesAsOf(plan.profiles(), targetRoot.resolve("profiles"));
             reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
@@ -384,6 +389,9 @@ final class FsSnapshotExporter {
                         persistCa(target, ca);
                     }
                 }
+                for (StatusObject status : authority.statuses()) {
+                    persistStatus(target, status);
+                }
             }
         }
 
@@ -420,6 +428,12 @@ final class FsSnapshotExporter {
                 return false;
             }
         }
+
+        private void persistStatus(FilesystemPkiStore target, StatusObject sourceStatus) throws IOException {
+            try (StatusTransfer transfer = new StatusTransfer(source, target, sourceStatus)) {
+                transfer.persist();
+            }
+        }
     }
 
     /** Owns a completed target reference until its credential is persisted. */
@@ -433,11 +447,40 @@ final class FsSnapshotExporter {
                 Credential sourceCredential) throws IOException {
             this.target = target;
             this.sourceCredential = sourceCredential;
-            this.targetReference = transferCredentialContent(source, target, sourceCredential.content());
+            this.targetReference = transferContent(source, target, sourceCredential.content());
         }
 
         private void persist() {
             target.putCredential(withContent(sourceCredential, targetReference));
+            persisted = true;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (!persisted) {
+                target.stagedContent().retireUnownedContent(targetReference);
+            }
+        }
+    }
+
+    /** Owns reminted target content until its status authority is committed. */
+    private static final class StatusTransfer implements AutoCloseable {
+        private final FilesystemPkiStore target;
+        private final StatusObject sourceStatus;
+        private final DurableContentReference targetReference;
+        private boolean persisted;
+
+        private StatusTransfer(FilesystemPkiStore source, FilesystemPkiStore target, StatusObject sourceStatus)
+                throws IOException {
+            this.target = target;
+            this.sourceStatus = sourceStatus;
+            this.targetReference = transferContent(source, target, sourceStatus.content());
+        }
+
+        private void persist() {
+            target.putStatusObject(new StatusObject(sourceStatus.statusObjectId(), sourceStatus.formatId(),
+                    sourceStatus.issuerCaId(), sourceStatus.type(), sourceStatus.thisUpdate(),
+                    sourceStatus.nextUpdate(), targetReference, sourceStatus.attributes()));
             persisted = true;
         }
 
@@ -683,11 +726,12 @@ final class FsSnapshotExporter {
     }
 
     private record SnapshotAuthority(List<CaRecord> cas, Map<PkiId, Credential> credentials,
-            Set<String> sourceCredentialContentIds) {
+            List<StatusObject> statuses, Set<String> remintedContentIds) {
         private SnapshotAuthority {
             cas = List.copyOf(cas);
             credentials = Collections.unmodifiableMap(new LinkedHashMap<>(credentials));
-            sourceCredentialContentIds = Set.copyOf(sourceCredentialContentIds);
+            statuses = List.copyOf(statuses);
+            remintedContentIds = Set.copyOf(remintedContentIds);
         }
     }
 

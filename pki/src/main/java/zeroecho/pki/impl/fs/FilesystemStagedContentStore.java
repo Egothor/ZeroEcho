@@ -103,8 +103,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     private final Path root;
     private final String storeId;
     private final ReentrantLock[] ownerLocks;
-    private final ConcurrentMap<String, Integer> signingReservations;
-    private final AtomicReference<SigningOwnership> signingOwnership;
+    private final ConcurrentMap<String, Integer> transactionalReservations;
+    private final AtomicReference<TransactionalOwnership> transactionalOwnership;
 
     /**
      * Creates a staged-content store.
@@ -118,8 +118,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         this.storeId = requireStoreIdentifier(storeId);
         this.ownerLocks = new ReentrantLock[OWNER_LOCK_COUNT];
-        this.signingReservations = new ConcurrentHashMap<>();
-        this.signingOwnership = new AtomicReference<>(reference -> Set.of());
+        this.transactionalReservations = new ConcurrentHashMap<>();
+        this.transactionalOwnership = new AtomicReference<>(reference -> Set.of());
         for (int index = 0; index < ownerLocks.length; index++) {
             ownerLocks[index] = new ReentrantLock();
         }
@@ -184,7 +184,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     public boolean retainContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
         DurableContentReference exact = requireOwned(reference);
         Objects.requireNonNull(owner, "owner");
-        SigningOwnershipIo.requireSidecarOwner(owner);
+        TransactionalOwnershipIo.requireSidecarOwner(owner);
         ReentrantLock lock = ownerLock(exact.contentId());
         lock.lock();
         try {
@@ -204,7 +204,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     public boolean releaseContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
         DurableContentReference exact = requireOwned(reference);
         Objects.requireNonNull(owner, "owner");
-        SigningOwnershipIo.requireSidecarOwner(owner);
+        TransactionalOwnershipIo.requireSidecarOwner(owner);
         ReentrantLock lock = ownerLock(exact.contentId());
         lock.lock();
         try {
@@ -217,7 +217,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                 return false;
             }
             writeOwners(exact.contentId(), owners);
-            SigningOwnershipIo.retireIfUnowned(this, exact, owners);
+            TransactionalOwnershipIo.retireIfUnowned(this, exact, owners);
             return true;
         } finally {
             lock.unlock();
@@ -232,7 +232,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         try {
             requireExactMetadata(exact);
             Set<DurableContentOwner> owners = readOwners(exact.contentId());
-            owners.addAll(signingOwnership.get().findOwners(exact));
+            owners.addAll(transactionalOwnership.get().findOwners(exact));
             return Set.copyOf(owners);
         } finally {
             lock.unlock();
@@ -246,7 +246,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         lock.lock();
         try {
             requireExactMetadata(exact);
-            SigningOwnershipIo.requireUnowned(this, exact);
+            TransactionalOwnershipIo.requireUnowned(this, exact);
             retireFiles(exact);
         } finally {
             lock.unlock();
@@ -255,7 +255,15 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
     @Override
     public void recoverContent(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners) throws IOException {
-        StoreIo.recoverContent(this, retained, retainedOwners);
+        try (TemporaryUniqueIndex transactionalOwners = beginUniqueIndex()) {
+            StoreIo.recoverContent(this, retained, retainedOwners, transactionalOwners);
+        }
+    }
+
+    /** Recovery input separating transactional authority from general references and sidecars. */
+    /* package */ void recoverContent(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners,
+            TemporaryUniqueIndex transactionalOwners) throws IOException {
+        StoreIo.recoverContent(this, retained, retainedOwners, transactionalOwners);
     }
 
     @Override
@@ -316,47 +324,52 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     }
 
     private void writeOwners(String contentId, Set<DurableContentOwner> owners) throws IOException {
-        SigningOwnershipIo.requireSidecarOwners(owners);
+        TransactionalOwnershipIo.requireSidecarOwners(owners);
         StoreIo.writeOwners(this, contentId, owners);
     }
 
     /* package */ void retireSigningContent(DurableContentReference reference) throws IOException {
-        SigningOwnershipIo.retireSigningContent(this, reference);
+        TransactionalOwnershipIo.retireTransactionalContent(this, reference);
     }
 
-    /* package */ void bindSigningOwnership(SigningOwnership ownership) {
-        signingOwnership.set(Objects.requireNonNull(ownership, "ownership"));
+    /* package */ void bindTransactionalOwnership(TransactionalOwnership ownership) {
+        transactionalOwnership.set(Objects.requireNonNull(ownership, "ownership"));
     }
 
-    /* package */ SigningReservation reserveSigningPublication(DurableContentReference reference)
+    /* package */ TransactionalReservation reserveTransactionalPublication(DurableContentReference reference)
             throws IOException {
-        return SigningOwnershipIo.reserveSigningPublication(this, reference);
+        return TransactionalOwnershipIo.reserveTransactionalPublication(this, reference);
     }
 
-    /** Internal callback to the transactional signing-owner authority. */
+    /** Internal callback to signing and status transactional owner authority. */
     /* default */
     @FunctionalInterface
-    interface SigningOwnership {
-        /** Finds every exact signing owner for a durable content reference. */
+    interface TransactionalOwnership {
+        /** Finds every exact transactional owner for a durable content reference. */
         Set<DurableContentOwner> findOwners(DurableContentReference reference) throws IOException;
     }
 
     /** Short-lived reference-counted reservation spanning validation and commit. */
-    /* package */ final class SigningReservation implements AutoCloseable {
+    /* package */ final class TransactionalReservation implements AutoCloseable {
         private final String contentId;
         private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicBoolean recoveryRequired = new AtomicBoolean();
 
-        private SigningReservation(String contentId) {
+        private TransactionalReservation(String contentId) {
             this.contentId = contentId;
+        }
+
+        /* package */ void preserveUntilRecovery() {
+            recoveryRequired.set(true);
         }
 
         @Override
         public void close() {
-            if (closed.compareAndSet(false, true)) {
+            if (!recoveryRequired.get() && closed.compareAndSet(false, true)) {
                 ReentrantLock lock = ownerLock(contentId);
                 lock.lock();
                 try {
-                    signingReservations.computeIfPresent(contentId,
+                    transactionalReservations.computeIfPresent(contentId,
                             (ignored, count) -> count == 1 ? null : count - 1);
                 } finally {
                     lock.unlock();
@@ -688,11 +701,13 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     /** Mechanical home for filesystem metadata branches kept outside the store coordinator. */
     private static final class StoreIo {
         private static void recoverContent(FilesystemStagedContentStore store, TemporaryUniqueIndex retained,
-                TemporaryUniqueIndex retainedOwners) throws IOException {
+                TemporaryUniqueIndex retainedOwners, TemporaryUniqueIndex transactionalOwners) throws IOException {
             Objects.requireNonNull(retained, "retained");
             Objects.requireNonNull(retainedOwners, "retainedOwners");
+            Objects.requireNonNull(transactionalOwners, "transactionalOwners");
             retained.validateNamespace();
             retainedOwners.validateNamespace();
+            transactionalOwners.validateNamespace();
             try (java.util.stream.Stream<Path> paths = Files.list(store.root)) {
                 java.util.Iterator<Path> iterator = paths
                         .filter(path -> path.getFileName().toString().endsWith(".meta")).iterator();
@@ -700,7 +715,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                     Path metadata = iterator.next();
                     String name = metadata.getFileName().toString();
                     String contentId = name.substring(0, name.length() - ".meta".length());
-                    recoverContent(store, retained, retainedOwners, contentId);
+                    recoverContent(store, retained, retainedOwners, transactionalOwners, contentId);
                 }
             }
             store.cleanupOrphanedCompletedFiles();
@@ -708,7 +723,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         }
 
         private static void recoverContent(FilesystemStagedContentStore store, TemporaryUniqueIndex retained,
-                TemporaryUniqueIndex retainedOwners, String contentId) throws IOException {
+                TemporaryUniqueIndex retainedOwners, TemporaryUniqueIndex transactionalOwners, String contentId)
+                throws IOException {
             ReentrantLock lock = store.ownerLock(contentId);
             lock.lock();
             try {
@@ -719,8 +735,10 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                     store.writeOwners(contentId, owners);
                 }
                 boolean referenced = retained.contains(contentId.getBytes(StandardCharsets.US_ASCII));
+                boolean transactionallyOwned = transactionalOwners.contains(
+                        contentId.getBytes(StandardCharsets.US_ASCII));
                 boolean keep = reference.lifecycle() != DurableContentReference.Lifecycle.TEMPORARY
-                        && (referenced || !owners.isEmpty());
+                        && (referenced || transactionallyOwned || !owners.isEmpty());
                 if (!keep || !isRegularFile(store.completePath(reference))) {
                     store.retireFiles(reference);
                 }
@@ -863,7 +881,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             }
             for (int index = 0; index < count; index++) {
                 DurableContentOwner owner = parseOwner(input.readUTF());
-                if (owner.category() == DurableContentOwner.Category.SIGNING_OPERATION) {
+                if (TransactionalOwnershipIo.isTransactionalOwner(owner)) {
                     continue;
                 }
                 if (!owners.add(owner)) {
@@ -933,8 +951,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         }
     }
 
-    /** Isolates transactional signing-ownership lifecycle decisions. */
-    private static final class SigningOwnershipIo {
+    /** Isolates transactional staged-content ownership lifecycle decisions. */
+    private static final class TransactionalOwnershipIo {
         private static void requireSidecarOwners(Set<DurableContentOwner> owners) {
             for (DurableContentOwner owner : owners) {
                 requireSidecarOwner(owner);
@@ -942,37 +960,42 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         }
 
         private static void requireSidecarOwner(DurableContentOwner owner) {
-            if (owner.category() == DurableContentOwner.Category.SIGNING_OPERATION) {
+            if (isTransactionalOwner(owner)) {
                 throw new IllegalArgumentException(
-                        "Signing-operation ownership is authoritative transactional metadata");
+                        "Transactional ownership is authoritative metadata");
             }
         }
 
-        private static SigningReservation reserveSigningPublication(FilesystemStagedContentStore store,
+        private static boolean isTransactionalOwner(DurableContentOwner owner) {
+            return owner.category() == DurableContentOwner.Category.SIGNING_OPERATION
+                    || owner.category() == DurableContentOwner.Category.STATUS_OBJECT_RECORD;
+        }
+
+        private static TransactionalReservation reserveTransactionalPublication(FilesystemStagedContentStore store,
                 DurableContentReference reference) throws IOException {
             DurableContentReference exact = store.requireOwned(reference);
             ReentrantLock lock = store.ownerLock(exact.contentId());
             lock.lock();
             try {
                 store.requireExactMetadata(exact);
-                store.signingReservations.merge(exact.contentId(), 1, Math::addExact);
-                return store.new SigningReservation(exact.contentId());
+                store.transactionalReservations.merge(exact.contentId(), 1, Math::addExact);
+                return store.new TransactionalReservation(exact.contentId());
             } catch (ArithmeticException exception) {
-                throw new IOException("Signing content reservation limit exceeded", exception);
+                throw new IOException("Transactional content reservation limit exceeded", exception);
             } finally {
                 lock.unlock();
             }
         }
 
-        private static boolean hasSigningAuthority(FilesystemStagedContentStore store,
+        private static boolean hasTransactionalAuthority(FilesystemStagedContentStore store,
                 DurableContentReference reference) throws IOException {
-            return store.signingReservations.containsKey(reference.contentId())
-                    || !store.signingOwnership.get().findOwners(reference).isEmpty();
+            return store.transactionalReservations.containsKey(reference.contentId())
+                    || !store.transactionalOwnership.get().findOwners(reference).isEmpty();
         }
 
         private static void retireIfUnowned(FilesystemStagedContentStore store,
                 DurableContentReference reference, Set<DurableContentOwner> owners) throws IOException {
-            if (owners.isEmpty() && !hasSigningAuthority(store, reference)) {
+            if (owners.isEmpty() && !hasTransactionalAuthority(store, reference)) {
                 store.retireFiles(reference);
             }
         }
@@ -980,12 +1003,12 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         private static void requireUnowned(FilesystemStagedContentStore store,
                 DurableContentReference reference) throws IOException {
             if (!store.readOwners(reference.contentId()).isEmpty()
-                    || hasSigningAuthority(store, reference)) {
+                    || hasTransactionalAuthority(store, reference)) {
                 throw new IOException("Staged content remains durably owned");
             }
         }
 
-        private static void retireSigningContent(FilesystemStagedContentStore store,
+        private static void retireTransactionalContent(FilesystemStagedContentStore store,
                 DurableContentReference reference) throws IOException {
             DurableContentReference exact = store.requireOwned(reference);
             ReentrantLock lock = store.ownerLock(exact.contentId());
@@ -993,7 +1016,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             try {
                 store.requireExactMetadata(exact);
                 if (store.readOwners(exact.contentId()).isEmpty()
-                        && !hasSigningAuthority(store, exact)) {
+                        && !hasTransactionalAuthority(store, exact)) {
                     store.retireFiles(exact);
                 }
             } finally {

@@ -169,8 +169,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     /* package */ static final String CURRENT_STORE_VERSION = "v3";
     private static final String SIGN_RECORD_NAMESPACE = "io.zeroecho.pki.signing-record";
     private static final String SIGN_OWNER_NAMESPACE = "io.zeroecho.pki.signing-owner";
+    private static final String STATUS_RECORD_NAMESPACE = "io.zeroecho.pki.status-object-record";
+    private static final String STATUS_OWNER_NAMESPACE = "io.zeroecho.pki.status-object-owner";
     private static final int CURRENT_SIGN_RECORD_VERSION = 2;
     private static final int SIGN_OWNER_VALUE_VERSION = 1;
+    private static final int STATUS_OWNER_VALUE_VERSION = 1;
+    private static final int METADATA_TRANSFER_BUFFER_BYTES = 16 * 1024;
+    private static final ThreadLocal<StatusCommitFaultPoint> STATUS_COMMIT_FAULT = new ThreadLocal<>();
     private static final String SIGN_FINGERPRINT_PREFIX = "signfp:v1:";
     private static final int SIGN_FINGERPRINT_HEX_LENGTH = 64;
     private static final long INITIAL_FENCE = 0L;
@@ -250,7 +255,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             FsOperations.ensureDir(this.paths.transactionalMetadataLog().getParent());
             openedMetadata = openMetadataStore();
             this.metadataStore = openedMetadata;
-            this.stagedContent.bindSigningOwnership(this::findSigningOwner);
+            this.stagedContent.bindTransactionalOwnership(this::findTransactionalOwners);
             this.credentialContentTransactions = new CredentialContentTransaction(this.paths, this.stagedContent);
             this.signingTimeWatermark = new AtomicLong(loadSigningTimeWatermark());
             this.historySeq = new AtomicLong(0L);
@@ -313,6 +318,17 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    private Set<DurableContentOwner> findTransactionalOwners(DurableContentReference reference) throws IOException {
+        Set<DurableContentOwner> owners = new HashSet<>(findSigningOwner(reference));
+        for (StoredStatus stored : listStoredStatuses()) {
+            if (reference.equals(stored.status().content())) {
+                owners.add(new DurableContentOwner(DurableContentOwner.Category.STATUS_OBJECT_RECORD,
+                        stored.status().statusObjectId().value()));
+            }
+        }
+        return Set.copyOf(owners);
+    }
+
     private Optional<DurableContentOwner> matchingSigningOwner(MetadataSnapshot.Record owner,
             DurableContentReference reference)
             throws IOException {
@@ -330,13 +346,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private void recoverStagedContent() throws IOException {
         credentialContentTransactions.recover();
+        List<StoredStatus> statuses = listStoredStatuses();
         try (TemporaryUniqueIndex retained = stagedContent.beginUniqueIndex();
-                TemporaryUniqueIndex retainedOwners = stagedContent.beginOwnerIndex()) {
+                TemporaryUniqueIndex retainedOwners = stagedContent.beginOwnerIndex();
+                TemporaryUniqueIndex transactionalOwners = stagedContent.beginUniqueIndex()) {
             try {
                 addPersistedCredentialReferences(retained, retainedOwners);
-                addPersistedStatusReferences(retained);
+                addTransactionalStatusOwnership(transactionalOwners, statuses);
                 addPendingSigningReferences(retained);
-                stagedContent.recoverContent(retained, retainedOwners);
+                stagedContent.recoverContent(retained, retainedOwners, transactionalOwners);
             } catch (IllegalStateException | PkiException malformedDurableState) {
                 // Recovery cannot prove abandonment while durable metadata is
                 // corrupt. Preserve content so the normal owning subsystem can
@@ -366,18 +384,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private void addPersistedStatusReferences(TemporaryUniqueIndex retained) throws IOException {
-        Path root = paths.root().resolve("status").resolve("by-id");
-        if (!Files.isDirectory(root)) {
-            return;
-        }
-        try (Stream<Path> pathsStream = Files.list(root)) {
-            java.util.Iterator<Path> iterator = pathsStream.filter(Files::isRegularFile).iterator();
-            while (iterator.hasNext()) {
-                StatusObject status = FsCodec.decode(FsCodec.STATUS_OBJECT, FsOperations.readAll(iterator.next()),
-                        stagedContent);
-                addRetained(retained, status.content());
-            }
+    private static void addTransactionalStatusOwnership(TemporaryUniqueIndex transactionalOwners,
+            List<StoredStatus> statuses)
+            throws IOException {
+        for (StoredStatus stored : statuses) {
+            addRetained(transactionalOwners, stored.status().content());
         }
     }
 
@@ -430,13 +441,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     /* default */ Set<String> snapshotNonCredentialContentIds() {
         requireStoreUsable();
         Set<String> contentIds = new HashSet<>();
-        for (StatusObject status : listBinaryFiles(paths.statusRoot(), FsCodec.STATUS_OBJECT)) {
-            contentIds.add(status.content().contentId());
-        }
         for (StoredSign stored : listStoredSigns()) {
             stored.reference().map(DurableContentReference::contentId).ifPresent(contentIds::add);
         }
         return Set.copyOf(contentIds);
+    }
+
+    /* default */ List<StatusObject> snapshotStatusObjects() {
+        requireStoreUsable();
+        return listStoredStatuses().stream().map(StoredStatus::status).toList();
     }
 
     @Override
@@ -596,16 +609,45 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public void putStatusObject(final StatusObject object) {
         requireStoreUsable();
         Objects.requireNonNull(object, "object");
-        PkiId id = object.statusObjectId();
-        writeOnce(this.paths.statusObjectPath(id), FsCodec.encode(FsCodec.STATUS_OBJECT, object), "STATUS_OBJECT",
-                FsUtil.safeId(id));
+        byte[] encoded = validateStatusObject(object);
+        DurableContentReference reference = object.content();
+        try (FilesystemStagedContentStore.TransactionalReservation reservation =
+                stagedContent.reserveTransactionalPublication(reference)) {
+            validateStatusContent(reference);
+            MetadataCommitResult result = createStatusMetadata(object, encoded);
+            if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
+                return;
+            }
+            if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                reservation.preserveUntilRecovery();
+                durabilityUncertain.set(true);
+                throw new PkiException("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED");
+            }
+            throw new IllegalStateException("Status object already exists");
+        } catch (IOException exception) {
+            throw new IllegalStateException("Status object content is invalid", exception);
+        }
     }
 
     @Override
     public Optional<StatusObject> getStatusObject(final PkiId statusObjectId) {
         requireStoreUsable();
         Objects.requireNonNull(statusObjectId, "statusObjectId");
-        return readOptional(this.paths.statusObjectPath(statusObjectId), FsCodec.STATUS_OBJECT);
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            Optional<MetadataSnapshot.Record> record = snapshot.get(statusRecordKey(statusObjectId));
+            if (record.isEmpty()) {
+                Optional<MetadataSnapshot.Record> owner = snapshot.get(statusOwnerKey(statusObjectId));
+                if (owner.isPresent()) {
+                    try (MetadataSnapshot.Record ignored = owner.orElseThrow()) {
+                        throw new IllegalStateException("Status owner exists without its record");
+                    }
+                }
+                return Optional.empty();
+            }
+            return Optional.of(decodeStoredStatus(snapshot, record.orElseThrow()).status());
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to read authoritative status object", exception);
+        }
     }
 
     @Override
@@ -613,13 +655,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requireStoreUsable();
         Objects.requireNonNull(issuerCaId, "issuerCaId");
 
-        // Deterministic but coarse: scan all and filter by issuer id.
-        // This is acceptable for a reference implementation; indexes can be added
-        // later.
-        Path byId = this.paths.root().resolve("status").resolve("by-id");
-        List<StatusObject> all = listBinaryFiles(byId, FsCodec.STATUS_OBJECT);
         List<StatusObject> out = new ArrayList<>();
-        for (StatusObject o : all) {
+        for (StoredStatus stored : listStoredStatuses()) {
+            StatusObject o = stored.status();
             if (issuerCaId.equals(o.issuerCaId())) {
                 out.add(o);
             }
@@ -896,8 +934,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     stagedContent);
             DurableContentReference reference = continuation.content();
             MetadataCommitResult result;
-            try (FilesystemStagedContentStore.SigningReservation ignoredReservation =
-                            stagedContent.reserveSigningPublication(reference);
+            try (FilesystemStagedContentStore.TransactionalReservation ignoredReservation =
+                            stagedContent.reserveTransactionalPublication(reference);
                     RepeatableContent ignoredContent = stagedContent.openContent(reference)) {
                 stagedContent.restoreReference(reference.storeId(), reference.contentId(), reference.encoding(),
                         reference.length(), reference.sha256(), reference.lifecycle());
@@ -973,6 +1011,128 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to list authoritative signing records", ex);
         }
+    }
+
+    private List<StoredStatus> listStoredStatuses() {
+        List<StoredStatus> statuses = new ArrayList<>();
+        Set<String> recordIdentities = new HashSet<>();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(STATUS_RECORD_NAMESPACE),
+                    CancellationSignal.NONE)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                    StoredStatus stored = decodeStoredStatus(snapshot, next.orElseThrow());
+                    statuses.add(stored);
+                    recordIdentities.add(stored.status().statusObjectId().value());
+                }
+            }
+            try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(STATUS_OWNER_NAMESPACE),
+                    CancellationSignal.NONE)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                    try (MetadataSnapshot.Record owner = next.orElseThrow()) {
+                        if (!recordIdentities.contains(owner.key().key())) {
+                            throw new IllegalStateException("Status owner exists without its record");
+                        }
+                    }
+                }
+            }
+            return List.copyOf(statuses);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to list authoritative status objects", exception);
+        }
+    }
+
+    private StoredStatus decodeStoredStatus(MetadataSnapshot snapshot, MetadataSnapshot.Record storedRecord)
+            throws IOException {
+        try (storedRecord) {
+            StatusObject status = FsCodec.decode(FsCodec.STATUS_OBJECT, readMetadataValue(storedRecord),
+                    stagedContent);
+            PkiId statusId = status.statusObjectId();
+            if (!statusRecordKey(statusId).equals(storedRecord.key())) {
+                throw new IOException("Status record metadata key mismatch");
+            }
+            validateStatusObject(status);
+            Optional<MetadataSnapshot.Record> storedOwner = snapshot.get(statusOwnerKey(statusId));
+            try (MetadataSnapshot.Record owner = storedOwner.orElseThrow(
+                    () -> new IOException("Status record owner edge is missing"))) {
+                DurableContentReference reference = decodeStatusOwner(owner, statusId);
+                if (!reference.equals(status.content())) {
+                    throw new IOException("Status record owner reference mismatch");
+                }
+                validateStatusContent(reference);
+                return new StoredStatus(status, storedRecord.recordRevision(), owner.recordRevision());
+            }
+        }
+    }
+
+    private byte[] validateStatusObject(StatusObject object) {
+        DurableContentReference reference = object.content();
+        if (!stagedContent.contentStoreId().equals(reference.storeId())
+                || reference.lifecycle() != DurableContentReference.Lifecycle.PERSISTED) {
+            throw new IllegalArgumentException("Status content reference is not persistent store authority");
+        }
+        byte[] encoded = FsCodec.encode(FsCodec.STATUS_OBJECT, object);
+        StatusObject canonical = FsCodec.decode(FsCodec.STATUS_OBJECT, encoded, stagedContent);
+        if (!object.statusObjectId().equals(canonical.statusObjectId())
+                || !Arrays.equals(encoded, FsCodec.encode(FsCodec.STATUS_OBJECT, canonical))) {
+            throw new IllegalArgumentException("Status object is not canonical");
+        }
+        return encoded;
+    }
+
+    private void validateStatusContent(DurableContentReference reference) throws IOException {
+        stagedContent.restoreReference(reference.storeId(), reference.contentId(), reference.encoding(),
+                reference.length(), reference.sha256(), reference.lifecycle());
+        try (RepeatableContent content = stagedContent.openContent(reference);
+                InputStream input = content.openStream()) {
+            byte[] buffer = new byte[METADATA_TRANSFER_BUFFER_BYTES];
+            while (true) {
+                int count = input.read(buffer);
+                if (count < 0) {
+                    return;
+                }
+                if (count == 0) {
+                    throw new IOException("Status content validation made no progress");
+                }
+            }
+        }
+    }
+
+    private MetadataCommitResult createStatusMetadata(StatusObject status, byte[] encoded) throws IOException {
+        PkiId statusId = status.statusObjectId();
+        try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+            transaction.create(statusRecordKey(statusId), byteContent(encoded), CancellationSignal.NONE);
+            transaction.create(statusOwnerKey(statusId),
+                    byteContent(encodeStatusOwner(statusId, status.content())), CancellationSignal.NONE);
+            if (STATUS_COMMIT_FAULT.get() == StatusCommitFaultPoint.BEFORE_COMMIT) {
+                throw new IOException("Injected status commit failure");
+            }
+            MetadataCommitResult result = transaction.commit();
+            if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED
+                    && STATUS_COMMIT_FAULT.get() == StatusCommitFaultPoint.AFTER_COMMIT_AS_UNKNOWN) {
+                return new MetadataCommitResult(result.transactionId(), MetadataCommitResult.Outcome.UNKNOWN,
+                        OptionalLong.empty(), Optional.empty());
+            }
+            return result;
+        }
+    }
+
+    /* package */ static void installStatusCommitFault(StatusCommitFaultPoint point) {
+        STATUS_COMMIT_FAULT.set(Objects.requireNonNull(point, "point"));
+    }
+
+    /* package */ static void clearStatusCommitFault() {
+        STATUS_COMMIT_FAULT.remove();
+    }
+
+    /** Test-only status-publication boundary; never part of production API. */
+    /* default */
+    enum StatusCommitFaultPoint {
+        /** Fails after admission but before the metadata commit attempt. */
+        BEFORE_COMMIT,
+        /** Reports uncertainty only after a real durable commit. */
+        AFTER_COMMIT_AS_UNKNOWN
     }
 
     @Override
@@ -1693,6 +1853,14 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return new MetadataKey(SIGN_OWNER_NAMESPACE, parsed.id().value());
     }
 
+    private static MetadataKey statusRecordKey(PkiId statusObjectId) {
+        return new MetadataKey(STATUS_RECORD_NAMESPACE, statusObjectId.value());
+    }
+
+    private static MetadataKey statusOwnerKey(PkiId statusObjectId) {
+        return new MetadataKey(STATUS_OWNER_NAMESPACE, statusObjectId.value());
+    }
+
     private static RepeatableContent byteContent(byte[] value) {
         return new ByteValueContent(value);
     }
@@ -1700,7 +1868,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private static byte[] readMetadataValue(MetadataSnapshot.Record record) throws IOException {
         long length = record.length().orElseThrow();
         if (length < 0L || length > FsCodec.MAX_COMPONENT_BYTES) {
-            throw new IOException("Signing metadata value length is invalid");
+            throw new IOException("Metadata value length is invalid");
         }
         byte[] result = new byte[Math.toIntExact(length)];
         try (InputStream input = record.openStream()) {
@@ -1708,21 +1876,33 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             while (offset < result.length) {
                 int count = input.read(result, offset, result.length - offset);
                 if (count <= 0) {
-                    throw new IOException("Signing metadata value is truncated");
+                    throw new IOException("Metadata value is truncated");
                 }
                 offset += count;
             }
             if (input.read() >= 0) {
-                throw new IOException("Signing metadata value has trailing data");
+                throw new IOException("Metadata value has trailing data");
             }
         }
         return result;
     }
 
     private static byte[] encodeSigningOwner(PkiId submissionId, DurableContentReference reference) {
+        return encodeTransactionalOwner(SIGN_OWNER_VALUE_VERSION, DurableContentOwner.Category.SIGNING_OPERATION,
+                submissionId, reference);
+    }
+
+    private static byte[] encodeStatusOwner(PkiId statusObjectId, DurableContentReference reference) {
+        new DurableContentOwner(DurableContentOwner.Category.STATUS_OBJECT_RECORD, statusObjectId.value());
+        return encodeTransactionalOwner(STATUS_OWNER_VALUE_VERSION,
+                DurableContentOwner.Category.STATUS_OBJECT_RECORD, statusObjectId, reference);
+    }
+
+    private static byte[] encodeTransactionalOwner(int version, DurableContentOwner.Category category,
+            PkiId ownerId, DurableContentReference reference) {
         byte[][] fields = {
-                DurableContentOwner.Category.SIGNING_OPERATION.name().getBytes(StandardCharsets.US_ASCII),
-                submissionId.value().getBytes(StandardCharsets.UTF_8),
+                category.name().getBytes(StandardCharsets.US_ASCII),
+                ownerId.value().getBytes(StandardCharsets.UTF_8),
                 reference.storeId().getBytes(StandardCharsets.UTF_8),
                 reference.contentId().getBytes(StandardCharsets.UTF_8),
                 reference.encoding().name().getBytes(StandardCharsets.US_ASCII),
@@ -1734,7 +1914,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             size = Math.addExact(size, Math.addExact(Integer.BYTES, field.length));
         }
         ByteBuffer output = ByteBuffer.allocate(size);
-        output.putInt(SIGN_OWNER_VALUE_VERSION);
+        output.putInt(version);
         for (byte[] field : fields) {
             output.putInt(field.length).put(field);
         }
@@ -1744,10 +1924,23 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private DurableContentReference decodeSigningOwner(MetadataSnapshot.Record owner, PkiId expectedId)
             throws IOException {
+        return decodeTransactionalOwner(owner, expectedId, SIGN_OWNER_VALUE_VERSION,
+                DurableContentOwner.Category.SIGNING_OPERATION, signingOwnerKey(expectedId), "signing");
+    }
+
+    private DurableContentReference decodeStatusOwner(MetadataSnapshot.Record owner, PkiId expectedId)
+            throws IOException {
+        return decodeTransactionalOwner(owner, expectedId, STATUS_OWNER_VALUE_VERSION,
+                DurableContentOwner.Category.STATUS_OBJECT_RECORD, statusOwnerKey(expectedId), "status");
+    }
+
+    private DurableContentReference decodeTransactionalOwner(MetadataSnapshot.Record owner, PkiId expectedId,
+            int expectedVersion, DurableContentOwner.Category expectedCategory, MetadataKey expectedKey,
+            String authority) throws IOException {
         ByteBuffer input = ByteBuffer.wrap(readMetadataValue(owner));
         try {
-            if (input.getInt() != SIGN_OWNER_VALUE_VERSION) {
-                throw new IOException("Unsupported signing owner metadata");
+            if (input.getInt() != expectedVersion) {
+                throw new IOException("Unsupported " + authority + " owner metadata");
             }
             DurableContentOwner.Category category = DurableContentOwner.Category.valueOf(readOwnerField(input));
             String ownerId = readOwnerField(input);
@@ -1758,18 +1951,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             DurableContentReference.Lifecycle lifecycle = DurableContentReference.Lifecycle.valueOf(
                     readOwnerField(input));
             long length = input.getLong();
-            if (input.hasRemaining() || category != DurableContentOwner.Category.SIGNING_OPERATION
+            if (input.hasRemaining() || category != expectedCategory
                     || !ownerId.equals(expectedId.value())) {
-                throw new IOException("Signing owner metadata identity mismatch");
+                throw new IOException("Transactional owner metadata identity mismatch");
             }
+            new DurableContentOwner(category, ownerId);
             DurableContentReference restored = stagedContent.restoreReference(storeId, contentId, encoding,
                     length, digest, lifecycle);
-            if (!signingOwnerKey(expectedId).equals(owner.key())) {
-                throw new IOException("Signing owner metadata key mismatch");
+            if (!expectedKey.equals(owner.key())) {
+                throw new IOException("Transactional owner metadata key mismatch");
             }
             return restored;
         } catch (IllegalArgumentException | java.nio.BufferUnderflowException exception) {
-            throw new IOException("Malformed signing owner metadata", exception);
+            throw new IOException("Malformed transactional owner metadata", exception);
         }
     }
 
@@ -1789,6 +1983,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private record StoredSign(SignWorkflowStore.Record record, long recordRevision,
             OptionalLong ownerRevision, Optional<DurableContentReference> reference) {
+    }
+
+    private record StoredStatus(StatusObject status, long recordRevision, long ownerRevision) {
     }
 
     /** Store-owned bounded finite control metadata used only for synchronous admission. */

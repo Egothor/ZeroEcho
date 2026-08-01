@@ -178,19 +178,6 @@ final class FsPaths {
     }
 
     // -------------------------------------------------------------------------
-    // Status objects (immutable .bin)
-    // -------------------------------------------------------------------------
-
-    /* default */ Path statusObjectPath(final PkiId statusObjectId) {
-        Objects.requireNonNull(statusObjectId, "statusObjectId");
-        return this.root.resolve("status").resolve(BY_ID).resolve(FsUtil.safeId(statusObjectId) + ".bin");
-    }
-
-    /* default */ Path statusRoot() {
-        return this.root.resolve("status").resolve(BY_ID);
-    }
-
-    // -------------------------------------------------------------------------
     // Policy traces (immutable .bin)
     // -------------------------------------------------------------------------
 
