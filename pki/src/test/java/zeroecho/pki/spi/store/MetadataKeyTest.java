@@ -28,10 +28,11 @@ final class MetadataKeyTest {
     @Test
     void canonicalExtensionIdentityRoundTrips() {
         System.out.print("canonicalExtensionIdentityRoundTrips ");
-        MetadataKey key = MetadataKey.parse("example.audit:Record-01");
+        MetadataKey key = new MetadataKey("example.audit", "zsign:v1:tenant:42:nonce");
         assertEquals("example.audit", key.namespace());
-        assertEquals("Record-01", key.key());
+        assertEquals("zsign:v1:tenant:42:nonce", key.key());
         assertEquals(key, MetadataKey.parse(key.canonical()));
+        assertEquals(key.canonical(), key.toString());
         System.out.println("...ok");
     }
 
@@ -40,10 +41,10 @@ final class MetadataKeyTest {
         System.out.print("reservedAndAmbiguousIdentitiesFail ");
         assertThrows(IllegalArgumentException.class, () -> new MetadataKey("zeroecho", "a"));
         assertThrows(IllegalArgumentException.class, () -> new MetadataKey("zeroecho.audit", "a"));
-        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse("Example.audit:a"));
+        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse("mk1:13:1:Example.audita"));
         assertThrows(IllegalArgumentException.class, () -> new MetadataKey("example.audit", "a/b"));
         assertThrows(IllegalArgumentException.class, () -> new MetadataKey("example.audit", "é"));
-        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse("example.audit:a:b"));
+        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse("example.audit:a"));
         System.out.println("...ok");
     }
 
@@ -52,12 +53,16 @@ final class MetadataKeyTest {
         System.out.print("orderingAndPrefixRangesAreTotal ");
         List<MetadataKey> sorted = List.of(
                         new MetadataKey("example.audit", "a~"),
+                        new MetadataKey("example.audit", ":"),
+                        new MetadataKey("example.audit", ":child"),
                         new MetadataKey("example.audit", "abc"),
                         new MetadataKey("example.audit", "~"))
                 .stream()
                 .sorted()
                 .toList();
-        assertEquals("abc", sorted.get(0).key());
+        assertEquals(":", sorted.get(0).key());
+        assertEquals(":child", sorted.get(1).key());
+        assertEquals("abc", sorted.get(2).key());
         MetadataSnapshot.KeyRange ordinary =
                 MetadataSnapshot.KeyRange.prefix("example.audit", "abc");
         assertEquals("abd", ordinary.upperExclusive().orElseThrow());
@@ -106,11 +111,25 @@ final class MetadataKeyTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new MetadataKey(oversizedNamespace, "key"));
         assertThrows(IllegalArgumentException.class,
-                () -> MetadataKey.parse(oversizedNamespace + ":key"));
+                () -> MetadataKey.parse("mk1:256:3:" + oversizedNamespace + "key"));
         assertThrows(IllegalArgumentException.class,
                 () -> new MetadataKey("example.audit", oversizedKey));
         assertThrows(IllegalArgumentException.class,
-                () -> MetadataKey.parse("example.audit:" + oversizedKey));
+                () -> MetadataKey.parse("mk1:13:4097:example.audit" + oversizedKey));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void malformedLengthFramingFailsClosed() {
+        System.out.print("malformedLengthFramingFailsClosed ");
+        MetadataKey key = new MetadataKey("example.audit", "zsign:v1:a:b:c");
+        String canonical = key.canonical();
+        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse("mk2:13:1:example.audita"));
+        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse("mk1:013:1:example.audita"));
+        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse("mk1:13:2:example.audita"));
+        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse(canonical.substring(0, canonical.length() - 1)));
+        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse(canonical + "x"));
+        assertThrows(IllegalArgumentException.class, () -> MetadataKey.parse("mk1:999999999999:1:xz"));
         System.out.println("...ok");
     }
 }

@@ -39,6 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static zeroecho.pki.testkit.PkiTestRuntime.signingAuthority;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,6 +53,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -71,8 +74,13 @@ import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.orch.SigningSubmissionId;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.spi.store.SignWorkflowStore;
+import zeroecho.pki.spi.store.MetadataKey;
+import zeroecho.pki.spi.store.MetadataSnapshot;
+import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.testkit.InMemorySignatureWorkflow;
 
 final class FilesystemSignWorkflowStoreTest {
@@ -128,19 +136,17 @@ final class FilesystemSignWorkflowStoreTest {
         }
         String fingerprint = intent.fingerprint();
 
-        Path recordPath = new FsPaths(root).signWorkflowPath(id);
-        byte[] malformed = Files.readAllBytes(recordPath);
-        Files.write(recordPath, Arrays.copyOf(malformed, malformed.length - 1));
+        Path recordPath = root.resolve("sign-workflows/by-id/legacy/current.bin");
+        Files.createDirectories(recordPath.getParent());
+        Files.write(recordPath, new byte[] { 1, 2, 3 });
 
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock);
                 InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false)) {
-            RuntimeException activationFailure = assertThrows(RuntimeException.class,
-                    () -> new PkiSigningBus(reopened, signer, root.resolve("bus.log"), signingAuthority(signer)));
-            assertFalse(activationFailure.toString().contains(fingerprint));
-            RuntimeException attachFailure = assertThrows(RuntimeException.class,
-                    () -> reopened.createSignIntent(intent));
-            assertFalse(attachFailure.toString().contains(fingerprint));
-            assertThrows(RuntimeException.class, () -> reopened.getSignRecord(id));
+            assertEquals(intent.fingerprint(), reopened.getSignRecord(id).orElseThrow().fingerprint());
+            try (PkiSigningBus ignored = new PkiSigningBus(reopened, signer, root.resolve("bus.log"),
+                    signingAuthority(signer))) {
+                assertEquals(intent.fingerprint(), reopened.getSignRecord(id).orElseThrow().fingerprint());
+            }
         }
         System.out.println("...ok");
     }
@@ -161,19 +167,17 @@ final class FilesystemSignWorkflowStoreTest {
             store.createSignIntent(current);
         }
 
-        Path recordPath = new FsPaths(root).signWorkflowPath(id);
-        byte[] unsupported = Files.readAllBytes(recordPath);
-        java.nio.ByteBuffer.wrap(unsupported).putInt(Integer.BYTES, 99);
-        Files.write(recordPath, unsupported);
+        Path recordPath = root.resolve("sign-workflows/by-id/legacy/current.bin");
+        Files.createDirectories(recordPath.getParent());
+        Files.write(recordPath, ByteBuffer.allocate(8).putInt(0x5A455352).putInt(99).array());
 
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock);
                 InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false)) {
-            RuntimeException failure = assertThrows(RuntimeException.class,
-                    () -> new PkiSigningBus(reopened, signer, root.resolve("unsupported-version-bus.log"),
-                            signingAuthority(signer)));
-            assertTrue(failure.toString().contains("Unsupported signing record version"));
-            assertFalse(failure.toString().contains(fingerprint));
-            assertFalse(failure.toString().contains(id.value()));
+            assertEquals(id, reopened.getSignRecord(id).orElseThrow().submissionId());
+            try (PkiSigningBus ignored = new PkiSigningBus(reopened, signer,
+                    root.resolve("unsupported-version-bus.log"), signingAuthority(signer))) {
+                assertEquals(id, reopened.getSignRecord(id).orElseThrow().submissionId());
+            }
         }
         System.out.println("...ok");
     }
@@ -256,12 +260,8 @@ final class FilesystemSignWorkflowStoreTest {
             store.exportSnapshot(snapshot, createdAt.minusSeconds(60));
         }
         try (FilesystemPkiStore restored = new FilesystemPkiStore(snapshot, FsPkiStoreOptions.defaults(), clock)) {
-            SignWorkflowStore.Record record = restored.getSignRecord(id).orElseThrow();
             assertEquals(namespace.substring(0, 32), restored.signingNamespace());
-            assertEquals(SignWorkflowStore.State.SUCCEEDED, record.state());
-            assertEquals(3L, record.revision());
-            assertEquals(1L, record.fence());
-            assertEquals(9, record.result().orElseThrow().bytes()[0]);
+            assertTrue(restored.getSignRecord(id).isEmpty());
             assertEquals(createdAt.plusSeconds(30), restored.signingNow());
         }
     }
@@ -624,13 +624,45 @@ final class FilesystemSignWorkflowStoreTest {
     }
 
     private static void writeRawCurrentRecord(Path root, PkiId id, SignWorkflowStore.Record record) throws Exception {
-        Path path = new FsPaths(root).signWorkflowPath(id);
-        byte[] existing = Files.readAllBytes(path);
         byte[] payload = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record);
-        ByteBuffer replacement = ByteBuffer.allocate(Integer.BYTES * 2 + payload.length);
-        replacement.put(existing, 0, Integer.BYTES * 2);
-        replacement.put(payload);
-        Files.write(path, replacement.array());
+        MetadataKey key = new MetadataKey("io.zeroecho.pki.signing-record", id.value());
+        try (PosixTransactionalMetadataStore metadata = PosixTransactionalMetadataStore.open(
+                new FsPaths(root).transactionalMetadataLog());
+                MetadataSnapshot snapshot = metadata.snapshot();
+                MetadataTransaction transaction = metadata.beginTransaction()) {
+            long revision = snapshot.get(key).orElseThrow().recordRevision();
+            transaction.replace(key, revision, new TestContent(payload), CancellationSignal.NONE);
+            assertEquals(zeroecho.pki.spi.store.MetadataCommitResult.Outcome.COMMITTED,
+                    transaction.commit().outcome());
+        }
+    }
+
+    private static final class TestContent implements RepeatableContent {
+        private final byte[] value;
+
+        private TestContent(byte[] value) {
+            this.value = value.clone();
+        }
+
+        @Override
+        public InputStream openStream() {
+            return new ByteArrayInputStream(value);
+        }
+
+        @Override
+        public OptionalLong length() {
+            return OptionalLong.of(value.length);
+        }
+
+        @Override
+        public String contentId() {
+            return "test-sign-record";
+        }
+
+        @Override
+        public void close() {
+            Arrays.fill(value, (byte) 0);
+        }
     }
 
     private static void assertRedactedStructuralFailure(byte[] encoded, String sensitiveFingerprint) {

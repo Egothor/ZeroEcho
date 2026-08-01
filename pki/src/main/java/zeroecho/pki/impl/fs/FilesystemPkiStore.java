@@ -34,7 +34,9 @@
 package zeroecho.pki.impl.fs;
 
 import java.io.Closeable;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
@@ -55,10 +57,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -95,6 +99,14 @@ import zeroecho.pki.impl.ProfileLifecycleFailure;
 import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.pki.spi.store.MetadataCommitResult;
+import zeroecho.pki.spi.store.MetadataCursor;
+import zeroecho.pki.spi.store.MetadataKey;
+import zeroecho.pki.spi.store.MetadataSnapshot;
+import zeroecho.pki.spi.store.MetadataStoreId;
+import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.TemporaryUniqueIndex;
@@ -155,9 +167,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
 
     /* package */ static final String CURRENT_STORE_VERSION = "v2";
-    private static final int SIGN_RECORD_MAGIC = 0x5A455352;
+    private static final String SIGN_RECORD_NAMESPACE = "io.zeroecho.pki.signing-record";
+    private static final String SIGN_OWNER_NAMESPACE = "io.zeroecho.pki.signing-owner";
     private static final int CURRENT_SIGN_RECORD_VERSION = 2;
-    private static final int SIGN_RECORD_HEADER_BYTES = Integer.BYTES * 2;
+    private static final int SIGN_OWNER_VALUE_VERSION = 1;
     private static final String SIGN_FINGERPRINT_PREFIX = "signfp:v1:";
     private static final int SIGN_FINGERPRINT_HEX_LENGTH = 64;
     private static final long INITIAL_FENCE = 0L;
@@ -176,6 +189,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private final AtomicBoolean durabilityUncertain;
     private final FilesystemStagedContentStore stagedContent;
     private final CredentialContentTransaction credentialContentTransactions;
+    private final PosixTransactionalMetadataStore metadataStore;
 
     private final StoreOwnership ownership;
 
@@ -227,11 +241,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
 
         boolean ownershipTransferred = false;
+        PosixTransactionalMetadataStore openedMetadata = null;
         try {
             ensureVersionFile();
             this.signingNamespace = ensureSigningNamespace();
             this.stagedContent = new FilesystemStagedContentStore(this.paths.stagedContentRoot(),
                     this.signingNamespace);
+            FsOperations.ensureDir(this.paths.transactionalMetadataLog().getParent());
+            openedMetadata = openMetadataStore();
+            this.metadataStore = openedMetadata;
+            this.stagedContent.bindSigningOwnership(this::findSigningOwner);
             this.credentialContentTransactions = new CredentialContentTransaction(this.paths, this.stagedContent);
             this.signingTimeWatermark = new AtomicLong(loadSigningTimeWatermark());
             this.historySeq = new AtomicLong(0L);
@@ -244,9 +263,64 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             throw new IllegalStateException("failed to open filesystem store at " + root, e);
         } finally {
             if (!ownershipTransferred) {
+                if (openedMetadata != null) {
+                    try {
+                        closeMetadataAfterFailedOpen(openedMetadata);
+                    } catch (IOException closeFailure) {
+                        LOG.log(Level.WARNING, "Metadata-store cleanup failed during initialization");
+                    }
+                }
                 acquiredOwnership.closeSilently();
             }
         }
+    }
+
+    private static void closeMetadataAfterFailedOpen(PosixTransactionalMetadataStore openedMetadata)
+            throws IOException {
+        openedMetadata.close();
+    }
+
+    private PosixTransactionalMetadataStore openMetadataStore() throws IOException {
+        Path log = paths.transactionalMetadataLog();
+        PosixTransactionalMetadataStore opened = Files.exists(log)
+                ? PosixTransactionalMetadataStore.open(log)
+                : PosixTransactionalMetadataStore.create(log, new MetadataStoreId(signingNamespace));
+        if (!opened.id().equals(new MetadataStoreId(signingNamespace))) {
+            try {
+                opened.close();
+            } catch (IOException closeFailure) {
+                throw new IOException("Metadata store authority mismatch", closeFailure);
+            }
+            throw new IOException("Metadata store authority mismatch");
+        }
+        return opened;
+    }
+
+    private Set<DurableContentOwner> findSigningOwner(DurableContentReference reference) throws IOException {
+        Set<DurableContentOwner> owners = new HashSet<>();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(SIGN_OWNER_NAMESPACE),
+                        CancellationSignal.NONE)) {
+            Optional<MetadataSnapshot.Record> next;
+            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                MetadataSnapshot.Record owner = next.orElseThrow();
+                try (owner) {
+                    Optional<DurableContentOwner> matched = matchingSigningOwner(owner, reference);
+                    matched.ifPresent(owners::add);
+                }
+            }
+            return Set.copyOf(owners);
+        }
+    }
+
+    private Optional<DurableContentOwner> matchingSigningOwner(MetadataSnapshot.Record owner,
+            DurableContentReference reference)
+            throws IOException {
+        PkiId submissionId = new PkiId(owner.key().key());
+        if (reference.equals(decodeSigningOwner(owner, submissionId))) {
+            return Optional.of(DurableContentOwner.signingOperation(submissionId));
+        }
+        return Optional.empty();
     }
 
     @Override
@@ -261,7 +335,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             try {
                 addPersistedCredentialReferences(retained, retainedOwners);
                 addPersistedStatusReferences(retained);
-                addPendingSigningReferences(retained, retainedOwners);
+                addPendingSigningReferences(retained);
                 stagedContent.recoverContent(retained, retainedOwners);
             } catch (IllegalStateException | PkiException malformedDurableState) {
                 // Recovery cannot prove abandonment while durable metadata is
@@ -307,34 +381,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private void addPendingSigningReferences(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners)
-            throws IOException {
-        Path root = paths.signWorkflowRoot();
-        if (!Files.isDirectory(root)) {
-            return;
-        }
-        try (Stream<Path> pathsStream = Files.walk(root)) {
-            java.util.Iterator<Path> iterator = pathsStream
-                    .filter(path -> Files.isRegularFile(path)
-                            && FsPaths.CURRENT_FILE.equals(path.getFileName().toString()))
-                    .iterator();
-            while (iterator.hasNext()) {
-                SignWorkflowStore.Record record = readSignRecordFile(iterator.next());
-                PkiSigningBus.SignContinuation continuation = PkiSigningBus.SignContinuation.decode(record.request(),
-                        stagedContent);
-                if (record.state() == SignWorkflowStore.State.RETIRED) {
-                    if (continuation.hasLiveContent()) {
-                        throw new IllegalStateException("Retired signing record retains live content");
-                    }
-                    continue;
-                }
-                DurableContentReference reference = continuation.content();
-                DurableContentOwner owner = DurableContentOwner.signingOperation(record.submissionId());
-                if (!stagedContent.contentOwners(reference).contains(owner)) {
-                    throw new IllegalStateException("Signing content owner is missing");
-                }
-                addRetained(retained, reference);
-                retainedOwners.add(owner.canonicalForm().getBytes(StandardCharsets.UTF_8));
+    private void addPendingSigningReferences(TemporaryUniqueIndex retained) throws IOException {
+        for (StoredSign stored : listStoredSigns()) {
+            if (stored.record().state() != SignWorkflowStore.State.RETIRED) {
+                addRetained(retained, stored.reference().orElseThrow());
             }
         }
     }
@@ -812,10 +862,40 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                         ? SignWorkflowStore.CreateResult.ATTACHED
                         : SignWorkflowStore.CreateResult.CONFLICT;
             }
-            writeSignRecord(intent);
-            return SignWorkflowStore.CreateResult.CREATED;
+            PkiSigningBus.SignContinuation continuation = PkiSigningBus.SignContinuation.decode(intent.request(),
+                    stagedContent);
+            DurableContentReference reference = continuation.content();
+            MetadataCommitResult result;
+            try (FilesystemStagedContentStore.SigningReservation ignoredReservation =
+                            stagedContent.reserveSigningPublication(reference);
+                    RepeatableContent ignoredContent = stagedContent.openContent(reference)) {
+                stagedContent.restoreReference(reference.storeId(), reference.contentId(), reference.encoding(),
+                        reference.length(), reference.sha256(), reference.lifecycle());
+                result = createSignMetadata(intent, reference);
+            } catch (IOException exception) {
+                retireFailedSigningPublication(reference);
+                throw new PkiException("Signing staged content is invalid: code=CONTENT_INTEGRITY_FAILED", exception);
+            } catch (PkiException | IllegalArgumentException | IllegalStateException exception) {
+                if (!durabilityUncertain.get()) {
+                    retireFailedSigningPublication(reference);
+                }
+                throw exception;
+            }
+            if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
+                return SignWorkflowStore.CreateResult.CREATED;
+            }
+            retireFailedSigningPublication(reference);
+            return SignWorkflowStore.CreateResult.CONFLICT;
         } finally {
             releaseSignLock(intent.submissionId(), lock);
+        }
+    }
+
+    private void retireFailedSigningPublication(DurableContentReference reference) {
+        try {
+            stagedContent.retireUnownedContent(reference);
+        } catch (IOException cleanupFailure) {
+            LOG.log(Level.WARNING, "Failed signing publication cleanup was incomplete");
         }
     }
 
@@ -834,15 +914,32 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public List<SignWorkflowStore.Record> listSignRecords() {
         requireStoreUsable();
-        Path root = paths.signWorkflowRoot();
-        if (!Files.isDirectory(root)) {
-            return List.of();
-        }
-        try (Stream<Path> directories = Files.list(root)) {
-            return directories.filter(Files::isDirectory).map(directory -> directory.resolve(FsPaths.CURRENT_FILE))
-                    .filter(Files::isRegularFile).sorted(Comparator.comparing(Path::toString))
-                    .map(this::readSignRecordFile).peek(record -> validateSignRecord(record.submissionId(), record))
-                    .toList();
+        return listStoredSigns().stream().map(StoredSign::record).toList();
+    }
+
+    private List<StoredSign> listStoredSigns() {
+        List<StoredSign> storedSigns = new ArrayList<>();
+        Set<String> recordIdentities = new HashSet<>();
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(SIGN_RECORD_NAMESPACE),
+                    CancellationSignal.NONE)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                    StoredSign stored = decodeStoredSign(snapshot, next.orElseThrow());
+                    storedSigns.add(stored);
+                    recordIdentities.add(stored.record().submissionId().value());
+                }
+            }
+            try (MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(SIGN_OWNER_NAMESPACE),
+                    CancellationSignal.NONE)) {
+                Optional<MetadataSnapshot.Record> next;
+                while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                    if (!recordIdentities.contains(next.orElseThrow().key().key())) {
+                        throw new IllegalStateException("Signing owner exists without its record");
+                    }
+                }
+            }
+            return List.copyOf(storedSigns);
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to list authoritative signing records", ex);
         }
@@ -854,11 +951,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requirePositive(lease, "lease");
         SignLockEntry lock = acquireSignLock(submissionId);
         try {
-            Optional<SignWorkflowStore.Record> optional = readSignRecord(submissionId);
+            Optional<StoredSign> optional = readStoredSign(submissionId);
             if (optional.isEmpty()) {
                 return Optional.empty();
             }
-            SignWorkflowStore.Record current = optional.get();
+            StoredSign stored = optional.get();
+            SignWorkflowStore.Record current = stored.record();
             Instant now = signingNow();
             boolean claimable = current.state() == SignWorkflowStore.State.INTENT;
             boolean leaseAvailable = current.leaseUntil().isEmpty() || !current.leaseUntil().get().isAfter(now);
@@ -868,8 +966,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             SignWorkflowStore.Record claimed = copySignRecord(current, current.state(), current.revision() + 1L,
                     current.fence() + 1L, Optional.of(now.plus(lease)), current.detailCode(), current.result(),
                     current.providerUpdatedAt());
-            writeSignRecord(claimed);
-            return Optional.of(claimed);
+            return replaceSignMetadata(stored, claimed, false) ? Optional.of(claimed) : Optional.empty();
         } finally {
             releaseSignLock(submissionId, lock);
         }
@@ -882,19 +979,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requirePositive(lease, "lease");
         SignLockEntry lock = acquireSignLock(submissionId);
         try {
-            Optional<SignWorkflowStore.Record> optional = readSignRecord(submissionId);
+            Optional<StoredSign> optional = readStoredSign(submissionId);
             if (optional.isEmpty()) {
                 return Optional.empty();
             }
-            SignWorkflowStore.Record current = optional.get();
+            StoredSign stored = optional.get();
+            SignWorkflowStore.Record current = stored.record();
             if (current.revision() != expectedRevision || current.fence() != fence || current.leaseUntil().isEmpty()) {
                 return Optional.empty();
             }
             SignWorkflowStore.Record renewed = copySignRecord(current, current.state(), current.revision() + 1L, fence,
                     Optional.of(signingNow().plus(lease)), current.detailCode(), current.result(),
                     current.providerUpdatedAt());
-            writeSignRecord(renewed);
-            return Optional.of(renewed);
+            return replaceSignMetadata(stored, renewed, false) ? Optional.of(renewed) : Optional.empty();
         } finally {
             releaseSignLock(submissionId, lock);
         }
@@ -911,11 +1008,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         Objects.requireNonNull(providerUpdatedAt, "providerUpdatedAt");
         SignLockEntry lock = acquireSignLock(submissionId);
         try {
-            Optional<SignWorkflowStore.Record> optional = readSignRecord(submissionId);
+            Optional<StoredSign> optional = readStoredSign(submissionId);
             if (optional.isEmpty()) {
                 return Optional.empty();
             }
-            SignWorkflowStore.Record current = optional.get();
+            StoredSign stored = optional.get();
+            SignWorkflowStore.Record current = stored.record();
             if (current.revision() != expectedRevision || current.fence() != fence
                     || !validSignTransition(current.state(), target)) {
                 return Optional.empty();
@@ -930,8 +1028,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
             SignWorkflowStore.Record transitioned = copySignRecord(current, target, current.revision() + 1L, fence,
                     Optional.empty(), detailCode, result, providerUpdatedAt);
-            writeSignRecord(transitioned);
-            return Optional.of(transitioned);
+            return replaceSignMetadata(stored, transitioned, false) ? Optional.of(transitioned) : Optional.empty();
         } finally {
             releaseSignLock(submissionId, lock);
         }
@@ -942,11 +1039,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requireStoreUsable();
         SignLockEntry lock = acquireSignLock(submissionId);
         try {
-            Optional<SignWorkflowStore.Record> optional = readSignRecord(submissionId);
+            Optional<StoredSign> optional = readStoredSign(submissionId);
             if (optional.isEmpty()) {
                 return Optional.empty();
             }
-            SignWorkflowStore.Record current = optional.get();
+            StoredSign stored = optional.get();
+            SignWorkflowStore.Record current = stored.record();
             if (current.revision() != expectedRevision || current.fence() != fence
                     || !isRetirableSignState(current.state())) {
                 return Optional.empty();
@@ -958,7 +1056,18 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     current.namespace(), current.fingerprint(), current.owner(), current.createdAt(),
                     current.deadline(), retiredRequest, SignWorkflowStore.State.RETIRED, current.revision() + 1L,
                     fence, Optional.empty(), Optional.of("RETIRED"), current.result(), current.providerUpdatedAt());
-            writeSignRecord(retired);
+            if (!replaceSignMetadata(stored, retired, true)) {
+                return Optional.empty();
+            }
+            stored.reference().ifPresent(reference -> {
+                try {
+                    if (reference.lifecycle() == DurableContentReference.Lifecycle.OPERATION) {
+                        stagedContent.retireSigningContent(reference);
+                    }
+                } catch (IOException exception) {
+                    LOG.log(Level.WARNING, "Signing content retirement cleanup failed");
+                }
+            });
             return Optional.of(retired);
         } finally {
             releaseSignLock(submissionId, lock);
@@ -968,24 +1077,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     public int purgeExpiredSignRecords() {
         requireStoreUsable();
-        Path root = paths.signWorkflowRoot();
-        if (!Files.isDirectory(root)) {
-            return 0;
-        }
         int purged = 0;
         for (SignWorkflowStore.Record record : listSignRecords()) {
             if (record.state() == SignWorkflowStore.State.RETIRED
                     && !record.createdAt().plus(options.signingOperationHorizon()).isAfter(signingNow())) {
                 SignLockEntry lock = acquireSignLock(record.submissionId());
                 try {
-                    Optional<SignWorkflowStore.Record> current = readSignRecord(record.submissionId());
-                    if (current.isPresent() && current.get().state() == SignWorkflowStore.State.RETIRED
-                            && !current.get().createdAt().plus(options.signingOperationHorizon()).isAfter(signingNow())
-                            && Files.deleteIfExists(paths.signWorkflowPath(record.submissionId()))) {
+                    Optional<StoredSign> current = readStoredSign(record.submissionId());
+                    if (current.isPresent() && current.get().record().state() == SignWorkflowStore.State.RETIRED
+                            && !current.get().record().createdAt().plus(options.signingOperationHorizon())
+                                    .isAfter(signingNow())
+                            && deleteSignMetadata(current.get())) {
                         purged++;
                     }
-                } catch (IOException ex) {
-                    throw new IllegalStateException("failed to purge signing workflow", ex);
                 } finally {
                     releaseSignLock(record.submissionId(), lock);
                 }
@@ -996,7 +1100,24 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     @Override
     public void close() throws IOException {
-        this.ownership.close();
+        IOException failure = null;
+        try {
+            metadataStore.close();
+        } catch (IOException exception) {
+            failure = exception;
+        }
+        try {
+            ownership.close();
+        } catch (IOException exception) {
+            if (failure == null) {
+                failure = exception;
+            } else {
+                failure.addSuppressed(exception);
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
     private void requireStoreUsable() {
@@ -1351,34 +1472,55 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     private Optional<SignWorkflowStore.Record> readSignRecord(PkiId submissionId) {
-        Path path = paths.signWorkflowPath(submissionId);
-        if (!Files.exists(path)) {
-            return Optional.empty();
-        }
-        SignWorkflowStore.Record record = readSignRecordFile(path);
-        validateSignRecord(submissionId, record);
-        return Optional.of(record);
+        return readStoredSign(submissionId).map(StoredSign::record);
     }
 
-    private SignWorkflowStore.Record readSignRecordFile(Path path) {
-        try {
-            byte[] envelope = FsOperations.readAll(path);
-            if (envelope.length < SIGN_RECORD_HEADER_BYTES) {
-                throw new IllegalStateException("Invalid signing record envelope");
+    private Optional<StoredSign> readStoredSign(PkiId submissionId) {
+        MetadataKey recordKey = signingRecordKey(submissionId);
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            Optional<MetadataSnapshot.Record> storedRecord = snapshot.get(recordKey);
+            if (storedRecord.isEmpty()) {
+                if (snapshot.get(signingOwnerKey(submissionId)).isPresent()) {
+                    throw new IllegalStateException("Signing owner exists without its record");
+                }
+                return Optional.empty();
             }
-            ByteBuffer input = ByteBuffer.wrap(envelope);
-            if (input.getInt() != SIGN_RECORD_MAGIC) {
-                throw new IllegalStateException("Invalid signing record envelope");
-            }
-            if (input.getInt() != CURRENT_SIGN_RECORD_VERSION) {
-                throw new IllegalStateException("Unsupported signing record version");
-            }
-            byte[] payload = new byte[input.remaining()];
-            input.get(payload);
-            return FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, payload, stagedContent);
+            return Optional.of(decodeStoredSign(snapshot, storedRecord.orElseThrow()));
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to read authoritative signing record", ex);
         }
+    }
+
+    private StoredSign decodeStoredSign(MetadataSnapshot snapshot, MetadataSnapshot.Record storedRecord)
+            throws IOException {
+        SignWorkflowStore.Record record = decodeSignRecord(storedRecord);
+        PkiId submissionId = record.submissionId();
+        if (!signingRecordKey(submissionId).equals(storedRecord.key())) {
+            throw new IllegalStateException("Signing record metadata key mismatch");
+        }
+        validateSignRecord(submissionId, record);
+        Optional<MetadataSnapshot.Record> storedOwner = snapshot.get(signingOwnerKey(submissionId));
+        if (record.state() == SignWorkflowStore.State.RETIRED) {
+            if (storedOwner.isPresent()) {
+                throw new IllegalStateException("Retired signing record retains an owner edge");
+            }
+            return new StoredSign(record, storedRecord.recordRevision(), OptionalLong.empty(), Optional.empty());
+        }
+        try (MetadataSnapshot.Record owner = storedOwner.orElseThrow(
+                () -> new IllegalStateException("Signing record owner edge is missing"))) {
+            DurableContentReference reference = decodeSigningOwner(owner, submissionId);
+            PkiSigningBus.SignContinuation continuation = PkiSigningBus.SignContinuation.decode(
+                    record.request(), stagedContent);
+            if (!reference.equals(continuation.content())) {
+                throw new IllegalStateException("Signing record owner reference mismatch");
+            }
+            return new StoredSign(record, storedRecord.recordRevision(), OptionalLong.of(owner.recordRevision()),
+                    Optional.of(reference));
+        }
+    }
+
+    private SignWorkflowStore.Record decodeSignRecord(MetadataSnapshot.Record stored) throws IOException {
+        return FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, readMetadataValue(stored), stagedContent);
     }
 
     // Parsing and canonicalization failures can carry persisted request material;
@@ -1456,18 +1598,51 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         validateSignRecordState(record);
     }
 
-    private void writeSignRecord(SignWorkflowStore.Record record) {
+    private MetadataCommitResult createSignMetadata(SignWorkflowStore.Record record,
+            DurableContentReference reference) {
         validateSignRecord(record.submissionId(), record);
-        try {
-            byte[] payload = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record);
-            ByteBuffer envelope = ByteBuffer.allocate(SIGN_RECORD_HEADER_BYTES + payload.length);
-            envelope.putInt(SIGN_RECORD_MAGIC);
-            envelope.putInt(CURRENT_SIGN_RECORD_VERSION);
-            envelope.put(payload);
-            FsOperations.writeAtomic(paths.signWorkflowPath(record.submissionId()), envelope.array());
+        try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+            transaction.create(signingRecordKey(record.submissionId()),
+                    byteContent(FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record)), CancellationSignal.NONE);
+            transaction.create(signingOwnerKey(record.submissionId()),
+                    byteContent(encodeSigningOwner(record.submissionId(), reference)), CancellationSignal.NONE);
+            return requireKnownOutcome(transaction.commit());
         } catch (IOException ex) {
-            throw new IllegalStateException("failed to persist signing workflow", ex);
+            throw new IllegalStateException("Failed to persist signing authority", ex);
         }
+    }
+
+    private boolean replaceSignMetadata(StoredSign current, SignWorkflowStore.Record replacement,
+            boolean removeOwner) {
+        validateSignRecord(replacement.submissionId(), replacement);
+        try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+            transaction.replace(signingRecordKey(replacement.submissionId()), current.recordRevision(),
+                    byteContent(FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, replacement)), CancellationSignal.NONE);
+            if (removeOwner) {
+                transaction.delete(signingOwnerKey(replacement.submissionId()),
+                        current.ownerRevision().orElseThrow());
+            }
+            return requireKnownOutcome(transaction.commit()).outcome() == MetadataCommitResult.Outcome.COMMITTED;
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to replace signing authority", ex);
+        }
+    }
+
+    private boolean deleteSignMetadata(StoredSign current) {
+        try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+            transaction.delete(signingRecordKey(current.record().submissionId()), current.recordRevision());
+            return requireKnownOutcome(transaction.commit()).outcome() == MetadataCommitResult.Outcome.COMMITTED;
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to retire signing authority", ex);
+        }
+    }
+
+    private MetadataCommitResult requireKnownOutcome(MetadataCommitResult result) {
+        if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+            durabilityUncertain.set(true);
+            throw new PkiException("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED");
+        }
+        return result;
     }
 
     private static SignWorkflowStore.Record copySignRecord(SignWorkflowStore.Record current,
@@ -1476,6 +1651,143 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return new SignWorkflowStore.Record(current.submissionId(), current.namespace(), current.fingerprint(),
                 current.owner(), current.createdAt(), current.deadline(), current.request(), state, revision, fence,
                 leaseUntil, detailCode, result, providerUpdatedAt);
+    }
+
+    private static MetadataKey signingRecordKey(PkiId submissionId) {
+        SigningSubmissionId parsed = SigningSubmissionId.parse(submissionId);
+        return new MetadataKey(SIGN_RECORD_NAMESPACE, parsed.id().value());
+    }
+
+    private static MetadataKey signingOwnerKey(PkiId submissionId) {
+        SigningSubmissionId parsed = SigningSubmissionId.parse(submissionId);
+        return new MetadataKey(SIGN_OWNER_NAMESPACE, parsed.id().value());
+    }
+
+    private static RepeatableContent byteContent(byte[] value) {
+        return new ByteValueContent(value);
+    }
+
+    private static byte[] readMetadataValue(MetadataSnapshot.Record record) throws IOException {
+        long length = record.length().orElseThrow();
+        if (length < 0L || length > FsCodec.MAX_COMPONENT_BYTES) {
+            throw new IOException("Signing metadata value length is invalid");
+        }
+        byte[] result = new byte[Math.toIntExact(length)];
+        try (InputStream input = record.openStream()) {
+            int offset = 0;
+            while (offset < result.length) {
+                int count = input.read(result, offset, result.length - offset);
+                if (count <= 0) {
+                    throw new IOException("Signing metadata value is truncated");
+                }
+                offset += count;
+            }
+            if (input.read() >= 0) {
+                throw new IOException("Signing metadata value has trailing data");
+            }
+        }
+        return result;
+    }
+
+    private static byte[] encodeSigningOwner(PkiId submissionId, DurableContentReference reference) {
+        byte[][] fields = {
+                DurableContentOwner.Category.SIGNING_OPERATION.name().getBytes(StandardCharsets.US_ASCII),
+                submissionId.value().getBytes(StandardCharsets.UTF_8),
+                reference.storeId().getBytes(StandardCharsets.UTF_8),
+                reference.contentId().getBytes(StandardCharsets.UTF_8),
+                reference.encoding().name().getBytes(StandardCharsets.US_ASCII),
+                reference.sha256().getBytes(StandardCharsets.US_ASCII),
+                reference.lifecycle().name().getBytes(StandardCharsets.US_ASCII)
+        };
+        int size = Integer.BYTES + Long.BYTES;
+        for (byte[] field : fields) {
+            size = Math.addExact(size, Math.addExact(Integer.BYTES, field.length));
+        }
+        ByteBuffer output = ByteBuffer.allocate(size);
+        output.putInt(SIGN_OWNER_VALUE_VERSION);
+        for (byte[] field : fields) {
+            output.putInt(field.length).put(field);
+        }
+        output.putLong(reference.length());
+        return output.array();
+    }
+
+    private DurableContentReference decodeSigningOwner(MetadataSnapshot.Record owner, PkiId expectedId)
+            throws IOException {
+        ByteBuffer input = ByteBuffer.wrap(readMetadataValue(owner));
+        try {
+            if (input.getInt() != SIGN_OWNER_VALUE_VERSION) {
+                throw new IOException("Unsupported signing owner metadata");
+            }
+            DurableContentOwner.Category category = DurableContentOwner.Category.valueOf(readOwnerField(input));
+            String ownerId = readOwnerField(input);
+            String storeId = readOwnerField(input);
+            String contentId = readOwnerField(input);
+            zeroecho.pki.api.Encoding encoding = zeroecho.pki.api.Encoding.valueOf(readOwnerField(input));
+            String digest = readOwnerField(input);
+            DurableContentReference.Lifecycle lifecycle = DurableContentReference.Lifecycle.valueOf(
+                    readOwnerField(input));
+            long length = input.getLong();
+            if (input.hasRemaining() || category != DurableContentOwner.Category.SIGNING_OPERATION
+                    || !ownerId.equals(expectedId.value())) {
+                throw new IOException("Signing owner metadata identity mismatch");
+            }
+            DurableContentReference restored = stagedContent.restoreReference(storeId, contentId, encoding,
+                    length, digest, lifecycle);
+            if (!signingOwnerKey(expectedId).equals(owner.key())) {
+                throw new IOException("Signing owner metadata key mismatch");
+            }
+            return restored;
+        } catch (IllegalArgumentException | java.nio.BufferUnderflowException exception) {
+            throw new IOException("Malformed signing owner metadata", exception);
+        }
+    }
+
+    private static String readOwnerField(ByteBuffer input) throws IOException {
+        int length = input.getInt();
+        if (length <= 0 || length > MetadataKey.MAXIMUM_KEY_UTF8_BYTES || input.remaining() < length) {
+            throw new IOException("Malformed signing owner metadata field");
+        }
+        byte[] value = new byte[length];
+        input.get(value);
+        String decoded = new String(value, StandardCharsets.UTF_8);
+        if (!Arrays.equals(value, decoded.getBytes(StandardCharsets.UTF_8))) {
+            throw new IOException("Malformed signing owner metadata UTF-8");
+        }
+        return decoded;
+    }
+
+    private record StoredSign(SignWorkflowStore.Record record, long recordRevision,
+            OptionalLong ownerRevision, Optional<DurableContentReference> reference) {
+    }
+
+    /** Store-owned bounded finite control metadata used only for synchronous admission. */
+    private static final class ByteValueContent implements RepeatableContent {
+        private final byte[] value;
+
+        private ByteValueContent(byte[] value) {
+            this.value = Objects.requireNonNull(value, "value").clone();
+        }
+
+        @Override
+        public InputStream openStream() {
+            return new ByteArrayInputStream(value);
+        }
+
+        @Override
+        public OptionalLong length() {
+            return OptionalLong.of(value.length);
+        }
+
+        @Override
+        public String contentId() {
+            return "signing-control-metadata";
+        }
+
+        @Override
+        public void close() {
+            Arrays.fill(value, (byte) 0);
+        }
     }
 
     private static boolean validSignTransition(SignWorkflowStore.State source, SignWorkflowStore.State target) {

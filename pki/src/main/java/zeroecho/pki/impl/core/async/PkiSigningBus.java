@@ -58,7 +58,6 @@ import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.content.DurableContentReference;
-import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
 import zeroecho.pki.api.orch.SigningSubmissionId;
@@ -427,34 +426,13 @@ public final class PkiSigningBus implements AutoCloseable {
             SignWorkflowStore.Record intent = new SignWorkflowStore.Record(baseOpId, namespace, fingerprint, owner,
                     parsed.createdAt(), deadline, persistedRequest, SignWorkflowStore.State.INTENT, 0L, 0L,
                     Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty());
-            DurableContentOwner contentOwner = DurableContentOwner.signingOperation(baseOpId);
-            boolean retained = false;
-            boolean recordVisible = false;
-            try {
-                retained = store.stagedContent().retainContent(content, contentOwner);
-                SignWorkflowStore.CreateResult created = store.createSignIntent(intent);
-                if (created == SignWorkflowStore.CreateResult.CONFLICT) {
-                    throw new PkiException("Signing submission identifier conflicts with a different request");
-                }
-                recordVisible = true;
-                authoritative = store.getSignRecord(baseOpId).orElseThrow();
-            } catch (java.io.IOException exception) {
-                throw new PkiException("Signing content retention failed: code=SPOOL_STORAGE_FAILED", exception);
-            } finally {
-                if (retained && !recordVisible) {
-                    rollbackSigningOwner(content, contentOwner);
-                }
+            SignWorkflowStore.CreateResult created = store.createSignIntent(intent);
+            if (created == SignWorkflowStore.CreateResult.CONFLICT) {
+                throw new PkiException("Signing submission identifier conflicts with a different request");
             }
+            authoritative = store.getSignRecord(baseOpId).orElseThrow();
         }
         project(authoritative);
-    }
-
-    private void rollbackSigningOwner(DurableContentReference content, DurableContentOwner owner) {
-        try {
-            store.stagedContent().releaseContent(content, owner);
-        } catch (java.io.IOException exception) {
-            throw new PkiException("Signing content rollback failed: code=SPOOL_STORAGE_FAILED", exception);
-        }
     }
 
     /**
@@ -564,15 +542,8 @@ public final class PkiSigningBus implements AutoCloseable {
             if (!isTerminalSignState(state.state())) {
                 return;
             }
-            Optional<DurableContentReference> releaseReference = Optional.empty();
-            if (state.state() != SignWorkflowStore.State.RETIRED) {
-                releaseReference = Optional.of(SignContinuation.decode(state.request(), store.stagedContent()).content());
-            }
             state = confirmRetirement(baseOpId, state);
             store.deleteWorkflowState(baseOpId);
-            if (releaseReference.isPresent()) {
-                releaseRetiredOperationContent(baseOpId, releaseReference.get());
-            }
         }
         AsyncState advisoryState = state.result().isPresent() ? AsyncState.SUCCEEDED : AsyncState.CANCELLED;
         bus.update(baseOpId, new AsyncStatus(advisoryState, store.signingNow(), Optional.of("RETIRED"),
@@ -580,16 +551,6 @@ public final class PkiSigningBus implements AutoCloseable {
         bus.retire(baseOpId);
     }
 
-    private void releaseRetiredOperationContent(PkiId operationId, DurableContentReference reference) {
-        if (reference.lifecycle() != DurableContentReference.Lifecycle.OPERATION) {
-            return;
-        }
-        try {
-            store.stagedContent().releaseContent(reference, DurableContentOwner.signingOperation(operationId));
-        } catch (java.io.IOException exception) {
-            throw new PkiException("Signing content retirement failed: code=SPOOL_STORAGE_FAILED", exception);
-        }
-    }
 
     private void reconcileExpiredOperations() {
         Instant current = store.signingNow();
@@ -1103,8 +1064,6 @@ public final class PkiSigningBus implements AutoCloseable {
                 boolean reservationTransferred = false;
                 try {
                     SignContinuation continuation = SignContinuation.decode(claimed.request(), store.stagedContent());
-                    DurableContentOwner contentOwner = DurableContentOwner.signingOperation(opId);
-                    requireSigningOwner(continuation.content(), contentOwner);
                     X509ExecutionPlan<SignatureWorkflow> plan = authority.planSigning(continuation.algorithmId,
                             workflowImplementationId(signer), SignatureWorkflow.class);
                     authority.authorize(plan, signer, AlgorithmExecutionCapability.Direction.SIGN);
@@ -1130,16 +1089,6 @@ public final class PkiSigningBus implements AutoCloseable {
                         reservation.close();
                     }
                 }
-            }
-        }
-
-        private void requireSigningOwner(DurableContentReference reference, DurableContentOwner owner) {
-            try {
-                if (!store.stagedContent().contentOwners(reference).contains(owner)) {
-                    throw new PkiException("Signing content owner missing: code=STAGED_CONTENT_INCOMPLETE");
-                }
-            } catch (java.io.IOException exception) {
-                throw new PkiException("Signing content ownership failed: code=CONTENT_INTEGRITY_FAILED", exception);
             }
         }
 

@@ -46,6 +46,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -137,6 +138,37 @@ final class FilesystemStagedContentStoreTest {
         assertThrows(IOException.class, () -> store.openContent(temporary));
         System.out.println("...retainedLength=" + retained.length());
         System.out.println("recoveryRetainsOnlyDurablyReferencedCompletedContent...ok");
+    }
+
+    @Test
+    void transactionalSigningOwnerPreventsGeneralRetirement(@TempDir Path directory) throws Exception {
+        System.out.println("transactionalSigningOwnerPreventsGeneralRetirement");
+        FilesystemStagedContentStore store = new FilesystemStagedContentStore(directory, STORE_ID);
+        DurableContentReference reference = stage(store, DurableContentReference.Lifecycle.OPERATION, "sign-input");
+        DurableContentOwner authority = signingOwner("authority");
+        store.bindSigningOwnership(candidate -> candidate.equals(reference) ? Set.of(authority) : Set.of());
+        assertThrows(IOException.class, () -> store.retireUnownedContent(reference));
+        try (zeroecho.core.io.RepeatableContent content = store.openContent(reference)) {
+            assertEquals(reference.length(), content.length().orElseThrow());
+        }
+        assertThrows(IllegalArgumentException.class,
+                () -> store.retainContent(reference, signingOwner("authority")));
+        System.out.println("transactionalSigningOwnerPreventsGeneralRetirement...ok");
+    }
+
+    @Test
+    void sharedSigningPublicationReservationsAreReferenceCounted(@TempDir Path directory) throws Exception {
+        System.out.println("sharedSigningPublicationReservationsAreReferenceCounted");
+        FilesystemStagedContentStore store = new FilesystemStagedContentStore(directory, STORE_ID);
+        DurableContentReference reference = stage(store, DurableContentReference.Lifecycle.OPERATION, "shared");
+        try (FilesystemStagedContentStore.SigningReservation first = store.reserveSigningPublication(reference);
+                FilesystemStagedContentStore.SigningReservation second = store.reserveSigningPublication(reference)) {
+            first.close();
+            assertThrows(IOException.class, () -> store.retireUnownedContent(reference));
+        }
+        store.retireUnownedContent(reference);
+        assertThrows(IOException.class, () -> store.openContent(reference));
+        System.out.println("sharedSigningPublicationReservationsAreReferenceCounted...ok");
     }
 
     @Test

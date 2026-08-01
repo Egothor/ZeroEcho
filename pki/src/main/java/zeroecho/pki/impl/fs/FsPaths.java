@@ -94,6 +94,10 @@ final class FsPaths {
         return this.root.resolve("staged-content");
     }
 
+    /* default */ Path transactionalMetadataLog() {
+        return this.root.resolve("metadata").resolve("transactions.log");
+    }
+
     /* default */ Path lockFile() {
         return this.root.resolve(LOCK_DIR).resolve(STORE_LOCK);
     }
@@ -154,16 +158,6 @@ final class FsPaths {
     /* default */ Path requestPath(final PkiId requestId) {
         Objects.requireNonNull(requestId, "requestId");
         return this.root.resolve("requests").resolve(BY_ID).resolve(FsUtil.safeId(requestId) + BINARY_EXTENSION);
-    }
-
-    /* default */ Path signWorkflowPath(final PkiId submissionId) {
-        Objects.requireNonNull(submissionId, "submissionId");
-        return this.root.resolve("sign-workflows").resolve(BY_ID).resolve(FsUtil.safeId(submissionId))
-                .resolve(CURRENT_FILE);
-    }
-
-    /* default */ Path signWorkflowRoot() {
-        return this.root.resolve("sign-workflows").resolve(BY_ID);
     }
 
     // -------------------------------------------------------------------------

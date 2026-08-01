@@ -61,7 +61,10 @@ import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 import zeroecho.core.io.RepeatableContent;
@@ -100,6 +103,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     private final Path root;
     private final String storeId;
     private final ReentrantLock[] ownerLocks;
+    private final ConcurrentMap<String, Integer> signingReservations;
+    private final AtomicReference<SigningOwnership> signingOwnership;
 
     /**
      * Creates a staged-content store.
@@ -113,6 +118,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         this.storeId = requireStoreIdentifier(storeId);
         this.ownerLocks = new ReentrantLock[OWNER_LOCK_COUNT];
+        this.signingReservations = new ConcurrentHashMap<>();
+        this.signingOwnership = new AtomicReference<>(reference -> Set.of());
         for (int index = 0; index < ownerLocks.length; index++) {
             ownerLocks[index] = new ReentrantLock();
         }
@@ -177,6 +184,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     public boolean retainContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
         DurableContentReference exact = requireOwned(reference);
         Objects.requireNonNull(owner, "owner");
+        SigningOwnershipIo.requireSidecarOwner(owner);
         ReentrantLock lock = ownerLock(exact.contentId());
         lock.lock();
         try {
@@ -196,6 +204,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     public boolean releaseContent(DurableContentReference reference, DurableContentOwner owner) throws IOException {
         DurableContentReference exact = requireOwned(reference);
         Objects.requireNonNull(owner, "owner");
+        SigningOwnershipIo.requireSidecarOwner(owner);
         ReentrantLock lock = ownerLock(exact.contentId());
         lock.lock();
         try {
@@ -208,9 +217,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                 return false;
             }
             writeOwners(exact.contentId(), owners);
-            if (owners.isEmpty()) {
-                retireFiles(exact);
-            }
+            SigningOwnershipIo.retireIfUnowned(this, exact, owners);
             return true;
         } finally {
             lock.unlock();
@@ -224,7 +231,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         lock.lock();
         try {
             requireExactMetadata(exact);
-            return Set.copyOf(readOwners(exact.contentId()));
+            Set<DurableContentOwner> owners = readOwners(exact.contentId());
+            owners.addAll(signingOwnership.get().findOwners(exact));
+            return Set.copyOf(owners);
         } finally {
             lock.unlock();
         }
@@ -237,9 +246,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         lock.lock();
         try {
             requireExactMetadata(exact);
-            if (!readOwners(exact.contentId()).isEmpty()) {
-                throw new IOException("Staged content remains durably owned");
-            }
+            SigningOwnershipIo.requireUnowned(this, exact);
             retireFiles(exact);
         } finally {
             lock.unlock();
@@ -309,7 +316,53 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     }
 
     private void writeOwners(String contentId, Set<DurableContentOwner> owners) throws IOException {
+        SigningOwnershipIo.requireSidecarOwners(owners);
         StoreIo.writeOwners(this, contentId, owners);
+    }
+
+    /* package */ void retireSigningContent(DurableContentReference reference) throws IOException {
+        SigningOwnershipIo.retireSigningContent(this, reference);
+    }
+
+    /* package */ void bindSigningOwnership(SigningOwnership ownership) {
+        signingOwnership.set(Objects.requireNonNull(ownership, "ownership"));
+    }
+
+    /* package */ SigningReservation reserveSigningPublication(DurableContentReference reference)
+            throws IOException {
+        return SigningOwnershipIo.reserveSigningPublication(this, reference);
+    }
+
+    /** Internal callback to the transactional signing-owner authority. */
+    /* default */
+    @FunctionalInterface
+    interface SigningOwnership {
+        /** Finds every exact signing owner for a durable content reference. */
+        Set<DurableContentOwner> findOwners(DurableContentReference reference) throws IOException;
+    }
+
+    /** Short-lived reference-counted reservation spanning validation and commit. */
+    /* package */ final class SigningReservation implements AutoCloseable {
+        private final String contentId;
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        private SigningReservation(String contentId) {
+            this.contentId = contentId;
+        }
+
+        @Override
+        public void close() {
+            if (closed.compareAndSet(false, true)) {
+                ReentrantLock lock = ownerLock(contentId);
+                lock.lock();
+                try {
+                    signingReservations.computeIfPresent(contentId,
+                            (ignored, count) -> count == 1 ? null : count - 1);
+                } finally {
+                    lock.unlock();
+                }
+            }
+        }
     }
 
     private void retireFiles(DurableContentReference reference) throws IOException {
@@ -810,6 +863,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             }
             for (int index = 0; index < count; index++) {
                 DurableContentOwner owner = parseOwner(input.readUTF());
+                if (owner.category() == DurableContentOwner.Category.SIGNING_OPERATION) {
+                    continue;
+                }
                 if (!owners.add(owner)) {
                     throw new IOException("Duplicate staged content owner");
                 }
@@ -873,6 +929,75 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                 Files.move(incomplete, complete, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException exception) {
                 Files.move(incomplete, complete);
+            }
+        }
+    }
+
+    /** Isolates transactional signing-ownership lifecycle decisions. */
+    private static final class SigningOwnershipIo {
+        private static void requireSidecarOwners(Set<DurableContentOwner> owners) {
+            for (DurableContentOwner owner : owners) {
+                requireSidecarOwner(owner);
+            }
+        }
+
+        private static void requireSidecarOwner(DurableContentOwner owner) {
+            if (owner.category() == DurableContentOwner.Category.SIGNING_OPERATION) {
+                throw new IllegalArgumentException(
+                        "Signing-operation ownership is authoritative transactional metadata");
+            }
+        }
+
+        private static SigningReservation reserveSigningPublication(FilesystemStagedContentStore store,
+                DurableContentReference reference) throws IOException {
+            DurableContentReference exact = store.requireOwned(reference);
+            ReentrantLock lock = store.ownerLock(exact.contentId());
+            lock.lock();
+            try {
+                store.requireExactMetadata(exact);
+                store.signingReservations.merge(exact.contentId(), 1, Math::addExact);
+                return store.new SigningReservation(exact.contentId());
+            } catch (ArithmeticException exception) {
+                throw new IOException("Signing content reservation limit exceeded", exception);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        private static boolean hasSigningAuthority(FilesystemStagedContentStore store,
+                DurableContentReference reference) throws IOException {
+            return store.signingReservations.containsKey(reference.contentId())
+                    || !store.signingOwnership.get().findOwners(reference).isEmpty();
+        }
+
+        private static void retireIfUnowned(FilesystemStagedContentStore store,
+                DurableContentReference reference, Set<DurableContentOwner> owners) throws IOException {
+            if (owners.isEmpty() && !hasSigningAuthority(store, reference)) {
+                store.retireFiles(reference);
+            }
+        }
+
+        private static void requireUnowned(FilesystemStagedContentStore store,
+                DurableContentReference reference) throws IOException {
+            if (!store.readOwners(reference.contentId()).isEmpty()
+                    || hasSigningAuthority(store, reference)) {
+                throw new IOException("Staged content remains durably owned");
+            }
+        }
+
+        private static void retireSigningContent(FilesystemStagedContentStore store,
+                DurableContentReference reference) throws IOException {
+            DurableContentReference exact = store.requireOwned(reference);
+            ReentrantLock lock = store.ownerLock(exact.contentId());
+            lock.lock();
+            try {
+                store.requireExactMetadata(exact);
+                if (store.readOwners(exact.contentId()).isEmpty()
+                        && !hasSigningAuthority(store, exact)) {
+                    store.retireFiles(exact);
+                }
+            } finally {
+                lock.unlock();
             }
         }
     }

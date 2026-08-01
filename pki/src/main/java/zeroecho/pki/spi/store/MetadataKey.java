@@ -1,5 +1,9 @@
 package zeroecho.pki.spi.store;
 
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
@@ -16,6 +20,11 @@ import java.util.Optional;
  * @param key exact logical key
  */
 public record MetadataKey(String namespace, String key) implements Comparable<MetadataKey> {
+    private static final String CANONICAL_VERSION_PREFIX = "mk1:";
+    private static final byte[] CANONICAL_VERSION_BYTES =
+            CANONICAL_VERSION_PREFIX.getBytes(StandardCharsets.US_ASCII);
+    private static final byte LENGTH_SEPARATOR = ':';
+    private static final int MAXIMUM_CANONICAL_CHARACTERS = 4364;
     private static final int MINIMUM_KEY_BYTE = 0x21;
     private static final int MAXIMUM_KEY_BYTE = 0x7e;
     /** Maximum canonical namespace length in UTF-8 bytes. */
@@ -33,6 +42,9 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
 
     /* package */ static void validateNamespace(String value) {
         Objects.requireNonNull(value, "namespace");
+        if (value.length() > MAXIMUM_NAMESPACE_UTF8_BYTES) {
+            throw new IllegalArgumentException("Metadata namespace exceeds its canonical UTF-8 limit");
+        }
         if (!value.matches("[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?)*")) {
             throw new IllegalArgumentException("Metadata namespace is not canonical");
         }
@@ -44,6 +56,9 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
 
     /* package */ static void validateKey(String value, boolean emptyAllowed) {
         Objects.requireNonNull(value, "key");
+        if (value.length() > MAXIMUM_KEY_UTF8_BYTES) {
+            throw new IllegalArgumentException("Metadata key exceeds its canonical UTF-8 limit");
+        }
         if (!emptyAllowed && value.isEmpty()) {
             throw new IllegalArgumentException("Metadata key must not be empty");
         }
@@ -52,7 +67,6 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
             char current = value.charAt(index);
             if (current < MINIMUM_KEY_BYTE
                     || current > MAXIMUM_KEY_BYTE
-                    || current == ':'
                     || current == '/'
                     || current == '\\') {
                 throw new IllegalArgumentException("Metadata key is not canonical visible ASCII");
@@ -103,35 +117,32 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
     }
 
     /**
-     * Parses one complete canonical extension-owned identity.
+     * Parses one complete versioned length-framed identity.
      *
-     * @param encoded canonical namespace and key separated by one colon
+     * @param encoded current versioned length-framed representation
      * @return parsed metadata key
      * @throws NullPointerException if {@code encoded} is {@code null}
      * @throws IllegalArgumentException if the representation is malformed
      */
     public static MetadataKey parse(String encoded) {
-        Objects.requireNonNull(encoded, "encoded");
-        int separator = encoded.indexOf(':');
-        if (separator <= 0 || separator != encoded.lastIndexOf(':')
-                || separator == encoded.length() - 1) {
-            throw new IllegalArgumentException("Metadata key representation is not canonical");
-        }
-        MetadataKey result = new MetadataKey(
-                encoded.substring(0, separator), encoded.substring(separator + 1));
-        if (!result.canonical().equals(encoded)) {
-            throw new IllegalArgumentException("Metadata key representation is not canonical");
-        }
-        return result;
+        return CanonicalCodec.parse(encoded);
     }
 
     /**
-     * Returns the complete canonical representation.
+     * Returns the complete versioned length-framed canonical representation.
      *
-     * @return namespace and exact key separated by one colon
+     * @return current versioned length-framed representation
      */
     public String canonical() {
-        return namespace + ':' + key;
+        int namespaceLength = namespace.getBytes(StandardCharsets.UTF_8).length;
+        int keyLength = key.getBytes(StandardCharsets.UTF_8).length;
+        return CANONICAL_VERSION_PREFIX + namespaceLength + ':' + keyLength + ':' + namespace + key;
+    }
+
+    /** Returns the canonical serialized representation. */
+    @Override
+    public String toString() {
+        return canonical();
     }
 
     /*
@@ -158,6 +169,120 @@ public record MetadataKey(String namespace, String key) implements Comparable<Me
     private static void requireUtf8Limit(String value, int maximumBytes, String component) {
         if (value.getBytes(StandardCharsets.UTF_8).length > maximumBytes) {
             throw new IllegalArgumentException(component + " exceeds its canonical UTF-8 limit");
+        }
+    }
+
+    /** Strict current-version textual framing isolated from semantic identity rules. */
+    private static final class CanonicalCodec {
+        private static MetadataKey parse(String encoded) {
+            Objects.requireNonNull(encoded, "encoded");
+            if (encoded.length() > MAXIMUM_CANONICAL_CHARACTERS) {
+                throw malformedRepresentation();
+            }
+            byte[] bytes = strictEncode(encoded);
+            if (!hasCanonicalPrefix(bytes)) {
+                throw malformedRepresentation();
+            }
+            LengthField namespaceLength = parseLength(bytes, CANONICAL_VERSION_BYTES.length,
+                    MAXIMUM_NAMESPACE_UTF8_BYTES);
+            LengthField keyLength = parseLength(bytes, namespaceLength.nextOffset(), MAXIMUM_KEY_UTF8_BYTES);
+            int componentLength;
+            int expectedEnd;
+            try {
+                componentLength = Math.addExact(namespaceLength.value(), keyLength.value());
+                expectedEnd = Math.addExact(keyLength.nextOffset(), componentLength);
+            } catch (ArithmeticException exception) {
+                throw new IllegalArgumentException("Metadata key representation length overflows", exception);
+            }
+            if (namespaceLength.value() == 0 || keyLength.value() == 0 || expectedEnd != bytes.length) {
+                throw malformedRepresentation();
+            }
+            int namespaceStart = keyLength.nextOffset();
+            int keyStart;
+            try {
+                keyStart = Math.addExact(namespaceStart, namespaceLength.value());
+            } catch (ArithmeticException exception) {
+                throw new IllegalArgumentException("Metadata key representation length overflows", exception);
+            }
+            MetadataKey result = new MetadataKey(
+                    strictDecode(bytes, namespaceStart, namespaceLength.value()),
+                    strictDecode(bytes, keyStart, keyLength.value()));
+            if (!result.canonical().equals(encoded)) {
+                throw malformedRepresentation();
+            }
+            return result;
+        }
+
+        private static LengthField parseLength(byte[] bytes, int offset, int maximum) {
+        if (offset >= bytes.length) {
+            throw malformedRepresentation();
+        }
+        int value = 0;
+        int cursor = offset;
+        while (cursor < bytes.length && bytes[cursor] != LENGTH_SEPARATOR) {
+            int digit = bytes[cursor] - '0';
+            if (digit < 0 || digit > 9 || cursor > offset && bytes[offset] == '0') {
+                throw malformedRepresentation();
+            }
+            try {
+                value = Math.addExact(Math.multiplyExact(value, 10), digit);
+            } catch (ArithmeticException exception) {
+                throw new IllegalArgumentException("Metadata key representation length overflows", exception);
+            }
+            if (value > maximum) {
+                throw malformedRepresentation();
+            }
+            cursor++;
+        }
+        if (cursor == offset || cursor >= bytes.length) {
+            throw malformedRepresentation();
+        }
+        return new LengthField(value, cursor + 1);
+        }
+
+        private static boolean hasCanonicalPrefix(byte[] bytes) {
+        if (bytes.length < CANONICAL_VERSION_BYTES.length) {
+            return false;
+        }
+        for (int index = 0; index < CANONICAL_VERSION_BYTES.length; index++) {
+            if (bytes[index] != CANONICAL_VERSION_BYTES[index]) {
+                return false;
+            }
+        }
+        return true;
+        }
+
+        private static byte[] strictEncode(String value) {
+        try {
+            ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .encode(CharBuffer.wrap(value));
+            byte[] result = new byte[encoded.remaining()];
+            encoded.get(result);
+            return result;
+        } catch (CharacterCodingException exception) {
+            throw new IllegalArgumentException("Metadata key representation is not valid UTF-8", exception);
+        }
+        }
+
+        private static String strictDecode(byte[] bytes, int offset, int length) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes, offset, length))
+                    .toString();
+        } catch (CharacterCodingException exception) {
+            throw new IllegalArgumentException("Metadata key component is not valid UTF-8", exception);
+        }
+        }
+
+        private static IllegalArgumentException malformedRepresentation() {
+            return new IllegalArgumentException("Metadata key representation is not canonical");
+        }
+
+        private record LengthField(int value, int nextOffset) {
         }
     }
 }
