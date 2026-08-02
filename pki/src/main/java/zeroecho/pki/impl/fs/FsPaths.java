@@ -177,6 +177,10 @@ final class FsPaths {
         return this.root.resolve("revocations").resolve("transitions.log");
     }
 
+    /* default */ Path revocationCheckpointDirectory() {
+        return this.root.resolve("revocations").resolve("checkpoints");
+    }
+
     /* default */ Path revocationSnapshotRoot() {
         return this.root.resolve("revocation-snapshots");
     }
