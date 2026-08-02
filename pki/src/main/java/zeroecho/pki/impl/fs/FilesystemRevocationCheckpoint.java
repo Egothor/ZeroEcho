@@ -179,13 +179,29 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             Path directory,
             Path logPath,
             FilesystemRevocationLog.RecoveryResult recovery) throws IOException {
-        return Discovery.discover(directory, logPath, recovery);
+        Objects.requireNonNull(recovery, "recovery");
+        return Discovery.discover(directory, logPath, LogBinding.from(recovery));
+    }
+
+    /* default */ static Optional<FilesystemRevocationCheckpoint> discoverBelow(
+            Path directory,
+            Path logPath,
+            FilesystemRevocationCurrentIndex.RecoveryBoundary target,
+            long upper,
+            boolean includeUpper,
+            FilesystemRevocationCurrentIndex.FaultInjector observer) throws IOException {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(observer, "observer");
+        return Discovery.discoverBelow(
+                directory, logPath, LogBinding.from(target), upper,
+                includeUpper, observer);
     }
 
     /* default */ static FilesystemRevocationCheckpoint open(
             Path checkpointPath,
             Path logPath,
             FilesystemRevocationLog.RecoveryResult recovery) throws IOException {
+        Objects.requireNonNull(recovery, "recovery");
         Objects.requireNonNull(checkpointPath, "checkpointPath");
         FinalName name = FinalName.parse(checkpointPath.getFileName().toString())
                 .orElseThrow(() -> new IOException("Invalid revocation checkpoint generation name"));
@@ -198,7 +214,8 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             RevocationCheckpointCodec codec = new RevocationCheckpointCodec();
             RevocationCheckpointCodec.ValidatedFile validated = codec.validate(channel);
             name.requireAgreement(validated);
-            Binding.validate(logPath, recovery, Coverage.from(validated.header()));
+            Binding.validate(
+                    logPath, LogBinding.from(recovery), Coverage.from(validated.header()));
             return new FilesystemRevocationCheckpoint(channel, codec, validated);
         } catch (IOException failure) {
             try {
@@ -467,6 +484,11 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
 
     /** Read-only ordered checkpoint cursor. */
     /* default */ interface Cursor extends AutoCloseable {
+        /** Advances without an externally cancellable recovery operation. */
+        default boolean advance() throws IOException {
+            return advance(CancellationSignal.NONE);
+        }
+
         /** Advances to the next matching checkpoint entry. */
         boolean advance(CancellationSignal cancellation) throws IOException;
 
@@ -635,9 +657,19 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             Objects.requireNonNull(logPath, "logPath");
             Objects.requireNonNull(recovery, "recovery");
             Objects.requireNonNull(coverage, "coverage");
-            if (!coverage.storeId().equals(recovery.storeId())
-                    || coverage.coveredRevision() > recovery.globalRevision()
-                    || coverage.coveredBoundary() > recovery.lastCompleteRecordBoundary()) {
+            validate(logPath, LogBinding.from(recovery), coverage);
+        }
+
+        private static void validate(
+                Path logPath,
+                LogBinding binding,
+                Coverage coverage) throws IOException {
+            Objects.requireNonNull(logPath, "logPath");
+            Objects.requireNonNull(binding, "binding");
+            Objects.requireNonNull(coverage, "coverage");
+            if (!coverage.storeId().equals(binding.storeId())
+                    || coverage.coveredRevision() > binding.globalRevision()
+                    || coverage.coveredBoundary() > binding.boundary()) {
                 throw new IOException("Checkpoint does not match the validated revocation log");
             }
             try (FileChannel log = FileChannel.open(logPath, StandardOpenOption.READ)) {
@@ -750,20 +782,51 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         private static Optional<FilesystemRevocationCheckpoint> discover(
                 Path directory,
                 Path logPath,
-                FilesystemRevocationLog.RecoveryResult recovery) throws IOException {
+                LogBinding binding) throws IOException {
             Objects.requireNonNull(directory, "directory");
             Objects.requireNonNull(logPath, "logPath");
-            Objects.requireNonNull(recovery, "recovery");
+            Objects.requireNonNull(binding, "binding");
             if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
                 return Optional.empty();
             }
-            long upperExclusive = Long.MAX_VALUE;
-            boolean includeMaximum = true;
+            return selectUnambiguous(
+                    directory, logPath, binding, binding.globalRevision(), true, null);
+        }
+
+        private static Optional<FilesystemRevocationCheckpoint> discoverBelow(
+                Path directory,
+                Path logPath,
+                LogBinding binding,
+                long upper,
+                boolean includeUpper,
+                FilesystemRevocationCurrentIndex.FaultInjector observer) throws IOException {
+            Objects.requireNonNull(directory, "directory");
+            Objects.requireNonNull(logPath, "logPath");
+            Objects.requireNonNull(binding, "binding");
+            return selectUnambiguous(
+                    directory, logPath, binding, upper, includeUpper, observer);
+        }
+
+        private static Optional<FilesystemRevocationCheckpoint> selectUnambiguous(
+                Path directory,
+                Path logPath,
+                LogBinding binding,
+                long initialUpper,
+                boolean initialInclusive,
+                FilesystemRevocationCurrentIndex.FaultInjector observer) throws IOException {
+            long upperExclusive = initialUpper;
+            boolean includeMaximum = initialInclusive;
             while (true) {
                 Selection selection = select(
-                        directory, logPath, recovery, upperExclusive, includeMaximum);
+                        directory, logPath, binding, upperExclusive,
+                        includeMaximum, observer);
                 if (selection.candidate().isEmpty()) {
-                    return Optional.empty();
+                    if (selection.revision() < ZERO_REVISION) {
+                        return Optional.empty();
+                    }
+                    upperExclusive = selection.revision();
+                    includeMaximum = false;
+                    continue;
                 }
                 if (!selection.ambiguous()) {
                     return Optional.of(openSelected(selection.candidate().orElseThrow()));
@@ -776,10 +839,44 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         private static Selection select(
                 Path directory,
                 Path logPath,
-                FilesystemRevocationLog.RecoveryResult recovery,
+                LogBinding binding,
+                long upper,
+                boolean includeUpper,
+                FilesystemRevocationCurrentIndex.FaultInjector observer) throws IOException {
+            long selectedRevision = highestEligibleRevision(
+                    directory, upper, includeUpper);
+            if (selectedRevision < ZERO_REVISION) {
+                return new Selection(Optional.empty(), selectedRevision, false);
+            }
+            return validateTier(
+                    directory, logPath, binding, selectedRevision, observer);
+        }
+
+        private static long highestEligibleRevision(
+                Path directory,
                 long upper,
                 boolean includeUpper) throws IOException {
             long selectedRevision = -1L;
+            try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+                for (Path candidate : entries) {
+                    Optional<FinalName> parsed = FinalName.parse(
+                            candidate.getFileName().toString());
+                    if (parsed.isPresent()
+                            && eligible(parsed.orElseThrow().revision(), upper, includeUpper)) {
+                        selectedRevision = Math.max(
+                                selectedRevision, parsed.orElseThrow().revision());
+                    }
+                }
+            }
+            return selectedRevision;
+        }
+
+        private static Selection validateTier(
+                Path directory,
+                Path logPath,
+                LogBinding binding,
+                long selectedRevision,
+                FilesystemRevocationCurrentIndex.FaultInjector observer) throws IOException {
             Path selectedPath = null;
             RevocationCheckpointCodec.ValidatedFile selectedValidated = null;
             String selectedGeneration = null;
@@ -787,23 +884,23 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
                 for (Path candidate : entries) {
                     Optional<FinalName> parsed = FinalName.parse(candidate.getFileName().toString());
-                    if (parsed.isEmpty() || !eligible(parsed.orElseThrow().revision(), upper, includeUpper)) {
+                    if (parsed.isEmpty()
+                            || parsed.orElseThrow().revision() != selectedRevision) {
                         continue;
                     }
+                    if (observer != null) {
+                        observer.observeRecoveryCheckpointCandidate(selectedRevision);
+                    }
                     Optional<RevocationCheckpointCodec.ValidatedFile> validated =
-                            validateCandidate(candidate, logPath, recovery, parsed.orElseThrow());
+                            validateCandidate(candidate, logPath, binding, parsed.orElseThrow());
                     if (validated.isEmpty()) {
                         continue;
                     }
-                    long revision = validated.orElseThrow().header().coveredRevision();
-                    if (revision > selectedRevision) {
-                        selectedRevision = revision;
+                    if (selectedPath == null) {
                         selectedPath = candidate;
                         selectedValidated = validated.orElseThrow();
                         selectedGeneration = validated.orElseThrow().generationId();
-                        ambiguous = false;
-                    } else if (revision == selectedRevision
-                            && !validated.orElseThrow().generationId().equals(selectedGeneration)) {
+                    } else if (!validated.orElseThrow().generationId().equals(selectedGeneration)) {
                         ambiguous = true;
                     }
                 }
@@ -827,17 +924,42 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         private static Optional<RevocationCheckpointCodec.ValidatedFile> validateCandidate(
                 Path candidate,
                 Path logPath,
-                FilesystemRevocationLog.RecoveryResult recovery,
+                LogBinding binding,
                 FinalName name) {
             try (FileChannel channel = FileChannel.open(candidate, StandardOpenOption.READ)) {
                 RevocationCheckpointCodec.ValidatedFile validated =
                         new RevocationCheckpointCodec().validate(channel);
                 name.requireAgreement(validated);
-                Binding.validate(logPath, recovery, Coverage.from(validated.header()));
+                Binding.validate(logPath, binding, Coverage.from(validated.header()));
                 return Optional.of(validated);
             } catch (IOException invalid) {
                 return Optional.empty();
             }
+        }
+    }
+
+    /** Scalar authoritative prefix used without retaining recovered current state. */
+    private record LogBinding(
+            MetadataStoreId storeId,
+            long globalRevision,
+            long boundary,
+            RevocationTransitionFrameCodec.Commitment commitment) {
+        private LogBinding {
+            Objects.requireNonNull(storeId, "storeId");
+            Objects.requireNonNull(commitment, "commitment");
+        }
+
+        private static LogBinding from(FilesystemRevocationLog.RecoveryResult recovery) {
+            return new LogBinding(
+                    recovery.storeId(), recovery.globalRevision(),
+                    recovery.lastCompleteRecordBoundary(), recovery.globalCommitment());
+        }
+
+        private static LogBinding from(
+                FilesystemRevocationCurrentIndex.RecoveryBoundary target) {
+            return new LogBinding(
+                    target.storeId(), target.globalRevision(),
+                    target.boundary(), target.globalCommitment());
         }
     }
 

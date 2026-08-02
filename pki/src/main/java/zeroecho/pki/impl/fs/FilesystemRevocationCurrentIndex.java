@@ -39,8 +39,6 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -57,12 +55,8 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.logging.Logger;
 
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.revocation.RevocationReason;
-import zeroecho.pki.api.revocation.RevocationState;
-import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
 /**
@@ -79,10 +73,6 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
     /* default */ static final int CELL_BYTES = 160;
     /* default */ static final int CELLS_PER_SLOT = 2;
 
-    private static final Logger LOGGER =
-            Logger.getLogger(FilesystemRevocationCurrentIndex.class.getName());
-    private static final String DIRECTORY_WARNING =
-            "Revocation current-index directory durability is limited; continuing in best-effort mode";
     private static final String ENTRY_COUNT_OVERFLOW =
             "Revocation index entry count overflow";
     private static final int MAGIC_SUPERBLOCK = 0x5A455249;
@@ -106,8 +96,6 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             "ZeroEcho revocation current index superblock v1".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] CELL_DOMAIN =
             "ZeroEcho revocation current index cell v1".getBytes(StandardCharsets.US_ASCII);
-    private static final byte[] KEY_DOMAIN =
-            "ZeroEcho revocation current index key v1".getBytes(StandardCharsets.US_ASCII);
     private static final HexFormat HEX = HexFormat.of();
 
     private final Path indexPath;
@@ -210,6 +198,32 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             Configuration configuration) throws IOException {
         return rebuild(indexPath, logPath, expectedStoreId, configuration,
                 DefaultPublicationOperations.INSTANCE, FaultInjector.NONE);
+    }
+
+    /* default */ static FilesystemRevocationCurrentIndex recover(
+            Path indexPath,
+            Path checkpointDirectory,
+            Path logPath,
+            MetadataStoreId expectedStoreId,
+            Configuration configuration,
+            RecoveryBoundary target) throws IOException {
+        return recover(indexPath, checkpointDirectory, logPath, expectedStoreId,
+                configuration, target, DefaultPublicationOperations.INSTANCE,
+                FaultInjector.NONE);
+    }
+
+    /* default */ static FilesystemRevocationCurrentIndex recover(
+            Path indexPath,
+            Path checkpointDirectory,
+            Path logPath,
+            MetadataStoreId expectedStoreId,
+            Configuration configuration,
+            RecoveryBoundary target,
+            PublicationOperations operations,
+            FaultInjector faults) throws IOException {
+        return RecoveryCoordinator.recover(
+                indexPath, checkpointDirectory, logPath, expectedStoreId,
+                configuration, target, operations, faults);
     }
 
     /* default */ static FilesystemRevocationCurrentIndex rebuild(
@@ -487,7 +501,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         if (probe.match().isPresent()) {
             previous = readAuthoritative(probe.match().orElseThrow().cell(), credentialId);
         }
-        TransitionRules.validate(record.data(), previous);
+        FilesystemRevocationLog.validateTransition(record.data(), previous);
         boolean insertion = probe.match().isEmpty();
         if (insertion && IoOperations.addExact(active.entryCount(), 1L,
                 ENTRY_COUNT_OVERFLOW) > active.loadThreshold()) {
@@ -627,6 +641,428 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                         break;
                 }
             }
+        }
+    }
+
+    /** Bounded recovery orchestration over one immutable authoritative prefix. */
+    private static final class RecoveryCoordinator {
+        private final Path indexPath;
+        private final Path checkpointDirectory;
+        private final Path logPath;
+        private final MetadataStoreId storeId;
+        private final Configuration configuration;
+        private final RecoveryBoundary target;
+        private final PublicationOperations operations;
+        private final FaultInjector faults;
+        private Optional<String> originalFingerprint = Optional.empty();
+        private Optional<Superblock> publishedState = Optional.empty();
+
+        private RecoveryCoordinator(
+                Path indexPath,
+                Path checkpointDirectory,
+                Path logPath,
+                MetadataStoreId storeId,
+                Configuration configuration,
+                RecoveryBoundary target,
+                PublicationOperations operations,
+                FaultInjector faults) {
+            this.indexPath = indexPath;
+            this.checkpointDirectory = checkpointDirectory;
+            this.logPath = logPath;
+            this.storeId = storeId;
+            this.configuration = configuration;
+            this.target = target;
+            this.operations = operations;
+            this.faults = faults;
+        }
+
+        private static FilesystemRevocationCurrentIndex recover(
+                Path indexPath,
+                Path checkpointDirectory,
+                Path logPath,
+                MetadataStoreId expectedStoreId,
+                Configuration configuration,
+                RecoveryBoundary target,
+                PublicationOperations operations,
+                FaultInjector faults) throws IOException {
+            requireArguments(indexPath, checkpointDirectory, logPath, expectedStoreId,
+                    configuration, target, operations, faults);
+            return new RecoveryCoordinator(
+                    indexPath, checkpointDirectory, logPath, expectedStoreId,
+                    configuration, target, operations, faults).execute();
+        }
+
+        private FilesystemRevocationCurrentIndex execute() throws IOException {
+            Path parent = Objects.requireNonNull(indexPath.getParent(), "index parent");
+            Files.createDirectories(parent);
+            IoOperations.requireDirectory(parent);
+            Path seedCopy = parent.resolve("." + indexPath.getFileName()
+                    + ".seed-" + UUID.randomUUID());
+            Path temporary = parent.resolve("." + indexPath.getFileName()
+                    + ".recovering-" + UUID.randomUUID());
+            Optional<FilesystemRevocationCurrentIndex> exact =
+                    capturePublishedSeed(seedCopy);
+            if (exact.isPresent()) {
+                return exact.orElseThrow();
+            }
+            boolean published = false;
+            try {
+                buildTarget(temporary, seedCopy);
+                FilesystemRevocationCurrentIndex result = publish(
+                        temporary, originalFingerprint);
+                published = true;
+                return result;
+            } finally {
+                deleteDerived(seedCopy);
+                if (!published) {
+                    deleteDerived(temporary);
+                }
+            }
+        }
+
+        private static void requireArguments(
+                Path indexPath,
+                Path checkpointDirectory,
+                Path logPath,
+                MetadataStoreId expectedStoreId,
+                Configuration configuration,
+                RecoveryBoundary target,
+                PublicationOperations operations,
+                FaultInjector faults) throws IOException {
+            Objects.requireNonNull(indexPath, "indexPath");
+            Objects.requireNonNull(checkpointDirectory, "checkpointDirectory");
+            Objects.requireNonNull(logPath, "logPath");
+            Objects.requireNonNull(expectedStoreId, "expectedStoreId");
+            Objects.requireNonNull(configuration, "configuration");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(operations, "operations");
+            Objects.requireNonNull(faults, "faults");
+            configuration.requireValid();
+            IoOperations.requireRegular(logPath, "Revocation transition log");
+            if (!expectedStoreId.equals(target.storeId())) {
+                throw new IOException("Revocation recovery target belongs to another store");
+            }
+        }
+
+        private Optional<FilesystemRevocationCurrentIndex> capturePublishedSeed(
+                Path seedCopy) throws IOException {
+            try (StableIndexLock stable = StableIndexLock.acquire(indexPath)) {
+                originalFingerprint = fingerprint(indexPath);
+                if (originalFingerprint.isEmpty()) {
+                    return Optional.empty();
+                }
+                try (FileChannel index = FileChannel.open(indexPath, StandardOpenOption.READ);
+                        FileChannel log = FileChannel.open(logPath, StandardOpenOption.READ)) {
+                    Optional<SelectedSuperblock> selected = selectDerivedSeed(
+                            index, log, storeId, configuration);
+                    if (selected.isEmpty()) {
+                        return Optional.empty();
+                    }
+                    Superblock state = selected.orElseThrow().value();
+                    if (state.coveredRevision() > target.globalRevision()) {
+                        throw new IOException(
+                                "Published revocation index is newer than the recovery target");
+                    }
+                    if (matches(state, target)) {
+                        return Optional.of(openExactWhileLocked(
+                                stable, indexPath, logPath, storeId,
+                                configuration, target, operations, faults));
+                    }
+                    Files.copy(indexPath, seedCopy);
+                    publishedState = Optional.of(state);
+                    return Optional.empty();
+                }
+            }
+        }
+
+        private static Optional<SelectedSuperblock> selectDerivedSeed(
+                FileChannel index,
+                FileChannel log,
+                MetadataStoreId storeId,
+                Configuration configuration) {
+            try {
+                SuperblockCandidates candidates = IndexOperations.selectSuperblocks(
+                        index, storeId, configuration);
+                return Optional.of(selectValid(index, log, storeId, candidates));
+            } catch (IOException invalidDerived) {
+                return Optional.empty();
+            }
+        }
+
+        private static SelectedSuperblock selectValid(
+                FileChannel index,
+                FileChannel log,
+                MetadataStoreId storeId,
+                SuperblockCandidates candidates) throws IOException {
+            IOException newestFailure = validateCandidate(
+                    index, log, storeId, candidates.newest());
+            if (newestFailure == null) {
+                return candidates.newest();
+            }
+            if (candidates.older().isPresent()) {
+                SelectedSuperblock older = candidates.older().orElseThrow();
+                IOException olderFailure = validateCandidate(index, log, storeId, older);
+                if (olderFailure == null) {
+                    return older;
+                }
+                newestFailure.addSuppressed(olderFailure);
+            }
+            throw newestFailure;
+        }
+
+        private static IOException validateCandidate(
+                FileChannel index,
+                FileChannel log,
+                MetadataStoreId storeId,
+                SelectedSuperblock selected) {
+            try {
+                IndexValidation.validate(index, log, storeId, selected.value());
+                return null;
+            } catch (IOException invalid) {
+                return invalid;
+            }
+        }
+
+        private static FilesystemRevocationCurrentIndex openExactWhileLocked(
+                StableIndexLock stable,
+                Path indexPath,
+                Path logPath,
+                MetadataStoreId storeId,
+                Configuration configuration,
+                RecoveryBoundary target,
+                PublicationOperations operations,
+                FaultInjector faults) throws IOException {
+            try (OpenResources resources = OpenResources.acquireLocked(
+                    stable, indexPath, logPath)) {
+                IoOperations.requireLogStore(resources.logChannel(), storeId);
+                SuperblockCandidates candidates = IndexOperations.selectSuperblocks(
+                        resources.indexChannel(), storeId, configuration);
+                SelectedSuperblock selected = CandidateSelection.select(
+                        resources, storeId, candidates);
+                requireTarget(selected.value(), target);
+                FilesystemRevocationCurrentIndex opened = new FilesystemRevocationCurrentIndex(
+                        indexPath, logPath, storeId, configuration,
+                        operations, faults,
+                        resources.indexChannel(), resources.stableLock(),
+                        resources.logChannel(), selected);
+                resources.transferOwnership();
+                return opened;
+            }
+        }
+
+        private void buildTarget(Path temporary, Path seedCopy) throws IOException {
+            try (FileChannel log = FileChannel.open(
+                    logPath, StandardOpenOption.READ)) {
+                IoOperations.requireLogStore(log, storeId);
+                if (publishedState.isPresent()) {
+                    try (BuildIndex builder = BuildIndex.resume(
+                            seedCopy, temporary, storeId,
+                            configuration, operations, faults,
+                            log, publishedState.orElseThrow())) {
+                        replayToTarget(builder, log, target, faults);
+                    }
+                    return;
+                }
+                if (buildFromCheckpoint(temporary, log)) {
+                    return;
+                }
+                try (BuildIndex builder = BuildIndex.create(
+                        temporary, storeId, configuration,
+                        operations, faults, log)) {
+                    replayToTarget(builder, log, target, faults);
+                }
+            }
+        }
+
+        private boolean buildFromCheckpoint(
+                Path temporary, FileChannel log) throws IOException {
+            if (!Files.isDirectory(
+                    checkpointDirectory, LinkOption.NOFOLLOW_LINKS)) {
+                return false;
+            }
+            long upper = target.globalRevision();
+            boolean includeUpper = true;
+            while (true) {
+                Optional<FilesystemRevocationCheckpoint> candidate =
+                        FilesystemRevocationCheckpoint.discoverBelow(
+                                checkpointDirectory, logPath, target, upper,
+                                includeUpper, faults);
+                if (candidate.isEmpty()) {
+                    return false;
+                }
+                try (FilesystemRevocationCheckpoint checkpoint = candidate.orElseThrow()) {
+                    try (BuildIndex builder = BuildIndex.createSeeded(
+                            temporary, storeId, configuration,
+                            operations, faults, log, checkpoint)) {
+                        seed(builder, checkpoint, faults);
+                        replayToTarget(builder, log, target, faults);
+                        return true;
+                    } catch (CheckpointRejectedException rejected) {
+                        deleteDerived(temporary);
+                        if (Files.exists(temporary, LinkOption.NOFOLLOW_LINKS)) {
+                            throw new IOException(
+                                    "Rejected checkpoint recovery file could not be removed",
+                                    rejected);
+                        }
+                        upper = checkpoint.coveredRevision();
+                        includeUpper = false;
+                    }
+                }
+            }
+        }
+
+        private static void seed(
+                BuildIndex builder,
+                FilesystemRevocationCheckpoint checkpoint,
+                FaultInjector faults) throws IOException {
+            builder.seed(checkpoint, faults);
+        }
+
+        private static void replayToTarget(
+                BuildIndex builder,
+                FileChannel log,
+                RecoveryBoundary target,
+                FaultInjector faults) throws IOException {
+            RevocationTransitionFrameCodec codec = new RevocationTransitionFrameCodec();
+            long offset = builder.state().coveredBoundary();
+            while (offset < target.boundary()) {
+                faults.observeRecoveryLogOffset(offset);
+                RevocationTransitionFrameCodec.ReadResult result = codec.read(log, offset);
+                if (result.classification()
+                        != RevocationTransitionFrameCodec.Classification.COMPLETE_RECORD) {
+                    throw new IOException(
+                            "Authoritative revocation log ends before the recovery target");
+                }
+                RevocationTransitionFrameCodec.CompleteRecord record =
+                        result.record().orElseThrow();
+                if (record.recordEnd() > target.boundary()) {
+                    throw new IOException(
+                            "Authoritative revocation frame crosses the recovery target");
+                }
+                builder.accept(record);
+                offset = record.recordEnd();
+            }
+            requireTarget(builder.state(), target);
+            builder.finish();
+        }
+
+        private FilesystemRevocationCurrentIndex publish(
+                Path temporary,
+                Optional<String> originalFingerprint) throws IOException {
+            Path parent = Objects.requireNonNull(indexPath.getParent(), "index parent");
+            try (StableIndexLock stable = StableIndexLock.acquire(indexPath)) {
+                Optional<String> currentFingerprint = fingerprint(indexPath);
+                if (!currentFingerprint.equals(originalFingerprint)) {
+                    Optional<FilesystemRevocationCurrentIndex> exact = tryOpenExact(
+                            stable);
+                    if (exact.isPresent()) {
+                        deleteDerived(temporary);
+                        return exact.orElseThrow();
+                    }
+                    throw new IOException(
+                            "Published revocation index changed during bounded recovery");
+                }
+                requireSeedUnchanged();
+                faults.fail(FaultPoint.PUBLISH_ATOMIC_MOVE);
+                try {
+                    operations.atomicReplace(temporary, indexPath);
+                } catch (AtomicMoveNotSupportedException unsupported) {
+                    throw new IOException(
+                            "Atomic revocation index recovery publication is unsupported",
+                            unsupported);
+                }
+                IoOperations.forceDirectory(parent, operations, faults);
+                return openExactWhileLocked(
+                        stable, indexPath, logPath, storeId, configuration,
+                        target, operations, faults);
+            }
+        }
+
+        private void requireSeedUnchanged() throws IOException {
+            if (publishedState.isEmpty()) {
+                return;
+            }
+            try (FileChannel index = FileChannel.open(indexPath, StandardOpenOption.READ);
+                    FileChannel log = FileChannel.open(logPath, StandardOpenOption.READ)) {
+                SuperblockCandidates candidates = IndexOperations.selectSuperblocks(
+                        index, storeId, configuration);
+                SelectedSuperblock selected = selectValid(
+                        index, log, storeId, candidates);
+                if (!selected.value().equals(publishedState.orElseThrow())) {
+                    throw new IOException(
+                            "Published revocation index seed changed during recovery");
+                }
+            }
+        }
+
+        private Optional<FilesystemRevocationCurrentIndex> tryOpenExact(
+                StableIndexLock stable) {
+            try {
+                return Optional.of(openExactWhileLocked(
+                        stable, indexPath, logPath, storeId, configuration,
+                        target, operations, faults));
+            } catch (IOException notExact) {
+                return Optional.empty();
+            }
+        }
+
+        private static Optional<String> fingerprint(Path path) throws IOException {
+            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+                return Optional.empty();
+            }
+            IoOperations.requireRegular(path, "Revocation current index");
+            MessageDigest digest = IoOperations.sha256();
+            ByteBuffer buffer = ByteBuffer.allocate(8192);
+            try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
+                long offset = 0L;
+                while (offset < channel.size()) {
+                    buffer.clear();
+                    int read = channel.read(buffer, offset);
+                    if (read <= 0) {
+                        throw new IOException(
+                                "Revocation current-index fingerprint made no progress");
+                    }
+                    digest.update(buffer.array(), 0, read);
+                    offset += read;
+                }
+            }
+            return Optional.of(HEX.formatHex(digest.digest()));
+        }
+
+        private static boolean matches(
+                Superblock state,
+                RecoveryBoundary target) {
+            return state.storeId().equals(target.storeId())
+                    && state.coveredRevision() == target.globalRevision()
+                    && state.finalRecordStart().equals(target.finalRecordStart())
+                    && state.coveredBoundary() == target.boundary()
+                    && state.coveredCommitment().equals(target.globalCommitment());
+        }
+
+        private static void requireTarget(
+                Superblock state,
+                RecoveryBoundary target) throws IOException {
+            if (!matches(state, target)) {
+                throw new IOException(
+                        "Recovered revocation index does not match its immutable target");
+            }
+        }
+
+        private static void deleteDerived(Path path) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException ignored) {
+                // Derived temporary cleanup cannot alter revocation authority.
+            }
+        }
+    }
+
+    /** A self-consistent derived checkpoint cannot seed the exact authoritative frames. */
+    private static final class CheckpointRejectedException extends IOException {
+        private static final long serialVersionUID = 2411479676961225172L;
+
+        private CheckpointRejectedException(String message) {
+            super(message);
         }
     }
 
@@ -855,30 +1291,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
     private static final class IoOperations {
 
     private static String keyDigest(PkiId credentialId) throws IOException {
-        byte[] identity = strictUtf8(credentialId.value());
-        if (identity.length == 0 || identity.length > RevocationTransitionFrameCodec.MAX_COMPONENT_BYTES) {
-            throw new IOException("Revocation credential identity exceeds its technical bound");
-        }
-        MessageDigest digest = sha256();
-        digest.update(KEY_DOMAIN);
-        digest.update(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN)
-                .putInt(identity.length).array());
-        digest.update(identity);
-        return HEX.formatHex(digest.digest());
-    }
-
-    private static byte[] strictUtf8(String value) throws IOException {
-        try {
-            ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .encode(java.nio.CharBuffer.wrap(value));
-            byte[] result = new byte[encoded.remaining()];
-            encoded.get(result);
-            return result;
-        } catch (CharacterCodingException malformed) {
-            throw new IOException("Revocation credential identity is not strict UTF-8", malformed);
-        }
+        return FilesystemRevocationLog.indexKeyDigest(credentialId);
     }
 
     private static long initialSlot(String keyDigest, long capacity) {
@@ -1081,7 +1494,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             faults.fail(FaultPoint.DIRECTORY_FORCE);
             operations.forceDirectory(parent);
         } catch (IOException unsupported) {
-            LOGGER.warning(DIRECTORY_WARNING);
+            FilesystemRevocationLog.warnIndexDirectoryDurability();
         }
     }
 
@@ -1132,6 +1545,24 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    /** Immutable scalar prefix accepted by bounded derived-index recovery. */
+    /* default */ interface RecoveryBoundary {
+        /** Returns the authoritative store identity. */
+        MetadataStoreId storeId();
+
+        /** Returns the covered global revision. */
+        long globalRevision();
+
+        /** Returns the final covered frame start, when one exists. */
+        OptionalLong finalRecordStart();
+
+        /** Returns the exact covered log boundary. */
+        long boundary();
+
+        /** Returns the covered global commitment. */
+        RevocationTransitionFrameCodec.Commitment globalCommitment();
+    }
+
     /** Deterministic lifecycle fault seam; it is not a production extension point. */
     /* default */ @FunctionalInterface
     interface FaultInjector {
@@ -1139,6 +1570,21 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
 
         /** Fails one exact derived-index lifecycle boundary. */
         void fail(FaultPoint point) throws IOException;
+
+        /** Observes one checkpoint entry admitted during bounded recovery. */
+        default void observeRecoveryCheckpointEntry(long index) {
+            // Optional structural test observation.
+        }
+
+        /** Observes one checkpoint generation selected for full validation. */
+        default void observeRecoveryCheckpointCandidate(long revision) {
+            // Optional structural test observation.
+        }
+
+        /** Observes one authoritative suffix offset read during bounded recovery. */
+        default void observeRecoveryLogOffset(long offset) {
+            // Optional structural test observation.
+        }
     }
 
     /** Exact durability and publication boundaries available to deterministic tests. */
@@ -1238,6 +1684,32 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                     OptionalLong.empty(), RevocationTransitionFrameCodec.PREAMBLE_BYTES,
                     RevocationTransitionFrameCodec.initialCommitment(storeId),
                     configuration.loadNumerator(), configuration.loadDenominator());
+        }
+
+        private static Superblock checkpoint(
+                FilesystemRevocationCheckpoint checkpoint,
+                long capacity,
+                Configuration configuration) {
+            return new Superblock(
+                    checkpoint.storeId(), capacity, 0L,
+                    checkpoint.coveredRevision(),
+                    OptionalLong.empty(),
+                    checkpoint.coveredBoundary(), checkpoint.coveredCommitment(),
+                    configuration.loadNumerator(), configuration.loadDenominator());
+        }
+
+        private Superblock withEntryCount(long count) {
+            return new Superblock(
+                    storeId, capacity, count, coveredRevision, finalRecordStart,
+                    coveredBoundary, coveredCommitment,
+                    loadNumerator, loadDenominator);
+        }
+
+        private Superblock withFinalRecordStart(OptionalLong start) {
+            return new Superblock(
+                    storeId, capacity, entryCount, coveredRevision, start,
+                    coveredBoundary, coveredCommitment,
+                    loadNumerator, loadDenominator);
         }
 
         private Superblock advance(
@@ -1960,6 +2432,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         private final FileChannel log;
         private FileChannel channel;
         private Superblock state;
+        private OptionalLong seededFinalStart = OptionalLong.empty();
 
         private BuildIndex(
                 Path path,
@@ -2007,6 +2480,49 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             }
         }
 
+        private static BuildIndex createSeeded(
+                Path path,
+                MetadataStoreId storeId,
+                Configuration configuration,
+                PublicationOperations operations,
+                FaultInjector faults,
+                FileChannel log,
+                FilesystemRevocationCheckpoint checkpoint) throws IOException {
+            long capacity = capacityFor(
+                    checkpoint.entryCount(), configuration);
+            FileChannel channel = FileChannel.open(path,
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.READ,
+                    StandardOpenOption.WRITE);
+            try {
+                IoOperations.extend(channel, IoOperations.expectedSize(capacity));
+                Superblock state = Superblock.checkpoint(
+                        checkpoint, capacity, configuration);
+                return new BuildIndex(path, storeId, configuration,
+                        operations, faults, log, channel, state);
+            } catch (IOException failure) {
+                try {
+                    channel.close();
+                } catch (IOException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+                throw failure;
+            }
+        }
+
+        private static long capacityFor(
+                long entryCount, Configuration configuration) throws IOException {
+            long capacity = configuration.initialCapacity();
+            while (configuration.threshold(capacity) < entryCount) {
+                try {
+                    capacity = Math.multiplyExact(capacity, 2L);
+                } catch (ArithmeticException overflow) {
+                    throw new IOException(
+                            "Revocation current index capacity is exhausted", overflow);
+                }
+            }
+            return capacity;
+        }
+
         private static BuildIndex resume(
                 Path source,
                 Path temporary,
@@ -2037,6 +2553,95 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             return state;
         }
 
+        private void seed(
+                FilesystemRevocationCheckpoint checkpoint,
+                FaultInjector recoveryFaults) throws IOException {
+            long count = 0L;
+            try (FilesystemRevocationCheckpoint.Cursor cursor =
+                    checkpoint.allCurrentStates()) {
+                while (cursor.advance()) {
+                    recoveryFaults.observeRecoveryCheckpointEntry(count);
+                    seedCurrent(cursor);
+                    count = IoOperations.addExact(count, 1L, ENTRY_COUNT_OVERFLOW);
+                }
+            }
+            if (count != checkpoint.entryCount() || state.entryCount() != count) {
+                throw new CheckpointRejectedException(
+                        "Revocation checkpoint entry count is inconsistent");
+            }
+            if (state.coveredRevision() > GENESIS_REVISION) {
+                if (seededFinalStart.isEmpty()) {
+                    throw new CheckpointRejectedException(
+                            "Checkpoint omits its covered final record");
+                }
+                state = state.withFinalRecordStart(seededFinalStart);
+            }
+        }
+
+        private void seedCurrent(FilesystemRevocationCheckpoint.Cursor cursor)
+                throws IOException {
+            if (cursor.current().globalRevision() > state.coveredRevision()) {
+                throw new CheckpointRejectedException(
+                        "Checkpoint entry exceeds its declared coverage");
+            }
+            RevocationTransitionFrameCodec.ReadResult result =
+                    new RevocationTransitionFrameCodec().read(
+                            log, cursor.current().frameStart());
+            if (result.classification()
+                    != RevocationTransitionFrameCodec.Classification.COMPLETE_RECORD) {
+                throw new IOException(
+                        "Checkpoint locator reaches corrupt authoritative log content");
+            }
+            RevocationTransitionFrameCodec.CompleteRecord record =
+                    result.record().orElseThrow();
+            if (!entryMatches(cursor, record)) {
+                throw new CheckpointRejectedException(
+                        "Checkpoint entry disagrees with its authoritative frame");
+            }
+            if (record.data().globalRevision() == state.coveredRevision()) {
+                if (seededFinalStart.isPresent()) {
+                    throw new CheckpointRejectedException(
+                            "Checkpoint duplicates its covered final record");
+                }
+                seededFinalStart = OptionalLong.of(record.recordOffset());
+            }
+            String digest = IoOperations.keyDigest(cursor.current().credentialId());
+            BuildProbe probe = probe(cursor.current().credentialId(), digest);
+            if (probe.match().isPresent()) {
+                throw new CheckpointRejectedException(
+                        "Checkpoint contains a duplicate current-state identity");
+            }
+            long nextCount = IoOperations.addExact(
+                    state.entryCount(), 1L, ENTRY_COUNT_OVERFLOW);
+            if (nextCount > state.loadThreshold()) {
+                grow();
+                probe = probe(cursor.current().credentialId(), digest);
+            }
+            faults.fail(FaultPoint.REBUILD_WRITE);
+            IndexOperations.writeCell(
+                    channel, probe.insertionSlot(), FIRST_GENERATION,
+                    Cell.occupied(record, digest));
+            state = state.withEntryCount(nextCount);
+        }
+
+        private static boolean entryMatches(
+                FilesystemRevocationCheckpoint.Cursor cursor,
+                RevocationTransitionFrameCodec.CompleteRecord record) {
+            return record.recordOffset() == cursor.current().frameStart()
+                    && record.recordEnd() == cursor.current().frameEnd()
+                    && record.data().credentialId().equals(
+                            cursor.current().credentialId())
+                    && record.data().globalRevision()
+                            == cursor.current().globalRevision()
+                    && record.data().transition().revision()
+                            == cursor.current().credentialRevision()
+                    && record.commitment().equals(
+                            cursor.current().transitionCommitment())
+                    && RevocationTransitionFrameCodec.transitionsEqual(
+                            record.data().transition(), cursor.current().transition());
+        }
+
+
         private void accept(RevocationTransitionFrameCodec.CompleteRecord record)
                 throws IOException {
             IoOperations.requireNextGlobal(
@@ -2045,7 +2650,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             BuildProbe probe = probe(record.data().credentialId(), digest);
             RevocationTransitionFrameCodec.CompleteRecord previous = probe.match().isPresent()
                     ? readFrame(probe.match().orElseThrow().cell(), record.data().credentialId()) : null;
-            TransitionRules.validate(record.data(), previous);
+            FilesystemRevocationLog.validateTransition(record.data(), previous);
             boolean insertion = probe.match().isEmpty();
             if (insertion && IoOperations.addExact(state.entryCount(), 1L,
                     ENTRY_COUNT_OVERFLOW) > state.loadThreshold()) {
@@ -2203,72 +2808,4 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Exact state-machine validation copied from the authoritative log implementation. */
-    private static final class TransitionRules {
-        private static void validate(
-                RevocationTransitionFrameCodec.TransitionData data,
-                RevocationTransitionFrameCodec.CompleteRecord previous) throws IOException {
-            RevocationTransition transition = data.transition();
-            if (previous == null) {
-                validateFirst(data, transition);
-                return;
-            }
-            long expectedLocal = nextLocalRevision(previous.data().transition().revision());
-            if (transition.revision() != expectedLocal
-                    || data.previousCredentialGlobalRevision().isEmpty()
-                    || data.previousCredentialGlobalRevision().getAsLong()
-                            != previous.data().globalRevision()
-                    || data.previousCredentialCommitment().isEmpty()
-                    || !data.previousCredentialCommitment().orElseThrow()
-                            .equals(previous.commitment())) {
-                throw new IOException("Credential revocation history chain is invalid");
-            }
-            validateSuccessor(previous.data().transition(), transition);
-        }
-
-        private static void validateFirst(
-                RevocationTransitionFrameCodec.TransitionData data,
-                RevocationTransition transition) throws IOException {
-            if (transition.revision() != 1L
-                    || data.previousCredentialGlobalRevision().isPresent()
-                    || data.previousCredentialCommitment().isPresent()
-                    || !hasValidReason(transition)
-                    || transition.state() != RevocationState.HELD
-                            && transition.state() != RevocationState.PERMANENTLY_REVOKED) {
-                throw new IOException("First credential revocation transition is not canonical");
-            }
-        }
-
-        private static long nextLocalRevision(long current) throws IOException {
-            return IoOperations.addExact(
-                    current, 1L, "Credential revocation revision is exhausted");
-        }
-
-        private static void validateSuccessor(
-                RevocationTransition previous, RevocationTransition current) throws IOException {
-            if (current.time().isBefore(previous.time()) || !hasValidReason(current)) {
-                throw new IOException("Revocation transition is not legal");
-            }
-            boolean legal = switch (previous.state()) {
-                case CLEAR -> current.state() == RevocationState.HELD
-                        || current.state() == RevocationState.PERMANENTLY_REVOKED;
-                case HELD -> current.state() == RevocationState.CLEAR
-                        || current.state() == RevocationState.PERMANENTLY_REVOKED;
-                case PERMANENTLY_REVOKED -> false;
-            };
-            if (!legal) {
-                throw new IOException("Revocation transition is not legal");
-            }
-        }
-
-        private static boolean hasValidReason(RevocationTransition transition) {
-            if (transition.state() != RevocationState.PERMANENTLY_REVOKED) {
-                return transition.permanentReason().isEmpty();
-            }
-            return transition.permanentReason()
-                    .filter(reason -> reason != RevocationReason.CERTIFICATE_HOLD
-                            && reason != RevocationReason.REMOVE_FROM_CRL)
-                    .isPresent();
-        }
-    }
 }

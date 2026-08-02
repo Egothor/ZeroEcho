@@ -34,6 +34,11 @@
 package zeroecho.pki.impl.fs;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
@@ -45,12 +50,17 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
+import java.util.HexFormat;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Logger;
 
@@ -66,6 +76,11 @@ final class FilesystemRevocationLog implements AutoCloseable {
     private static final Logger LOGGER = Logger.getLogger(FilesystemRevocationLog.class.getName());
     private static final String CAPABILITY_WARNING =
             "POSIX revocation-log creation durability is limited; continuing in best-effort mode";
+    private static final String INDEX_DIRECTORY_WARNING =
+            "Revocation current-index directory durability is limited; continuing in best-effort mode";
+    private static final byte[] INDEX_KEY_DOMAIN =
+            "ZeroEcho revocation current index key v1".getBytes(StandardCharsets.US_ASCII);
+    private static final HexFormat HEX = HexFormat.of();
     private static final Set<String> LOCAL_FILE_SYSTEMS =
             Set.of("apfs", "btrfs", "ext2", "ext3", "ext4", "tmpfs", "ufs", "xfs", "zfs");
     private static final Set<java.nio.file.attribute.PosixFilePermission> OWNER_ONLY =
@@ -80,6 +95,8 @@ final class FilesystemRevocationLog implements AutoCloseable {
     private final RevocationTransitionFrameCodec codec = new RevocationTransitionFrameCodec();
     private final Map<PkiId, LatestState> latest;
     private long globalRevision;
+    private OptionalLong finalRecordStart;
+    private long lastCompleteRecordBoundary;
     private RevocationTransitionFrameCodec.Commitment globalCommitment;
     private long scanInvocations;
     private State state = State.OPEN;
@@ -98,6 +115,8 @@ final class FilesystemRevocationLog implements AutoCloseable {
         this.faults = faults;
         latest = new HashMap<>(recovery.latestStates());
         globalRevision = recovery.globalRevision();
+        finalRecordStart = recovery.finalRecordStart();
+        lastCompleteRecordBoundary = recovery.lastCompleteRecordBoundary();
         globalCommitment = recovery.globalCommitment();
         scanInvocations = 1L;
     }
@@ -158,6 +177,8 @@ final class FilesystemRevocationLog implements AutoCloseable {
                 LatestState next = latestState(record);
                 latest.put(credentialId, next);
                 globalRevision = data.globalRevision();
+                finalRecordStart = OptionalLong.of(record.recordOffset());
+                lastCompleteRecordBoundary = record.recordEnd();
                 globalCommitment = record.commitment();
                 return record;
             } catch (IOException failure) {
@@ -213,6 +234,24 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Captures one immutable authoritative prefix without retaining the append lock.
+     *
+     * <p>Records appended after this method returns belong to a later prefix and do
+     * not change the returned target.</p>
+     */
+    /* default */ RecoveryTarget recoveryTarget() throws IOException {
+        appendLock.lock();
+        try {
+            requireOperational();
+            return new RecoveryTarget(
+                    storeId, globalRevision, finalRecordStart,
+                    lastCompleteRecordBoundary, globalCommitment);
+        } finally {
+            appendLock.unlock();
+        }
+    }
+
     /* default */ boolean recoveryRequired() {
         appendLock.lock();
         try {
@@ -230,6 +269,64 @@ final class FilesystemRevocationLog implements AutoCloseable {
         return Scanner.scan(channel, expectedStoreId, credentialAuthority, sink);
     }
 
+    /* default */ static void validateTransition(
+            RevocationTransitionFrameCodec.TransitionData data,
+            RevocationTransitionFrameCodec.CompleteRecord previous) throws IOException {
+        Objects.requireNonNull(data, "data");
+        LatestState prior = previous == null ? null : latestState(previous);
+        try {
+            TransitionRules.validate(data, prior);
+        } catch (IllegalArgumentException invalid) {
+            throw new IOException("Revocation transition is not legal", invalid);
+        }
+    }
+
+    /* default */ static void warnIndexDirectoryDurability() {
+        try {
+            LOGGER.warning(INDEX_DIRECTORY_WARNING);
+        } catch (IllegalStateException ignored) {
+            // Advisory logging cannot alter derived-index publication.
+        }
+    }
+
+    /* default */ static String indexKeyDigest(PkiId credentialId) throws IOException {
+        byte[] identity = strictUtf8(credentialId.value());
+        if (identity.length == 0
+                || identity.length > RevocationTransitionFrameCodec.MAX_COMPONENT_BYTES) {
+            throw new IOException(
+                    "Revocation credential identity exceeds its technical bound");
+        }
+        MessageDigest digest = sha256();
+        digest.update(INDEX_KEY_DOMAIN);
+        digest.update(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN)
+                .putInt(identity.length).array());
+        digest.update(identity);
+        return HEX.formatHex(digest.digest());
+    }
+
+    private static byte[] strictUtf8(String value) throws IOException {
+        try {
+            ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .encode(java.nio.CharBuffer.wrap(value));
+            byte[] result = new byte[encoded.remaining()];
+            encoded.get(result);
+            return result;
+        } catch (CharacterCodingException malformed) {
+            throw new IOException(
+                    "Revocation credential identity is not strict UTF-8", malformed);
+        }
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+        }
+    }
+
     private RevocationTransitionFrameCodec.TransitionData nextData(
             PkiId credentialId, RevocationTransition transition) throws IOException {
         LatestState previous = latest.get(credentialId);
@@ -242,12 +339,12 @@ final class FilesystemRevocationLog implements AutoCloseable {
         if (previous == null) {
             return new RevocationTransitionFrameCodec.TransitionData(
                     nextGlobal, globalCommitment, credentialId,
-                    java.util.OptionalLong.empty(), java.util.Optional.empty(), transition);
+                    OptionalLong.empty(), Optional.empty(), transition);
         }
         return new RevocationTransitionFrameCodec.TransitionData(
                 nextGlobal, globalCommitment, credentialId,
-                java.util.OptionalLong.of(previous.globalRevision()),
-                java.util.Optional.of(previous.commitment()), transition);
+                OptionalLong.of(previous.globalRevision()),
+                Optional.of(previous.commitment()), transition);
     }
 
     private static void validateGlobal(
@@ -580,6 +677,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
             sink.accept(record);
             state.states.put(record.data().credentialId(), latestState(record));
             state.globalRevision = record.data().globalRevision();
+            state.finalRecordStart = OptionalLong.of(record.recordOffset());
             state.globalCommitment = record.commitment();
             state.boundary = record.recordEnd();
         }
@@ -587,7 +685,8 @@ final class FilesystemRevocationLog implements AutoCloseable {
         private static RecoveryResult finish(ScanState state, boolean incomplete) {
             return new RecoveryResult(
                     state.storeId, state.boundary, state.physicalEnd, incomplete,
-                    state.globalRevision, state.globalCommitment, state.states);
+                    state.globalRevision, state.finalRecordStart,
+                    state.globalCommitment, state.states);
         }
 
         private static CorruptLogException corrupt(String message) {
@@ -681,6 +780,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
         private final Map<PkiId, LatestState> states = new HashMap<>();
         private long boundary = RevocationTransitionFrameCodec.PREAMBLE_BYTES;
         private long globalRevision;
+        private OptionalLong finalRecordStart = OptionalLong.empty();
         private RevocationTransitionFrameCodec.Commitment globalCommitment;
 
         private ScanState(MetadataStoreId storeId, long physicalEnd) {
@@ -732,14 +832,17 @@ final class FilesystemRevocationLog implements AutoCloseable {
             long physicalEnd,
             boolean incompleteTail,
             long globalRevision,
+            OptionalLong finalRecordStart,
             RevocationTransitionFrameCodec.Commitment globalCommitment,
             Map<PkiId, LatestState> latestStates) {
         RecoveryResult {
             Objects.requireNonNull(storeId, "storeId");
+            Objects.requireNonNull(finalRecordStart, "finalRecordStart");
             Objects.requireNonNull(globalCommitment, "globalCommitment");
             latestStates = Map.copyOf(latestStates);
             if (lastCompleteRecordBoundary < RevocationTransitionFrameCodec.PREAMBLE_BYTES
-                    || physicalEnd < lastCompleteRecordBoundary || globalRevision < 0L) {
+                    || physicalEnd < lastCompleteRecordBoundary || globalRevision < 0L
+                    || globalRevision == 0L != finalRecordStart.isEmpty()) {
                 throw new IllegalArgumentException("Invalid revocation recovery boundaries");
             }
         }
@@ -748,13 +851,46 @@ final class FilesystemRevocationLog implements AutoCloseable {
             return new RecoveryResult(
                     storeId, RevocationTransitionFrameCodec.PREAMBLE_BYTES,
                     RevocationTransitionFrameCodec.PREAMBLE_BYTES, false, 0L,
+                    OptionalLong.empty(),
                     RevocationTransitionFrameCodec.initialCommitment(storeId), Map.of());
         }
 
         private RecoveryResult afterTailRepair() {
             return new RecoveryResult(
                     storeId, lastCompleteRecordBoundary, lastCompleteRecordBoundary,
-                    false, globalRevision, globalCommitment, latestStates);
+                    false, globalRevision, finalRecordStart,
+                    globalCommitment, latestStates);
+        }
+    }
+
+    /** Immutable scalar boundary used by bounded derived-state recovery. */
+    /* default */ record RecoveryTarget(
+            MetadataStoreId storeId,
+            long globalRevision,
+            OptionalLong finalRecordStart,
+            long boundary,
+            RevocationTransitionFrameCodec.Commitment globalCommitment)
+            implements FilesystemRevocationCurrentIndex.RecoveryBoundary {
+        RecoveryTarget {
+            Objects.requireNonNull(storeId, "storeId");
+            Objects.requireNonNull(finalRecordStart, "finalRecordStart");
+            Objects.requireNonNull(globalCommitment, "globalCommitment");
+            if (globalRevision < 0L
+                    || boundary < RevocationTransitionFrameCodec.PREAMBLE_BYTES
+                    || globalRevision == 0L != finalRecordStart.isEmpty()) {
+                throw new IllegalArgumentException("Invalid revocation recovery target");
+            }
+            if (globalRevision == 0L
+                    && (boundary != RevocationTransitionFrameCodec.PREAMBLE_BYTES
+                    || !globalCommitment.equals(
+                            RevocationTransitionFrameCodec.initialCommitment(storeId)))) {
+                throw new IllegalArgumentException("Invalid genesis revocation recovery target");
+            }
+            if (finalRecordStart.isPresent()
+                    && (finalRecordStart.getAsLong() < RevocationTransitionFrameCodec.PREAMBLE_BYTES
+                    || finalRecordStart.getAsLong() >= boundary)) {
+                throw new IllegalArgumentException("Invalid final revocation record boundary");
+            }
         }
     }
 
