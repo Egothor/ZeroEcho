@@ -181,6 +181,14 @@ final class FsPaths {
         return this.root.resolve("revocations").resolve("checkpoints");
     }
 
+    /* default */ Path revocationCurrentIndex() {
+        return this.root.resolve("revocations").resolve("current-state.idx");
+    }
+
+    /* default */ Path revocationCurrentIndexLock() {
+        return this.root.resolve("revocations").resolve("current-state.idx.lock");
+    }
+
     /* default */ Path revocationSnapshotRoot() {
         return this.root.resolve("revocation-snapshots");
     }
