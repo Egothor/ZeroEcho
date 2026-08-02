@@ -97,7 +97,6 @@ import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
-import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
@@ -225,12 +224,12 @@ final class DefaultStatusObjectServiceCrlTest {
             StatusObjectGenerateCommand command = new StatusObjectGenerateCommand(caId, StatusObjectType.CRL,
                     runtime.framework().formatId(), emptyAttributes());
 
-            assertCrlFailure(runtime, command, List.of(journal(new PkiId("credential:missing"), RevocationState.HELD,
+            assertCrlFailure(runtime, command, List.of(record(new PkiId("credential:missing"), RevocationState.HELD,
                     EVALUATION_TIME.minusSeconds(1), Optional.empty())), Map.of(), false);
 
             Credential wrongFormat = copy(template, "wrong-format", new FormatId("not-x509"), template.content());
             assertCrlFailure(
-                    runtime, command, List.of(journal(wrongFormat.credentialId(), RevocationState.HELD,
+                    runtime, command, List.of(record(wrongFormat.credentialId(), RevocationState.HELD,
                             EVALUATION_TIME.minusSeconds(1), Optional.empty())),
                     Map.of(wrongFormat.credentialId(), wrongFormat), false);
 
@@ -240,14 +239,14 @@ final class DefaultStatusObjectServiceCrlTest {
             Credential wrongEncoding = copy(template, "wrong-encoding", BcX509CredentialFramework.FORMAT_ID,
                     wrongEncodingContent);
             assertCrlFailure(
-                    runtime, command, List.of(journal(wrongEncoding.credentialId(), RevocationState.HELD,
+                    runtime, command, List.of(record(wrongEncoding.credentialId(), RevocationState.HELD,
                             EVALUATION_TIME.minusSeconds(1), Optional.empty())),
                     Map.of(wrongEncoding.credentialId(), wrongEncoding), false);
 
             Credential malformed = copy(template, "malformed", BcX509CredentialFramework.FORMAT_ID,
                     runtime.stageCredential(new byte[] { 1, 2, 3 }));
             assertCrlFailure(
-                    runtime, command, List.of(journal(malformed.credentialId(), RevocationState.HELD,
+                    runtime, command, List.of(record(malformed.credentialId(), RevocationState.HELD,
                             EVALUATION_TIME.minusSeconds(1), Optional.empty())),
                     Map.of(malformed.credentialId(), malformed), false);
 
@@ -256,16 +255,16 @@ final class DefaultStatusObjectServiceCrlTest {
             Credential duplicateTwo = copy(template, "duplicate-two", BcX509CredentialFramework.FORMAT_ID,
                     template.content());
             assertCrlFailure(runtime, command,
-                    List.of(journal(duplicateOne.credentialId(), RevocationState.HELD, EVALUATION_TIME.minusSeconds(1),
+                    List.of(record(duplicateOne.credentialId(), RevocationState.HELD, EVALUATION_TIME.minusSeconds(1),
                             Optional.empty()),
-                            journal(duplicateTwo.credentialId(), RevocationState.PERMANENTLY_REVOKED,
+                            record(duplicateTwo.credentialId(), RevocationState.PERMANENTLY_REVOKED,
                                     EVALUATION_TIME.minusSeconds(1), Optional.of(RevocationReason.KEY_COMPROMISE))),
                     Map.of(duplicateOne.credentialId(), duplicateOne, duplicateTwo.credentialId(), duplicateTwo),
                     false);
 
             Credential future = copy(template, "future", BcX509CredentialFramework.FORMAT_ID, template.content());
             assertCrlFailure(
-                    runtime, command, List.of(journal(future.credentialId(), RevocationState.HELD,
+                    runtime, command, List.of(record(future.credentialId(), RevocationState.HELD,
                             EVALUATION_TIME.plusSeconds(1), Optional.empty())),
                     Map.of(future.credentialId(), future), false);
 
@@ -320,10 +319,10 @@ final class DefaultStatusObjectServiceCrlTest {
     }
 
     private static void assertCrlFailure(PkiTestRuntime runtime, StatusObjectGenerateCommand command,
-            List<RevocationJournal> journals, Map<PkiId, Credential> credentials, boolean failListing) {
+            List<RevocationRecord> records, Map<PkiId, Credential> credentials, boolean failListing) {
         int signCount = runtime.submittedSignCount();
         int statusCount = runtime.store().listStatusObjects(command.issuerCaId()).size();
-        PkiStore view = storeView(runtime.store(), journals, credentials, failListing);
+        PkiStore view = storeView(runtime.store(), records, credentials, failListing);
         DefaultStatusObjectService service = new DefaultStatusObjectService(view, runtime.framework(),
                 runtime.auditSink(), usableResolver(), runtime.signingBus().authority());
 
@@ -335,7 +334,7 @@ final class DefaultStatusObjectServiceCrlTest {
         assertEquals(statusCount, runtime.store().listStatusObjects(command.issuerCaId()).size());
     }
 
-    private static PkiStore storeView(PkiStore delegate, List<RevocationJournal> journals,
+    private static PkiStore storeView(PkiStore delegate, List<RevocationRecord> records,
             Map<PkiId, Credential> credentials, boolean failListing) {
         return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
                 (proxy, method, arguments) -> {
@@ -343,9 +342,7 @@ final class DefaultStatusObjectServiceCrlTest {
                         if (failListing) {
                             throw new IllegalStateException(SENTINEL);
                         }
-                        List<RevocationRecord> snapshot = journals.stream()
-                                .map(journal -> new RevocationRecord(journal.credentialId(), journal.latest()))
-                                .toList();
+                        List<RevocationRecord> snapshot = List.copyOf(records);
                         return new zeroecho.pki.spi.store.RevocationSnapshot() {
                             @Override
                             public String snapshotId() {
@@ -475,10 +472,10 @@ final class DefaultStatusObjectServiceCrlTest {
         };
     }
 
-    private static RevocationJournal journal(PkiId credentialId, RevocationState state, Instant time,
+    private static RevocationRecord record(PkiId credentialId, RevocationState state, Instant time,
             Optional<RevocationReason> reason) {
-        return new RevocationJournal(credentialId,
-                List.of(new RevocationTransition(1L, state, time, reason, emptyAttributes())));
+        return new RevocationRecord(credentialId,
+                new RevocationTransition(1L, state, time, reason, emptyAttributes()));
     }
 
     private static Credential copy(Credential template, String suffix, FormatId formatId,

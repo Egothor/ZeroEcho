@@ -416,7 +416,7 @@ final class FsSnapshotExporter {
 
         private void restore(Path targetRoot) throws IOException {
             Set<PkiId> transferred = new HashSet<>();
-            try (FilesystemPkiStore target = new FilesystemPkiStore(targetRoot, options)) {
+            try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(targetRoot, options)) {
                 for (Map.Entry<PkiId, Credential> entry : authority.credentials().entrySet()) {
                     if (persistCredential(target, entry.getValue())) {
                         transferred.add(entry.getKey());

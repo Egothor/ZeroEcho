@@ -214,17 +214,17 @@ final class FsOperations {
     }
 
     /**
-     * Strictly persists one authoritative revocation journal image.
+     * Strictly persists one complete atomic file image.
      *
      * <p>
      * The namespace commit point is an {@link StandardCopyOption#ATOMIC_MOVE} in
      * the target directory. No non-atomic fallback is permitted. A directory force
      * failure after that move is reported distinctly because the durable
-     * authoritative image is then uncertain.
+     * image is then uncertain.
      * </p>
      *
-     * @param target journal target
-     * @param data   complete encoded journal
+     * @param target file target
+     * @param data   complete encoded image
      * @throws IOException                  on a pre-commit persistence failure
      * @throws DurabilityUncertainException after a committed move whose directory
      *                                      force failed

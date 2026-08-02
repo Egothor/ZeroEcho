@@ -68,7 +68,7 @@ public sealed interface RevocationCommand
         /** Validates and snapshots the command. */
         public Hold {
             Objects.requireNonNull(credentialId, "credentialId");
-            attributes = RevocationJournal.snapshot(attributes);
+            attributes = RevocationTransition.snapshotAttributes(attributes);
         }
     }
 
@@ -82,7 +82,7 @@ public sealed interface RevocationCommand
         /** Validates and snapshots the command. */
         public Unhold {
             Objects.requireNonNull(credentialId, "credentialId");
-            attributes = RevocationJournal.snapshot(attributes);
+            attributes = RevocationTransition.snapshotAttributes(attributes);
         }
     }
 
@@ -102,7 +102,7 @@ public sealed interface RevocationCommand
             if (reason == RevocationReason.CERTIFICATE_HOLD || reason == RevocationReason.REMOVE_FROM_CRL) {
                 throw new IllegalArgumentException("reason must be permanent");
             }
-            attributes = RevocationJournal.snapshot(attributes);
+            attributes = RevocationTransition.snapshotAttributes(attributes);
         }
     }
 }

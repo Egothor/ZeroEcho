@@ -116,7 +116,6 @@ import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
-import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.status.StatusObject;
@@ -779,8 +778,8 @@ public final class FilesystemPkiStoreTest {
     }
 
     @Test
-    void revocationJournalPersistsLegalTransitions() throws Exception {
-        System.out.println("revocationJournalPersistsLegalTransitions");
+    void globalRevocationLogPersistsStreamingHistory() throws Exception {
+        System.out.println("globalRevocationLogPersistsStreamingHistory");
 
         Path root = tmp.resolve("store-revocation-history");
         Path restoredRoot = tmp.resolve("store-revocation-history-snapshot");
@@ -830,7 +829,7 @@ public final class FilesystemPkiStoreTest {
         System.out.println("...store tree:");
         dumpTree(root);
 
-        System.out.println("revocationJournalPersistsLegalTransitions...ok");
+        System.out.println("globalRevocationLogPersistsStreamingHistory...ok");
     }
 
     @Test

@@ -89,15 +89,15 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
  * the configured {@link PkiStore} and delegates format-specific object creation
  * to the active {@link CredentialFramework}. The store acts as the
  * authoritative source of issuer CA state, issuer credentials, revocation
- * journals, and previously generated status objects.
+ * transitions, and previously generated status objects.
  * </p>
  *
  * <p>
  * The current runtime implementation primarily supports generation workflows
  * that require issuer certificate material and issuer signing key indirection
  * to be provided through status-object attributes. For X.509 CRL generation,
- * this class derives structured CRL entries from authoritative journals and the
- * referenced X.509 credentials.
+ * this class derives structured CRL entries from a stable ordered current-state
+ * snapshot and the referenced X.509 credentials.
  * </p>
  *
  * <h2>Persistence model</h2>
@@ -114,7 +114,7 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
  * <li>This service does not access private key material directly.</li>
  * <li>Issuer signing capability is conveyed only through
  * {@link BcX509Attributes#ISSUER_KEYREF}.</li>
- * <li>For CRL generation, every active journal and referenced target is
+ * <li>For CRL generation, every selected current state and referenced target is
  * validated before signing. Any unresolved or malformed state aborts generation
  * with a stable redacted failure.</li>
  * <li>The correctness of the generated status object depends on the configured
@@ -184,7 +184,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      *
      * <p>
      * When {@link StatusObjectType#CRL} is requested, the service validates every
-     * authoritative active journal before signing. Current hold and permanent
+     * current state from one stable authoritative revision before signing. Hold and permanent
      * states are transported with the exact positive X.509 serial, authoritative
      * transition time, and explicit reason. Current {@code CLEAR} states are
      * omitted.
@@ -192,7 +192,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      *
      * <p>
      * Missing targets, malformed credentials, duplicate serials, future
-     * transitions, corrupt journals, and store failures abort the complete CRL
+     * transitions, corrupt derived state, and store failures abort the complete CRL
      * before generator invocation or persistence with a stable redacted error.
      * </p>
      *
@@ -347,7 +347,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         }
     }
 
-    /** Bounded cursor translating authoritative journals into CRL entries. */
+    /** Bounded cursor translating stable validated current states into CRL entries. */
     private final class CheckpointCrlCursor implements CrlEntrySource.Cursor {
         private final RevocationSnapshot.Cursor cursor;
         private final PkiId issuerCaId;

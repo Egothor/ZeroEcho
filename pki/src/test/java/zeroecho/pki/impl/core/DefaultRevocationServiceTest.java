@@ -57,7 +57,6 @@ import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.revocation.RevocationCommand;
-import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationQuery;
 import zeroecho.pki.api.revocation.RevocationState;

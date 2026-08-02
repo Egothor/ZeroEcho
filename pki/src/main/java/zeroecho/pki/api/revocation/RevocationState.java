@@ -34,7 +34,7 @@
 package zeroecho.pki.api.revocation;
 
 /**
- * Effective state recorded by an authoritative revocation journal.
+ * Effective state recorded by the authoritative global revocation log.
  */
 public enum RevocationState {
     /** Credential has no effective revocation restriction. */

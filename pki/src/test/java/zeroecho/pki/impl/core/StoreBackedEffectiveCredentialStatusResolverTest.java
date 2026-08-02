@@ -69,7 +69,6 @@ import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
-import zeroecho.pki.api.revocation.RevocationJournal;
 import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
@@ -122,13 +121,13 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
     }
 
     @Test
-    void futureAndMismatchedJournalsFailClosed() {
+    void futureAndMismatchedRecordsFailClosed() {
         Credential credential = credential("invalid", CredentialStatus.ISSUED, NOW.minusSeconds(60),
                 NOW.plusSeconds(60));
         assertResolutionFailure(credential, revocation(credential, RevocationReason.KEY_COMPROMISE, NOW.plusNanos(1)));
-        RevocationJournal mismatch = new RevocationJournal(new PkiId("credential:other"),
-                List.of(new RevocationTransition(1L, RevocationState.PERMANENTLY_REVOKED, NOW,
-                        Optional.of(RevocationReason.KEY_COMPROMISE), new SimpleAttributeSet())));
+        RevocationRecord mismatch = new RevocationRecord(new PkiId("credential:other"),
+                new RevocationTransition(1L, RevocationState.PERMANENTLY_REVOKED, NOW,
+                        Optional.of(RevocationReason.KEY_COMPROMISE), new SimpleAttributeSet()));
         assertResolutionFailure(credential, Optional.of(mismatch));
     }
 
@@ -193,50 +192,47 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
         assertFalse(event.details().toString().contains(sentinel));
     }
 
-    private static void assertStatus(Credential credential, Optional<RevocationJournal> revocation,
+    private static void assertStatus(Credential credential, Optional<RevocationRecord> revocation,
             EffectiveCredentialStatus expected) {
         assertEquals(expected, resolver(revocation).beginEvaluation().resolve(credential));
     }
 
-    private static void assertResolutionFailure(Credential credential, Optional<RevocationJournal> revocation) {
+    private static void assertResolutionFailure(Credential credential, Optional<RevocationRecord> revocation) {
         PkiException failure = assertThrows(PkiException.class,
                 () -> resolver(revocation).beginEvaluation().resolve(credential));
         assertEquals("Credential status resolution failed: code=CREDENTIAL_STATUS_RESOLUTION_FAILED",
                 failure.getMessage());
     }
 
-    private static StoreBackedEffectiveCredentialStatusResolver resolver(Optional<RevocationJournal> revocation) {
+    private static StoreBackedEffectiveCredentialStatusResolver resolver(Optional<RevocationRecord> revocation) {
         return new StoreBackedEffectiveCredentialStatusResolver(store(id -> revocation, new AtomicInteger()),
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
-    private static PkiStore store(Function<PkiId, Optional<RevocationJournal>> lookup, AtomicInteger calls) {
+    private static PkiStore store(Function<PkiId, Optional<RevocationRecord>> lookup, AtomicInteger calls) {
         return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
                 (proxy, method, arguments) -> {
                     if ("getRevocation".equals(method.getName())) {
                         calls.incrementAndGet();
-                        return lookup.apply((PkiId) arguments[0])
-                                .map(journal -> new RevocationRecord(journal.credentialId(), journal.latest()));
+                        return lookup.apply((PkiId) arguments[0]);
                     }
                     throw new UnsupportedOperationException(method.getName());
                 });
     }
 
-    private static Optional<RevocationJournal> revocation(Credential credential, RevocationReason reason,
+    private static Optional<RevocationRecord> revocation(Credential credential, RevocationReason reason,
             Instant time) {
         if (reason == RevocationReason.REMOVE_FROM_CRL) {
-            return Optional.of(new RevocationJournal(credential.credentialId(),
-                    List.of(new RevocationTransition(1L, RevocationState.HELD, time.minusNanos(1), Optional.empty(),
-                            new SimpleAttributeSet()),
-                            new RevocationTransition(2L, RevocationState.CLEAR, time, Optional.empty(),
-                                    new SimpleAttributeSet()))));
+            return Optional.of(new RevocationRecord(credential.credentialId(),
+                    new RevocationTransition(2L, RevocationState.CLEAR, time, Optional.empty(),
+                            new SimpleAttributeSet())));
         }
         RevocationState state = reason == RevocationReason.CERTIFICATE_HOLD ? RevocationState.HELD
                 : RevocationState.PERMANENTLY_REVOKED;
         Optional<RevocationReason> permanentReason = state == RevocationState.PERMANENTLY_REVOKED ? Optional.of(reason)
                 : Optional.empty();
-        return Optional.of(new RevocationJournal(credential.credentialId(),
-                List.of(new RevocationTransition(1L, state, time, permanentReason, new SimpleAttributeSet()))));
+        return Optional.of(new RevocationRecord(credential.credentialId(),
+                new RevocationTransition(1L, state, time, permanentReason, new SimpleAttributeSet())));
     }
 
     private Credential credential(String suffix, CredentialStatus status, Instant notBefore, Instant notAfter) {

@@ -167,18 +167,8 @@ final class FsPaths {
     }
 
     // -------------------------------------------------------------------------
-    // Revocations (single authoritative journal)
+    // Revocations (global log authority and derived structures)
     // -------------------------------------------------------------------------
-
-    /* default */ Path revocationDir(final PkiId credentialId) {
-        Objects.requireNonNull(credentialId, "credentialId");
-        return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("by-credential")
-                .resolve(FsUtil.safeId(credentialId));
-    }
-
-    /* default */ Path revocationJournal(final PkiId credentialId) {
-        return revocationDir(credentialId).resolve("journal.bin");
-    }
 
     /* default */ Path revocationTransitionLog() {
         return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("transitions.log");
@@ -198,10 +188,6 @@ final class FsPaths {
 
     /* default */ Path revocationCurrentIndexLock() {
         return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("current-state.idx.lock");
-    }
-
-    /* default */ Path revocationSnapshotRoot() {
-        return this.root.resolve("revocation-snapshots");
     }
 
     // -------------------------------------------------------------------------

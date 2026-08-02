@@ -34,12 +34,19 @@
 package zeroecho.pki.api.revocation;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
+import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
+import zeroecho.pki.api.attr.AttributeValue;
 
 /**
- * One committed transition in an authoritative revocation journal.
+ * One committed transition in the authoritative global revocation log.
  *
  * @param revision        positive contiguous revision
  * @param state           resulting state
@@ -57,6 +64,76 @@ public record RevocationTransition(long revision, RevocationState state, Instant
         if (revision <= 0L || state == null || time == null || permanentReason == null || attributes == null) {
             throw new IllegalArgumentException("Invalid revocation transition");
         }
-        attributes = RevocationJournal.snapshot(attributes);
+        attributes = snapshotAttributes(attributes);
+    }
+
+    // Defensive snapshotting necessarily allocates immutable entries while walking
+    // the caller-owned attribute collection.
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    /* default */ static AttributeSet snapshotAttributes(AttributeSet source) {
+        Objects.requireNonNull(source, "source");
+        List<SnapshotEntry> entries = new ArrayList<>();
+        for (AttributeId id : source.ids()) {
+            List<AttributeValue> values = new ArrayList<>();
+            for (AttributeValue value : source.getAll(id)) {
+                values.add(snapshotValue(value));
+            }
+            entries.add(new SnapshotEntry(id, List.copyOf(values)));
+        }
+        return new SnapshotAttributeSet(List.copyOf(entries));
+    }
+
+    private static AttributeValue snapshotValue(AttributeValue value) {
+        Objects.requireNonNull(value, "value");
+        if (value instanceof AttributeValue.BytesValue bytesValue) {
+            return new AttributeValue.BytesValue(bytesValue.value().clone());
+        }
+        return value;
+    }
+
+    /** One immutable attribute entry owned by a transition or command. */
+    private record SnapshotEntry(AttributeId id, List<AttributeValue> values) {
+    }
+
+    /** Immutable defensive implementation for revocation metadata ownership. */
+    private static final class SnapshotAttributeSet implements AttributeSet {
+        private final List<SnapshotEntry> entries;
+
+        private SnapshotAttributeSet(List<SnapshotEntry> entries) {
+            this.entries = entries;
+        }
+
+        @Override
+        public Set<AttributeId> ids() {
+            Set<AttributeId> ids = new LinkedHashSet<>();
+            for (SnapshotEntry entry : entries) {
+                ids.add(entry.id());
+            }
+            return Set.copyOf(ids);
+        }
+
+        @Override
+        public Optional<AttributeValue> get(AttributeId id) {
+            List<AttributeValue> values = getAll(id);
+            return values.isEmpty() ? Optional.empty() : Optional.of(values.get(0));
+        }
+
+        // Byte values are copied per accessor invocation so callers cannot mutate
+        // transition-owned storage.
+        @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+        @Override
+        public List<AttributeValue> getAll(AttributeId id) {
+            Objects.requireNonNull(id, "id");
+            for (SnapshotEntry entry : entries) {
+                if (entry.id().equals(id)) {
+                    List<AttributeValue> copies = new ArrayList<>(entry.values().size());
+                    for (AttributeValue value : entry.values()) {
+                        copies.add(snapshotValue(value));
+                    }
+                    return List.copyOf(copies);
+                }
+            }
+            return List.of();
+        }
     }
 }

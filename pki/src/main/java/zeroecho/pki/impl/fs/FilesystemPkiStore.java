@@ -231,9 +231,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         this(root, options, clock, FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE);
     }
 
-    @SuppressWarnings("PMD.CloseResource")
     /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
             final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults) {
+        this(root, options, clock, indexUpdateFaults, false);
+    }
+
+    @SuppressWarnings("PMD.CloseResource")
+    private FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
+            final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults,
+            final boolean snapshotAssembly) {
         this.options = Objects.requireNonNull(options, "options");
         Objects.requireNonNull(root, "root");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -258,6 +264,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         FilesystemRevocationAuthority openedRevocations = null;
         try {
             boolean newStore = !Files.exists(this.paths.versionFile());
+            if (newStore && !snapshotAssembly) {
+                rejectNonEmptyUnversionedStore();
+            }
             ensureVersionFile();
             this.signingNamespace = ensureSigningNamespace();
             this.stagedContent = new FilesystemStagedContentStore(this.paths.stagedContentRoot(),
@@ -310,6 +319,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 acquiredOwnership.closeSilently();
             }
         }
+    }
+
+    /* package */ static FilesystemPkiStore openSnapshotAssembly(final Path root,
+            final FsPkiStoreOptions options) {
+        return new FilesystemPkiStore(root, options, Clock.systemUTC(),
+                FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE, true);
     }
 
     private boolean requireSnapshotBoundary() throws IOException {
@@ -2317,6 +2332,20 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         String ver = Files.readString(vf).trim();
         if (!CURRENT_STORE_VERSION.equals(ver)) {
             throw new IllegalStateException("unsupported store version: " + ver);
+        }
+    }
+
+    private void rejectNonEmptyUnversionedStore() throws IOException {
+        Path lockDirectory = this.paths.lockFile().getParent();
+        try (Stream<Path> entries = Files.list(this.paths.root())) {
+            if (entries.anyMatch(entry -> !entry.equals(lockDirectory))) {
+                throw new IllegalStateException("unversioned store is not empty");
+            }
+        }
+        try (Stream<Path> entries = Files.list(lockDirectory)) {
+            if (entries.anyMatch(entry -> !entry.equals(this.paths.lockFile()))) {
+                throw new IllegalStateException("unversioned store is not empty");
+            }
         }
     }
 
