@@ -427,13 +427,13 @@ final class FilesystemRevocationCurrentIndexTest {
     }
 
     @Test
-    void structuralContractHasNoHistoryCollectionOrCheckpointDependency() throws Exception {
-        System.out.print("structuralContractHasNoHistoryCollectionOrCheckpointDependency ");
+    void structuralContractHasNoHistoryCollectionOrCheckpointPublication() throws Exception {
+        System.out.print("structuralContractHasNoHistoryCollectionOrCheckpointPublication ");
         String source = Files.readString(Path.of(
                 "src/main/java/zeroecho/pki/impl/fs/FilesystemRevocationCurrentIndex.java"));
         assertFalse(source.contains("List<RevocationTransition>"));
         assertFalse(source.contains("readAllBytes()"));
-        assertFalse(source.contains("FilesystemRevocationCheckpoint"));
+        assertFalse(source.contains("publishHistorical"));
         assertFalse(source.contains("HashMap"));
         assertFalse(source.contains("new Thread"));
         assertFalse(source.contains("Executors."));

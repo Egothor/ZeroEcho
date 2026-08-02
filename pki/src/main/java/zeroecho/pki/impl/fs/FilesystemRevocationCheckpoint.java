@@ -114,6 +114,32 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         Objects.requireNonNull(faults, "faults");
         Binding.requireCurrentPublication(recovery, coverage);
         Binding.validate(logPath, recovery, coverage);
+        return publishBound(directory, coverage, source, operations, faults,
+                checkpoint -> Binding.validateGeneration(checkpoint, logPath, recovery));
+    }
+
+    /* default */ static PublishedGeneration publishHistorical(
+            Path directory,
+            FilesystemRevocationCurrentIndex.FrozenSnapshot frozen,
+            SortedSource source) throws IOException {
+        Objects.requireNonNull(directory, "directory");
+        Objects.requireNonNull(frozen, "frozen");
+        Objects.requireNonNull(source, "source");
+        Coverage coverage = frozen.coverage();
+        return publishBound(
+                directory, coverage, source,
+                DefaultPublicationOperations.INSTANCE, FaultInjector.NONE,
+                checkpoint -> HistoricalBinding.validateGeneration(
+                        checkpoint, frozen));
+    }
+
+    private static PublishedGeneration publishBound(
+            Path directory,
+            Coverage coverage,
+            SortedSource source,
+            PublicationOperations operations,
+            FaultInjector faults,
+            GenerationValidator validator) throws IOException {
         Files.createDirectories(directory);
         requireDirectory(directory);
         long declaredCount = source.entryCount();
@@ -126,7 +152,7 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         Path target = directory.resolve(finalName(coverage.coveredRevision(), build.generationId()));
         boolean published = false;
         try {
-            Binding.validateGeneration(temporary, logPath, recovery);
+            validator.validate(temporary);
             published = publishAtomically(temporary, target, operations, faults);
             forceDirectory(directory, operations, faults);
             return new PublishedGeneration(target, build.generationId(), coverage.coveredRevision(), published);
@@ -140,6 +166,13 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             }
             throw failure;
         }
+    }
+
+    /** Exact post-build binding check selected by the publication boundary. */
+    @FunctionalInterface
+    private interface GenerationValidator {
+        /** Validates the completed temporary generation before publication. */
+        void validate(Path checkpoint) throws IOException;
     }
 
     /* default */ static Optional<FilesystemRevocationCheckpoint> discover(
@@ -650,6 +683,66 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
             }
         }
 
+    }
+
+    /** Exact set-equality proof between a generation and its immutable frozen index. */
+    private static final class HistoricalBinding {
+        private static void validateGeneration(
+                Path checkpointPath,
+                FilesystemRevocationCurrentIndex.FrozenSnapshot frozen) throws IOException {
+            try (FileChannel checkpoint = FileChannel.open(
+                    checkpointPath, StandardOpenOption.READ)) {
+                RevocationCheckpointCodec codec = new RevocationCheckpointCodec();
+                RevocationCheckpointCodec.ValidatedFile validated = codec.validate(checkpoint);
+                Coverage expectedCoverage = frozen.coverage();
+                Coverage actualCoverage = Coverage.from(validated.header());
+                if (!actualCoverage.equals(expectedCoverage)) {
+                    throw new IOException("Checkpoint coverage changed during construction");
+                }
+                if (validated.header().entryCount() != frozen.entryCount()) {
+                    throw new IOException("Checkpoint count differs from its frozen index");
+                }
+                validateEntries(frozen, checkpoint, codec, validated);
+            }
+        }
+
+        private static void validateEntries(
+                FilesystemRevocationCurrentIndex.FrozenSnapshot frozen,
+                FileChannel checkpoint,
+                RevocationCheckpointCodec checkpointCodec,
+                RevocationCheckpointCodec.ValidatedFile validated) throws IOException {
+            long offset = RevocationCheckpointCodec.HEADER_BYTES;
+            RevocationCheckpointCodec.SequentialDecoder decoder =
+                    checkpointCodec.sequentialDecoder();
+            for (long index = 0L; index < validated.header().entryCount(); index++) {
+                RevocationCheckpointCodec.DecodedRecord decoded = decoder.read(
+                        checkpoint, offset, validated.trailerOffset());
+                validateEntry(frozen, decoded.entry());
+                offset = decoded.nextOffset();
+            }
+        }
+
+        private static void validateEntry(
+                FilesystemRevocationCurrentIndex.FrozenSnapshot frozen,
+                RevocationCheckpointCodec.CurrentStateEntry entry) throws IOException {
+            RevocationTransitionFrameCodec.CompleteRecord frame = frozen.lookup(
+                    entry.credentialId()).orElseThrow(
+                            () -> new IOException(
+                                    "Checkpoint entry is absent from its frozen index"));
+            if (!frame.data().credentialId().equals(entry.credentialId())
+                    || frame.data().globalRevision() != entry.globalRevision()
+                    || frame.data().transition().revision() != entry.credentialRevision()
+                    || !frame.commitment().equals(entry.transitionCommitment())
+                    || !RevocationTransitionFrameCodec.transitionsEqual(
+                            frame.data().transition(), entry.transition())
+                    || !new FrameBounds(frame.recordOffset(), frame.recordEnd()).equals(
+                            new FrameBounds(entry.frameStart(), entry.frameEnd()))) {
+                throw new IOException("Checkpoint entry disagrees with its frozen current state");
+            }
+        }
+
+        private record FrameBounds(long start, long end) {
+        }
     }
 
     /** Streaming discovery keeps one candidate descriptor and repeats only for ambiguity fallback. */

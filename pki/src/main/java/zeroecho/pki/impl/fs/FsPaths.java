@@ -60,6 +60,7 @@ final class FsPaths {
     private static final String BINARY_EXTENSION = ".bin";
 
     private static final String BY_ID = "by-id";
+    private static final String REVOCATIONS_DIRECTORY = "revocations";
 
     /* default */ static final String VERSION_FILE = "VERSION";
     /* default */ static final String LOCK_DIR = ".lock";
@@ -166,7 +167,8 @@ final class FsPaths {
 
     /* default */ Path revocationDir(final PkiId credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
-        return this.root.resolve("revocations").resolve("by-credential").resolve(FsUtil.safeId(credentialId));
+        return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("by-credential")
+                .resolve(FsUtil.safeId(credentialId));
     }
 
     /* default */ Path revocationJournal(final PkiId credentialId) {
@@ -174,19 +176,23 @@ final class FsPaths {
     }
 
     /* default */ Path revocationTransitionLog() {
-        return this.root.resolve("revocations").resolve("transitions.log");
+        return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("transitions.log");
     }
 
     /* default */ Path revocationCheckpointDirectory() {
-        return this.root.resolve("revocations").resolve("checkpoints");
+        return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("checkpoints");
+    }
+
+    /* default */ Path revocationCheckpointWorkDirectory() {
+        return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("checkpoint-work");
     }
 
     /* default */ Path revocationCurrentIndex() {
-        return this.root.resolve("revocations").resolve("current-state.idx");
+        return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("current-state.idx");
     }
 
     /* default */ Path revocationCurrentIndexLock() {
-        return this.root.resolve("revocations").resolve("current-state.idx.lock");
+        return this.root.resolve(REVOCATIONS_DIRECTORY).resolve("current-state.idx.lock");
     }
 
     /* default */ Path revocationSnapshotRoot() {

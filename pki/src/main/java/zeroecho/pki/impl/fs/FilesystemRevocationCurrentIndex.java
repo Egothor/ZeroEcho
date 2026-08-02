@@ -111,6 +111,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
     private static final HexFormat HEX = HexFormat.of();
 
     private final Path indexPath;
+    private final Path logPath;
     private final MetadataStoreId storeId;
     private final Configuration configuration;
     private final PublicationOperations operations;
@@ -126,6 +127,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
 
     private FilesystemRevocationCurrentIndex(
             Path indexPath,
+            Path logPath,
             MetadataStoreId storeId,
             Configuration configuration,
             PublicationOperations operations,
@@ -135,6 +137,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             FileChannel logChannel,
             SelectedSuperblock selected) {
         this.indexPath = indexPath;
+        this.logPath = logPath;
         this.storeId = storeId;
         this.configuration = configuration;
         this.operations = operations;
@@ -172,13 +175,14 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         IoOperations.requireRegular(indexPath, "Revocation current index");
         IoOperations.requireRegular(logPath, "Revocation transition log");
         try (OpenResources resources = OpenResources.acquire(indexPath, logPath)) {
-            return openLocked(indexPath, expectedStoreId, configuration,
+            return openLocked(indexPath, logPath, expectedStoreId, configuration,
                     operations, faults, resources);
         }
     }
 
     private static FilesystemRevocationCurrentIndex openLocked(
             Path indexPath,
+            Path logPath,
             MetadataStoreId expectedStoreId,
             Configuration configuration,
             PublicationOperations operations,
@@ -191,7 +195,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
             SelectedSuperblock selected = CandidateSelection.select(
                     resources, expectedStoreId, candidates);
             FilesystemRevocationCurrentIndex opened = new FilesystemRevocationCurrentIndex(
-                    indexPath, expectedStoreId, configuration, operations, faults,
+                    indexPath, logPath, expectedStoreId, configuration, operations, faults,
                     resources.indexChannel(), resources.stableLock(),
                     resources.logChannel(), selected);
             opened.new IndexAccess().applySuffix();
@@ -241,7 +245,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                 IoOperations.forceDirectory(parent, operations, faults);
                 try (OpenResources resources = OpenResources.acquireLocked(
                         stable, indexPath, logPath)) {
-                    return openLocked(indexPath, expectedStoreId, configuration,
+                    return openLocked(indexPath, logPath, expectedStoreId, configuration,
                             operations, faults, resources);
                 }
             } finally {
@@ -317,6 +321,43 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         lifecycleLock.lock();
         try {
             return state == State.UNUSABLE;
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    /* default */ FrozenSnapshot freeze(Path snapshotPath, int transferBufferBytes)
+            throws IOException {
+        return freeze(snapshotPath, transferBufferBytes, FrozenFaultInjector.NONE);
+    }
+
+    /* default */ FrozenSnapshot freeze(
+            Path snapshotPath,
+            int transferBufferBytes,
+            FrozenFaultInjector faults) throws IOException {
+        Objects.requireNonNull(snapshotPath, "snapshotPath");
+        Objects.requireNonNull(faults, "faults");
+        if (transferBufferBytes <= 0) {
+            throw new IllegalArgumentException("Freeze transfer buffer must be positive");
+        }
+        lifecycleLock.lock();
+        try {
+            requireOperational();
+            try (FrozenResources resources = FrozenResources.create(snapshotPath, logPath)) {
+                long expectedSize = IoOperations.expectedSize(active.capacity());
+                faults.fail(FrozenFaultPoint.COPY);
+                IoOperations.copyExact(
+                        indexChannel, resources.indexChannel(), expectedSize, transferBufferBytes);
+                faults.fail(FrozenFaultPoint.FORCE);
+                resources.indexChannel().force(true);
+                IndexValidation.validate(
+                        resources.indexChannel(), resources.logChannel(), storeId, active);
+                FrozenSnapshot snapshot = new FrozenSnapshot(
+                        snapshotPath, logPath,
+                        resources.indexChannel(), resources.logChannel(), active);
+                resources.transferOwnership();
+                return snapshot;
+            }
         } finally {
             lifecycleLock.unlock();
         }
@@ -879,6 +920,34 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
+    private static void copyExact(
+            FileChannel source,
+            FileChannel target,
+            long length,
+            int transferBufferBytes) throws IOException {
+        ByteBuffer buffer = ByteBuffer.allocate(transferBufferBytes);
+        long offset = 0L;
+        while (offset < length) {
+            buffer.clear();
+            buffer.limit((int) Math.min((long) buffer.capacity(), length - offset));
+            int read = source.read(buffer, offset);
+            if (read <= 0) {
+                throw new IOException("Revocation current-index freeze made no read progress");
+            }
+            buffer.flip();
+            long writeOffset = offset;
+            while (buffer.hasRemaining()) {
+                int written = target.write(buffer, writeOffset);
+                if (written <= 0) {
+                    throw new IOException("Revocation current-index freeze made no write progress");
+                }
+                writeOffset += written;
+            }
+            offset = writeOffset;
+        }
+        target.truncate(length);
+    }
+
     private static void requireExpectedSize(FileChannel channel, long capacity) throws IOException {
         if (channel.size() != expectedSize(capacity)) {
             throw new IOException("Revocation current index physical size is invalid");
@@ -1424,6 +1493,270 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                 return null;
             } catch (IOException invalid) {
                 return invalid;
+            }
+        }
+    }
+
+    /** Deterministic frozen-copy failure seam; package access is intentional for tests. */
+    /* default */ @FunctionalInterface
+    interface FrozenFaultInjector {
+        FrozenFaultInjector NONE = point -> { };
+
+        /** Fails at one copy or force boundary. */
+        void fail(FrozenFaultPoint point) throws IOException;
+    }
+
+    /** Finite lifecycle boundaries for the frozen derived-index copy. */
+    /* default */ enum FrozenFaultPoint {
+        COPY,
+        FORCE
+    }
+
+    /** Immutable physical-slot copy used by bounded checkpoint construction. */
+    /* default */ static final class FrozenSnapshot implements AutoCloseable {
+        private final Path path;
+        private final Path logPath;
+        private final FileChannel indexChannel;
+        private final FileChannel logChannel;
+        private final Superblock state;
+        private boolean closed;
+
+        private FrozenSnapshot(
+                Path path,
+                Path logPath,
+                FileChannel indexChannel,
+                FileChannel logChannel,
+                Superblock state) {
+            this.path = path;
+            this.logPath = logPath;
+            this.indexChannel = indexChannel;
+            this.logChannel = logChannel;
+            this.state = state;
+        }
+
+        /* default */ long entryCount() {
+            requireOpen();
+            return state.entryCount();
+        }
+
+        /* default */ FilesystemRevocationCheckpoint.Coverage coverage() {
+            requireOpen();
+            return new FilesystemRevocationCheckpoint.Coverage(
+                    state.storeId(), state.coveredRevision(), state.finalRecordStart(),
+                    state.coveredBoundary(), state.coveredCommitment());
+        }
+
+        /* default */ FrozenCursor openCursor() {
+            requireOpen();
+            return new PhysicalCursor(this);
+        }
+
+        /* default */ Path logPath() {
+            requireOpen();
+            return logPath;
+        }
+
+        /* default */ Optional<RevocationTransitionFrameCodec.CompleteRecord> lookup(
+                PkiId credentialId) throws IOException {
+            Objects.requireNonNull(credentialId, "credentialId");
+            requireOpen();
+            long slot = IndexValidation.probeSlot(
+                    indexChannel, logChannel, state, credentialId);
+            if (slot == NO_SLOT) {
+                return Optional.empty();
+            }
+            Cell cell = IndexOperations.activeCell(
+                    indexChannel, slot, state.coveredRevision()).cell();
+            return Optional.of(IndexValidation.readFrame(logChannel, cell));
+        }
+
+        private void requireOpen() {
+            if (closed || !indexChannel.isOpen() || !logChannel.isOpen()) {
+                throw new IllegalStateException("Frozen revocation current index is closed");
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            IOException failure = null;
+            try {
+                logChannel.close();
+            } catch (IOException closeFailure) {
+                failure = closeFailure;
+            }
+            try {
+                indexChannel.close();
+            } catch (IOException closeFailure) {
+                failure = IoOperations.appendFailure(failure, closeFailure);
+            }
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException closeFailure) {
+                failure = IoOperations.appendFailure(failure, closeFailure);
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+    }
+
+    /** One-entry-at-a-time physical-slot cursor over a frozen index. */
+    /* default */ interface FrozenCursor extends AutoCloseable {
+        /** Advances to the next occupied physical slot. */
+        boolean advance() throws IOException;
+
+        /** Returns the entry selected by the most recent successful advancement. */
+        RevocationCheckpointCodec.CurrentStateEntry current();
+
+        @Override
+        void close();
+    }
+
+    /** Cursor state remains constant regardless of frozen index population. */
+    private static final class PhysicalCursor implements FrozenCursor {
+        private final FrozenSnapshot owner;
+        private long slot;
+        private long emitted;
+        private RevocationCheckpointCodec.CurrentStateEntry current;
+        private boolean closed;
+
+        private PhysicalCursor(FrozenSnapshot owner) {
+            this.owner = owner;
+        }
+
+        @Override
+        public boolean advance() throws IOException {
+            requireOpen();
+            while (slot < owner.state.capacity()) {
+                Cell cell = IndexOperations.activeCell(
+                        owner.indexChannel, slot, owner.state.coveredRevision()).cell();
+                slot++;
+                if (cell.state() == SlotState.OCCUPIED) {
+                    RevocationTransitionFrameCodec.CompleteRecord record =
+                            IndexValidation.readFrame(owner.logChannel, cell);
+                    emitted = IoOperations.addExact(
+                            emitted, 1L, ENTRY_COUNT_OVERFLOW);
+                    if (emitted > owner.state.entryCount()) {
+                        throw new IOException("Frozen revocation index contains excess entries");
+                    }
+                    current = checkpointEntry(record);
+                    return true;
+                }
+            }
+            if (emitted != owner.state.entryCount()) {
+                throw new IOException("Frozen revocation index entry count is inconsistent");
+            }
+            current = null;
+            return false;
+        }
+
+        @Override
+        public RevocationCheckpointCodec.CurrentStateEntry current() {
+            requireOpen();
+            if (current == null) {
+                throw new IllegalStateException("Frozen revocation cursor has no current entry");
+            }
+            return current;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            current = null;
+        }
+
+        private void requireOpen() {
+            if (closed) {
+                throw new IllegalStateException("Frozen revocation cursor is closed");
+            }
+            owner.requireOpen();
+        }
+
+        private static RevocationCheckpointCodec.CurrentStateEntry checkpointEntry(
+                RevocationTransitionFrameCodec.CompleteRecord record) {
+            return new RevocationCheckpointCodec.CurrentStateEntry(
+                    record.data().credentialId(), record.data().globalRevision(),
+                    record.data().transition().revision(), record.commitment(),
+                    record.data().transition(), record.recordOffset(), record.recordEnd());
+        }
+    }
+
+    /** Owns a frozen copy and independent log reader until snapshot transfer. */
+    private static final class FrozenResources implements AutoCloseable {
+        private final Path path;
+        private final FileChannel indexChannel;
+        private final FileChannel logChannel;
+        private boolean transferred;
+
+        private FrozenResources(
+                Path path, FileChannel indexChannel, FileChannel logChannel) {
+            this.path = path;
+            this.indexChannel = indexChannel;
+            this.logChannel = logChannel;
+        }
+
+        private static FrozenResources create(Path path, Path logPath) throws IOException {
+            FileChannel index = FileChannel.open(path,
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.READ,
+                    StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+            try {
+                FileChannel log = FileChannel.open(
+                        logPath, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+                return new FrozenResources(path, index, log);
+            } catch (IOException failure) {
+                try {
+                    index.close();
+                } catch (IOException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException cleanupFailure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+                throw failure;
+            }
+        }
+
+        private FileChannel indexChannel() {
+            return indexChannel;
+        }
+
+        private FileChannel logChannel() {
+            return logChannel;
+        }
+
+        private void transferOwnership() {
+            transferred = true;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (transferred) {
+                return;
+            }
+            IOException failure = null;
+            try {
+                logChannel.close();
+            } catch (IOException closeFailure) {
+                failure = closeFailure;
+            }
+            try {
+                indexChannel.close();
+            } catch (IOException closeFailure) {
+                failure = IoOperations.appendFailure(failure, closeFailure);
+            }
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException cleanupFailure) {
+                failure = IoOperations.appendFailure(failure, cleanupFailure);
+            }
+            if (failure != null) {
+                throw failure;
             }
         }
     }
