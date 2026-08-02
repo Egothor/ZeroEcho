@@ -45,9 +45,11 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
@@ -56,6 +58,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -68,6 +75,7 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuerRef;
 import zeroecho.pki.api.KeyRef;
@@ -109,6 +117,7 @@ import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
@@ -173,7 +182,7 @@ public final class FilesystemPkiStoreTest {
             store.putCa(ca);
             store.putCredential(credential);
             store.putRequest(request);
-            RevocationJournal revocation = store.transitionRevocation(new RevocationCommand.RevokePermanently(
+            RevocationRecord revocation = store.transitionRevocation(new RevocationCommand.RevokePermanently(
                     credential.credentialId(), RevocationReason.KEY_COMPROMISE, attributes), now);
             store.putStatusObject(status);
             store.putPublicationRecord(publication);
@@ -187,7 +196,7 @@ public final class FilesystemPkiStoreTest {
                     store.getCredential(credential.credentialId()).orElseThrow().credentialId());
             assertEquals(request.requestId(), store.getRequest(request.requestId()).orElseThrow().requestId());
             assertEquals(revocation.credentialId(),
-                    store.getRevocationJournal(revocation.credentialId()).orElseThrow().credentialId());
+                    store.getRevocation(revocation.credentialId()).orElseThrow().credentialId());
             assertEquals(status.statusObjectId(),
                     store.getStatusObject(status.statusObjectId()).orElseThrow().statusObjectId());
             assertEquals(publication.publicationId(), store.listPublicationRecords().get(0).publicationId());
@@ -774,10 +783,13 @@ public final class FilesystemPkiStoreTest {
         System.out.println("revocationJournalPersistsLegalTransitions");
 
         Path root = tmp.resolve("store-revocation-history");
+        Path restoredRoot = tmp.resolve("store-revocation-history-snapshot");
         FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
+        PkiId credentialId;
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, options)) {
             Credential credential = TestObjects.minimalCredential(store, "SERIAL-REV", "profile-rev");
+            credentialId = credential.credentialId();
             store.putCredential(credential);
             store.transitionRevocation(
                     new RevocationCommand.Hold(credential.credentialId(), TestObjects.emptyAttributes()),
@@ -786,9 +798,33 @@ public final class FilesystemPkiStoreTest {
                     new RevocationCommand.Unhold(credential.credentialId(), TestObjects.emptyAttributes()),
                     Instant.EPOCH.plusSeconds(11L));
 
-            Optional<RevocationJournal> loaded = store.getRevocationJournal(credential.credentialId());
+            Optional<RevocationRecord> loaded = store.getRevocation(credential.credentialId());
             assertTrue(loaded.isPresent());
-            assertEquals(2L, loaded.get().latest().revision());
+            assertEquals(2L, loaded.get().transition().revision());
+            try (zeroecho.pki.spi.store.RevocationSnapshot snapshot = store.openRevocationSnapshot()) {
+                assertEquals(2L, snapshot.revision());
+            }
+            try (zeroecho.pki.spi.store.RevocationHistory history =
+                    store.openRevocationHistory(credential.credentialId())) {
+                assertTrue(history.next());
+                assertEquals(1L, history.current().revision());
+                assertTrue(history.next());
+                assertEquals(2L, history.current().revision());
+                assertFalse(history.next());
+            }
+            store.exportSnapshot(restoredRoot, Instant.now());
+        }
+        try (FilesystemPkiStore restored = new FilesystemPkiStore(restoredRoot, options)) {
+            assertEquals(RevocationState.CLEAR,
+                    restored.getRevocation(credentialId).orElseThrow().transition().state());
+            try (zeroecho.pki.spi.store.RevocationHistory history =
+                    restored.openRevocationHistory(credentialId)) {
+                assertTrue(history.next());
+                assertTrue(history.next());
+                assertFalse(history.next());
+            }
+            assertTrue(Files.isRegularFile(new FsPaths(restoredRoot).revocationCurrentIndex()));
+            assertFalse(Files.exists(restoredRoot.resolve("revocations").resolve("by-credential")));
         }
 
         System.out.println("...store tree:");
@@ -826,6 +862,164 @@ public final class FilesystemPkiStoreTest {
         assertTrue(Files.exists(snapshot.resolve("cas").resolve("by-id")));
 
         System.out.println("snapshotExportClonesNewRootNonStrict...ok");
+    }
+
+    @Test
+    void snapshotRejectsTruncatedRevocationAuthorityAndObsoleteSchema() throws Exception {
+        System.out.println("snapshotRejectsTruncatedRevocationAuthorityAndObsoleteSchema");
+        Path sourceRoot = tmp.resolve("snapshot-revocation-corruption-source");
+        Path snapshotRoot = tmp.resolve("snapshot-revocation-corruption-target");
+        Path oversizedRoot = tmp.resolve("snapshot-revocation-oversized-marker");
+        Path symlinkRoot = tmp.resolve("snapshot-revocation-symlink-marker");
+        FsPkiStoreOptions options = nonStrictSnapshotOptions();
+        try (FilesystemPkiStore source = new FilesystemPkiStore(sourceRoot, options)) {
+            Credential credential = TestObjects.minimalCredential(source, "SERIAL-SNAPSHOT-CORRUPT",
+                    "profile-snapshot-corrupt");
+            source.putCredential(credential);
+            source.transitionRevocation(new RevocationCommand.Hold(
+                    credential.credentialId(), TestObjects.emptyAttributes()), Instant.now());
+            source.exportSnapshot(snapshotRoot, Instant.now());
+            source.exportSnapshot(oversizedRoot, Instant.now());
+            source.exportSnapshot(symlinkRoot, Instant.now());
+        }
+        Path log = new FsPaths(snapshotRoot).revocationTransitionLog();
+        try (FileChannel channel = FileChannel.open(log, StandardOpenOption.WRITE)) {
+            channel.truncate(Files.size(log) - 1L);
+        }
+        assertThrows(IllegalStateException.class,
+                () -> new FilesystemPkiStore(snapshotRoot, options));
+
+        Files.writeString(new FsPaths(oversizedRoot).revocationSnapshotBoundary(),
+                "12345678901234567890", StandardCharsets.US_ASCII);
+        assertThrows(IllegalStateException.class,
+                () -> new FilesystemPkiStore(oversizedRoot, options));
+
+        Path symlinkMarker = new FsPaths(symlinkRoot).revocationSnapshotBoundary();
+        Files.delete(symlinkMarker);
+        Files.createSymbolicLink(symlinkMarker, new FsPaths(symlinkRoot).revocationTransitionLog());
+        assertThrows(IllegalStateException.class,
+                () -> new FilesystemPkiStore(symlinkRoot, options));
+
+        Path obsolete = tmp.resolve("snapshot-obsolete-schema");
+        Files.createDirectories(obsolete);
+        Files.writeString(obsolete.resolve(FsPaths.VERSION_FILE), "v3", StandardCharsets.US_ASCII);
+        assertThrows(IllegalStateException.class,
+                () -> new FilesystemPkiStore(obsolete, options));
+        System.out.println("snapshotRejectsTruncatedRevocationAuthorityAndObsoleteSchema...ok");
+    }
+
+    @Test
+    void stableRevocationViewIsImmutableAndExactCheckpointIsReused() throws Exception {
+        System.out.println("stableRevocationViewIsImmutableAndExactCheckpointIsReused");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(
+                tmp.resolve("stable-revocation-view"), FsPkiStoreOptions.defaults())) {
+            Credential credential = TestObjects.minimalCredential(store, "SERIAL-STABLE-VIEW",
+                    "profile-stable-view");
+            store.putCredential(credential);
+            store.transitionRevocation(new RevocationCommand.Hold(
+                    credential.credentialId(), TestObjects.emptyAttributes()), Instant.EPOCH.plusSeconds(1L));
+            try (zeroecho.pki.spi.store.RevocationSnapshot captured = store.openRevocationSnapshot()) {
+                assertEquals(1L, captured.revision());
+                store.transitionRevocation(new RevocationCommand.Unhold(
+                        credential.credentialId(), TestObjects.emptyAttributes()), Instant.EPOCH.plusSeconds(2L));
+                try (zeroecho.pki.spi.store.RevocationSnapshot.Cursor cursor = captured.openCursor()) {
+                    assertTrue(cursor.next());
+                    assertEquals(RevocationState.HELD, cursor.current().transition().state());
+                    assertFalse(cursor.next());
+                }
+            }
+            String generation;
+            try (zeroecho.pki.spi.store.RevocationSnapshot current = store.openRevocationSnapshot()) {
+                generation = current.snapshotId();
+                assertEquals(2L, current.revision());
+            }
+            try (zeroecho.pki.spi.store.RevocationSnapshot reused = store.openRevocationSnapshot()) {
+                assertEquals(generation, reused.snapshotId());
+                assertEquals(2L, reused.revision());
+            }
+        }
+        System.out.println("stableRevocationViewIsImmutableAndExactCheckpointIsReused...ok");
+    }
+
+    @Test
+    void concurrentStableViewAndStoreCloseFinishDeterministically() throws Exception {
+        System.out.println("concurrentStableViewAndStoreCloseFinishDeterministically");
+        FilesystemPkiStore store = new FilesystemPkiStore(
+                tmp.resolve("concurrent-revocation-close"), FsPkiStoreOptions.defaults());
+        zeroecho.pki.spi.store.RevocationSnapshot view = null;
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Credential credential = TestObjects.minimalCredential(store, "SERIAL-CONCURRENT-CLOSE",
+                    "profile-concurrent-close");
+            store.putCredential(credential);
+            store.transitionRevocation(new RevocationCommand.Hold(
+                    credential.credentialId(), TestObjects.emptyAttributes()), Instant.now());
+            view = store.openRevocationSnapshot();
+            zeroecho.pki.spi.store.RevocationSnapshot captured = view;
+            CountDownLatch start = new CountDownLatch(1);
+            Future<?> viewClose = executor.submit(() -> {
+                start.await();
+                captured.close();
+                return null;
+            });
+            Future<?> storeClose = executor.submit(() -> {
+                start.await();
+                store.close();
+                return null;
+            });
+            start.countDown();
+            viewClose.get(5L, TimeUnit.SECONDS);
+            storeClose.get(5L, TimeUnit.SECONDS);
+            view = null;
+        } finally {
+            if (view != null) {
+                view.close();
+            }
+            store.close();
+            executor.shutdownNow();
+        }
+        System.out.println("concurrentStableViewAndStoreCloseFinishDeterministically...ok");
+    }
+
+    @Test
+    void committedTransitionSurvivesDerivedIndexUpdateFailureAndConcurrentRecovery() throws Exception {
+        System.out.println("committedTransitionSurvivesDerivedIndexUpdateFailureAndConcurrentRecovery");
+        AtomicLong faultCalls = new AtomicLong();
+        try (FilesystemPkiStore store = new FilesystemPkiStore(
+                tmp.resolve("revocation-derived-failure"), FsPkiStoreOptions.defaults(),
+                java.time.Clock.systemUTC(), () -> {
+                    if (faultCalls.getAndIncrement() == 0L) {
+                        throw new IOException("Injected derived revocation-index update failure");
+                    }
+                })) {
+            Credential credential = TestObjects.minimalCredential(store, "SERIAL-DERIVED-FAILURE",
+                    "profile-derived-failure");
+            store.putCredential(credential);
+            RevocationRecord committed = store.transitionRevocation(new RevocationCommand.Hold(
+                    credential.credentialId(), TestObjects.emptyAttributes()), Instant.now());
+            assertEquals(1L, committed.transition().revision());
+
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            try {
+                CountDownLatch start = new CountDownLatch(1);
+                Future<Optional<RevocationRecord>> first = executor.submit(() -> {
+                    start.await();
+                    return store.getRevocation(credential.credentialId());
+                });
+                Future<Optional<RevocationRecord>> second = executor.submit(() -> {
+                    start.await();
+                    return store.getRevocation(credential.credentialId());
+                });
+                start.countDown();
+                assertEquals(RevocationState.HELD,
+                        first.get(5L, TimeUnit.SECONDS).orElseThrow().transition().state());
+                assertEquals(RevocationState.HELD,
+                        second.get(5L, TimeUnit.SECONDS).orElseThrow().transition().state());
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+        System.out.println("committedTransitionSurvivesDerivedIndexUpdateFailureAndConcurrentRecovery...ok");
     }
 
     @Test

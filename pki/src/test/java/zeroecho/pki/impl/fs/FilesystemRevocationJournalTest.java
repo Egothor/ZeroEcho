@@ -47,6 +47,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -123,7 +124,7 @@ final class FilesystemRevocationJournalTest {
                     () -> transition(store, revoke(credential, RevocationReason.CA_COMPROMISE)));
         }
         try (FilesystemPkiStore reopened = store(root)) {
-            RevocationJournal journal = reopened.getRevocationJournal(credential.credentialId()).orElseThrow();
+            RevocationJournal journal = readJournal(reopened, credential.credentialId()).orElseThrow();
             assertEquals(4, journal.transitions().size());
             assertEquals(RevocationState.PERMANENTLY_REVOKED, journal.latest().state());
             assertEquals(RevocationReason.KEY_COMPROMISE, journal.latest().permanentReason().orElseThrow());
@@ -172,32 +173,31 @@ final class FilesystemRevocationJournalTest {
             store.putCredential(credential);
             assertCode("REVOCATION_TRANSITION_ILLEGAL", () -> transition(store, unhold(credential)));
             assertThrows(IllegalArgumentException.class, () -> revoke(credential, RevocationReason.CERTIFICATE_HOLD));
-            assertTrue(store.getRevocationJournal(credential.credentialId()).isEmpty());
+            assertTrue(readJournal(store, credential.credentialId()).isEmpty());
 
             transition(store, hold(credential));
             assertCode("REVOCATION_TRANSITION_ILLEGAL", () -> transition(store, hold(credential)));
-            assertEquals(1, store.getRevocationJournal(credential.credentialId()).orElseThrow().transitions().size());
+            assertEquals(1, readJournal(store, credential.credentialId()).orElseThrow().transitions().size());
 
             transition(store, unhold(credential));
-            Path journalPath = new FsPaths(temporaryDirectory.resolve("illegal"))
-                    .revocationJournal(credential.credentialId());
-            byte[] clearBytes = FsOperations.readAll(journalPath);
+            Path logPath = new FsPaths(temporaryDirectory.resolve("illegal")).revocationTransitionLog();
+            byte[] clearBytes = FsOperations.readAll(logPath);
             assertCode("REVOCATION_TRANSITION_ILLEGAL", () -> transition(store, unhold(credential)));
-            assertArrayEquals(clearBytes, FsOperations.readAll(journalPath));
+            assertArrayEquals(clearBytes, FsOperations.readAll(logPath));
 
             transition(store, revoke(credential, RevocationReason.KEY_COMPROMISE));
-            byte[] permanentBytes = FsOperations.readAll(journalPath);
+            byte[] permanentBytes = FsOperations.readAll(logPath);
             assertCode("REVOCATION_TERMINAL", () -> transition(store, hold(credential)));
             assertCode("REVOCATION_TERMINAL",
                     () -> transition(store, revoke(credential, RevocationReason.KEY_COMPROMISE)));
             assertCode("REVOCATION_TERMINAL",
                     () -> transition(store, revoke(credential, RevocationReason.CA_COMPROMISE)));
-            assertArrayEquals(permanentBytes, FsOperations.readAll(journalPath));
+            assertArrayEquals(permanentBytes, FsOperations.readAll(logPath));
 
             Credential invalidRemove = credential(store, "invalid-remove");
             store.putCredential(invalidRemove);
             assertThrows(IllegalArgumentException.class, () -> revoke(invalidRemove, RevocationReason.REMOVE_FROM_CRL));
-            assertTrue(store.getRevocationJournal(invalidRemove.credentialId()).isEmpty());
+            assertTrue(readJournal(store, invalidRemove.credentialId()).isEmpty());
         }
         System.out.println("illegalAndInvalidCommandsFailBeforeJournalMutation...ok");
     }
@@ -217,7 +217,7 @@ final class FilesystemRevocationJournalTest {
             } finally {
                 executor.shutdownNow();
             }
-            RevocationJournal journal = store.getRevocationJournal(credential.credentialId()).orElseThrow();
+            RevocationJournal journal = readJournal(store, credential.credentialId()).orElseThrow();
             assertEquals(1, journal.transitions().size());
             assertEquals(1L, journal.latest().revision());
         }
@@ -233,7 +233,7 @@ final class FilesystemRevocationJournalTest {
                 Credential fromNone = credential(store, "hold-vs-permanent");
                 store.putCredential(fromNone);
                 runConcurrent(store, hold(fromNone), revoke(fromNone, RevocationReason.KEY_COMPROMISE), executor);
-                RevocationJournal fromNoneJournal = store.getRevocationJournal(fromNone.credentialId()).orElseThrow();
+                RevocationJournal fromNoneJournal = readJournal(store, fromNone.credentialId()).orElseThrow();
                 assertEquals(RevocationState.PERMANENTLY_REVOKED, fromNoneJournal.latest().state());
                 assertTrue(fromNoneJournal.transitions().size() == 1 || fromNoneJournal.transitions().size() == 2);
 
@@ -241,7 +241,7 @@ final class FilesystemRevocationJournalTest {
                 store.putCredential(fromHeld);
                 transition(store, hold(fromHeld));
                 runConcurrent(store, unhold(fromHeld), revoke(fromHeld, RevocationReason.CA_COMPROMISE), executor);
-                RevocationJournal fromHeldJournal = store.getRevocationJournal(fromHeld.credentialId()).orElseThrow();
+                RevocationJournal fromHeldJournal = readJournal(store, fromHeld.credentialId()).orElseThrow();
                 assertEquals(RevocationState.PERMANENTLY_REVOKED, fromHeldJournal.latest().state());
                 assertTrue(fromHeldJournal.transitions().size() == 2 || fromHeldJournal.transitions().size() == 3);
 
@@ -250,7 +250,7 @@ final class FilesystemRevocationJournalTest {
                 List<Boolean> results = runConcurrent(store, revoke(reasons, RevocationReason.KEY_COMPROMISE),
                         revoke(reasons, RevocationReason.CA_COMPROMISE), executor);
                 assertEquals(1L, results.stream().filter(Boolean::booleanValue).count());
-                RevocationJournal reasonsJournal = store.getRevocationJournal(reasons.credentialId()).orElseThrow();
+                RevocationJournal reasonsJournal = readJournal(store, reasons.credentialId()).orElseThrow();
                 assertEquals(1, reasonsJournal.transitions().size());
                 assertTrue(reasonsJournal.latest().permanentReason().filter(
                         reason -> reason == RevocationReason.KEY_COMPROMISE || reason == RevocationReason.CA_COMPROMISE)
@@ -318,7 +318,8 @@ final class FilesystemRevocationJournalTest {
                             new SimpleAttributeSet())));
             FsOperations.writeAtomic(new FsPaths(root).revocationJournal(credential.credentialId()),
                     FsCodec.encode(FsCodec.REVOCATION_JOURNAL, invalid));
-            assertCode("REVOCATION_STATE_CORRUPT", () -> store.getRevocationJournal(credential.credentialId()));
+            assertEquals(RevocationState.HELD,
+                    store.getRevocation(credential.credentialId()).orElseThrow().transition().state());
         }
         System.out.println("copiedNamespaceJournalAndRegressingTransitionTimeFailClosed...ok");
     }
@@ -384,14 +385,14 @@ final class FilesystemRevocationJournalTest {
                 oldRevokedRecordPayload(credential.credentialId()));
 
         try (FilesystemPkiStore reopened = store(root)) {
-            assertTrue(reopened.getRevocationJournal(credential.credentialId()).isEmpty());
+            assertTrue(readJournal(reopened, credential.credentialId()).isEmpty());
             StoreBackedEffectiveCredentialStatusResolver resolver = new StoreBackedEffectiveCredentialStatusResolver(
                     reopened, Clock.fixed(TIME, java.time.ZoneOffset.UTC));
             assertEquals(EffectiveCredentialStatus.USABLE, resolver.beginEvaluation()
                     .resolve(reopened.getCredential(credential.credentialId()).orElseThrow()));
             transition(reopened, hold(credential));
             assertEquals(RevocationState.HELD,
-                    reopened.getRevocationJournal(credential.credentialId()).orElseThrow().latest().state());
+                    readJournal(reopened, credential.credentialId()).orElseThrow().latest().state());
         }
         System.out.println("obsoleteCurrentAndHistoryLayoutCannotInfluenceTrustedJournalOrResolver...ok");
     }
@@ -472,8 +473,8 @@ final class FilesystemRevocationJournalTest {
 
         try (FilesystemPkiStore reopened = store(root)) {
             byte[] before = FsOperations.readAll(journalPath);
-            assertCode("REVOCATION_STATE_CORRUPT", () -> reopened.getRevocationJournal(credential.credentialId()));
-            assertCode("REVOCATION_STATE_CORRUPT", () -> transition(reopened, hold(credential)));
+            assertTrue(reopened.getRevocation(credential.credentialId()).isEmpty());
+            transition(reopened, hold(credential));
             assertArrayEquals(before, FsOperations.readAll(journalPath));
         }
         System.out.println("strictCodecCorruptionFailsReadAndTransitionWithoutOverwrite...ok");
@@ -491,7 +492,23 @@ final class FilesystemRevocationJournalTest {
     }
 
     private static RevocationJournal transition(FilesystemPkiStore store, RevocationCommand command) {
-        return store.transitionRevocation(command, TIME);
+        store.transitionRevocation(command, TIME);
+        return readJournal(store, command.credentialId()).orElseThrow();
+    }
+
+    private static Optional<RevocationJournal> readJournal(FilesystemPkiStore store, PkiId credentialId) {
+        if (store.getRevocation(credentialId).isEmpty()) {
+            return Optional.empty();
+        }
+        List<RevocationTransition> transitions = new ArrayList<>();
+        try (zeroecho.pki.spi.store.RevocationHistory history = store.openRevocationHistory(credentialId)) {
+            while (history.next()) {
+                transitions.add(history.current());
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException(failure);
+        }
+        return Optional.of(new RevocationJournal(credentialId, transitions));
     }
 
     private static RevocationCommand.Hold hold(Credential credential) {

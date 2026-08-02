@@ -39,6 +39,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.DirectoryStream;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -145,17 +146,22 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
         requireOpen();
         lock.lock();
         try {
-            for (Path entry : DurableMetadataFiles.list(directory, "")) {
-                requireCommittedName(entry);
-                byte[] value = readRecord(entry);
-                try {
-                    requireCanonicalOwner(value);
-                    String actualKey = entry.getFileName().toString();
-                    if (!actualKey.equals(key(domain, value))) {
-                        throw integrityFailure();
+            if (!Files.exists(directory)) {
+                return;
+            }
+            try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+                for (Path entry : entries) {
+                    requireCommittedName(entry);
+                    byte[] value = readRecord(entry);
+                    try {
+                        requireCanonicalOwner(value);
+                        String actualKey = entry.getFileName().toString();
+                        if (!actualKey.equals(key(domain, value))) {
+                            throw integrityFailure();
+                        }
+                    } finally {
+                        Arrays.fill(value, (byte) 0);
                     }
-                } finally {
-                    Arrays.fill(value, (byte) 0);
                 }
             }
         } finally {
@@ -170,8 +176,12 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
             if (!closed.compareAndSet(false, true)) {
                 return;
             }
-            for (Path entry : DurableMetadataFiles.list(directory, "")) {
-                DurableMetadataFiles.delete(entry);
+            if (Files.isDirectory(directory)) {
+                try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+                    for (Path entry : entries) {
+                        DurableMetadataFiles.delete(entry);
+                    }
+                }
             }
             Files.deleteIfExists(directory);
         } finally {

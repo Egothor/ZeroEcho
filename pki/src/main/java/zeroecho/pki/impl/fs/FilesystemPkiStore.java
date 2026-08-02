@@ -63,7 +63,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -88,7 +87,7 @@ import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
-import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
@@ -111,6 +110,7 @@ import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.TemporaryUniqueIndex;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationHistory;
 
 /**
  * Filesystem-based reference implementation of {@link PkiStore}.
@@ -133,9 +133,9 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
  * anomalous behavior for audit and incident analysis.
  *
  * <li><strong>Audit history for mutable entities:</strong> CA records and
- * profiles append history before updating {@code current.bin}. Revocation state
- * is instead one atomically replaced, internally ordered journal per
- * credential.</li>
+ * profiles append history before updating {@code current.bin}. Revocation
+ * transitions append to one authenticated global log; current indexes and
+ * ordered checkpoints are derived and rebuildable.</li>
  *
  * <li><strong>Deterministic behavior:</strong> filenames, ordering, and cleanup
  * semantics are deterministic. Cleanup occurs only during writes
@@ -161,12 +161,14 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
  * are limited to object type, safe IDs, and file operation outcomes.
  * </p>
  */
-@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
+@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods",
+        "PMD.ExcessivePublicCount", "PMD.UseTryWithResources", "PMD.ExceptionAsFlowControl",
+        "PMD.PreserveStackTrace" })
 public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
 
-    /* package */ static final String CURRENT_STORE_VERSION = "v3";
+    /* package */ static final String CURRENT_STORE_VERSION = "v4";
     private static final String SIGN_RECORD_NAMESPACE = "io.zeroecho.pki.signing-record";
     private static final String SIGN_OWNER_NAMESPACE = "io.zeroecho.pki.signing-owner";
     private static final String STATUS_RECORD_NAMESPACE = "io.zeroecho.pki.status-object-record";
@@ -195,6 +197,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private final FilesystemStagedContentStore stagedContent;
     private final CredentialContentTransaction credentialContentTransactions;
     private final PosixTransactionalMetadataStore metadataStore;
+    private final FilesystemRevocationAuthority revocations;
 
     private final StoreOwnership ownership;
 
@@ -224,8 +227,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     // close();
     // try-with-resources here would release process ownership at constructor
     // return.
-    @SuppressWarnings("PMD.CloseResource")
     public FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock) {
+        this(root, options, clock, FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE);
+    }
+
+    @SuppressWarnings("PMD.CloseResource")
+    /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
+            final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults) {
         this.options = Objects.requireNonNull(options, "options");
         Objects.requireNonNull(root, "root");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -247,7 +255,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
         boolean ownershipTransferred = false;
         PosixTransactionalMetadataStore openedMetadata = null;
+        FilesystemRevocationAuthority openedRevocations = null;
         try {
+            boolean newStore = !Files.exists(this.paths.versionFile());
             ensureVersionFile();
             this.signingNamespace = ensureSigningNamespace();
             this.stagedContent = new FilesystemStagedContentStore(this.paths.stagedContentRoot(),
@@ -260,6 +270,21 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             this.signingTimeWatermark = new AtomicLong(loadSigningTimeWatermark());
             this.historySeq = new AtomicLong(0L);
             recoverStagedContent();
+            boolean snapshotRestore = requireSnapshotBoundary();
+            openedRevocations = FilesystemRevocationAuthority.open(
+                    this.paths, new MetadataStoreId(this.signingNamespace), credentialId -> {
+                        if (getCredential(credentialId).isEmpty()) {
+                            throw new IOException("Revocation credential authority is missing");
+                        }
+                    }, newStore, indexUpdateFaults);
+            this.revocations = openedRevocations;
+            if (snapshotRestore) {
+                Files.delete(this.paths.revocationSnapshotBoundary());
+                try (FileChannel directory = FileChannel.open(
+                        this.paths.root(), StandardOpenOption.READ)) {
+                    directory.force(true);
+                }
+            }
 
             LOG.log(Level.INFO, "running in {0}", root);
             this.ownership = acquiredOwnership;
@@ -268,6 +293,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             throw new IllegalStateException("failed to open filesystem store at " + root, e);
         } finally {
             if (!ownershipTransferred) {
+                if (openedRevocations != null) {
+                    try {
+                        openedRevocations.close();
+                    } catch (IOException closeFailure) {
+                        LOG.log(Level.WARNING, "Revocation-store cleanup failed during initialization");
+                    }
+                }
                 if (openedMetadata != null) {
                     try {
                         closeMetadataAfterFailedOpen(openedMetadata);
@@ -278,6 +310,45 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 acquiredOwnership.closeSilently();
             }
         }
+    }
+
+    private boolean requireSnapshotBoundary() throws IOException {
+        Path marker = paths.revocationSnapshotBoundary();
+        if (!Files.exists(marker, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        if (!Files.isRegularFile(marker, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Revocation snapshot boundary is invalid");
+        }
+        String encoded;
+        try (FileChannel channel = FileChannel.open(marker, StandardOpenOption.READ,
+                java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            long size = channel.size();
+            if (size < 1L || size > 19L) {
+                throw new IOException("Revocation snapshot boundary is invalid");
+            }
+            ByteBuffer buffer = ByteBuffer.allocate(19);
+            while (buffer.position() < size) {
+                int read = channel.read(buffer);
+                if (read <= 0) {
+                    throw new IOException("Revocation snapshot boundary is invalid");
+                }
+            }
+            encoded = new String(buffer.array(), 0, (int) size, StandardCharsets.US_ASCII);
+        }
+        long expected;
+        try {
+            expected = Long.parseLong(encoded);
+        } catch (NumberFormatException failure) {
+            throw new IOException("Revocation snapshot boundary is invalid");
+        }
+        if (!Long.toString(expected).equals(encoded)
+                || expected < RevocationTransitionFrameCodec.PREAMBLE_BYTES
+                || !Files.isRegularFile(paths.revocationTransitionLog())
+                || Files.size(paths.revocationTransitionLog()) != expected) {
+            throw new IOException("Revocation snapshot authority boundary is invalid");
+        }
+        return true;
     }
 
     private static void closeMetadataAfterFailedOpen(PosixTransactionalMetadataStore openedMetadata)
@@ -438,6 +509,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return paths.root();
     }
 
+    /* default */ FilesystemRevocationLog.RecoveryTarget copyRevocationPrefix(Path target)
+            throws IOException {
+        requireStoreUsable();
+        return revocations.copyAuthoritativePrefix(target);
+    }
+
     /* default */ Set<String> snapshotNonCredentialContentIds() {
         requireStoreUsable();
         Set<String> contentIds = new HashSet<>();
@@ -531,7 +608,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @Override
     // Store failures are intentionally replaced by one stable redacted boundary.
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
-    public RevocationJournal transitionRevocation(final RevocationCommand command, final Instant transitionTime) {
+    public RevocationRecord transitionRevocation(final RevocationCommand command, final Instant transitionTime) {
         requireStoreUsable();
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(transitionTime, "transitionTime");
@@ -547,33 +624,49 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             if (credential.isEmpty()) {
                 throw new PkiException("Revocation target unavailable: code=REVOCATION_CREDENTIAL_NOT_FOUND");
             }
-            Optional<RevocationJournal> current;
+            Optional<RevocationRecord> current;
             try {
-                current = readRevocationJournal(credentialId);
-            } catch (RuntimeException failure) {
+                current = revocations.current(credentialId);
+            } catch (RuntimeException | IOException failure) {
                 throw corruptRevocationState();
             }
-            RevocationJournal updated = appendRevocation(current, credentialId, command, transitionTime);
+            RevocationTransition transition = nextRevocationTransition(
+                    current, command, transitionTime);
             try {
-                FsOperations.writeAtomicStrict(paths.revocationJournal(credentialId),
-                        FsCodec.encode(FsCodec.REVOCATION_JOURNAL, updated));
-            } catch (FsOperations.DurabilityUncertainException failure) {
-                durabilityUncertain.set(true);
-                throw new PkiException("Revocation durability unconfirmed: code=REVOCATION_DURABILITY_UNCONFIRMED");
-            } catch (IOException ex) {
+                RevocationTransitionFrameCodec.CompleteRecord committed =
+                        revocations.append(credentialId, transition);
+                return new RevocationRecord(credentialId, committed.data().transition());
+            } catch (FilesystemRevocationLog.OutcomeUnknownException uncertain) {
+                throw new PkiException(
+                        "Revocation append outcome requires recovery: code=REVOCATION_RECOVERY_REQUIRED");
+            } catch (IOException failure) {
                 throw new PkiException("Revocation persistence failed: code=REVOCATION_PERSIST_FAILED");
             }
-            return updated;
         } finally {
             releaseRevocationLock(credentialId, lock);
         }
     }
 
     @Override
-    public Optional<RevocationJournal> getRevocationJournal(final PkiId credentialId) {
+    public Optional<RevocationRecord> getRevocation(final PkiId credentialId) {
         requireStoreUsable();
         Objects.requireNonNull(credentialId, "credentialId");
-        return readRevocationJournal(credentialId);
+        try {
+            return revocations.current(credentialId);
+        } catch (IOException failure) {
+            throw corruptRevocationState();
+        }
+    }
+
+    @Override
+    public RevocationHistory openRevocationHistory(final PkiId credentialId) {
+        requireStoreUsable();
+        Objects.requireNonNull(credentialId, "credentialId");
+        try {
+            return revocations.history(credentialId);
+        } catch (IOException failure) {
+            throw corruptRevocationState();
+        }
     }
 
     @Override
@@ -581,26 +674,9 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     @SuppressWarnings("PMD.PreserveStackTrace")
     public RevocationSnapshot openRevocationSnapshot() {
         requireStoreUsable();
-        Path root = this.paths.root().resolve("revocations").resolve("by-credential");
-        String snapshotId = UUID.randomUUID().toString();
-        Path snapshotRoot = paths.revocationSnapshotRoot().resolve(snapshotId);
-        long count = 0L;
         try {
-            Files.createDirectories(snapshotRoot);
-            if (Files.isDirectory(root)) {
-                try (Stream<Path> journals = Files.walk(root)) {
-                    java.util.Iterator<Path> iterator = journals
-                            .filter(path -> Files.isRegularFile(path)
-                                    && "journal.bin".equals(path.getFileName().toString()))
-                            .iterator();
-                    while (iterator.hasNext()) {
-                        Files.copy(iterator.next(), snapshotRoot.resolve(Long.toUnsignedString(count) + ".bin"));
-                        count = Math.addExact(count, 1L);
-                    }
-                }
-            }
-            return new FilesystemRevocationSnapshot(snapshotId, snapshotRoot, count);
-        } catch (IOException ex) {
+            return revocations.snapshot();
+        } catch (IOException failure) {
             throw corruptRevocationState();
         }
     }
@@ -1292,9 +1368,18 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public void close() throws IOException {
         IOException failure = null;
         try {
-            metadataStore.close();
+            revocations.close();
         } catch (IOException exception) {
             failure = exception;
+        }
+        try {
+            metadataStore.close();
+        } catch (IOException exception) {
+            if (failure == null) {
+                failure = exception;
+            } else {
+                failure.addSuppressed(exception);
+            }
         }
         try {
             ownership.close();
@@ -1475,153 +1560,25 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
-    private Optional<RevocationJournal> readRevocationJournal(PkiId credentialId) {
-        Path path = paths.revocationJournal(credentialId);
-        if (!Files.exists(path)) {
-            return Optional.empty();
-        }
-        RevocationJournal journal = decodeRevocationJournal(path);
-        validateRevocationJournal(credentialId, journal);
-        return Optional.of(journal);
-    }
-
-    /** Stable file-backed revocation snapshot isolated from later store writes. */
-    private static final class FilesystemRevocationSnapshot implements RevocationSnapshot {
-        private final String snapshotId;
-        private final Path root;
-        private final long count;
-        private final AtomicBoolean closed;
-
-        private FilesystemRevocationSnapshot(String snapshotId, Path root, long count) {
-            this.snapshotId = snapshotId;
-            this.root = root;
-            this.count = count;
-            this.closed = new AtomicBoolean();
-        }
-
-        @Override
-        public String snapshotId() {
-            return snapshotId;
-        }
-
-        @Override
-        public OptionalLong count() {
-            return OptionalLong.of(count);
-        }
-
-        @Override
-        public Cursor openCursor() {
-            if (closed.get()) {
-                throw new IllegalStateException("Revocation snapshot is closed");
-            }
-            return new FilesystemRevocationCursor(root, count);
-        }
-
-        @Override
-        public void close() throws IOException {
-            if (!closed.compareAndSet(false, true)) {
-                return;
-            }
-            if (Files.isDirectory(root)) {
-                try (Stream<Path> files = Files.list(root)) {
-                    java.util.Iterator<Path> iterator = files.iterator();
-                    while (iterator.hasNext()) {
-                        Files.deleteIfExists(iterator.next());
-                    }
-                }
-                Files.deleteIfExists(root);
-            }
-        }
-    }
-
-    /** Sequential bounded-memory cursor over one immutable snapshot directory. */
-    private static final class FilesystemRevocationCursor implements RevocationSnapshot.Cursor {
-        private final Path root;
-        private final long count;
-        private long nextOrdinal;
-        private RevocationJournal current;
-        private boolean closed;
-
-        private FilesystemRevocationCursor(Path root, long count) {
-            this.root = root;
-            this.count = count;
-        }
-
-        @Override
-        public boolean next() throws IOException {
-            if (closed) {
-                throw new IllegalStateException("Revocation cursor is closed");
-            }
-            if (nextOrdinal >= count) {
-                current = null;
-                return false;
-            }
-            current = decodeRevocationJournal(root.resolve(Long.toUnsignedString(nextOrdinal) + ".bin"));
-            nextOrdinal = Math.addExact(nextOrdinal, 1L);
-            return true;
-        }
-
-        @Override
-        public RevocationJournal current() {
-            if (current == null) {
-                throw new IllegalStateException("Revocation cursor is not positioned");
-            }
-            return current;
-        }
-
-        @Override
-        public long ordinal() {
-            if (current == null) {
-                throw new IllegalStateException("Revocation cursor is not positioned");
-            }
-            return nextOrdinal - 1L;
-        }
-
-        @Override
-        public void close() {
-            current = null;
-            closed = true;
-        }
-    }
-
-    // Codec and filesystem failures are external persisted-state boundaries; raw
-    // causes are deliberately removed from the stable corruption exception.
-    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
-    private static RevocationJournal decodeRevocationJournal(Path path) {
-        try {
-            return FsCodec.decode(FsCodec.REVOCATION_JOURNAL, FsOperations.readAll(path));
-        } catch (IOException | RuntimeException ex) {
-            throw corruptRevocationState();
-        }
-    }
-
-    // Revision overflow is persisted-state corruption and is mapped to the stable,
-    // redacted state-corruption boundary.
-    @SuppressWarnings("PMD.PreserveStackTrace")
-    private static RevocationJournal appendRevocation(Optional<RevocationJournal> current, PkiId credentialId,
-            RevocationCommand command, Instant transitionTime) {
-        if (current.isPresent() && transitionTime.isBefore(current.get().latest().time())) {
+    private static RevocationTransition nextRevocationTransition(
+            Optional<RevocationRecord> current, RevocationCommand command, Instant transitionTime) {
+        if (current.isPresent() && transitionTime.isBefore(current.orElseThrow().transition().time())) {
             throw new PkiException("Revocation transition conflict: code=REVOCATION_TRANSITION_CONFLICT");
         }
-        RevocationState previous = current.map(RevocationJournal::latest).map(RevocationTransition::state).orElse(null);
+        RevocationState previous = current.map(RevocationRecord::transition)
+                .map(RevocationTransition::state).orElse(null);
         RevocationState next = nextRevocationState(previous, command);
-        long revision = current.map(RevocationJournal::latest).map(RevocationTransition::revision).map(value -> {
+        long revision = current.map(RevocationRecord::transition).map(RevocationTransition::revision).map(value -> {
             try {
                 return Math.addExact(value, 1L);
             } catch (ArithmeticException ex) {
                 throw corruptRevocationState();
             }
         }).orElse(1L);
-        List<RevocationTransition> transitions = new ArrayList<>(
-                current.map(RevocationJournal::transitions).orElseGet(List::of));
         Optional<RevocationReason> permanentReason = command instanceof RevocationCommand.RevokePermanently revoke
                 ? Optional.of(revoke.reason())
                 : Optional.empty();
-        transitions
-                .add(new RevocationTransition(revision, next, transitionTime, permanentReason, command.attributes()));
-        RevocationJournal journal = new RevocationJournal(credentialId, transitions);
-        validateRevocationJournal(credentialId, journal);
-        return journal;
+        return new RevocationTransition(revision, next, transitionTime, permanentReason, command.attributes());
     }
 
     private static RevocationState nextRevocationState(RevocationState previous, RevocationCommand command) {
@@ -1641,12 +1598,6 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 hold ? throwIllegalTransition() : unhold ? RevocationState.CLEAR : RevocationState.PERMANENTLY_REVOKED;
             case PERMANENTLY_REVOKED -> throw new PkiException("Revocation is terminal: code=REVOCATION_TERMINAL");
         };
-    }
-
-    private static void validateRevocationJournal(PkiId expectedId, RevocationJournal journal) {
-        if (!expectedId.equals(journal.credentialId())) {
-            throw corruptRevocationState();
-        }
     }
 
     private static RevocationState throwIllegalTransition() {

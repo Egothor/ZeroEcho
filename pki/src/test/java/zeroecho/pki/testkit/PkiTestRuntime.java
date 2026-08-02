@@ -278,7 +278,17 @@ public final class PkiTestRuntime implements AutoCloseable {
         for (Map.Entry<KeyRef, KeyPair> entry : keyPairs.entrySet()) {
             publicKeys.put(entry.getKey(), entry.getValue().getPublic());
         }
-        return create(rootDir, busFile, keyPairs, publicKeys, Optional.empty());
+        return create(rootDir, busFile, keyPairs, publicKeys, Optional.empty(), FsPkiStoreOptions.defaults());
+    }
+
+    /** Creates a test runtime with explicit filesystem-store options. */
+    public static PkiTestRuntime create(Path rootDir, Path busFile, Map<KeyRef, KeyPair> keyPairs,
+            FsPkiStoreOptions options) {
+        Map<KeyRef, PublicKey> publicKeys = new HashMap<>();
+        for (Map.Entry<KeyRef, KeyPair> entry : keyPairs.entrySet()) {
+            publicKeys.put(entry.getKey(), entry.getValue().getPublic());
+        }
+        return create(rootDir, busFile, keyPairs, publicKeys, Optional.empty(), options);
     }
 
     /**
@@ -294,18 +304,18 @@ public final class PkiTestRuntime implements AutoCloseable {
      */
     public static PkiTestRuntime create(Path rootDir, Path busFile, Map<KeyRef, KeyPair> signingKeys,
             Map<KeyRef, PublicKey> resolvedKeys, ProofOfPossessionVerifier proofVerifier) {
-        return create(rootDir, busFile, signingKeys, resolvedKeys, Optional.of(proofVerifier));
+        return create(rootDir, busFile, signingKeys, resolvedKeys, Optional.of(proofVerifier),
+                FsPkiStoreOptions.defaults());
     }
 
     private static PkiTestRuntime create(Path rootDir, Path busFile, Map<KeyRef, KeyPair> keyPairs,
-            Map<KeyRef, PublicKey> resolvedKeys, Optional<ProofOfPossessionVerifier> proofVerifier) {
+            Map<KeyRef, PublicKey> resolvedKeys, Optional<ProofOfPossessionVerifier> proofVerifier,
+            FsPkiStoreOptions opts) {
         Objects.requireNonNull(rootDir, "rootDir");
         Objects.requireNonNull(busFile, "busFile");
         Objects.requireNonNull(keyPairs, "keyPairs");
         Objects.requireNonNull(resolvedKeys, "resolvedKeys");
         Objects.requireNonNull(proofVerifier, "proofVerifier");
-
-        FsPkiStoreOptions opts = FsPkiStoreOptions.defaults();
 
         Path storeRoot = rootDir.resolve("store");
         FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, opts);

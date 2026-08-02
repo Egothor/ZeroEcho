@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Proxy;
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -47,6 +48,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Test;
@@ -56,10 +58,14 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
+import zeroecho.pki.api.revocation.RevocationQuery;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.core.io.CancellationSignal;
 
 final class DefaultRevocationServiceTest {
     private static final Instant NOW = Instant.parse("2026-07-01T12:00:00Z");
@@ -67,8 +73,8 @@ final class DefaultRevocationServiceTest {
 
     @Test
     void successAuditsCommittedStateAndRevisionOnce() {
-        RevocationJournal committed = new RevocationJournal(CREDENTIAL_ID, List.of(
-                new RevocationTransition(1L, RevocationState.HELD, NOW, Optional.empty(), new SimpleAttributeSet())));
+        RevocationRecord committed = new RevocationRecord(CREDENTIAL_ID,
+                new RevocationTransition(1L, RevocationState.HELD, NOW, Optional.empty(), new SimpleAttributeSet()));
         List<AuditEvent> events = new ArrayList<>();
         DefaultRevocationService service = new DefaultRevocationService(store((method, arguments) -> {
             if ("transitionRevocation".equals(method)) {
@@ -93,7 +99,7 @@ final class DefaultRevocationServiceTest {
             if ("transitionRevocation".equals(method)) {
                 throw new IllegalStateException(sentinel);
             }
-            if ("getRevocationJournal".equals(method)) {
+            if ("getRevocation".equals(method)) {
                 lookupAttempted.set(true);
                 throw new IllegalStateException(sentinel);
             }
@@ -110,6 +116,82 @@ final class DefaultRevocationServiceTest {
         assertEquals("REVOCATION_STATE_UPDATE_FAILED", events.get(0).details().get("code"));
         assertFalse(events.toString().contains(sentinel));
         assertTrue(lookupAttempted.get());
+    }
+
+    @Test
+    void appendUncertaintyPreservesRecoveryRequiredCodeAndAuditsOnce() {
+        List<AuditEvent> events = new ArrayList<>();
+        DefaultRevocationService service = new DefaultRevocationService(store((method, arguments) -> {
+            if ("transitionRevocation".equals(method)) {
+                throw new PkiException("Revocation append outcome is unknown: code=REVOCATION_RECOVERY_REQUIRED");
+            }
+            if ("getRevocation".equals(method)) {
+                return Optional.empty();
+            }
+            throw new UnsupportedOperationException(method);
+        }), Clock.fixed(NOW, ZoneOffset.UTC), events::add);
+
+        PkiException failure = assertThrows(PkiException.class,
+                () -> service.hold(new RevocationCommand.Hold(CREDENTIAL_ID, new SimpleAttributeSet())));
+        assertEquals("Revocation operation failed: code=REVOCATION_RECOVERY_REQUIRED", failure.getMessage());
+        assertNull(failure.getCause());
+        assertEquals(1, events.size());
+        assertEquals("REJECTED", events.get(0).details().get("result"));
+        assertEquals("REVOCATION_RECOVERY_REQUIRED", events.get(0).details().get("code"));
+    }
+
+    @Test
+    void delayedIssuerFilterFailureIsRedactedAtCursorBoundary() throws Exception {
+        String sentinel = "DO_NOT_EXPOSE_DELAYED_STORE_SENTINEL";
+        RevocationRecord record = new RevocationRecord(CREDENTIAL_ID,
+                new RevocationTransition(1L, RevocationState.HELD, NOW,
+                        Optional.empty(), new SimpleAttributeSet()));
+        RevocationSnapshot source = singleRecordSnapshot(record);
+        DefaultRevocationService service = new DefaultRevocationService(store((method, arguments) -> {
+            if ("openRevocationSnapshot".equals(method)) {
+                return source;
+            }
+            if ("getCredential".equals(method)) {
+                throw new IllegalStateException(sentinel);
+            }
+            throw new UnsupportedOperationException(method);
+        }), Clock.fixed(NOW, ZoneOffset.UTC), event -> { });
+        RevocationQuery query = new RevocationQuery(Optional.of(new PkiId("ca:issuer")),
+                Optional.empty(), Optional.empty(), Optional.empty());
+
+        try (RevocationSnapshot snapshot = service.search(query);
+                RevocationSnapshot.Cursor cursor = snapshot.openCursor()) {
+            PkiException failure = assertThrows(PkiException.class, cursor::next);
+            assertEquals("Revocation operation failed: code=REVOCATION_STATE_UPDATE_FAILED", failure.getMessage());
+            assertNull(failure.getCause());
+            assertFalse(failure.toString().contains(sentinel));
+        }
+    }
+
+    private static RevocationSnapshot singleRecordSnapshot(RevocationRecord record) {
+        return new RevocationSnapshot() {
+            @Override public String snapshotId() { return "snapshot:test"; }
+            @Override public long revision() { return 1L; }
+            @Override public long boundary() { return 1L; }
+            @Override public String commitment() { return "00"; }
+            @Override public OptionalLong count() { return OptionalLong.of(1L); }
+            @Override public Cursor openCursor() {
+                return new Cursor() {
+                    private boolean advanced;
+                    @Override public boolean next(CancellationSignal cancellation) {
+                        if (advanced) {
+                            return false;
+                        }
+                        advanced = true;
+                        return true;
+                    }
+                    @Override public RevocationRecord current() { return record; }
+                    @Override public long ordinal() { return 0L; }
+                    @Override public void close() { }
+                };
+            }
+            @Override public void close() throws IOException { }
+        };
     }
 
     @Test

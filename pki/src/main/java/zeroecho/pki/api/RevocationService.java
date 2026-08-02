@@ -33,15 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.api;
 
-import java.util.List;
 import java.util.Optional;
 
 import zeroecho.pki.api.revocation.RevocationCommand;
-import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationQuery;
+import zeroecho.pki.spi.store.RevocationHistory;
+import zeroecho.pki.spi.store.RevocationSnapshot;
 
 /**
- * Authoritative revocation transition and journal administration.
+ * Authoritative revocation transition, current-state, and history administration.
  */
 public interface RevocationService {
 
@@ -49,39 +50,47 @@ public interface RevocationService {
      * Places a credential on hold.
      *
      * @param command hold command
-     * @return committed journal
+     * @return committed current state
      */
-    RevocationJournal hold(RevocationCommand.Hold command);
+    RevocationRecord hold(RevocationCommand.Hold command);
 
     /**
      * Removes an existing hold.
      *
      * @param command unhold command
-     * @return committed journal
+     * @return committed current state
      */
-    RevocationJournal unhold(RevocationCommand.Unhold command);
+    RevocationRecord unhold(RevocationCommand.Unhold command);
 
     /**
      * Permanently revokes a credential.
      *
      * @param command permanent revocation command
-     * @return committed journal
+     * @return committed current state
      */
-    RevocationJournal revokePermanently(RevocationCommand.RevokePermanently command);
+    RevocationRecord revokePermanently(RevocationCommand.RevokePermanently command);
 
     /**
-     * Retrieves the authoritative journal for one credential.
+     * Retrieves the validated current state for one credential.
      *
      * @param credentialId credential identifier
-     * @return journal when present
+     * @return current state when present
      */
-    Optional<RevocationJournal> get(PkiId credentialId);
+    Optional<RevocationRecord> get(PkiId credentialId);
 
     /**
-     * Searches authoritative journals by their latest transition.
+     * Opens the authoritative transition history for one credential.
+     *
+     * @param credentialId credential identifier
+     * @return closeable bounded-memory history cursor
+     */
+    RevocationHistory history(PkiId credentialId);
+
+    /**
+     * Searches a stable ordered population view by current transition.
      *
      * @param query administrative query
-     * @return matching journals
+     * @return closeable stable ordered view whose cursor yields matching states
      */
-    List<RevocationJournal> search(RevocationQuery query);
+    RevocationSnapshot search(RevocationQuery query);
 }

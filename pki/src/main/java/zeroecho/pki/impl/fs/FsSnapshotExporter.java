@@ -103,6 +103,7 @@ final class FsSnapshotExporter {
     private static final String ACTIVE_POINTER_FILE = "active.bin";
     private static final String BINARY_EXTENSION = ".bin";
     private static final int TRANSFER_BUFFER_BYTES = 16 * 1024;
+    private static final String REVOCATION_PREFIX_STAGE = ".revocation-prefix.snapshot";
 
     private final FsPkiStoreOptions options;
 
@@ -337,8 +338,9 @@ final class FsSnapshotExporter {
 
         private void build(Path targetRoot, Instant at) throws IOException {
             Path sourceRoot = source.snapshotRoot();
-            FsPaths destination = new FsPaths(targetRoot);
-            Files.writeString(destination.versionFile(), FilesystemPkiStore.CURRENT_STORE_VERSION);
+            Path stagedRevocationPrefix = targetRoot.resolve(REVOCATION_PREFIX_STAGE);
+            FilesystemRevocationLog.RecoveryTarget captured =
+                    source.copyRevocationPrefix(stagedRevocationPrefix);
             copyFile(sourceRoot.resolve("SIGNING_NAMESPACE"), targetRoot.resolve("SIGNING_NAMESPACE"));
             copyFile(sourceRoot.resolve("SIGNING_TIME_WATERMARK"), targetRoot.resolve("SIGNING_TIME_WATERMARK"));
             copyTreeIfExists(sourceRoot.resolve("requests"), targetRoot.resolve("requests"));
@@ -347,11 +349,47 @@ final class FsSnapshotExporter {
             copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
             copyStagedContent(sourceRoot.resolve("staged-content"), targetRoot.resolve("staged-content"),
                     plan.authority().remintedContentIds(), plan.nonCredentialContentIds());
-            copyTreeIfExists(sourceRoot.resolve("revocations"), targetRoot.resolve("revocations"));
             copyImportedProfilesAsOf(plan.profiles(), targetRoot.resolve("profiles"));
             reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
                     options.workflowHistoryPolicy(), options.strictSnapshotExport());
             new AuthorityRestorer(source, options, plan.authority()).restore(targetRoot);
+            installRevocationAuthority(targetRoot, stagedRevocationPrefix);
+            try (FilesystemPkiStore ignored = new FilesystemPkiStore(targetRoot, options)) {
+                // Opening validates the restored authority and rebuilds its derived index.
+            }
+            writeSnapshotBoundary(targetRoot, captured.boundary());
+        }
+
+        private static void writeSnapshotBoundary(Path targetRoot, long boundary) throws IOException {
+            Path marker = new FsPaths(targetRoot).revocationSnapshotBoundary();
+            Files.writeString(marker, Long.toString(boundary), StandardCharsets.US_ASCII,
+                    java.nio.file.StandardOpenOption.CREATE_NEW,
+                    java.nio.file.StandardOpenOption.WRITE);
+            try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(
+                    marker, java.nio.file.StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
+            try (java.nio.channels.FileChannel directory = java.nio.channels.FileChannel.open(
+                    targetRoot, java.nio.file.StandardOpenOption.READ)) {
+                directory.force(true);
+            }
+        }
+
+        private static void installRevocationAuthority(Path targetRoot, Path stagedPrefix) throws IOException {
+            FsPaths paths = new FsPaths(targetRoot);
+            Files.deleteIfExists(paths.revocationCurrentIndex());
+            Files.createDirectories(paths.revocationTransitionLog().getParent());
+            try {
+                Files.move(stagedPrefix, paths.revocationTransitionLog(),
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+                throw new IOException("Atomic revocation snapshot restoration is unsupported", unsupported);
+            }
+            try (java.nio.channels.FileChannel directory = java.nio.channels.FileChannel.open(
+                    paths.revocationTransitionLog().getParent(), java.nio.file.StandardOpenOption.READ)) {
+                directory.force(true);
+            }
         }
 
         private static void addCleanupFailure(Exception primary, Path temporaryRoot) {

@@ -48,6 +48,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -73,6 +74,9 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.Encoding;
+import zeroecho.pki.impl.fs.FilesystemPkiStore;
+import zeroecho.pki.impl.fs.FsHistoryPolicy;
+import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuanceService;
 import zeroecho.pki.api.KeyRef;
@@ -94,6 +98,7 @@ import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
@@ -153,20 +158,37 @@ final class DefaultStatusObjectServiceCrlTest {
         KeyPair permanentKey = generateRsa();
         KeyPair clearKey = generateRsa();
         KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:crl-service");
+        Path snapshot = root.resolve("crl-service-restored");
+        FsHistoryPolicy history = FsHistoryPolicy.onWrite(Optional.of(Duration.ofDays(90)));
+        FsPkiStoreOptions snapshotOptions = new FsPkiStoreOptions(
+                history, history, history, history, false, Duration.ofDays(90), Duration.ZERO);
+        PkiId caId;
+        BigInteger heldSerial;
+        BigInteger permanentSerial;
         try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
-                Map.of(rootKeyRef, rootKey))) {
-            PkiId caId = createRoot(runtime, rootKeyRef, "CRL Service Root");
+                Map.of(rootKeyRef, rootKey), snapshotOptions)) {
+            caId = createRoot(runtime, rootKeyRef, "CRL Service Root");
             Credential held = issue(runtime, caId, heldKey, "Held");
             Credential permanent = issue(runtime, caId, permanentKey, "Permanent");
             Credential clear = issue(runtime, caId, clearKey, "Clear");
 
-            RevocationJournal heldJournal = runtime.revocationService()
+            RevocationRecord heldRecord = runtime.revocationService()
                     .hold(new RevocationCommand.Hold(held.credentialId(), emptyAttributes()));
-            RevocationJournal permanentJournal = runtime.revocationService()
+            RevocationRecord permanentRecord = runtime.revocationService()
                     .revokePermanently(new RevocationCommand.RevokePermanently(permanent.credentialId(),
                             RevocationReason.AA_COMPROMISE, emptyAttributes()));
             runtime.revocationService().hold(new RevocationCommand.Hold(clear.credentialId(), emptyAttributes()));
             runtime.revocationService().unhold(new RevocationCommand.Unhold(clear.credentialId(), emptyAttributes()));
+
+            try (java.util.stream.Stream<Path> files = java.nio.file.Files.walk(
+                    root.resolve("store").resolve("profiles"))) {
+                for (Path active : files.filter(path -> "active.bin".equals(
+                        path.getFileName().toString())).toList()) {
+                    java.nio.file.Files.delete(active);
+                }
+            }
+            java.nio.file.Files.createDirectories(snapshot);
+            ((FilesystemPkiStore) runtime.store()).exportSnapshot(snapshot.resolve("store"), Instant.now());
 
             StatusObject status = runtime.statusObjectService().generate(new StatusObjectGenerateCommand(caId,
                     StatusObjectType.CRL, runtime.framework().formatId(), emptyAttributes()));
@@ -174,10 +196,21 @@ final class DefaultStatusObjectServiceCrlTest {
             X509CertificateHolderView heldCertificate = certificate(runtime, held);
             X509CertificateHolderView permanentCertificate = certificate(runtime, permanent);
             X509CertificateHolderView clearCertificate = certificate(runtime, clear);
-            assertEntry(crl, heldCertificate.serial(), heldJournal.latest().time(), RevocationReason.CERTIFICATE_HOLD);
-            assertEntry(crl, permanentCertificate.serial(), permanentJournal.latest().time(),
+            assertEntry(crl, heldCertificate.serial(), heldRecord.transition().time(), RevocationReason.CERTIFICATE_HOLD);
+            assertEntry(crl, permanentCertificate.serial(), permanentRecord.transition().time(),
                     RevocationReason.AA_COMPROMISE);
             assertNull(crl.getRevokedCertificate(clearCertificate.serial()));
+            heldSerial = heldCertificate.serial();
+            permanentSerial = permanentCertificate.serial();
+        }
+        try (PkiTestRuntime restored = PkiTestRuntime.create(snapshot, snapshot.resolve("restored-bus.log"),
+                Map.of(rootKeyRef, rootKey), snapshotOptions)) {
+            StatusObject restoredStatus = restored.statusObjectService().generate(new StatusObjectGenerateCommand(
+                    caId, StatusObjectType.CRL, restored.framework().formatId(), emptyAttributes()));
+            X509CRLHolder restoredCrl = new X509CRLHolder(
+                    PkiTestRuntime.readContent(restored.signingBus(), restoredStatus.content()));
+            assertTrue(restoredCrl.getRevokedCertificate(heldSerial) != null);
+            assertTrue(restoredCrl.getRevokedCertificate(permanentSerial) != null);
         }
     }
 
@@ -310,11 +343,28 @@ final class DefaultStatusObjectServiceCrlTest {
                         if (failListing) {
                             throw new IllegalStateException(SENTINEL);
                         }
-                        List<RevocationJournal> snapshot = List.copyOf(journals);
+                        List<RevocationRecord> snapshot = journals.stream()
+                                .map(journal -> new RevocationRecord(journal.credentialId(), journal.latest()))
+                                .toList();
                         return new zeroecho.pki.spi.store.RevocationSnapshot() {
                             @Override
                             public String snapshotId() {
                                 return "test-snapshot";
+                            }
+
+                            @Override
+                            public long revision() {
+                                return snapshot.size();
+                            }
+
+                            @Override
+                            public long boundary() {
+                                return snapshot.size();
+                            }
+
+                            @Override
+                            public String commitment() {
+                                return "test-commitment";
                             }
 
                             @Override
@@ -328,13 +378,13 @@ final class DefaultStatusObjectServiceCrlTest {
                                     private int index = -1;
 
                                     @Override
-                                    public boolean next() {
+                                    public boolean next(zeroecho.core.io.CancellationSignal cancellation) {
                                         index++;
                                         return index < snapshot.size();
                                     }
 
                                     @Override
-                                    public RevocationJournal current() {
+                                    public RevocationRecord current() {
                                         return snapshot.get(index);
                                     }
 

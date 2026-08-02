@@ -122,8 +122,7 @@ final class FilesystemPkiStoreOwnershipTest {
         Files.writeString(root.resolve(FsPaths.VERSION_FILE), "unsupported", StandardCharsets.US_ASCII);
 
         assertThrows(IllegalStateException.class, () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
-        Files.writeString(root.resolve(FsPaths.VERSION_FILE), FilesystemPkiStore.CURRENT_STORE_VERSION,
-                StandardCharsets.US_ASCII);
+        Files.delete(root.resolve(FsPaths.VERSION_FILE));
 
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
             assertTrue(reopened.listCas().isEmpty());

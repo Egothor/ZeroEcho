@@ -33,13 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 
+import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.RevocationService;
@@ -47,11 +50,13 @@ import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.revocation.RevocationCommand;
-import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationQuery;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.spi.store.RevocationHistory;
+import zeroecho.pki.spi.store.RevocationSnapshot;
 
 /**
  * Store-backed authoritative revocation transition service.
@@ -63,7 +68,7 @@ public final class DefaultRevocationService implements RevocationService {
     private static final List<String> SAFE_STORE_CODES = List.of("REVOCATION_CREDENTIAL_NOT_FOUND",
             "REVOCATION_TRANSITION_ILLEGAL", "REVOCATION_TERMINAL", "REVOCATION_TRANSITION_CONFLICT",
             "REVOCATION_STATE_CORRUPT", "REVOCATION_PERSIST_FAILED", "REVOCATION_DURABILITY_UNCONFIRMED",
-            "STORE_DURABILITY_UNCONFIRMED");
+            "REVOCATION_RECOVERY_REQUIRED", "STORE_DURABILITY_UNCONFIRMED");
 
     private final PkiStore store;
     private final Clock clock;
@@ -83,26 +88,26 @@ public final class DefaultRevocationService implements RevocationService {
     }
 
     @Override
-    public RevocationJournal hold(RevocationCommand.Hold command) {
+    public RevocationRecord hold(RevocationCommand.Hold command) {
         return transition(Objects.requireNonNull(command, "command"), "HOLD");
     }
 
     @Override
-    public RevocationJournal unhold(RevocationCommand.Unhold command) {
+    public RevocationRecord unhold(RevocationCommand.Unhold command) {
         return transition(Objects.requireNonNull(command, "command"), "UNHOLD");
     }
 
     @Override
-    public RevocationJournal revokePermanently(RevocationCommand.RevokePermanently command) {
+    public RevocationRecord revokePermanently(RevocationCommand.RevokePermanently command) {
         return transition(Objects.requireNonNull(command, "command"), "REVOKE_PERMANENTLY");
     }
 
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    public Optional<RevocationJournal> get(PkiId credentialId) {
+    public Optional<RevocationRecord> get(PkiId credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
         try {
-            return store.getRevocationJournal(credentialId);
+            return store.getRevocation(credentialId);
         } catch (RuntimeException failure) {
             throw sanitized(failure);
         }
@@ -110,33 +115,34 @@ public final class DefaultRevocationService implements RevocationService {
 
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    public List<RevocationJournal> search(RevocationQuery query) {
+    public RevocationHistory history(PkiId credentialId) {
+        Objects.requireNonNull(credentialId, "credentialId");
+        try {
+            return store.openRevocationHistory(credentialId);
+        } catch (RuntimeException failure) {
+            throw sanitized(failure);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    public RevocationSnapshot search(RevocationQuery query) {
         Objects.requireNonNull(query, "query");
-        try (zeroecho.pki.spi.store.RevocationSnapshot snapshot = store.openRevocationSnapshot();
-                zeroecho.pki.spi.store.RevocationSnapshot.Cursor cursor = snapshot.openCursor()) {
-            List<RevocationJournal> matching = new java.util.ArrayList<>();
-            while (cursor.next()) {
-                RevocationJournal journal = cursor.current();
-                if (matches(journal, query)) {
-                    matching.add(journal);
-                }
-            }
-            return List.copyOf(matching);
-        } catch (java.io.IOException failure) {
-            throw new PkiException("Revocation snapshot failed: code=STORE_FAILED", failure);
+        try {
+            return new FilteredSnapshot(store.openRevocationSnapshot(), query);
         } catch (RuntimeException failure) {
             throw sanitized(failure);
         }
     }
 
     @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
-    private RevocationJournal transition(RevocationCommand command, String operation) {
+    private RevocationRecord transition(RevocationCommand command, String operation) {
         Instant time = null;
         try {
             time = Objects.requireNonNull(clock.instant(), "clock instant");
-            RevocationJournal journal = store.transitionRevocation(command, time);
-            auditSuccess(time, journal, operation);
-            return journal;
+            RevocationRecord record = store.transitionRevocation(command, time);
+            auditSuccess(time, record, operation);
+            return record;
         } catch (RuntimeException failure) {
             PkiException sanitized = time == null
                     ? new PkiException("Revocation operation failed: code=REVOCATION_TIME_UNAVAILABLE")
@@ -147,8 +153,8 @@ public final class DefaultRevocationService implements RevocationService {
         }
     }
 
-    private boolean matches(RevocationJournal journal, RevocationQuery query) {
-        RevocationTransition latest = journal.latest();
+    private boolean matches(RevocationRecord record, RevocationQuery query) {
+        RevocationTransition latest = record.transition();
         if (query.reason().isPresent() && !latest.permanentReason().filter(query.reason().get()::equals).isPresent()) {
             return false;
         }
@@ -158,23 +164,23 @@ public final class DefaultRevocationService implements RevocationService {
         if (query.revokedBefore().isPresent() && !latest.time().isBefore(query.revokedBefore().get())) {
             return false;
         }
-        return query.issuerCaId().isEmpty() || store.getCredential(journal.credentialId())
+        return query.issuerCaId().isEmpty() || store.getCredential(record.credentialId())
                 .map(credential -> query.issuerCaId().get().equals(credential.issuerRef().caId())).orElse(false);
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private Optional<String> currentState(RevocationCommand command) {
         try {
-            return store.getRevocationJournal(command.credentialId()).map(RevocationJournal::latest)
+            return store.getRevocation(command.credentialId()).map(RevocationRecord::transition)
                     .map(transition -> transition.state().name());
         } catch (RuntimeException ignored) {
             return Optional.empty();
         }
     }
 
-    private void auditSuccess(Instant time, RevocationJournal journal, String operation) {
-        RevocationTransition latest = journal.latest();
-        audit(time, journal.credentialId(), operation, Map.of("result", "COMMITTED", "state", latest.state().name(),
+    private void auditSuccess(Instant time, RevocationRecord record, String operation) {
+        RevocationTransition latest = record.transition();
+        audit(time, record.credentialId(), operation, Map.of("result", "COMMITTED", "state", latest.state().name(),
                 "revision", Long.toString(latest.revision())));
     }
 
@@ -216,5 +222,110 @@ public final class DefaultRevocationService implements RevocationService {
         String message = failure.getMessage();
         int marker = message.indexOf("code=");
         return marker < 0 ? "REVOCATION_STATE_UPDATE_FAILED" : message.substring(marker + 5);
+    }
+
+    /** Query-filtered ownership wrapper over one stable store snapshot. */
+    private final class FilteredSnapshot implements RevocationSnapshot {
+        private final RevocationSnapshot source;
+        private final RevocationQuery query;
+
+        private FilteredSnapshot(RevocationSnapshot source, RevocationQuery query) {
+            this.source = source;
+            this.query = query;
+        }
+
+        @Override
+        public String snapshotId() {
+            return source.snapshotId();
+        }
+
+        @Override
+        public long revision() {
+            return source.revision();
+        }
+
+        @Override
+        public long boundary() {
+            return source.boundary();
+        }
+
+        @Override
+        public String commitment() {
+            return source.commitment();
+        }
+
+        @Override
+        public OptionalLong count() {
+            return OptionalLong.empty();
+        }
+
+        @Override
+        @SuppressWarnings("PMD.AvoidCatchingGenericException")
+        public Cursor openCursor() throws IOException {
+            try {
+                return new FilteredCursor(source.openCursor(), query);
+            } catch (RuntimeException failure) {
+                throw sanitized(failure);
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            source.close();
+        }
+    }
+
+    /** Lazy query filter retaining only one current state. */
+    private final class FilteredCursor implements RevocationSnapshot.Cursor {
+        private final RevocationSnapshot.Cursor source;
+        private final RevocationQuery query;
+        private RevocationRecord current;
+        private long ordinal = -1L;
+
+        private FilteredCursor(RevocationSnapshot.Cursor source, RevocationQuery query) {
+            this.source = source;
+            this.query = query;
+        }
+
+        @Override
+        @SuppressWarnings({ "PMD.UnusedAssignment", "PMD.AvoidCatchingGenericException" })
+        public boolean next(CancellationSignal cancellation) throws IOException {
+            try {
+                current = null;
+                while (source.next(cancellation)) {
+                    RevocationRecord candidate = source.current();
+                    if (matches(candidate, query)) {
+                        current = candidate;
+                        ordinal = Math.addExact(ordinal, 1L);
+                        return true;
+                    }
+                }
+                return false;
+            } catch (RuntimeException failure) {
+                throw sanitized(failure);
+            }
+        }
+
+        @Override
+        public RevocationRecord current() {
+            if (current == null) {
+                throw new IllegalStateException("Revocation search cursor is not positioned");
+            }
+            return current;
+        }
+
+        @Override
+        public long ordinal() {
+            if (current == null) {
+                throw new IllegalStateException("Revocation search cursor is not positioned");
+            }
+            return ordinal;
+        }
+
+        @Override
+        public void close() throws IOException {
+            current = null;
+            source.close();
+        }
     }
 }

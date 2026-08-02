@@ -63,6 +63,7 @@ final class FsPaths {
     private static final String REVOCATIONS_DIRECTORY = "revocations";
 
     /* default */ static final String VERSION_FILE = "VERSION";
+    /* default */ static final String REVOCATION_SNAPSHOT_BOUNDARY_FILE = ".revocation-snapshot-boundary";
     /* default */ static final String LOCK_DIR = ".lock";
     /* default */ static final String STORE_LOCK = "store.lock";
 
@@ -81,6 +82,10 @@ final class FsPaths {
 
     /* default */ Path versionFile() {
         return this.root.resolve(VERSION_FILE);
+    }
+
+    /* default */ Path revocationSnapshotBoundary() {
+        return this.root.resolve(REVOCATION_SNAPSHOT_BOUNDARY_FILE);
     }
 
     /* default */ Path signingNamespaceFile() {

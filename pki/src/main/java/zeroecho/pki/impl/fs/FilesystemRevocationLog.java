@@ -71,6 +71,7 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
 /** Exclusive-writer POSIX append-only revocation transition log. */
+@SuppressWarnings("PMD.CyclomaticComplexity")
 final class FilesystemRevocationLog implements AutoCloseable {
 
     private static final Logger LOGGER = Logger.getLogger(FilesystemRevocationLog.class.getName());
@@ -107,13 +108,14 @@ final class FilesystemRevocationLog implements AutoCloseable {
             MetadataStoreId storeId,
             CredentialAuthority credentialAuthority,
             FaultInjector faults,
-            RecoveryResult recovery) {
+            RecoveryResult recovery,
+            boolean retainCurrentState) {
         this.channel = channel;
         this.writerLock = writerLock;
         this.storeId = storeId;
         this.credentialAuthority = credentialAuthority;
         this.faults = faults;
-        latest = new HashMap<>(recovery.latestStates());
+        latest = retainCurrentState ? new HashMap<>(recovery.latestStates()) : null;
         globalRevision = recovery.globalRevision();
         finalRecordStart = recovery.finalRecordStart();
         lastCompleteRecordBoundary = recovery.lastCompleteRecordBoundary();
@@ -125,6 +127,19 @@ final class FilesystemRevocationLog implements AutoCloseable {
             Path logPath, MetadataStoreId storeId, CredentialAuthority credentialAuthority) throws IOException {
         return create(logPath, storeId, credentialAuthority,
                 DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE);
+    }
+
+    /* default */ static FilesystemRevocationLog createProduction(
+            Path logPath, MetadataStoreId storeId, CredentialAuthority credentialAuthority) throws IOException {
+        return Lifecycle.create(logPath, storeId, credentialAuthority,
+                DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE, false);
+    }
+
+    /* default */ static FilesystemRevocationLog openProduction(
+            Path logPath, MetadataStoreId expectedStoreId, CredentialAuthority credentialAuthority)
+            throws IOException {
+        return Lifecycle.open(logPath, expectedStoreId, credentialAuthority,
+                DefaultCapabilityProfile.INSTANCE, FaultInjector.NONE, false);
     }
 
     /* default */ static FilesystemRevocationLog open(
@@ -140,7 +155,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
             CredentialAuthority credentialAuthority,
             CapabilityProfile capabilities,
             FaultInjector faults) throws IOException {
-        return Lifecycle.create(logPath, storeId, credentialAuthority, capabilities, faults);
+        return Lifecycle.create(logPath, storeId, credentialAuthority, capabilities, faults, true);
     }
 
     /* default */ static FilesystemRevocationLog open(
@@ -149,7 +164,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
             CredentialAuthority credentialAuthority,
             CapabilityProfile capabilities,
             FaultInjector faults) throws IOException {
-        return Lifecycle.open(logPath, expectedStoreId, credentialAuthority, capabilities, faults);
+        return Lifecycle.open(logPath, expectedStoreId, credentialAuthority, capabilities, faults, true);
     }
 
     /* default */ MetadataStoreId storeId() {
@@ -190,6 +205,41 @@ final class FilesystemRevocationLog implements AutoCloseable {
         }
     }
 
+    /* default */ RevocationTransitionFrameCodec.CompleteRecord append(
+            PkiId credentialId, RevocationTransition transition,
+            RevocationTransitionFrameCodec.CompleteRecord previous) throws IOException {
+        Objects.requireNonNull(credentialId, "credentialId");
+        Objects.requireNonNull(transition, "transition");
+        if (latest != null) {
+            throw new IllegalStateException("External predecessor append requires production log mode");
+        }
+        credentialAuthority.requireCredential(credentialId);
+        appendLock.lock();
+        try {
+            requireOperational();
+            RevocationTransitionFrameCodec.TransitionData data = nextData(
+                    credentialId, transition, previous);
+            validateTransition(data, previous);
+            try {
+                channel.position(channel.size());
+                faults.fail(FaultPoint.APPEND);
+                RevocationTransitionFrameCodec.CompleteRecord record = codec.write(channel, data);
+                faults.fail(FaultPoint.FILE_FORCE);
+                channel.force(true);
+                globalRevision = data.globalRevision();
+                finalRecordStart = OptionalLong.of(record.recordOffset());
+                lastCompleteRecordBoundary = record.recordEnd();
+                globalCommitment = record.commitment();
+                return record;
+            } catch (IOException failure) {
+                state = State.RECOVERY_REQUIRED;
+                throw new OutcomeUnknownException(failure);
+            }
+        } finally {
+            appendLock.unlock();
+        }
+    }
+
     /* default */ RecoveryResult scan(RecoverySink sink) throws IOException {
         appendLock.lock();
         try {
@@ -209,6 +259,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
         appendLock.lock();
         try {
             requireOpenAuthority();
+            if (latest == null) {
+                throw new IllegalStateException("Production log does not retain current credential state");
+            }
             return latest.size();
         } finally {
             appendLock.unlock();
@@ -347,6 +400,29 @@ final class FilesystemRevocationLog implements AutoCloseable {
                 Optional.of(previous.commitment()), transition);
     }
 
+    private RevocationTransitionFrameCodec.TransitionData nextData(
+            PkiId credentialId, RevocationTransition transition,
+            RevocationTransitionFrameCodec.CompleteRecord previous) throws IOException {
+        final long nextGlobal;
+        try {
+            nextGlobal = Math.addExact(globalRevision, 1L);
+        } catch (ArithmeticException exhausted) {
+            throw new IOException("Global revocation revision is exhausted", exhausted);
+        }
+        if (previous == null) {
+            return new RevocationTransitionFrameCodec.TransitionData(
+                    nextGlobal, globalCommitment, credentialId,
+                    OptionalLong.empty(), Optional.empty(), transition);
+        }
+        if (!previous.data().credentialId().equals(credentialId)) {
+            throw new IOException("Revocation predecessor identity is invalid");
+        }
+        return new RevocationTransitionFrameCodec.TransitionData(
+                nextGlobal, globalCommitment, credentialId,
+                OptionalLong.of(previous.data().globalRevision()),
+                Optional.of(previous.commitment()), transition);
+    }
+
     private static void validateGlobal(
             RevocationTransitionFrameCodec.CompleteRecord record,
             long currentRevision,
@@ -453,7 +529,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
             } catch (IOException closeFailure) {
                 failure = appendFailure(failure, closeFailure);
             }
-            latest.clear();
+            if (latest != null) {
+                latest.clear();
+            }
             state = State.CLOSED;
             if (failure != null) {
                 throw failure;
@@ -478,7 +556,8 @@ final class FilesystemRevocationLog implements AutoCloseable {
                 MetadataStoreId storeId,
                 CredentialAuthority credentialAuthority,
                 CapabilityProfile capabilities,
-                FaultInjector faults) throws IOException {
+                FaultInjector faults,
+                boolean retainCurrentState) throws IOException {
             requireLifecycleArguments(storeId, credentialAuthority, capabilities, faults);
             Path parent = requireParent(logPath);
             CapabilityObservation observation = observeCapabilities(parent, capabilities);
@@ -493,7 +572,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
                 RecoveryResult empty = RecoveryResult.empty(storeId);
                 FilesystemRevocationLog log = new FilesystemRevocationLog(
                         resources.channel, resources.writerLock, storeId,
-                        credentialAuthority, faults, empty);
+                        credentialAuthority, faults, empty, retainCurrentState);
                 log.scanInvocations = 0L;
                 return log;
             } catch (IOException failure) {
@@ -507,14 +586,18 @@ final class FilesystemRevocationLog implements AutoCloseable {
                 MetadataStoreId expectedStoreId,
                 CredentialAuthority credentialAuthority,
                 CapabilityProfile capabilities,
-                FaultInjector faults) throws IOException {
+                FaultInjector faults,
+                boolean retainCurrentState) throws IOException {
             requireLifecycleArguments(expectedStoreId, credentialAuthority, capabilities, faults);
             Path parent = requireParent(logPath);
             CapabilityObservation observation = observeCapabilities(parent, capabilities);
             Resources resources = Resources.acquire(logPath, false, observation.posix());
             try {
-                ProvisionalRecovery provisional = Scanner.scanProvisional(
-                        resources.channel, expectedStoreId, credentialAuthority, RecoverySink.NONE);
+                ProvisionalRecovery provisional = retainCurrentState
+                        ? Scanner.scanProvisional(resources.channel, expectedStoreId,
+                                credentialAuthority, RecoverySink.NONE)
+                        : ScalarScanner.scanProvisional(resources.channel, expectedStoreId,
+                                credentialAuthority);
                 boolean completed = false;
                 try {
                     RecoveryResult recovered = repairIfNecessary(
@@ -529,7 +612,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
                     }
                     return new FilesystemRevocationLog(
                             resources.channel, resources.writerLock, expectedStoreId,
-                            credentialAuthority, faults, recovered);
+                            credentialAuthority, faults, recovered, retainCurrentState);
                 } finally {
                     if (!completed) {
                         provisional.sink().abort();
@@ -691,6 +774,51 @@ final class FilesystemRevocationLog implements AutoCloseable {
 
         private static CorruptLogException corrupt(String message) {
             return new CorruptLogException(message);
+        }
+    }
+
+    /** Production scalar scan; credential-local state is rebuilt only in the disk index. */
+    private static final class ScalarScanner {
+        private static ProvisionalRecovery scanProvisional(
+                FileChannel channel,
+                MetadataStoreId expectedStoreId,
+                CredentialAuthority credentialAuthority) throws IOException {
+            RevocationTransitionFrameCodec codec = new RevocationTransitionFrameCodec();
+            MetadataStoreId actualStoreId = codec.readPreamble(channel);
+            if (!expectedStoreId.equals(actualStoreId)) {
+                throw new CorruptLogException("Revocation log belongs to another store");
+            }
+            long physicalEnd = channel.size();
+            long boundary = RevocationTransitionFrameCodec.PREAMBLE_BYTES;
+            long globalRevision = 0L;
+            OptionalLong finalRecordStart = OptionalLong.empty();
+            RevocationTransitionFrameCodec.Commitment commitment =
+                    RevocationTransitionFrameCodec.initialCommitment(actualStoreId);
+            boolean incomplete = false;
+            while (true) {
+                RevocationTransitionFrameCodec.ReadResult result = codec.read(channel, boundary);
+                if (result.classification() == RevocationTransitionFrameCodec.Classification.END_OF_INPUT) {
+                    break;
+                }
+                if (result.classification() == RevocationTransitionFrameCodec.Classification.INCOMPLETE_TAIL) {
+                    incomplete = true;
+                    break;
+                }
+                if (result.classification() != RevocationTransitionFrameCodec.Classification.COMPLETE_RECORD) {
+                    throw new CorruptLogException("Revocation transition log contains a corrupt record");
+                }
+                RevocationTransitionFrameCodec.CompleteRecord record = result.record().orElseThrow();
+                validateGlobal(record, globalRevision, commitment);
+                credentialAuthority.requireCredential(record.data().credentialId());
+                globalRevision = record.data().globalRevision();
+                finalRecordStart = OptionalLong.of(record.recordOffset());
+                commitment = record.commitment();
+                boundary = record.recordEnd();
+            }
+            RecoveryResult recovered = new RecoveryResult(
+                    actualStoreId, boundary, physicalEnd, incomplete, globalRevision,
+                    finalRecordStart, commitment, Map.of());
+            return new ProvisionalRecovery(recovered, RecoverySink.NONE);
         }
     }
 

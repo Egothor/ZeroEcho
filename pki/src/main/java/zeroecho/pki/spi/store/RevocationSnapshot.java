@@ -36,16 +36,21 @@ package zeroecho.pki.spi.store;
 import java.io.IOException;
 import java.util.OptionalLong;
 
-import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
+import zeroecho.core.io.CancellationSignal;
 
 /**
- * Stable, restartable streaming view of authoritative revocation journals.
+ * Stable, restartable ordered current-state view at one authoritative revision.
  *
  * <p>
  * A snapshot never exposes a complete collection. Each cursor yields one
- * immutable journal at a time and uses {@code long} ordinal accounting. ZeroEcho
+ * immutable current state at a time and uses {@code long} ordinal accounting. ZeroEcho
  * core imposes no product-wide entry-count ceiling.
  * </p>
+ *
+ * <p>An exact checkpoint opens without population materialization. Building a
+ * missing checkpoint uses a bounded-memory external sort; cursor traversal is
+ * linear in the current-state count and uses constant auxiliary heap per entry.</p>
  */
 public interface RevocationSnapshot extends AutoCloseable {
 
@@ -56,8 +61,17 @@ public interface RevocationSnapshot extends AutoCloseable {
      */
     String snapshotId();
 
+    /** @return captured authoritative global revision */
+    long revision();
+
+    /** @return captured authoritative byte boundary */
+    long boundary();
+
+    /** @return captured authoritative global commitment in lowercase hexadecimal */
+    String commitment();
+
     /**
-     * Returns the journal count when the store can provide it without
+     * Returns the current-state count when the store can provide it without
      * materialization.
      *
      * @return count or empty
@@ -81,25 +95,36 @@ public interface RevocationSnapshot extends AutoCloseable {
     void close() throws IOException;
 
     /**
-     * One-pass journal cursor.
+     * One-pass current-state cursor.
      */
     interface Cursor extends AutoCloseable {
 
         /**
-         * Advances to the next journal.
+         * Advances to the next current state.
          *
          * @return {@code true} when {@link #current()} is available
          * @throws IOException if store reading fails
          */
-        boolean next() throws IOException;
+        default boolean next() throws IOException {
+            return next(CancellationSignal.NONE);
+        }
 
         /**
-         * Returns the current journal.
+         * Advances with cancellation.
          *
-         * @return immutable current journal
+         * @param cancellation cancellation signal
+         * @return {@code true} when a current state is available
+         * @throws IOException if store reading fails
+         */
+        boolean next(CancellationSignal cancellation) throws IOException;
+
+        /**
+         * Returns the current state.
+         *
+         * @return immutable current state
          * @throws IllegalStateException if the cursor is not positioned on a value
          */
-        RevocationJournal current();
+        RevocationRecord current();
 
         /**
          * Returns the zero-based current ordinal.

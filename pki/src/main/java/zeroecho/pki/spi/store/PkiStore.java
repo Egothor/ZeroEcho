@@ -48,7 +48,7 @@ import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
-import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.status.StatusObject;
 
 /**
@@ -177,20 +177,37 @@ public interface PkiStore extends SignWorkflowStore {
      *
      * @param command        trusted transition command
      * @param transitionTime authoritative transition time
-     * @return committed journal
+     * @return committed current state
      */
-    RevocationJournal transitionRevocation(RevocationCommand command, Instant transitionTime);
+    RevocationRecord transitionRevocation(RevocationCommand command, Instant transitionTime);
 
     /**
-     * Retrieves the authoritative revocation journal for a credential.
+     * Retrieves the validated current revocation state for a credential.
+     * Disk probing is expected constant time and is linear in index capacity in
+     * the worst collision case; auxiliary heap use is constant.
      *
      * @param credentialId credential identifier
-     * @return journal when present
+     * @return current state when present
      */
-    Optional<RevocationJournal> getRevocationJournal(PkiId credentialId);
+    Optional<RevocationRecord> getRevocation(PkiId credentialId);
+
+    /**
+     * Opens a bounded-memory cursor over one credential's authoritative history.
+     * Opening is constant time. The first advance validates the captured global
+     * prefix; consuming the history performs at most two linear passes over that
+     * prefix and uses constant auxiliary heap.
+     *
+     * @param credentialId exact credential identity
+     * @return closeable history cursor captured at the current log head
+     * @throws IllegalStateException if the authoritative history cannot be opened
+     */
+    RevocationHistory openRevocationHistory(PkiId credentialId);
 
     /**
      * Opens a stable restartable streaming snapshot of authoritative revocations.
+     * An exact checkpoint opens in constant time after validation. Otherwise the
+     * implementation may perform bounded-memory external sorting over the current
+     * population; cursors themselves use constant auxiliary heap per entry.
      *
      * @return revocation snapshot
      * @throws IllegalStateException if the snapshot cannot be opened

@@ -44,7 +44,7 @@ import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
-import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.store.PkiStore;
@@ -125,9 +125,9 @@ public final class StoreBackedEffectiveCredentialStatusResolver implements Effec
         // removed from the stable redacted status-resolution exception.
         @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
         private RevocationTransition currentRevocation(Credential credential) {
-            Optional<RevocationJournal> current;
+            Optional<RevocationRecord> current;
             try {
-                current = store.getRevocationJournal(credential.credentialId());
+                current = store.getRevocation(credential.credentialId());
             } catch (RuntimeException exception) {
                 throw resolutionFailure();
             }
@@ -137,13 +137,13 @@ public final class StoreBackedEffectiveCredentialStatusResolver implements Effec
             if (current.isEmpty()) {
                 return null;
             }
-            RevocationJournal journal = current.get();
-            if (!credential.credentialId().equals(journal.credentialId())) {
+            RevocationRecord record = current.get();
+            if (!credential.credentialId().equals(record.credentialId())) {
                 throw resolutionFailure();
             }
             RevocationTransition latest;
             try {
-                latest = journal.latest();
+                latest = record.transition();
             } catch (RuntimeException exception) {
                 throw resolutionFailure();
             }

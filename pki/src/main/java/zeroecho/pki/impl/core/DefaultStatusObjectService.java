@@ -58,7 +58,7 @@ import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
-import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
@@ -288,19 +288,19 @@ public final class DefaultStatusObjectService implements StatusObjectService {
     }
 
     private CrlEntrySource openCrlEntries(PkiId issuerCaId, Instant evaluationTime) {
-        return new JournalCrlEntrySource(store.openRevocationSnapshot(), issuerCaId, evaluationTime);
+        return new CheckpointCrlEntrySource(store.openRevocationSnapshot(), issuerCaId, evaluationTime);
     }
 
-    private Optional<CrlEntry> collectCrlEntry(PkiId issuerCaId, Instant evaluationTime, RevocationJournal journal) {
-        Objects.requireNonNull(journal, "journal");
-        RevocationTransition latest = Objects.requireNonNull(journal.latest(), "latest transition");
+    private Optional<CrlEntry> collectCrlEntry(PkiId issuerCaId, Instant evaluationTime, RevocationRecord record) {
+        Objects.requireNonNull(record, "record");
+        RevocationTransition latest = Objects.requireNonNull(record.transition(), "latest transition");
         if (latest.time().isAfter(evaluationTime)) {
             throw crlGenerationFailure();
         }
         if (latest.state() == RevocationState.CLEAR) {
             return Optional.empty();
         }
-        Credential credential = store.getCredential(journal.credentialId())
+        Credential credential = store.getCredential(record.credentialId())
                 .orElseThrow(DefaultStatusObjectService::crlGenerationFailure);
         if (!issuerCaId.equals(credential.issuerRef().caId())) {
             return Optional.empty();
@@ -320,12 +320,12 @@ public final class DefaultStatusObjectService implements StatusObjectService {
     }
 
     /** Stable restartable view over one revocation-store snapshot. */
-    private final class JournalCrlEntrySource implements CrlEntrySource {
+    private final class CheckpointCrlEntrySource implements CrlEntrySource {
         private final RevocationSnapshot snapshot;
         private final PkiId issuerCaId;
         private final Instant evaluationTime;
 
-        private JournalCrlEntrySource(RevocationSnapshot snapshot, PkiId issuerCaId, Instant evaluationTime) {
+        private CheckpointCrlEntrySource(RevocationSnapshot snapshot, PkiId issuerCaId, Instant evaluationTime) {
             this.snapshot = snapshot;
             this.issuerCaId = issuerCaId;
             this.evaluationTime = evaluationTime;
@@ -333,7 +333,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
 
         @Override
         public Cursor openCursor() throws IOException {
-            return new JournalCrlCursor(snapshot.openCursor(), issuerCaId, evaluationTime);
+            return new CheckpointCrlCursor(snapshot.openCursor(), issuerCaId, evaluationTime);
         }
 
         @Override
@@ -348,14 +348,14 @@ public final class DefaultStatusObjectService implements StatusObjectService {
     }
 
     /** Bounded cursor translating authoritative journals into CRL entries. */
-    private final class JournalCrlCursor implements CrlEntrySource.Cursor {
+    private final class CheckpointCrlCursor implements CrlEntrySource.Cursor {
         private final RevocationSnapshot.Cursor cursor;
         private final PkiId issuerCaId;
         private final Instant evaluationTime;
         private CrlEntry current;
         private long ordinal = -1L;
 
-        private JournalCrlCursor(RevocationSnapshot.Cursor cursor, PkiId issuerCaId, Instant evaluationTime) {
+        private CheckpointCrlCursor(RevocationSnapshot.Cursor cursor, PkiId issuerCaId, Instant evaluationTime) {
             this.cursor = cursor;
             this.issuerCaId = issuerCaId;
             this.evaluationTime = evaluationTime;

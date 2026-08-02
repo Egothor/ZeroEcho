@@ -70,6 +70,7 @@ import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.api.revocation.RevocationJournal;
+import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
@@ -212,9 +213,10 @@ final class StoreBackedEffectiveCredentialStatusResolverTest {
     private static PkiStore store(Function<PkiId, Optional<RevocationJournal>> lookup, AtomicInteger calls) {
         return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
                 (proxy, method, arguments) -> {
-                    if ("getRevocationJournal".equals(method.getName())) {
+                    if ("getRevocation".equals(method.getName())) {
                         calls.incrementAndGet();
-                        return lookup.apply((PkiId) arguments[0]);
+                        return lookup.apply((PkiId) arguments[0])
+                                .map(journal -> new RevocationRecord(journal.credentialId(), journal.latest()));
                     }
                     throw new UnsupportedOperationException(method.getName());
                 });
