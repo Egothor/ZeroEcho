@@ -51,15 +51,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.publication.PublicationCursor;
+import zeroecho.pki.api.publication.PublicationRecord;
+import zeroecho.pki.api.publication.PublicationSourceType;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.impl.ProfileLifecycleFailure;
 import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
@@ -337,27 +342,48 @@ final class FsSnapshotExporter {
         }
 
         private void build(Path targetRoot, Instant at) throws IOException {
-            Path sourceRoot = source.snapshotRoot();
-            Path stagedRevocationPrefix = targetRoot.resolve(REVOCATION_PREFIX_STAGE);
-            FilesystemRevocationLog.RecoveryTarget captured =
-                    source.copyRevocationPrefix(stagedRevocationPrefix);
-            copyFile(sourceRoot.resolve("SIGNING_NAMESPACE"), targetRoot.resolve("SIGNING_NAMESPACE"));
-            copyFile(sourceRoot.resolve("SIGNING_TIME_WATERMARK"), targetRoot.resolve("SIGNING_TIME_WATERMARK"));
-            copyTreeIfExists(sourceRoot.resolve("requests"), targetRoot.resolve("requests"));
-            copyTreeIfExists(sourceRoot.resolve("policy"), targetRoot.resolve("policy"));
-            copyTreeIfExists(sourceRoot.resolve("publications"), targetRoot.resolve("publications"));
-            copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
-            copyStagedContent(sourceRoot.resolve("staged-content"), targetRoot.resolve("staged-content"),
-                    plan.authority().remintedContentIds(), plan.nonCredentialContentIds());
-            copyImportedProfilesAsOf(plan.profiles(), targetRoot.resolve("profiles"));
-            reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
-                    options.workflowHistoryPolicy(), options.strictSnapshotExport());
-            new AuthorityRestorer(source, options, plan.authority()).restore(targetRoot);
-            installRevocationAuthority(targetRoot, stagedRevocationPrefix);
-            try (FilesystemPkiStore ignored = new FilesystemPkiStore(targetRoot, options)) {
-                // Opening validates the restored authority and rebuilds its derived index.
+            try (PublicationCursor publications = source.openPublicationRecords()) {
+                Path sourceRoot = source.snapshotRoot();
+                Path stagedRevocationPrefix = targetRoot.resolve(REVOCATION_PREFIX_STAGE);
+                FilesystemRevocationLog.RecoveryTarget captured =
+                        source.copyRevocationPrefix(stagedRevocationPrefix);
+                copyFile(sourceRoot.resolve("SIGNING_NAMESPACE"), targetRoot.resolve("SIGNING_NAMESPACE"));
+                copyFile(sourceRoot.resolve("SIGNING_TIME_WATERMARK"), targetRoot.resolve("SIGNING_TIME_WATERMARK"));
+                copyTreeIfExists(sourceRoot.resolve("requests"), targetRoot.resolve("requests"));
+                copyTreeIfExists(sourceRoot.resolve("policy"), targetRoot.resolve("policy"));
+                copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
+                copyStagedContent(sourceRoot.resolve("staged-content"), targetRoot.resolve("staged-content"),
+                        plan.authority().remintedContentIds(), plan.nonCredentialContentIds());
+                copyImportedProfilesAsOf(plan.profiles(), targetRoot.resolve("profiles"));
+                reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
+                        options.workflowHistoryPolicy(), options.strictSnapshotExport());
+                new AuthorityRestorer(source, options, plan.authority()).restore(targetRoot);
+                installRevocationAuthority(targetRoot, stagedRevocationPrefix);
+                try (FilesystemPkiStore target = new FilesystemPkiStore(targetRoot, options)) {
+                    // Opening validates the restored authority and rebuilds its derived index.
+                    restorePublicationMetadata(publications, target);
+                }
+                writeSnapshotBoundary(targetRoot, captured.boundary());
             }
-            writeSnapshotBoundary(targetRoot, captured.boundary());
+        }
+
+        @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+        private static void restorePublicationMetadata(PublicationCursor cursor, FilesystemPkiStore target)
+                throws IOException {
+            Optional<PublicationRecord> next;
+            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                PublicationRecord record = next.orElseThrow();
+                DurableContentReference targetContent = record.sourceType() == PublicationSourceType.CREDENTIAL
+                        ? target.getCredential(record.sourceId()).map(Credential::content).orElseThrow(
+                                () -> new IOException("Snapshot publication credential is missing"))
+                        : target.getStatusObject(record.sourceId()).map(StatusObject::content).orElseThrow(
+                                () -> new IOException("Snapshot publication status object is missing"));
+                PublicationRecord restored = new PublicationRecord(record.publicationId(), record.sourceType(),
+                        record.sourceId(), targetContent, record.target(), record.status(), record.attemptNumber(),
+                        record.attemptToken(), record.createdAt(), record.updatedAt(), record.failure(),
+                        record.evidence());
+                target.createPublicationRecord(restored);
+            }
         }
 
         private static void writeSnapshotBoundary(Path targetRoot, long boundary) throws IOException {

@@ -45,6 +45,7 @@ import zeroecho.pki.api.policy.PolicyTrace;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
+import zeroecho.pki.api.publication.PublicationCursor;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
@@ -59,6 +60,21 @@ import zeroecho.pki.api.status.StatusObject;
  * domain model. Implementations may use a filesystem, database, or other
  * backend, but must preserve deterministic behavior, atomicity guarantees, and
  * must not leak secrets through logging or exception messages.
+ * </p>
+ *
+ * <h2>Publication recovery ownership</h2>
+ * <p>
+ * Before an instance is exposed to callers, its implementation must hold
+ * exclusive publication-runtime ownership and validate the complete publication
+ * namespace in one stable view. Any abandoned
+ * {@link zeroecho.pki.api.publication.PublicationStatus#DISPATCH_PREPARED}
+ * operation must be durably changed to
+ * {@link zeroecho.pki.api.publication.PublicationStatus#OUTCOME_UNKNOWN} before
+ * exposure, without invoking a publisher. Once exposed, the store must not
+ * reclassify a prepared operation because it may represent an active dispatch in
+ * the owning runtime. A backend that supports simultaneous runtimes must provide
+ * durable session or lease fencing with equivalent safety instead of unconditional
+ * open-time recovery.
  * </p>
  *
  * <h2>Security</h2>
@@ -256,27 +272,49 @@ public interface PkiStore extends SignWorkflowStore {
     List<StatusObject> listStatusObjects(PkiId issuerCaId);
 
     /**
-     * Persists or updates a publication record.
+     * Creates one publication operation if absent.
      *
      * <p>
-     * Publication records describe distribution state (for example: where and when
-     * an object was published). These records may be used for operational
-     * monitoring and reconciliation.
+     * An identical replay is idempotent. A different record under the same identity
+     * fails closed. The implementation must use its finite transactional metadata
+     * authority and must not create a sidecar record.
      * </p>
      *
      * @param record publication record (never {@code null})
      * @throws NullPointerException  if {@code record} is {@code null}
-     * @throws IllegalStateException if persistence fails
+     * @return committed record, including an identical existing record
+     * @throws IllegalArgumentException if the identity conflicts
+     * @throws IllegalStateException if persistence fails or is uncertain
      */
-    void putPublicationRecord(PublicationRecord record);
+    PublicationRecord createPublicationRecord(PublicationRecord record);
 
     /**
-     * Lists all publication records.
+     * Reads one publication operation by exact semantic identity.
      *
-     * @return list of publication records (never {@code null})
-     * @throws IllegalStateException if listing fails
+     * @param publicationId operation identity
+     * @return current durable record, or empty when absent
      */
-    List<PublicationRecord> listPublicationRecords();
+    Optional<PublicationRecord> getPublicationRecord(PkiId publicationId);
+
+    /**
+     * Atomically replaces one exact observed publication state.
+     *
+     * @param expected exact current record
+     * @param replacement valid next state with identical immutable fields
+     * @return {@code true} when committed; {@code false} on a concurrent conflict
+     * @throws IllegalArgumentException if identities, immutable fields or the state
+     *         transition are invalid
+     * @throws IllegalStateException if persistence fails or is uncertain
+     */
+    boolean replacePublicationRecord(PublicationRecord expected, PublicationRecord replacement);
+
+    /**
+     * Opens a stable ordered cursor over the complete publication namespace.
+     *
+     * @return closeable cursor whose heap does not grow with returned records
+     * @throws IllegalStateException if the stable view cannot be opened
+     */
+    PublicationCursor openPublicationRecords();
 
     /**
      * Atomically imports one immutable validated profile version.

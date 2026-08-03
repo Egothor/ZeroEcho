@@ -33,66 +33,85 @@
  ******************************************************************************/
 package zeroecho.pki.api;
 
-import java.util.List;
+import java.util.Optional;
 
+import zeroecho.pki.api.publication.PublicationCursor;
 import zeroecho.pki.api.publication.PublicationQuery;
 import zeroecho.pki.api.publication.PublicationRecord;
+import zeroecho.pki.api.publication.PublicationRequest;
 import zeroecho.pki.api.publication.PublicationResult;
-import zeroecho.pki.api.publication.PublicationTarget;
 
 /**
  * Publication and distribution operations.
  *
  * <p>
  * Publishing is an explicit operation enabling parity with established PKI
- * systems. Implementations may publish credentials, CA materials, and status
- * objects to configured targets such as filesystem mirrors, LDAP directories,
- * HTTP endpoints, or object stores.
+ * systems. Implementations publish committed credential and status-object
+ * content to administrator-configured targets such as filesystem mirrors, LDAP
+ * directories, HTTP endpoints, or object stores. Publication never establishes
+ * source-object authority.
  * </p>
  */
-public interface PublicationService {
+public interface PublicationService extends AutoCloseable {
 
     /**
-     * Publishes an issued credential to the specified target.
+     * Registers one publication operation after its source object is committed.
      *
-     * @param credentialId credential id
-     * @param target       publication target
-     * @return publication result
-     * @throws IllegalArgumentException if inputs are invalid
-     * @throws PkiException             if publication fails
+     * @param request immutable registration request
+     * @return committed pending record, or the identical existing operation
+     * @throws IllegalArgumentException if the request is invalid or conflicting
+     * @throws PkiException if registration cannot be established durably
      */
-    PublicationResult publishCredential(PkiId credentialId, PublicationTarget target);
+    PublicationRecord register(PublicationRequest request);
 
     /**
-     * Publishes CA materials (e.g., CA certificate sets) for the given CA entity to
-     * the specified target.
+     * Processes one pending operation synchronously.
      *
-     * @param caId   CA entity id
-     * @param target publication target
-     * @return publication result
-     * @throws IllegalArgumentException if inputs are invalid
-     * @throws PkiException             if publication fails
+     * @param publicationId operation identity
+     * @return durably classified result
+     * @throws IllegalArgumentException if the operation is absent or ineligible
+     * @throws PkiException if persistence or content validation fails
      */
-    PublicationResult publishCaMaterials(PkiId caId, PublicationTarget target);
+    PublicationResult process(PkiId publicationId);
 
     /**
-     * Publishes a status object to the specified target.
+     * Explicitly retries one retryable operation as a new numbered attempt.
      *
-     * @param statusObjectId status object id
-     * @param target         publication target
-     * @return publication result
-     * @throws IllegalArgumentException if inputs are invalid
-     * @throws PkiException             if publication fails
+     * @param publicationId operation identity
+     * @return durably classified result
+     * @throws IllegalArgumentException if the operation is not retryable
+     * @throws PkiException if persistence or content validation fails
      */
-    PublicationResult publishStatusObject(PkiId statusObjectId, PublicationTarget target);
+    PublicationResult retry(PkiId publicationId);
 
     /**
-     * Lists publication records matching query constraints.
+     * Reconciles one unknown external outcome using the original attempt token.
      *
-     * @param query publication query
-     * @return publication records
-     * @throws IllegalArgumentException if {@code query} is invalid
-     * @throws PkiException             if listing fails
+     * @param publicationId operation identity
+     * @return current durable result; unresolved operations remain unknown
+     * @throws IllegalArgumentException if the operation is not unknown
+     * @throws PkiException if reconciliation persistence fails
      */
-    List<PublicationRecord> listPublications(PublicationQuery query);
+    PublicationResult reconcile(PkiId publicationId);
+
+    /**
+     * Reads one durable publication operation.
+     *
+     * @param publicationId operation identity
+     * @return current record, or empty when absent
+     */
+    Optional<PublicationRecord> find(PkiId publicationId);
+
+    /**
+     * Opens a stable lazy query over publication operations.
+     *
+     * @param query finite query constraints
+     * @return closeable cursor
+     * @throws PkiException if the stable view cannot be opened
+     */
+    PublicationCursor openPublications(PublicationQuery query);
+
+    /** Rejects new operations while allowing an in-flight synchronous call to classify its result. */
+    @Override
+    void close();
 }

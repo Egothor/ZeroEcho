@@ -611,7 +611,10 @@ final class PkiProofGateE2eTest {
             assertTrue(signingFailure.store().listCas().isEmpty());
             assertTrue(signingFailure.store().listWorkflowStates().isEmpty());
             assertTrue(signingFailure.store().listSignRecords().isEmpty());
-            assertTrue(signingFailure.store().listPublicationRecords().isEmpty());
+            try (zeroecho.pki.api.publication.PublicationCursor cursor =
+                    signingFailure.store().openPublicationRecords()) {
+                assertTrue(cursor.next(zeroecho.core.io.CancellationSignal.NONE).isEmpty());
+            }
             assertFalse(signingFailure.hasRunningSignatureOperations());
             assertEquals(0, signingFailure.submittedSignCount());
             assertEquals("MANAGED_KEY_UNAVAILABLE", signingFailure.auditSink().snapshot()

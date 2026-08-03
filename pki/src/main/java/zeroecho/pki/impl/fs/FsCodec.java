@@ -80,10 +80,6 @@ import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.api.profile.SubjectAlternativeNameType;
 import zeroecho.pki.api.profile.SubjectRdnType;
-import zeroecho.pki.api.publication.PublicationRecord;
-import zeroecho.pki.api.publication.PublicationStatus;
-import zeroecho.pki.api.publication.PublicationTarget;
-import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.api.request.SubjectRdn;
@@ -125,7 +121,6 @@ final class FsCodec {
     private static final int TOP_CREDENTIAL = 2;
     private static final int TOP_PARSED_REQUEST = 3;
     private static final int TOP_STATUS_OBJECT = 5;
-    private static final int TOP_PUBLICATION = 6;
     private static final int TOP_POLICY_TRACE = 8;
     private static final int TOP_WORKFLOW_STATE = 9;
     private static final int TOP_SIGN_WORKFLOW_RECORD = 10;
@@ -150,7 +145,6 @@ final class FsCodec {
     private static final int TYPE_PRINCIPAL = 27;
     private static final int TYPE_ATTRIBUTE_ID = 28;
     private static final int TYPE_POLICY_TRACE_STEP = 29;
-    private static final int TYPE_PUBLICATION_TARGET = 30;
     private static final int TYPE_ATTRIBUTE_SET = 31;
     private static final int TYPE_ATTRIBUTE_VALUE = 33;
     private static final int TYPE_CREDENTIAL_RECORD = 34;
@@ -159,8 +153,6 @@ final class FsCodec {
     private static final int TYPE_CA_STATE_ENUM = 52;
     private static final int TYPE_CREDENTIAL_STATUS_ENUM = 53;
     private static final int TYPE_STATUS_OBJECT_TYPE_ENUM = 55;
-    private static final int TYPE_PUBLICATION_TARGET_TYPE_ENUM = 56;
-    private static final int TYPE_PUBLICATION_STATUS_ENUM = 57;
     private static final int TYPE_DURABILITY_POLICY_ENUM = 58;
     private static final int TYPE_SIGN_STATE_ENUM = 59;
     private static final int TYPE_SUBJECT_RDN_TYPE_ENUM = 62;
@@ -249,32 +241,6 @@ final class FsCodec {
                 case 3 -> StatusObjectType.OCSP;
                 case 4 -> StatusObjectType.REVOCATION_LIST;
                 default -> throw unknownEnum("StatusObjectType", code);
-            });
-    private static final ValueSchema<PublicationTargetType> PUBLICATION_TARGET_TYPE = enumSchema(
-            TYPE_PUBLICATION_TARGET_TYPE_ENUM, value -> switch (value) {
-                case FILESYSTEM -> 1;
-                case LDAP -> 2;
-                case HTTP -> 3;
-                case OBJECT_STORE -> 4;
-                case CUSTOM -> 5;
-            }, code -> switch (code) {
-                case 1 -> PublicationTargetType.FILESYSTEM;
-                case 2 -> PublicationTargetType.LDAP;
-                case 3 -> PublicationTargetType.HTTP;
-                case 4 -> PublicationTargetType.OBJECT_STORE;
-                case 5 -> PublicationTargetType.CUSTOM;
-                default -> throw unknownEnum("PublicationTargetType", code);
-            });
-    private static final ValueSchema<PublicationStatus> PUBLICATION_STATUS = enumSchema(TYPE_PUBLICATION_STATUS_ENUM,
-            value -> switch (value) {
-                case PUBLISHED -> 1;
-                case SKIPPED -> 2;
-                case FAILED -> 3;
-            }, code -> switch (code) {
-                case 1 -> PublicationStatus.PUBLISHED;
-                case 2 -> PublicationStatus.SKIPPED;
-                case 3 -> PublicationStatus.FAILED;
-                default -> throw unknownEnum("PublicationStatus", code);
             });
     private static final ValueSchema<OrchestrationDurabilityPolicy> DURABILITY_POLICY = enumSchema(
             TYPE_DURABILITY_POLICY_ENUM, value -> switch (value) {
@@ -384,14 +350,6 @@ final class FsCodec {
             }, reader -> new PolicyTraceStep(reader.readValue(STRING), reader.readValue(STRING),
                     reader.readValue(STRINGS)));
     private static final ValueSchema<List<PolicyTraceStep>> POLICY_TRACE_STEPS = listOf(POLICY_TRACE_STEP);
-    private static final ValueSchema<PublicationTarget> PUBLICATION_TARGET = valueSchema(TYPE_PUBLICATION_TARGET,
-            (writer, value) -> {
-                writer.writeValue(PUBLICATION_TARGET_TYPE, value.type());
-                writer.writeValue(STRING, value.targetId());
-                writer.writeValue(ATTRIBUTE_SET, value.attributes());
-            }, reader -> new PublicationTarget(reader.readValue(PUBLICATION_TARGET_TYPE), reader.readValue(STRING),
-                    reader.readValue(ATTRIBUTE_SET)));
-
     private static final ValueSchema<Optional<Validity>> OPTIONAL_VALIDITY = optionalOf(VALIDITY);
     private static final ValueSchema<Optional<String>> OPTIONAL_STRING = optionalOf(STRING);
     private static final ValueSchema<Optional<Instant>> OPTIONAL_INSTANT = optionalOf(INSTANT);
@@ -408,8 +366,6 @@ final class FsCodec {
             "PARSED_REQUEST", valueSchema(101, FsCodec::writeParsedRequest, FsCodec::readParsedRequest));
     /* package */ static final Schema<StatusObject> STATUS_OBJECT = topLevel(TOP_STATUS_OBJECT, "STATUS_OBJECT",
             valueSchema(103, FsCodec::writeStatusObject, FsCodec::readStatusObject));
-    /* package */ static final Schema<PublicationRecord> PUBLICATION = topLevel(TOP_PUBLICATION, "PUBLICATION",
-            valueSchema(104, FsCodec::writePublication, FsCodec::readPublication));
     /* package */ static final Schema<PolicyTrace> POLICY_TRACE = topLevel(TOP_POLICY_TRACE, "POLICY_TRACE",
             valueSchema(106, FsCodec::writePolicyTrace, FsCodec::readPolicyTrace));
     /* package */ static final Schema<WorkflowStateRecord> WORKFLOW_STATE = topLevel(TOP_WORKFLOW_STATE,
@@ -425,7 +381,7 @@ final class FsCodec {
     private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(Map.entry(TOP_CA_RECORD, CA_RECORD),
             Map.entry(TOP_CREDENTIAL, CREDENTIAL), Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
             Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
-            Map.entry(TOP_PUBLICATION, PUBLICATION), Map.entry(TOP_POLICY_TRACE, POLICY_TRACE),
+            Map.entry(TOP_POLICY_TRACE, POLICY_TRACE),
             Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE), Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD),
             Map.entry(TOP_PROFILE_VERSION, PROFILE_VERSION), Map.entry(TOP_ACTIVE_PROFILE_REF, ACTIVE_PROFILE_REF));
 
@@ -709,21 +665,6 @@ final class FsCodec {
         DurableContentReference content = reader.readValue(DURABLE_CONTENT);
         return new StatusObject(statusObjectId, formatId, issuerCaId, type, thisUpdate, nextUpdate, content,
                 reader.readValue(ATTRIBUTE_SET));
-    }
-
-    private static void writePublication(Writer writer, PublicationRecord value) throws IOException {
-        writer.writeValue(PKI_ID, value.publicationId());
-        writer.writeValue(INSTANT, value.time());
-        writer.writeValue(PUBLICATION_TARGET, value.target());
-        writer.writeValue(PKI_ID, value.objectId());
-        writer.writeValue(STRING, value.objectKind());
-        writer.writeValue(PUBLICATION_STATUS, value.status());
-    }
-
-    private static PublicationRecord readPublication(Reader reader) throws IOException {
-        return new PublicationRecord(reader.readValue(PKI_ID), reader.readValue(INSTANT),
-                reader.readValue(PUBLICATION_TARGET), reader.readValue(PKI_ID), reader.readValue(STRING),
-                reader.readValue(PUBLICATION_STATUS));
     }
 
     private static void writeProfileVersion(Writer writer, ImportedCertificateProfileVersion value) throws IOException {

@@ -84,7 +84,11 @@ import zeroecho.pki.api.policy.PolicyTrace;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
+import zeroecho.pki.api.publication.PublicationCursor;
+import zeroecho.pki.api.publication.PublicationFailure;
 import zeroecho.pki.api.publication.PublicationRecord;
+import zeroecho.pki.api.publication.PublicationSourceType;
+import zeroecho.pki.api.publication.PublicationStatus;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationRecord;
@@ -173,11 +177,13 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private static final String SIGN_OWNER_NAMESPACE = "io.zeroecho.pki.signing-owner";
     private static final String STATUS_RECORD_NAMESPACE = "io.zeroecho.pki.status-object-record";
     private static final String STATUS_OWNER_NAMESPACE = "io.zeroecho.pki.status-object-owner";
+    private static final String PUBLICATION_RECORD_NAMESPACE = "io.zeroecho.pki.publication-record";
     private static final int CURRENT_SIGN_RECORD_VERSION = 2;
     private static final int SIGN_OWNER_VALUE_VERSION = 1;
     private static final int STATUS_OWNER_VALUE_VERSION = 1;
     private static final int METADATA_TRANSFER_BUFFER_BYTES = 16 * 1024;
     private static final ThreadLocal<StatusCommitFaultPoint> STATUS_COMMIT_FAULT = new ThreadLocal<>();
+    private static final ThreadLocal<PublicationCommitFaultPoint> PUBLICATION_COMMIT_FAULT = new ThreadLocal<>();
     private static final String SIGN_FINGERPRINT_PREFIX = "signfp:v1:";
     private static final int SIGN_FINGERPRINT_HEX_LENGTH = 64;
     private static final long INITIAL_FENCE = 0L;
@@ -268,6 +274,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 rejectNonEmptyUnversionedStore();
             }
             ensureVersionFile();
+            rejectObsoletePublicationLayout();
             this.signingNamespace = ensureSigningNamespace();
             this.stagedContent = new FilesystemStagedContentStore(this.paths.stagedContentRoot(),
                     this.signingNamespace);
@@ -279,6 +286,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             this.signingTimeWatermark = new AtomicLong(loadSigningTimeWatermark());
             this.historySeq = new AtomicLong(0L);
             recoverStagedContent();
+            recoverPublicationRecords();
             boolean snapshotRestore = requireSnapshotBoundary();
             openedRevocations = FilesystemRevocationAuthority.open(
                     this.paths, new MetadataStoreId(this.signingNamespace), credentialId -> {
@@ -757,19 +765,117 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
-    public void putPublicationRecord(final PublicationRecord record) {
+    public PublicationRecord createPublicationRecord(final PublicationRecord record) {
         requireStoreUsable();
         Objects.requireNonNull(record, "record");
-        PkiId id = record.publicationId();
-        writeOnce(this.paths.publicationPath(id), FsCodec.encode(FsCodec.PUBLICATION, record), "PUBLICATION",
-                FsUtil.safeId(id));
+        validatePublicationRecord(record);
+        Optional<PublicationRecord> existing = getPublicationRecord(record.publicationId());
+        if (existing.isPresent()) {
+            if (publicationRecordsEqual(existing.orElseThrow(), record)) {
+                return existing.orElseThrow();
+            }
+            throw new IllegalArgumentException("Publication identity conflicts with an existing operation");
+        }
+        try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+            transaction.create(publicationRecordKey(record.publicationId()),
+                    byteContent(PublicationRecordCodec.encode(record)), CancellationSignal.NONE);
+            PublicationCommitFaultPoint fault = takePublicationCommitFault();
+            if (fault == PublicationCommitFaultPoint.CREATE_BEFORE_COMMIT) {
+                throw new IOException("Injected publication create failure");
+            }
+            MetadataCommitResult result = transaction.commit();
+            if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) {
+                return record;
+            }
+            if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                throw publicationPersistenceUnknown();
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException("Publication metadata persistence failed");
+        }
+        Optional<PublicationRecord> raced = getPublicationRecord(record.publicationId());
+        if (raced.isPresent() && publicationRecordsEqual(raced.orElseThrow(), record)) {
+            return raced.orElseThrow();
+        }
+        throw new IllegalArgumentException("Publication identity conflicts with an existing operation");
     }
 
     @Override
-    public List<PublicationRecord> listPublicationRecords() {
+    public Optional<PublicationRecord> getPublicationRecord(final PkiId publicationId) {
         requireStoreUsable();
-        Path byId = this.paths.root().resolve("publications").resolve("by-id");
-        return listBinaryFiles(byId, FsCodec.PUBLICATION);
+        Objects.requireNonNull(publicationId, "publicationId");
+        MetadataKey key = publicationRecordKey(publicationId);
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
+            if (stored.isEmpty()) {
+                return Optional.empty();
+            }
+            try (MetadataSnapshot.Record record = stored.orElseThrow()) {
+                return Optional.of(decodePublicationRecord(record, snapshot));
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException("Publication metadata is invalid");
+        }
+    }
+
+    @Override
+    public boolean replacePublicationRecord(final PublicationRecord expected,
+            final PublicationRecord replacement) {
+        requireStoreUsable();
+        Objects.requireNonNull(expected, "expected");
+        Objects.requireNonNull(replacement, "replacement");
+        validatePublicationReplacement(expected, replacement);
+        MetadataKey key = publicationRecordKey(expected.publicationId());
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
+            if (stored.isEmpty()) {
+                return false;
+            }
+            long revision;
+            try (MetadataSnapshot.Record record = stored.orElseThrow()) {
+                if (!publicationRecordsEqual(decodePublicationRecord(record, snapshot), expected)) {
+                    return false;
+                }
+                revision = record.recordRevision();
+            }
+            try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+                transaction.replace(key, revision, byteContent(PublicationRecordCodec.encode(replacement)),
+                        CancellationSignal.NONE);
+                PublicationCommitFaultPoint fault = takePublicationCommitFault();
+                if (fault == PublicationCommitFaultPoint.REPLACE_BEFORE_COMMIT) {
+                    throw new IOException("Injected publication replacement failure");
+                }
+                MetadataCommitResult result = transaction.commit();
+                if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED
+                        && fault == PublicationCommitFaultPoint.REPLACE_AFTER_COMMIT_AS_UNKNOWN) {
+                    throw publicationPersistenceUnknown();
+                }
+                if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                    throw publicationPersistenceUnknown();
+                }
+                return result.outcome() == MetadataCommitResult.Outcome.COMMITTED;
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException("Publication metadata persistence failed");
+        }
+    }
+
+    @Override
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    public PublicationCursor openPublicationRecords() {
+        requireStoreUsable();
+        MetadataSnapshot snapshot = null;
+        try {
+            snapshot = metadataStore.snapshot();
+            MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(PUBLICATION_RECORD_NAMESPACE),
+                    CancellationSignal.NONE);
+            return new PublicationMetadataCursor(snapshot, cursor);
+        } catch (IOException | RuntimeException failure) {
+            if (snapshot != null) {
+                snapshot.close();
+            }
+            throw new IllegalStateException("Publication metadata cursor cannot be opened");
+        }
     }
 
     @Override
@@ -1827,6 +1933,162 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return new MetadataKey(STATUS_OWNER_NAMESPACE, statusObjectId.value());
     }
 
+    private static MetadataKey publicationRecordKey(PkiId publicationId) {
+        return new MetadataKey(PUBLICATION_RECORD_NAMESPACE, publicationId.value());
+    }
+
+    private PublicationRecord decodePublicationRecord(MetadataSnapshot.Record stored, MetadataSnapshot snapshot)
+            throws IOException {
+        PublicationRecord record = PublicationRecordCodec.decode(readMetadataValue(stored), stagedContent);
+        if (!publicationRecordKey(record.publicationId()).equals(stored.key())) {
+            throw new IOException("Publication metadata key mismatch");
+        }
+        validatePublicationRecord(record, snapshot);
+        return record;
+    }
+
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    private void recoverPublicationRecords() {
+        try (PublicationCursor cursor = openPublicationRecords()) {
+            Optional<PublicationRecord> next;
+            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                PublicationRecord record = next.orElseThrow();
+                if (record.status() == PublicationStatus.DISPATCH_PREPARED) {
+                    Instant observed = clock.instant();
+                    Instant updatedAt = observed.isAfter(record.updatedAt()) ? observed : record.updatedAt();
+                    PublicationRecord unknown = new PublicationRecord(record.publicationId(), record.sourceType(),
+                            record.sourceId(), record.content(), record.target(), PublicationStatus.OUTCOME_UNKNOWN,
+                            record.attemptNumber(), record.attemptToken(), record.createdAt(), updatedAt,
+                            Optional.of(PublicationFailure.EXTERNAL_OUTCOME_UNKNOWN), Optional.empty());
+                    if (!replacePublicationRecord(record, unknown)) {
+                        throw new IllegalStateException("Publication recovery conflict");
+                    }
+                }
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException("Publication recovery failed");
+        }
+    }
+
+    private void validatePublicationRecord(PublicationRecord record) {
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            validatePublicationRecord(record, snapshot);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Publication source authority is invalid");
+        }
+    }
+
+    private void validatePublicationRecord(PublicationRecord record, MetadataSnapshot snapshot) throws IOException {
+        publicationRecordKey(record.publicationId());
+        DurableContentReference reference = record.content();
+        if (!stagedContent.contentStoreId().equals(reference.storeId())
+                || reference.lifecycle() != DurableContentReference.Lifecycle.PERSISTED) {
+            throw new IllegalArgumentException("Publication content is not persistent store authority");
+        }
+        try {
+            stagedContent.restoreReference(reference.storeId(), reference.contentId(), reference.encoding(),
+                    reference.length(), reference.sha256(), reference.lifecycle());
+        } catch (IOException exception) {
+            throw new IllegalStateException("Publication content commitment is invalid");
+        }
+        DurableContentReference authoritative = record.sourceType() == PublicationSourceType.CREDENTIAL
+                ? getCredential(record.sourceId()).map(Credential::content).orElseThrow(
+                        () -> new IllegalStateException("Publication credential source is missing"))
+                : statusContent(snapshot, record.sourceId());
+        if (!sameContentReference(authoritative, reference)) {
+            throw new IllegalArgumentException("Publication content does not match its source object");
+        }
+    }
+
+    private DurableContentReference statusContent(MetadataSnapshot snapshot, PkiId statusId) throws IOException {
+        Optional<MetadataSnapshot.Record> stored = snapshot.get(statusRecordKey(statusId));
+        if (stored.isPresent()) {
+            return decodeStoredStatus(snapshot, stored.orElseThrow()).status().content();
+        }
+        Optional<MetadataSnapshot.Record> owner = snapshot.get(statusOwnerKey(statusId));
+        if (owner.isPresent()) {
+            try (MetadataSnapshot.Record ignored = owner.orElseThrow()) {
+                throw new IOException("Status owner exists without its record");
+            }
+        }
+        throw new IllegalStateException("Publication status source is missing");
+    }
+
+    private static void validatePublicationReplacement(PublicationRecord expected, PublicationRecord replacement) {
+        if (!expected.hasSameOperation(replacement)
+                || replacement.updatedAt().isBefore(expected.updatedAt())) {
+            throw new IllegalArgumentException("Publication immutable fields cannot change");
+        }
+        PublicationStatus previous = expected.status();
+        PublicationStatus next = replacement.status();
+        boolean valid = switch (previous) {
+            case PENDING -> next == PublicationStatus.DISPATCH_PREPARED
+                    && replacement.attemptNumber() == Math.addExact(expected.attemptNumber(), 1L);
+            case DISPATCH_PREPARED -> (next == PublicationStatus.SUCCEEDED
+                    || next == PublicationStatus.RETRYABLE_FAILURE
+                    || next == PublicationStatus.TERMINAL_FAILURE
+                    || next == PublicationStatus.OUTCOME_UNKNOWN)
+                    && sameAttempt(expected, replacement);
+            case RETRYABLE_FAILURE -> next == PublicationStatus.PENDING
+                    && replacement.attemptNumber() == expected.attemptNumber();
+            case OUTCOME_UNKNOWN -> next == PublicationStatus.DISPATCH_PREPARED
+                    && sameAttempt(expected, replacement);
+            case SUCCEEDED, TERMINAL_FAILURE -> false;
+        };
+        if (!valid) {
+            throw new IllegalArgumentException("Publication state transition is illegal");
+        }
+    }
+
+    private static boolean sameAttempt(PublicationRecord first, PublicationRecord second) {
+        return first.attemptNumber() == second.attemptNumber()
+                && first.attemptToken().equals(second.attemptToken());
+    }
+
+    private static boolean publicationRecordsEqual(PublicationRecord first, PublicationRecord second) {
+        return first.hasSameOperation(second) && second.hasSameOperation(first)
+                && first.status() == second.status() && first.attemptNumber() == second.attemptNumber()
+                && first.attemptToken().equals(second.attemptToken())
+                && first.updatedAt().equals(second.updatedAt()) && first.failure().equals(second.failure())
+                && first.evidence().equals(second.evidence());
+    }
+
+    private static boolean sameContentReference(DurableContentReference first, DurableContentReference second) {
+        return first.storeId().equals(second.storeId()) && first.contentId().equals(second.contentId())
+                && first.encoding() == second.encoding() && first.length() == second.length()
+                && first.sha256().equals(second.sha256()) && first.lifecycle() == second.lifecycle();
+    }
+
+    private static PkiException publicationPersistenceUnknown() {
+        return new PkiException(
+                "Publication metadata outcome requires recovery: code=PUBLICATION_PERSISTENCE_UNKNOWN");
+    }
+
+    /* package */ static void installPublicationCommitFault(PublicationCommitFaultPoint point) {
+        PUBLICATION_COMMIT_FAULT.set(Objects.requireNonNull(point, "point"));
+    }
+
+    /* package */ static void clearPublicationCommitFault() {
+        PUBLICATION_COMMIT_FAULT.remove();
+    }
+
+    private static PublicationCommitFaultPoint takePublicationCommitFault() {
+        PublicationCommitFaultPoint point = PUBLICATION_COMMIT_FAULT.get();
+        PUBLICATION_COMMIT_FAULT.remove();
+        return point;
+    }
+
+    /** Test-only publication metadata commit boundary. */
+    /* default */
+    enum PublicationCommitFaultPoint {
+        /** Fails registration before the metadata commit attempt. */
+        CREATE_BEFORE_COMMIT,
+        /** Fails one state replacement before the metadata commit attempt. */
+        REPLACE_BEFORE_COMMIT,
+        /** Reports uncertainty after one replacement was durably committed. */
+        REPLACE_AFTER_COMMIT_AS_UNKNOWN
+    }
+
     private static RepeatableContent byteContent(byte[] value) {
         return new ByteValueContent(value);
     }
@@ -2349,6 +2611,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    private void rejectObsoletePublicationLayout() {
+        if (Files.exists(this.paths.root().resolve("publications"))) {
+            throw new IllegalStateException("obsolete publication layout is not supported");
+        }
+    }
+
     private <T> Optional<T> readOptional(final Path path, final FsCodec.Schema<T> schema) {
         try {
             if (!Files.exists(path)) {
@@ -2358,24 +2626,6 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             return Optional.of(FsCodec.decode(schema, data, stagedContent));
         } catch (IOException e) {
             throw new IllegalStateException("read failed: " + path, e);
-        }
-    }
-
-    private <T> List<T> listBinaryFiles(final Path byIdDir, final FsCodec.Schema<T> schema) {
-        if (!Files.isDirectory(byIdDir)) {
-            return List.of();
-        }
-        try {
-            return Files.list(byIdDir).filter(Files::isRegularFile)
-                    .sorted(Comparator.comparing(p -> p.getFileName().toString())).map(p -> {
-                        try {
-                            return FsCodec.decode(schema, FsOperations.readAll(p), stagedContent);
-                        } catch (IOException e) {
-                            throw new IllegalStateException("read failed: " + p, e);
-                        }
-                    }).toList();
-        } catch (IOException e) {
-            throw new IllegalStateException("list failed: " + byIdDir, e);
         }
     }
 
@@ -2477,6 +2727,41 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                     });
         } catch (IOException ignored) {
             // deterministic best-effort
+        }
+    }
+
+    /** Stable metadata cursor that decodes and validates one record at a time. */
+    private final class PublicationMetadataCursor implements PublicationCursor {
+        private final MetadataSnapshot snapshot;
+        private final MetadataCursor cursor;
+        private final AtomicBoolean cursorClosed = new AtomicBoolean();
+
+        private PublicationMetadataCursor(MetadataSnapshot snapshot, MetadataCursor cursor) {
+            this.snapshot = snapshot;
+            this.cursor = cursor;
+        }
+
+        @Override
+        public Optional<PublicationRecord> next(CancellationSignal cancellation) throws IOException {
+            Objects.requireNonNull(cancellation, "cancellation");
+            if (cursorClosed.get()) {
+                throw new IllegalStateException("Publication cursor is closed");
+            }
+            Optional<MetadataSnapshot.Record> next = cursor.next(cancellation);
+            if (next.isEmpty()) {
+                return Optional.empty();
+            }
+            try (MetadataSnapshot.Record stored = next.orElseThrow()) {
+                return Optional.of(decodePublicationRecord(stored, snapshot));
+            }
+        }
+
+        @Override
+        public void close() {
+            if (cursorClosed.compareAndSet(false, true)) {
+                cursor.close();
+                snapshot.close();
+            }
         }
     }
 }

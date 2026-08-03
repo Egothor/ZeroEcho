@@ -33,22 +33,42 @@
  ******************************************************************************/
 package zeroecho.pki.spi.publish;
 
+import java.util.Optional;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.publication.PublicationTarget;
 
 /**
  * Publishes an encoded artifact to a configured publication target.
  */
-@SuppressWarnings("PMD.ImplicitFunctionalInterface")
 public interface Publisher {
 
     /**
-     * Publishes the given payload to the specified target.
+     * Returns the exact administrator-configured destination served by this instance.
      *
-     * @param target  publication target
-     * @param payload payload to publish
-     * @throws IllegalArgumentException if inputs are null
-     * @throws RuntimeException         if publishing fails
+     * @return immutable destination identity
      */
-    void publish(PublicationTarget target, RepeatableContent payload);
+    PublicationTarget target();
+
+    /**
+     * Publishes the payload for one durably prepared attempt.
+     *
+     * @param attempt exact attempt and idempotency identity
+     * @param payload repeatable immutable payload; implementations must stream it
+     * @return definitive classified outcome
+     * @throws IllegalArgumentException if inputs are null
+     * @throws RuntimeException if the outcome cannot be established; callers treat
+     *         every such exception as externally unknown and discard its details
+     */
+    PublicationOutcome publish(PublicationAttempt attempt, RepeatableContent payload);
+
+    /**
+     * Resolves an existing unknown attempt without creating a new external effect.
+     *
+     * @param attempt original exact attempt identity
+     * @return definitive outcome, or empty when reliable reconciliation is unsupported
+     * @throws RuntimeException if the lookup outcome itself is unknown
+     */
+    default Optional<PublicationOutcome> reconcile(PublicationAttempt attempt) {
+        return Optional.empty();
+    }
 }

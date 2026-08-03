@@ -36,7 +36,9 @@
  *
  * <p>
  * Publishers implement target-specific distribution (filesystem, LDAP, HTTP,
- * object stores).
+ * object stores) for one core-issued attempt token. They return only closed safe
+ * outcomes and may optionally reconcile that exact attempt. Provider secrets and
+ * exception details never cross this boundary into publication metadata.
  * </p>
  */
 package zeroecho.pki.spi.publish;

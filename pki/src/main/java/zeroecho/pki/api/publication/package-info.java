@@ -35,16 +35,18 @@
  * Publication domain model.
  *
  * <p>
- * This package defines publication targets and records describing how PKI
- * artifacts are distributed to relying parties or infrastructure components
- * (repositories, directories, endpoints, etc.). Publication is orchestrated
- * through {@link zeroecho.pki.api.PublicationService}.
+ * This package defines the durable post-commit lifecycle for distributing exact
+ * immutable credential and status-object content. Publication records are finite
+ * operational control metadata; they never establish or invalidate PKI authority.
+ * Processing, retry, and reconciliation are explicit through
+ * {@link zeroecho.pki.api.PublicationService}.
  * </p>
  *
  * <h2>Artifacts</h2>
  * <p>
- * Publication may include certificates, chains, status objects, and related
- * metadata. The concrete transport is framework- and deployment-specific.
+ * Payload bytes remain in the staged-content store and are streamed to one
+ * configured destination. Unknown external outcomes require reconciliation and
+ * are never automatically retried.
  * </p>
  *
  * @since 1.0

@@ -200,15 +200,6 @@ final class FsPaths {
     }
 
     // -------------------------------------------------------------------------
-    // Publications (immutable .bin)
-    // -------------------------------------------------------------------------
-
-    /* default */ Path publicationPath(final PkiId publicationId) {
-        Objects.requireNonNull(publicationId, "publicationId");
-        return this.root.resolve("publications").resolve(BY_ID).resolve(FsUtil.safeId(publicationId) + ".bin");
-    }
-
-    // -------------------------------------------------------------------------
     // Workflow state (mutable with history)
     // -------------------------------------------------------------------------
 

@@ -33,22 +33,21 @@
  ******************************************************************************/
 package zeroecho.pki.api.publication;
 
-import zeroecho.pki.api.attr.AttributeSet;
-
 /**
  * Describes where and how to publish an artifact.
  *
  * <p>
- * The {@code targetId} identifies a configured target instance. Additional
- * configuration is carried in {@code attributes}. Secrets must not be carried
- * in attributes intended for publication.
+ * The {@code targetId} identifies one administrator-configured publisher.
+ * Provider configuration and secrets are resolved by that publisher and are
+ * never carried by this value.
  * </p>
  *
  * @param type       destination type
  * @param targetId   target identifier (implementation-defined)
- * @param attributes target configuration/hints (may be empty but not null)
  */
-public record PublicationTarget(PublicationTargetType type, String targetId, AttributeSet attributes) {
+public record PublicationTarget(PublicationTargetType type, String targetId) {
+
+    private static final int MAXIMUM_TARGET_ID_CHARACTERS = 128;
 
     /**
      * Creates a publication target.
@@ -59,11 +58,9 @@ public record PublicationTarget(PublicationTargetType type, String targetId, Att
         if (type == null) {
             throw new IllegalArgumentException("type must not be null");
         }
-        if (targetId == null || targetId.isBlank()) {
-            throw new IllegalArgumentException("targetId must not be null/blank");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
+        if (targetId == null || targetId.length() > MAXIMUM_TARGET_ID_CHARACTERS
+                || !targetId.matches("[A-Za-z0-9][A-Za-z0-9._-]*")) {
+            throw new IllegalArgumentException("targetId must be a canonical configured identity");
         }
     }
 }

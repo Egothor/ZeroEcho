@@ -42,10 +42,10 @@ import java.util.Optional;
  * @param targetType optional target type filter
  * @param after      optional lower bound for time
  * @param before     optional upper bound for time
- * @param objectKind optional object kind filter
+ * @param sourceType optional source-object type filter
  */
 public record PublicationQuery(Optional<PublicationTargetType> targetType, Optional<Instant> after,
-        Optional<Instant> before, Optional<String> objectKind) {
+        Optional<Instant> before, Optional<PublicationSourceType> sourceType) {
 
     /**
      * Creates a publication query.
@@ -53,8 +53,11 @@ public record PublicationQuery(Optional<PublicationTargetType> targetType, Optio
      * @throws IllegalArgumentException if any optional container is null
      */
     public PublicationQuery {
-        if (targetType == null || after == null || before == null || objectKind == null) {
+        if (targetType == null || after == null || before == null || sourceType == null) {
             throw new IllegalArgumentException("optional fields must not be null");
+        }
+        if (after.isPresent() && before.isPresent() && after.orElseThrow().isAfter(before.orElseThrow())) {
+            throw new IllegalArgumentException("after must not be later than before");
         }
     }
 }

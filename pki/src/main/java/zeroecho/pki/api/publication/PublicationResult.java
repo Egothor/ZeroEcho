@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.api.publication;
 
-import java.util.List;
-
 import zeroecho.pki.api.PkiId;
 
 /**
@@ -42,9 +40,10 @@ import zeroecho.pki.api.PkiId;
  *
  * @param publicationId publication record id
  * @param status        outcome status
- * @param notes         non-sensitive operator-readable notes
+ * @param attemptNumber current monotonic attempt number
  */
-public record PublicationResult(PkiId publicationId, PublicationStatus status, List<String> notes) {
+public record PublicationResult(PkiId publicationId, PublicationStatus status, long attemptNumber) {
+    private static final long INITIAL_ATTEMPT = 0L;
 
     /**
      * Creates a publication result.
@@ -58,8 +57,8 @@ public record PublicationResult(PkiId publicationId, PublicationStatus status, L
         if (status == null) {
             throw new IllegalArgumentException("status must not be null");
         }
-        if (notes == null) {
-            throw new IllegalArgumentException("notes must not be null");
+        if (attemptNumber < INITIAL_ATTEMPT) {
+            throw new IllegalArgumentException("attemptNumber must not be negative");
         }
     }
 }

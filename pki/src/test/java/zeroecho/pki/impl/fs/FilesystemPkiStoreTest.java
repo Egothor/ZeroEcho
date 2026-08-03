@@ -111,6 +111,7 @@ import zeroecho.pki.api.profile.SubjectPolicy;
 import zeroecho.pki.api.profile.SubjectRdnRule;
 import zeroecho.pki.api.profile.SubjectRdnType;
 import zeroecho.pki.api.publication.PublicationRecord;
+import zeroecho.pki.api.publication.PublicationSourceType;
 import zeroecho.pki.api.publication.PublicationStatus;
 import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.publication.PublicationTargetType;
@@ -175,16 +176,17 @@ public final class FilesystemPkiStoreTest {
                     zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(), Encoding.DER,
                             new byte[] { 1, 2 }),
                     attributes);
-            PublicationRecord publication = new PublicationRecord(new PkiId("publication-all"), now,
-                    new PublicationTarget(PublicationTargetType.FILESYSTEM, "target-all", attributes),
-                    credential.credentialId(), "CREDENTIAL", PublicationStatus.PUBLISHED);
+            PublicationRecord publication = new PublicationRecord(new PkiId("publication-all"),
+                    PublicationSourceType.CREDENTIAL, credential.credentialId(), credential.content(),
+                    new PublicationTarget(PublicationTargetType.FILESYSTEM, "target-all"),
+                    PublicationStatus.PENDING, 0L, Optional.empty(), now, now, Optional.empty(), Optional.empty());
             store.putCa(ca);
             store.putCredential(credential);
             store.putRequest(request);
             RevocationRecord revocation = store.transitionRevocation(new RevocationCommand.RevokePermanently(
                     credential.credentialId(), RevocationReason.KEY_COMPROMISE, attributes), now);
             store.putStatusObject(status);
-            store.putPublicationRecord(publication);
+            store.createPublicationRecord(publication);
             importProfile(store, profile, now);
             store.activateProfile(profile.profileId(), 1);
             store.putPolicyTrace(trace);
@@ -198,7 +200,8 @@ public final class FilesystemPkiStoreTest {
                     store.getRevocation(revocation.credentialId()).orElseThrow().credentialId());
             assertEquals(status.statusObjectId(),
                     store.getStatusObject(status.statusObjectId()).orElseThrow().statusObjectId());
-            assertEquals(publication.publicationId(), store.listPublicationRecords().get(0).publicationId());
+            assertEquals(publication.publicationId(),
+                    store.getPublicationRecord(publication.publicationId()).orElseThrow().publicationId());
             assertEquals(profile, store.requireActiveProfile(profile.profileId()).profile());
             assertEquals(trace, store.getPolicyTrace(trace.decisionId()).orElseThrow());
             assertEquals(workflow.opId(), store.getWorkflowState(workflow.opId()).orElseThrow().opId());
@@ -241,7 +244,9 @@ public final class FilesystemPkiStoreTest {
                     StatusObjectType.CRL, Instant.EPOCH.plusSeconds(1L), Optional.empty(), secondReference,
                     TestObjects.emptyAttributes()));
             assertEquals(2, store.listStatusObjects(new PkiId("ca-status")).size());
-            assertTrue(store.listPublicationRecords().isEmpty());
+            try (zeroecho.pki.api.publication.PublicationCursor cursor = store.openPublicationRecords()) {
+                assertTrue(cursor.next(CancellationSignal.NONE).isEmpty());
+            }
             assertFalse(Files.exists(root.resolve("staged-content").resolve(firstReference.contentId() + ".owners")));
         }
 

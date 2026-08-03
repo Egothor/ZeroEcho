@@ -64,6 +64,9 @@ public interface PkiStoreProvider extends ConfigurableProvider<PkiStore> {
      * <p>
      * Implementations must validate required keys and throw
      * {@link IllegalArgumentException} if configuration is incomplete or invalid.
+     * Before returning, the provider must also satisfy the exclusive publication
+     * recovery contract documented by {@link PkiStore}; no external publication
+     * call may occur during allocation.
      * </p>
      *
      * @param config configuration (never {@code null})

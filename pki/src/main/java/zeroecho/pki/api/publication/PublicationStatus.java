@@ -34,23 +34,31 @@
 package zeroecho.pki.api.publication;
 
 /**
- * Publication outcome status.
+ * Durable publication-operation state.
  */
 public enum PublicationStatus {
 
     /**
-     * Artifact has been published successfully.
+     * The operation is registered and eligible for explicit processing.
      */
-    PUBLISHED,
+    PENDING,
 
     /**
-     * Publication was skipped (e.g., already published, policy decision, target not
-     * applicable).
+     * One exact attempt is durably prepared but has no classified outcome.
      */
-    SKIPPED,
+    DISPATCH_PREPARED,
 
     /**
-     * Publication failed.
+     * The exact attempted operation has a confirmed successful outcome.
      */
-    FAILED
+    SUCCEEDED,
+
+    /** The attempt definitively failed and an explicit retry is permitted. */
+    RETRYABLE_FAILURE,
+
+    /** The operation definitively failed and is terminal. */
+    TERMINAL_FAILURE,
+
+    /** The external effect is unknown and requires explicit reconciliation. */
+    OUTCOME_UNKNOWN
 }
