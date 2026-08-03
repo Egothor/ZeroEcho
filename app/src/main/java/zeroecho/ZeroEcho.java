@@ -35,6 +35,7 @@ package zeroecho;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -48,6 +49,7 @@ import org.apache.commons.cli.ParseException;
 import org.apache.commons.cli.help.HelpFormatter;
 
 import zeroecho.sdk.util.BouncyCastleActivator;
+import zeroecho.pki.cli.PkiCli;
 
 /**
  * ZeroEcho is a command-line utility for managing asymmetric keys and
@@ -102,6 +104,12 @@ public final class ZeroEcho {
     public static void main(final String[] args) throws IOException {
         final int errorCode = mainProcess(args);
 
+        if (args.length > 0 && "pki".equals(args[0])) {
+            if (errorCode != 0) {
+                System.exit(errorCode);
+            }
+            return;
+        }
         if (errorCode == 0) {
             System.out.println("OK");
         } else {
@@ -119,6 +127,9 @@ public final class ZeroEcho {
      * @throws IOException If the output could not be written
      */
     public static int mainProcess(final String... args) throws IOException {
+        if (args.length > 0 && "pki".equals(args[0])) {
+            return PkiCli.execute(Arrays.copyOfRange(args, 1, args.length), System.out);
+        }
         final Option KEM_OPTION = Option.builder("E").longOpt("kem").desc("KEM encryption/decryption").get();
         final Option GUARD_OPTION = Option.builder("G").longOpt("guard")
                 .desc("multi-recipient encryption/decryption (keys+passwords), AES/ChaCha").get();

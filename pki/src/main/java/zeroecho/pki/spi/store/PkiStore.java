@@ -90,7 +90,7 @@ import zeroecho.pki.api.status.StatusObject;
  * {@link IllegalStateException} when an operation cannot be completed safely.
  * </p>
  */
-public interface PkiStore extends SignWorkflowStore {
+public interface PkiStore extends SignWorkflowStore, AutoCloseable {
 
     /**
      * Returns the runtime-owned durable streaming-content store.
@@ -430,4 +430,17 @@ public interface PkiStore extends SignWorkflowStore {
      * @throws IllegalStateException if listing fails
      */
     List<WorkflowStateRecord> listWorkflowStates();
+
+    /**
+     * Closes this store and releases all lifecycle-owned resources.
+     *
+     * <p>After this method returns, implementations must reject new operations.
+     * Repeated close calls must follow the implementation's documented idempotence
+     * contract. A caller that coordinates multiple resources must preserve the
+     * primary close failure and attach later failures as suppressed exceptions.</p>
+     *
+     * @throws Exception if a lifecycle-owned resource cannot be closed
+     */
+    @Override
+    void close() throws Exception;
 }

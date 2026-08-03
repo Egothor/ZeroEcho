@@ -8,8 +8,11 @@ group='org.egothor'
 dependencies {
     implementation 'org.apache.commons:commons-text'
     implementation 'commons-cli:commons-cli'
+    implementation platform('tools.jackson:jackson-bom:3.1.5')
+    implementation 'tools.jackson.core:jackson-core'
     implementation project(':lib')
     implementation project(':ext')
+    implementation project(':pki')
     // might be removed if I move BC ops to the lib
     testImplementation 'org.bouncycastle:bcpkix-jdk18on'
 }
@@ -57,4 +60,3 @@ jar {
 javadoc {
     options.links("https://www.egothor.org/javadoc/zeroecho/lib")
 }
-

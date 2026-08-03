@@ -1,0 +1,311 @@
+/*******************************************************************************
+ * Copyright (C) 2026, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+package zeroecho.pki.cli;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import zeroecho.pki.api.ProfileService;
+import zeroecho.pki.api.RevocationService;
+import zeroecho.pki.application.PkiOperation;
+import zeroecho.pki.application.PkiOperationFailure;
+import zeroecho.pki.application.PkiOperationOutcome;
+import zeroecho.pki.application.PkiOperationResult;
+import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.application.PkiSession;
+import zeroecho.pki.application.PkiSessionConfiguration;
+
+class PkiCliTest {
+
+    @TempDir
+    Path temporaryDirectory;
+
+    @Test
+    void productionSessionExecutesMachineAndHumanSingleCommands() throws IOException {
+        System.out.println("productionSessionExecutesMachineAndHumanSingleCommands");
+        Path configuration = configuration("production");
+        ByteArrayOutputStream machine = new ByteArrayOutputStream();
+        int first = PkiCli.execute(new String[] { "configuration.validate", "--config", configuration.toString(),
+                "--output", "json" }, machine);
+        ByteArrayOutputStream human = new ByteArrayOutputStream();
+        int second = PkiCli.execute(new String[] { "configuration.validate", "--config", configuration.toString() },
+                human);
+        String json = machine.toString(StandardCharsets.UTF_8);
+        System.out.println("...machineBytes=" + json.length());
+        assertEquals(0, first);
+        assertEquals(0, second);
+        assertTrue(json.contains("\"mode\":\"single\""));
+        assertTrue(json.contains("\"storeProvider\":\"fs\""));
+        assertTrue(human.toString(StandardCharsets.UTF_8).contains("configuration.validate SUCCEEDED"));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void singleAndBatchUseTheSameTypedExecutorAndSessionLifecycle() throws IOException {
+        System.out.println("singleAndBatchUseTheSameTypedExecutorAndSessionLifecycle");
+        Path configuration = configuration("shared");
+        Path plan = plan("shared.json", """
+                {"version":1,"failurePolicy":"FAIL_FAST","operations":[
+                  {"id":"validate","operation":"configuration.validate","arguments":{}}
+                ]}
+                """);
+        RecordingOpener opener = new RecordingOpener();
+        ByteArrayOutputStream single = new ByteArrayOutputStream();
+        int singleCode = PkiCli.execute(new String[] { "configuration.validate", "--config",
+                configuration.toString(), "--output", "json" }, single, opener, () -> false);
+        ByteArrayOutputStream batch = new ByteArrayOutputStream();
+        int batchCode = PkiCli.execute(new String[] { "run", plan.toString(), "--config", configuration.toString(),
+                "--output", "json" }, batch, opener, () -> false);
+        System.out.println("...sessions=" + opener.sessions.get());
+        assertEquals(0, singleCode);
+        assertEquals(0, batchCode);
+        assertEquals(List.of(PkiOperation.ValidateConfiguration.class, PkiOperation.ValidateConfiguration.class),
+                opener.operationTypes);
+        assertEquals(2, opener.sessions.get());
+        assertEquals(2, opener.closes.get());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void directMutationUsesTheSharedTypedExecutor() throws IOException {
+        System.out.println("directMutationUsesTheSharedTypedExecutor");
+        Path configuration = configuration("mutation");
+        RecordingOpener opener = new RecordingOpener();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { "credential.revoke", "--credential-id", "credential-1",
+                "--reason", "KEY_COMPROMISE", "--config", configuration.toString(), "--output", "json" },
+                output, opener, () -> false);
+        String rendered = output.toString(StandardCharsets.UTF_8);
+        System.out.println("...exit=" + code);
+        assertEquals(PkiExitCodes.SUCCESS, code);
+        assertEquals(List.of(PkiOperation.RevokeCredential.class), opener.operationTypes);
+        assertTrue(rendered.contains("\"state\":\"PERMANENTLY_REVOKED\""));
+        assertEquals(1, opener.closes.get());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void resolvesEarlierFieldsAndContinuesOnlyIndependentSteps() throws IOException {
+        System.out.println("resolvesEarlierFieldsAndContinuesOnlyIndependentSteps");
+        Path configuration = configuration("references");
+        Path plan = plan("references.json", """
+                {"version":1,"failurePolicy":"CONTINUE_INDEPENDENT","operations":[
+                  {"id":"config","operation":"configuration.validate","arguments":{}},
+                  {"id":"inspect","operation":"credential.inspect","arguments":{"credentialId":"${config.storeProvider}"}},
+                  {"id":"unknown-field","operation":"credential.inspect","arguments":{"credentialId":"${config.absentField}"}},
+                  {"id":"missing","operation":"publication.inspect","arguments":{"publicationId":"missing"}},
+                  {"id":"independent","operation":"configuration.validate","arguments":{}},
+                  {"id":"dependent","operation":"credential.inspect","arguments":{"credentialId":"${missing.sourceId}"}}
+                ]}
+                """);
+        RecordingOpener opener = new RecordingOpener();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { "run", plan.toString(), "--config", configuration.toString(),
+                "--output", "json" }, output, opener, () -> false);
+        String json = output.toString(StandardCharsets.UTF_8);
+        System.out.println("...exit=" + code);
+        assertEquals(PkiExitCodes.NOT_FOUND_OR_CONFLICT, code);
+        assertTrue(json.contains("\"id\":\"independent\",\"operation\":\"configuration.validate\",\"status\":\"SUCCEEDED\""));
+        assertTrue(json.contains("\"id\":\"unknown-field\",\"operation\":\"credential.inspect\",\"status\":\"FAILED\""));
+        assertTrue(json.contains("\"id\":\"dependent\",\"operation\":\"credential.inspect\",\"status\":\"SKIPPED\""));
+        assertEquals(1, opener.sessions.get());
+        assertEquals(1, opener.closes.get());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void rejectsFutureReferencesScriptsInterpolationAndSecretArgumentsBeforeOpening() throws IOException {
+        System.out.println("rejectsFutureReferencesScriptsInterpolationAndSecretArgumentsBeforeOpening");
+        Path configuration = configuration("hostile");
+        Path plan = plan("hostile.json", """
+                {"version":1,"failurePolicy":"FAIL_FAST","operations":[
+                  {"id":"first","operation":"credential.inspect","arguments":{"credentialId":"${later.credentialId}"}},
+                  {"id":"later","operation":"configuration.validate","arguments":{}}
+                ]}
+                """);
+        RecordingOpener opener = new RecordingOpener();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int future = PkiCli.execute(new String[] { "run", plan.toString(), "--config", configuration.toString(),
+                "--output", "json" }, output, opener, () -> false);
+        int script = PkiCli.execute(new String[] { "java.lang.Runtime", "--config", configuration.toString() },
+                new ByteArrayOutputStream(), opener, () -> false);
+        int secret = PkiCli.execute(new String[] { "configuration.validate", "--config", configuration.toString(),
+                "--password", "do-not-print" }, new ByteArrayOutputStream(), opener, () -> false);
+        System.out.println("...rejections=3");
+        assertEquals(PkiExitCodes.INVALID_INVOCATION, future);
+        assertEquals(PkiExitCodes.INVALID_INVOCATION, script);
+        assertEquals(PkiExitCodes.INVALID_INVOCATION, secret);
+        assertEquals(0, opener.sessions.get());
+        assertFalse(output.toString(StandardCharsets.UTF_8).contains("later.credentialId"));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void failFastCancellationAndCloseFailuresRemainExplicit() throws IOException {
+        System.out.println("failFastCancellationAndCloseFailuresRemainExplicit");
+        Path configuration = configuration("failures");
+        Path plan = plan("fail-fast.json", """
+                {"version":1,"failurePolicy":"FAIL_FAST","operations":[
+                  {"id":"missing","operation":"publication.inspect","arguments":{"publicationId":"missing"}},
+                  {"id":"later","operation":"configuration.validate","arguments":{}}
+                ]}
+                """);
+        RecordingOpener opener = new RecordingOpener();
+        ByteArrayOutputStream failed = new ByteArrayOutputStream();
+        int failFast = PkiCli.execute(new String[] { "run", plan.toString(), "--config", configuration.toString(),
+                "--output", "json" }, failed, opener, () -> false);
+        ByteArrayOutputStream cancelled = new ByteArrayOutputStream();
+        int cancel = PkiCli.execute(new String[] { "configuration.validate", "--config", configuration.toString(),
+                "--output", "json" }, cancelled, opener, () -> true);
+        opener.failClose = true;
+        ByteArrayOutputStream close = new ByteArrayOutputStream();
+        int closeCode = PkiCli.execute(new String[] { "configuration.validate", "--config",
+                configuration.toString(), "--output", "json" }, close, opener, () -> false);
+        System.out.println("...codes=" + failFast + "," + cancel + "," + closeCode);
+        assertEquals(PkiExitCodes.NOT_FOUND_OR_CONFLICT, failFast);
+        assertTrue(failed.toString(StandardCharsets.UTF_8).contains("\"code\":\"FAIL_FAST\""));
+        assertEquals(PkiExitCodes.CANCELLED, cancel);
+        assertEquals(PkiExitCodes.RESOURCE_FAILURE, closeCode);
+        assertTrue(close.toString(StandardCharsets.UTF_8).contains("SESSION_CLOSE_FAILED"));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void rejectsMalformedConfigurationAndNeverPrintsProviderExceptions() throws IOException {
+        System.out.println("rejectsMalformedConfigurationAndNeverPrintsProviderExceptions");
+        Path malformed = plan("bad-config.json",
+                "{\"version\":1,\"store\":{},\"audit\":{},\"secret\":\"hidden\"}");
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int invalid = PkiCli.execute(new String[] { "configuration.validate", "--config", malformed.toString(),
+                "--output", "json" }, output, configuration -> {
+                    throw new IllegalStateException("/sensitive/path provider-secret");
+                }, () -> false);
+        Path valid = configuration("provider-failure");
+        ByteArrayOutputStream providerOutput = new ByteArrayOutputStream();
+        int providerFailure = PkiCli.execute(new String[] { "configuration.validate", "--config", valid.toString(),
+                "--output", "json" }, providerOutput, configuration -> {
+                    throw new IllegalStateException("/sensitive/path provider-secret");
+                }, () -> false);
+        String rendered = output.toString(StandardCharsets.UTF_8)
+                + providerOutput.toString(StandardCharsets.UTF_8);
+        assertEquals(PkiExitCodes.CONFIGURATION_FAILURE, invalid);
+        assertEquals(PkiExitCodes.RESOURCE_FAILURE, providerFailure);
+        assertFalse(rendered.contains("hidden"));
+        assertFalse(rendered.contains("sensitive"));
+        assertFalse(rendered.contains("provider-secret"));
+        System.out.println("...ok");
+    }
+
+    private Path configuration(String name) throws IOException {
+        Path store = temporaryDirectory.resolve(name + "-store");
+        return plan(name + "-config.json", "{\"version\":1,\"store\":{\"provider\":\"fs\",\"properties\":{\"root\":\""
+                + store + "\"}},\"audit\":{\"provider\":\"memory\",\"properties\":{\"size\":\"32\"}}}");
+    }
+
+    private Path plan(String name, String content) throws IOException {
+        Path path = temporaryDirectory.resolve(name);
+        Files.writeString(path, content, StandardCharsets.UTF_8);
+        return path;
+    }
+
+    private static final class RecordingOpener implements PkiCli.SessionOpener {
+        private final AtomicInteger sessions = new AtomicInteger();
+        private final AtomicInteger closes = new AtomicInteger();
+        private final List<Class<?>> operationTypes = new java.util.ArrayList<>();
+        private boolean failClose;
+
+        @Override
+        public PkiSession open(PkiSessionConfiguration configuration) {
+            sessions.incrementAndGet();
+            return new PkiSession() {
+                @Override
+                public ProfileService profiles() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public RevocationService revocations() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public zeroecho.pki.application.PkiOperationExecutor operations() {
+                    return (operation, cancellation) -> outcome(operation);
+                }
+
+                @Override
+                public void close() throws Exception {
+                    closes.incrementAndGet();
+                    if (failClose) {
+                        throw new IOException("sensitive-close-detail");
+                    }
+                }
+            };
+        }
+
+        private PkiOperationOutcome outcome(PkiOperation operation) {
+            operationTypes.add(operation.getClass());
+            if (operation instanceof PkiOperation.InspectPublication) {
+                return new PkiOperationOutcome.Failure(operation.name(), PkiOperationFailure.NOT_FOUND,
+                        "OBJECT_NOT_FOUND");
+            }
+            LinkedHashMap<String, PkiOperationValue> fields = new LinkedHashMap<>();
+            if (operation instanceof PkiOperation.ValidateConfiguration) {
+                fields.put("version", new PkiOperationValue.IntegerValue(1));
+                fields.put("storeProvider", new PkiOperationValue.Text("fs"));
+            } else if (operation instanceof PkiOperation.InspectCredential inspect) {
+                fields.put("credentialId", new PkiOperationValue.Text(inspect.credentialId().value()));
+            } else if (operation instanceof PkiOperation.RevokeCredential revoke) {
+                fields.put("credentialId", new PkiOperationValue.Text(revoke.credentialId().value()));
+                fields.put("state", new PkiOperationValue.Text("PERMANENTLY_REVOKED"));
+            } else {
+                fields.put("status", new PkiOperationValue.Text("OK"));
+            }
+            return new PkiOperationOutcome.Success(new PkiOperationResult(operation.name(), fields));
+        }
+    }
+}

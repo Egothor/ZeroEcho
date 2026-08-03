@@ -140,27 +140,47 @@ public final class PkiBootstrap {
      */
     public static PkiStore openStore() {
         String requestedId = System.getProperty(PROP_STORE_BACKEND);
-
-        PkiStoreProvider provider = SpiSelector.select(PkiStoreProvider.class, requestedId,
-                new SpiSelector.ProviderId<>() {
-                    @Override
-                    public String id(PkiStoreProvider p) {
-                        return p.id();
-                    }
-                });
-
         Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_STORE_PREFIX);
-
+        PkiStoreProvider provider = selectStoreProvider(requestedId);
         if ("fs".equals(provider.id()) && !props.containsKey("root")) {
             props.put("root", Path.of("pki-store").toString());
         }
-
         ProviderConfig config = new ProviderConfig(provider.id(), props);
-
         if (LOG.isLoggable(Level.INFO)) {
             LOG.info("Selected store provider: " + provider.id() + " (keys: " + props.keySet() + ")");
         }
+        return provider.allocate(config);
+    }
 
+    /**
+     * Validates an explicit store configuration without allocating a store.
+     *
+     * <p>This entry point is intended for lifecycle composition that must reject
+     * every invalid configuration before exposing or allocating backend
+     * resources. Unknown provider properties are rejected because an explicit
+     * application configuration is versioned and closed.</p>
+     *
+     * @param config immutable store-provider configuration
+     * @throws NullPointerException if {@code config} is {@code null}
+     * @throws IllegalArgumentException if the provider or configuration is invalid
+     */
+    public static void validateStoreConfiguration(ProviderConfig config) {
+        PkiStoreProvider provider = selectStoreProvider(Objects.requireNonNull(config, "config").backendId());
+        requireKnownKeys(provider, config);
+        provider.validateConfig(config);
+    }
+
+    /**
+     * Opens a store from an explicit, strictly validated configuration.
+     *
+     * @param config immutable store-provider configuration
+     * @return opened store owned by the caller
+     * @throws IllegalArgumentException if the configuration is invalid
+     * @throws RuntimeException if store allocation fails
+     */
+    public static PkiStore openStore(ProviderConfig config) {
+        validateStoreConfiguration(config);
+        PkiStoreProvider provider = selectStoreProvider(config.backendId());
         return provider.allocate(config);
     }
 
@@ -198,6 +218,32 @@ public final class PkiBootstrap {
         }
 
         return provider.allocate(config);
+    }
+
+    /**
+     * Validates an explicit audit configuration without allocating a sink.
+     *
+     * @param config immutable audit-provider configuration
+     * @throws NullPointerException if {@code config} is {@code null}
+     * @throws IllegalArgumentException if the provider or configuration is invalid
+     */
+    public static void validateAuditConfiguration(ProviderConfig config) {
+        AuditSinkProvider provider = selectAuditProvider(Objects.requireNonNull(config, "config").backendId());
+        requireKnownKeys(provider, config);
+        provider.validateConfig(config);
+    }
+
+    /**
+     * Opens an audit sink from an explicit, strictly validated configuration.
+     *
+     * @param config immutable audit-provider configuration
+     * @return configured audit sink
+     * @throws IllegalArgumentException if the configuration is invalid
+     * @throws RuntimeException if sink allocation fails
+     */
+    public static AuditSink openAudit(ProviderConfig config) {
+        validateAuditConfiguration(config);
+        return selectAuditProvider(config.backendId()).allocate(config);
     }
 
     /**
@@ -347,6 +393,32 @@ public final class PkiBootstrap {
         Objects.requireNonNull(provider, "provider");
         if (LOG.isLoggable(Level.FINE)) {
             LOG.fine("Provider '" + provider.id() + "' supports keys: " + provider.supportedKeys());
+        }
+    }
+
+    private static PkiStoreProvider selectStoreProvider(String requestedId) {
+        return SpiSelector.select(PkiStoreProvider.class, requestedId, new SpiSelector.ProviderId<>() {
+            @Override
+            public String id(PkiStoreProvider provider) {
+                return provider.id();
+            }
+        });
+    }
+
+    private static AuditSinkProvider selectAuditProvider(String requestedId) {
+        return SpiSelector.select(AuditSinkProvider.class, requestedId, new SpiSelector.ProviderId<>() {
+            @Override
+            public String id(AuditSinkProvider provider) {
+                return provider.id();
+            }
+        });
+    }
+
+    private static void requireKnownKeys(ConfigurableProvider<?> provider, ProviderConfig config) {
+        for (String key : config.properties().keySet()) {
+            if (!provider.supportedKeys().contains(key)) {
+                throw new IllegalArgumentException("Unknown provider configuration key: " + key);
+            }
         }
     }
 }

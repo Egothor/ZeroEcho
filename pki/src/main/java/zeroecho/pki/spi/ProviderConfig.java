@@ -33,7 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.spi;
 
-import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -76,7 +75,7 @@ public record ProviderConfig(String backendId, Map<String, String> properties) {
         if (backendId.isBlank()) {
             throw new IllegalArgumentException("backendId must not be blank");
         }
-        properties = Collections.unmodifiableMap(properties);
+        properties = Map.copyOf(properties);
     }
 
     /**

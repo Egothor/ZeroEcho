@@ -44,7 +44,7 @@ import zeroecho.pki.api.audit.AuditEvent;
  * </p>
  */
 @FunctionalInterface
-public interface AuditSink {
+public interface AuditSink extends AutoCloseable {
 
     /**
      * Persists an audit event.
@@ -54,4 +54,16 @@ public interface AuditSink {
      * @throws RuntimeException         if persistence fails
      */
     void record(AuditEvent event);
+
+    /**
+     * Releases lifecycle-owned sink resources.
+     *
+     * <p>The default implementation owns no closeable resource. Stateful
+     * providers may override this method; repeated close calls should be
+     * harmless.</p>
+     */
+    @Override
+    default void close() {
+        // Most current sinks open resources only for the duration of record(...).
+    }
 }
