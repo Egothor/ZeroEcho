@@ -60,6 +60,7 @@ import java.util.Set;
 import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.DERBMPString;
+import org.bouncycastle.asn1.DERBitString;
 import org.bouncycastle.asn1.DERNull;
 import org.bouncycastle.asn1.DEROctetString;
 import org.bouncycastle.asn1.DERSequence;
@@ -250,6 +251,14 @@ final class H7ProfileEnforcementTest {
                 ed.getPublicKeyData().getBytes());
         assertCode("SUBJECT_KEY_PARAMETERS_UNSUPPORTED",
                 () -> validate(edWithNull.getEncoded(), "Ed25519", policyWithFixedOrganization("Ed25519")));
+
+        byte[] trailing = java.util.Arrays.copyOf(original.getEncoded(), original.getEncoded().length + 1);
+        assertCode("SUBJECT_KEY_UNSUPPORTED",
+                () -> validate(trailing, "RSA", policyWithFixedOrganization("RSA")));
+        DERSequence padded = new DERSequence(new ASN1Encodable[] { original.getAlgorithm(),
+                new DERBitString(original.getPublicKeyData().getBytes(), 1) });
+        assertCode("SUBJECT_KEY_UNSUPPORTED",
+                () -> validate(padded.getEncoded(), "RSA", policyWithFixedOrganization("RSA")));
     }
 
     @Test

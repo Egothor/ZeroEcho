@@ -35,7 +35,6 @@ package zeroecho.pki.impl.framework.x509.bc;
 
 import java.io.IOException;
 import java.util.Objects;
-import java.util.Arrays;
 
 import org.bouncycastle.asn1.ASN1Encoding;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
@@ -140,29 +139,4 @@ public final class BcX509AlgorithmAdapter {
         }
     }
 
-    /**
-     * Requires one complete canonical DER object before a BC structure parser is
-     * invoked.
-     *
-     * @param encoded complete DER object
-     * @throws IllegalArgumentException for trailing data, BER forms, or
-     *                                  non-canonical DER
-     */
-    /* default */ static void requireCanonicalDer(byte[] encoded) {
-        Objects.requireNonNull(encoded, "encoded");
-        ASN1Primitive primitive;
-        try {
-            primitive = ASN1Primitive.fromByteArray(encoded);
-        } catch (IOException exception) {
-            throw new IllegalArgumentException("Invalid canonical DER object", exception);
-        }
-        try {
-            byte[] canonical = primitive.getEncoded(ASN1Encoding.DER);
-            if (!Arrays.equals(encoded, canonical)) {
-                throw new IllegalArgumentException("Input is not one canonical DER object");
-            }
-        } catch (IOException exception) {
-            throw new IllegalArgumentException("Invalid canonical DER object", exception);
-        }
-    }
 }

@@ -57,6 +57,7 @@ import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.ImmutableByteContent;
@@ -267,7 +268,8 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
      */
     private static Optional<PKCS10CertificationRequest> parseCsr(byte[] csrDer) {
         try {
-            BcX509AlgorithmAdapter.requireCanonicalDer(csrDer);
+            new StreamingDerReader().validate(csrDer,
+                    BcX509CertificationRequestParser.MAXIMUM_CSR_DER_BYTES);
             return Optional.of(new PKCS10CertificationRequest(csrDer));
         } catch (IOException | IllegalArgumentException ex) {
             return Optional.empty();

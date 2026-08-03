@@ -41,6 +41,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.Optional;
 
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.DEROctetString;
@@ -57,6 +58,8 @@ import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 
 import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -78,6 +81,8 @@ import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
 import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
 import zeroecho.pki.spi.store.ContentSink;
 
@@ -124,8 +129,11 @@ import zeroecho.pki.spi.store.ContentSink;
  * </p>
  */
 // PMD cannot infer that retaining backend causes would violate the redaction contract.
-@SuppressWarnings("PMD.PreserveStackTrace")
+@SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CyclomaticComplexity" })
 public final class BcX509CredentialIssuerBackend implements CredentialIssuerBackend {
+
+    private static final int MAXIMUM_CERTIFICATE_BYTES = 1024 * 1024;
+    private static final int MAXIMUM_SPKI_BYTES = 1024 * 1024;
 
     private final PkiSigningBus signingBus;
     private final AlgorithmIdentity signatureIdentity;
@@ -342,7 +350,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         SubjectPublicKeyInfo spki;
         PkiId publicKeyId;
         try {
-            spki = SubjectPublicKeyInfo.getInstance(subjectSpki);
+            spki = parseSubjectPublicKeyInfo(subjectSpki);
             publicKeyId = new PkiId("spki:" + sha256Hex(subjectSpki));
         } finally {
             java.util.Arrays.fill(subjectSpki, (byte) 0);
@@ -394,6 +402,9 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
     }
 
     private DurableContentReference stageCertificate(byte[] certificate) {
+        if (certificate.length > MAXIMUM_CERTIFICATE_BYTES) {
+            throw new PkiException("Certificate exceeds artifact limit: code=CERTIFICATE_TOO_LARGE");
+        }
         try (ContentSink sink = signingBus.beginContent(Encoding.DER, DurableContentReference.Lifecycle.PERSISTED);
                 OutputStream output = sink.outputStream()) {
             output.write(certificate);
@@ -406,7 +417,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
     private void validateGeneratedCertificate(DurableContentReference reference, PkiBusContentSigner signer) {
         try (RepeatableContent content = signingBus.openContent(reference)) {
             new BcX509SignedObjectValidator(signingBus.authority()).validateGeneratedCertificate(content,
-                    signer.executionPlan(), zeroecho.core.io.CancellationSignal.NONE);
+                    signer.executionPlan(), CancellationSignal.NONE);
         } catch (IOException | IllegalArgumentException exception) {
             signingBus.releaseContent(reference);
             throw new PkiException("Certificate postcondition failed: code=BACKEND_RESULT_SUBSTITUTION", exception);
@@ -414,10 +425,11 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
     }
 
     private byte[] materialize(DurableContentReference reference) {
-        if (reference.length() > Integer.MAX_VALUE) {
-            throw new PkiException("Certificate exceeds BC adapter element domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
+        long length = reference.length();
+        if (reference.encoding() != Encoding.DER || length <= 0L || length > MAXIMUM_CERTIFICATE_BYTES) {
+            throw new PkiException("Certificate exceeds artifact limit: code=CERTIFICATE_TOO_LARGE");
         }
-        byte[] result = new byte[(int) reference.length()];
+        byte[] result = new byte[(int) length];
         try {
             readExact(reference, result);
             return result;
@@ -442,10 +454,12 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         }
     }
 
-    private static X509CertificateHolder parseIssuerCertificateOrThrow(byte[] issuerCertDer) {
+    private X509CertificateHolder parseIssuerCertificateOrThrow(byte[] issuerCertDer) {
         try {
+            new BcX509SignedObjectValidator(signingBus.authority()).validateCertificate(
+                    new ImmutableByteContent(issuerCertDer), Optional.empty(), CancellationSignal.NONE);
             return new X509CertificateHolder(issuerCertDer);
-        } catch (Exception ex) {
+        } catch (IOException | IllegalArgumentException ex) {
             throw new PkiException("Invalid issuer certificate: code=ISSUER_CERTIFICATE_INVALID");
         }
     }
@@ -473,12 +487,24 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         }
     }
 
-    private static SubjectPublicKeyInfo parseSubjectPublicKeyInfo(EncodedObject encoded) {
+    private SubjectPublicKeyInfo parseSubjectPublicKeyInfo(EncodedObject encoded) {
         byte[] bytes = encoded.bytes();
         try {
-            return SubjectPublicKeyInfo.getInstance(bytes);
+            return parseSubjectPublicKeyInfo(bytes);
         } finally {
             java.util.Arrays.fill(bytes, (byte) 0);
+        }
+    }
+
+    private SubjectPublicKeyInfo parseSubjectPublicKeyInfo(byte[] bytes) {
+        try {
+            new StreamingDerReader().validateSubjectPublicKeyInfo(bytes, MAXIMUM_SPKI_BYTES);
+            SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(bytes);
+            new BcX509AlgorithmAdapter(signingBus.authority().bindings()).decode(spki.getAlgorithm(),
+                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            return spki;
+        } catch (IOException | IllegalArgumentException exception) {
+            throw new PkiException("Invalid subject public key: code=SUBJECT_KEY_UNSUPPORTED");
         }
     }
 

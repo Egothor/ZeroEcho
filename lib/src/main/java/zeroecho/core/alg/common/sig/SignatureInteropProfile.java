@@ -39,8 +39,6 @@ import java.util.Objects;
 import org.bouncycastle.asn1.ASN1EncodableVector;
 import org.bouncycastle.asn1.ASN1Encoding;
 import org.bouncycastle.asn1.ASN1Integer;
-import org.bouncycastle.asn1.ASN1Primitive;
-import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.DERSequence;
 
 import zeroecho.core.spec.ContextSpec;
@@ -84,7 +82,10 @@ import zeroecho.core.spec.ContextSpec;
  * semantics, not as an optional hint.</li>
  * </ul>
  */
-public final class SignatureInteropProfile { // NOPMD
+public final class SignatureInteropProfile {
+    private static final int DER_SEQUENCE_TAG = 0x30;
+    private static final int DER_INTEGER_TAG = 0x02;
+    private static final int DER_LONG_FORM_BIT = 0x80;
 
     /**
      * Signature byte representation bridging policy.
@@ -192,11 +193,10 @@ public final class SignatureInteropProfile { // NOPMD
      *
      * @param signature external signature bytes
      * @return internal signature bytes suitable for ZeroEcho verification contexts
-     * @throws IOException              if DER decoding fails
      * @throws IllegalArgumentException if the supplied bytes do not match the
      *                                  expected external representation
      */
-    public byte[] externalToInternalSignature(byte[] signature) throws IOException {
+    public byte[] externalToInternalSignature(byte[] signature) {
         Objects.requireNonNull(signature, "signature");
         if (signatureRepresentation == SignatureRepresentation.IDENTITY) {
             return signature.clone();
@@ -221,19 +221,84 @@ public final class SignatureInteropProfile { // NOPMD
         return ecdsaP1363ToDer(signature, internalSignatureLength);
     }
 
-    private static byte[] ecdsaDerToP1363(byte[] der, int fixedLength) throws IOException {
-        ASN1Primitive primitive = ASN1Primitive.fromByteArray(der);
-        ASN1Sequence sequence = ASN1Sequence.getInstance(primitive);
-        if (sequence.size() != 2) { // NOPMD
-            throw new IllegalArgumentException("ECDSA DER signature must contain exactly two integers");
+    private static byte[] ecdsaDerToP1363(byte[] der, int fixedLength) {
+        if ((fixedLength & 1) != 0 || der.length > fixedLength + 8 || der.length < 8) {
+            throw new IllegalArgumentException("Invalid ECDSA DER signature length");
         }
         int coordinateLength = fixedLength / 2;
+        int offset = 0;
+        if (Byte.toUnsignedInt(der[offset++]) != DER_SEQUENCE_TAG) {
+            throw new IllegalArgumentException("ECDSA DER signature must be a sequence");
+        }
+        long sequenceLength = readDerLength(der, offset);
+        offset = (int) sequenceLength;
+        int sequenceEnd = Math.addExact(offset, (int) (sequenceLength >>> Integer.SIZE));
+        if (sequenceEnd != der.length) {
+            throw new IllegalArgumentException("ECDSA DER signature contains trailing or truncated data");
+        }
         byte[] out = new byte[fixedLength];
-        byte[] r = ASN1Integer.getInstance(sequence.getObjectAt(0)).getPositiveValue().toByteArray();
-        byte[] s = ASN1Integer.getInstance(sequence.getObjectAt(1)).getPositiveValue().toByteArray();
-        copyUnsignedFixed(r, out, 0, coordinateLength);
-        copyUnsignedFixed(s, out, coordinateLength, coordinateLength);
+        offset = readPositiveInteger(der, offset, sequenceEnd, out, 0, coordinateLength);
+        offset = readPositiveInteger(der, offset, sequenceEnd, out, coordinateLength, coordinateLength);
+        if (offset != sequenceEnd) {
+            throw new IllegalArgumentException("ECDSA DER signature must contain exactly two integers");
+        }
         return out;
+    }
+
+    /* High 32 bits carry the decoded length; low 32 bits carry the next offset. */
+    private static long readDerLength(byte[] der, int offset) {
+        int cursor = offset;
+        if (cursor >= der.length) {
+            throw new IllegalArgumentException("Truncated ECDSA DER length");
+        }
+        int first = Byte.toUnsignedInt(der[cursor++]);
+        int length;
+        if (first < DER_LONG_FORM_BIT) {
+            length = first;
+        } else {
+            int octets = first & 0x7f;
+            if (octets == 0 || octets > 2 || cursor + octets > der.length
+                    || Byte.toUnsignedInt(der[cursor]) == 0) {
+                throw new IllegalArgumentException("Non-canonical ECDSA DER length");
+            }
+            length = 0;
+            for (int index = 0; index < octets; index++) {
+                length = (length << Byte.SIZE) | Byte.toUnsignedInt(der[cursor++]);
+            }
+            if (length < DER_LONG_FORM_BIT) {
+                throw new IllegalArgumentException("Non-canonical ECDSA DER length");
+            }
+        }
+        return ((long) length << Integer.SIZE) | Integer.toUnsignedLong(cursor);
+    }
+
+    private static int readPositiveInteger(byte[] der, int offset, int limit, byte[] target, int targetOffset,
+            int width) {
+        int cursor = offset;
+        if (cursor >= limit || Byte.toUnsignedInt(der[cursor++]) != DER_INTEGER_TAG) {
+            throw new IllegalArgumentException("ECDSA DER signature must contain INTEGER values");
+        }
+        long encodedLength = readDerLength(der, cursor);
+        cursor = (int) encodedLength;
+        int length = (int) (encodedLength >>> Integer.SIZE);
+        if (length == 0 || length > width + 1 || cursor > limit - length) {
+            throw new IllegalArgumentException("Invalid ECDSA DER integer length");
+        }
+        int first = Byte.toUnsignedInt(der[cursor]);
+        if (first == 0) {
+            if (length == 1 || (der[cursor + 1] & DER_LONG_FORM_BIT) == 0) {
+                throw new IllegalArgumentException("ECDSA DER integer must be positive, nonzero, and minimal");
+            }
+            cursor++;
+            length--;
+        } else if ((first & DER_LONG_FORM_BIT) != 0) {
+            throw new IllegalArgumentException("ECDSA DER integer must be positive");
+        }
+        if (length > width) {
+            throw new IllegalArgumentException("ECDSA integer does not fit into fixed P1363 width");
+        }
+        System.arraycopy(der, cursor, target, targetOffset + width - length, length);
+        return cursor + length;
     }
 
     private static byte[] ecdsaP1363ToDer(byte[] p1363, int fixedLength) throws IOException {
@@ -250,18 +315,6 @@ public final class SignatureInteropProfile { // NOPMD
         vector.add(new ASN1Integer(new java.math.BigInteger(1, r)));
         vector.add(new ASN1Integer(new java.math.BigInteger(1, s)));
         return new DERSequence(vector).getEncoded(ASN1Encoding.DER);
-    }
-
-    private static void copyUnsignedFixed(byte[] value, byte[] target, int offset, int width) {
-        int start = 0;
-        while (start < value.length - 1 && value[start] == 0) {
-            start++;
-        }
-        int len = value.length - start;
-        if (len > width) {
-            throw new IllegalArgumentException("ECDSA integer does not fit into fixed P1363 width");
-        }
-        System.arraycopy(value, start, target, offset + width - len, len);
     }
 
     private static String requireNonBlank(String value, String label) {

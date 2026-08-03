@@ -33,9 +33,16 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.DateTimeException;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
@@ -58,6 +65,9 @@ import zeroecho.core.io.RepeatableContent;
  * fixed depth and comparison-buffer size.
  * </p>
  */
+// The aggregate branches implement one closed canonical-DER grammar.
+@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.NPathComplexity", "PMD.AvoidLiteralsInIfCondition",
+        "PMD.CommentDefaultAccessModifier" })
 public final class StreamingDerReader {
 
     private static final int BUFFER_BYTES = 16 * 1024;
@@ -65,6 +75,76 @@ public final class StreamingDerReader {
     private static final int HIGH_TAG_NUMBER = 0x1f;
     private static final int CONTINUATION_BIT = 0x80;
     private static final long SHORT_LENGTH_LIMIT = 128L;
+
+    /**
+     * Validates one complete canonical DER object held in an explicitly bounded
+     * byte array.
+     *
+     * <p>
+     * This convenience entry point is intended for individual adapter values such
+     * as PKCS#10 requests and subject-public-key information. The caller-selected
+     * {@code maximumBytes} is enforced before parsing. Repeatable stream sources,
+     * especially aggregate CRLs, should use
+     * {@link #validate(RepeatableContent, CancellationSignal)} instead.
+     * </p>
+     *
+     * @param encoded complete DER object
+     * @param maximumBytes positive caller-selected element limit in bytes
+     * @return exact encoded length
+     * @throws NullPointerException if {@code encoded} is {@code null}
+     * @throws IllegalArgumentException if {@code maximumBytes} is not positive
+     * @throws IOException if the input exceeds {@code maximumBytes}, is malformed,
+     *                     non-canonical, truncated, or contains trailing data
+     */
+    public int validate(byte[] encoded, int maximumBytes) throws IOException {
+        Objects.requireNonNull(encoded, "encoded");
+        if (maximumBytes <= 0) {
+            throw new IllegalArgumentException("maximumBytes must be positive");
+        }
+        if (encoded.length > maximumBytes) {
+            throw new IOException("DER object exceeds adapter element limit: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
+        }
+        long length = validate(new ByteArrayContent(encoded), CancellationSignal.NONE);
+        try {
+            return Math.toIntExact(length);
+        } catch (ArithmeticException exception) {
+            throw new IOException("DER length overflow: code=CONTENT_LENGTH_OVERFLOW", exception);
+        }
+    }
+
+    /**
+     * Validates one canonical DER {@code SubjectPublicKeyInfo} value, including
+     * the X.509 requirement that its public-key BIT STRING have zero unused bits.
+     *
+     * @param encoded complete DER subject-public-key information
+     * @param maximumBytes positive caller-selected element limit in bytes
+     * @return exact encoded length
+     * @throws NullPointerException if {@code encoded} is {@code null}
+     * @throws IllegalArgumentException if {@code maximumBytes} is not positive
+     * @throws IOException if the value exceeds the limit or is not one canonical
+     *                     {@code SubjectPublicKeyInfo}
+     */
+    public int validateSubjectPublicKeyInfo(byte[] encoded, int maximumBytes) throws IOException {
+        int length = validate(encoded, maximumBytes);
+        try (CountedInput input = new CountedInput(new ByteArrayInputStream(encoded))) {
+            Header root = HeaderReader.read(input);
+            requireSequence(root);
+            long rootEnd = checkedAdd(input.position(), root.length());
+            Header algorithm = HeaderReader.read(input);
+            requireSequence(algorithm);
+            skip(input, algorithm.length(), CancellationSignal.NONE);
+            Header publicKey = HeaderReader.read(input);
+            if (!publicKey.universal() || publicKey.tagNumber() != 3 || publicKey.constructed()
+                    || publicKey.length() < 1L || input.readRequired() != 0) {
+                throw new IOException("Malformed SubjectPublicKeyInfo BIT STRING");
+            }
+            skip(input, publicKey.length() - 1L, CancellationSignal.NONE);
+            if (input.position() != rootEnd || input.position() != length) {
+                throw new IOException("Malformed SubjectPublicKeyInfo structure");
+            }
+        }
+        return length;
+    }
 
     /**
      * Validates one complete canonical DER object.
@@ -108,7 +188,7 @@ public final class StreamingDerReader {
         try (CountedInput input = new CountedInput(content.openStream())) {
             Header outer = HeaderReader.read(input);
             requireSequence(outer);
-            long outerEnd = Math.addExact(input.position(), outer.length());
+            long outerEnd = checkedAdd(input.position(), outer.length());
             Header tbs = HeaderReader.read(input);
             requireSequence(tbs);
             long tbsTotalLength = tbs.encodedLength();
@@ -133,7 +213,8 @@ public final class StreamingDerReader {
             }
             return new SignedObjectLayout(tbs.start(), tbsTotalLength, inner.algorithmOffset(),
                     inner.algorithmLength(), outerAlgorithm.start(), outerAlgorithm.encodedLength(),
-                    inner.spkiOffset(), inner.spkiLength(), signatureOffset, signature.length() - 1L);
+                    inner.spkiOffset(), inner.spkiLength(), signatureOffset, signature.length() - 1L,
+                    inner.issuerOffset(), inner.issuerLength(), inner.thisUpdate(), inner.nextUpdate());
         }
     }
 
@@ -150,16 +231,12 @@ public final class StreamingDerReader {
                 requireUniversal(child, 2);
                 skip(input, child.length(), cancellation);
                 child = HeaderReader.read(input);
-            } else if (child.universal() && child.tagNumber() == 2) {
-                skip(input, child.length(), cancellation);
-                child = HeaderReader.read(input);
+            } else {
+                return inspectCrlTbs(input, tbs, child, cancellation);
             }
             requireSequence(child);
             long algorithmOffset = child.start();
             long algorithmLength = child.encodedLength();
-            if (kind == SignedObjectKind.CRL) {
-                return new AlgorithmAndKey(algorithmOffset, algorithmLength, -1L, 0L);
-            }
             skip(input, child.length(), cancellation);
             for (int index = 0; index < 3; index++) {
                 Header field = HeaderReader.read(input);
@@ -167,7 +244,213 @@ public final class StreamingDerReader {
             }
             Header spki = HeaderReader.read(input);
             requireSequence(spki);
-            return new AlgorithmAndKey(algorithmOffset, algorithmLength, spki.start(), spki.encodedLength());
+            return new AlgorithmAndKey(algorithmOffset, algorithmLength, spki.start(), spki.encodedLength(),
+                    -1L, 0L, Optional.empty(), Optional.empty());
+        }
+    }
+
+    private static AlgorithmAndKey inspectCrlTbs(CountedInput input, Header tbs, Header firstChild,
+            CancellationSignal cancellation) throws IOException {
+        long tbsEnd = checkedAdd(tbs.valueOffset(), tbs.length());
+        Header child = firstChild;
+        boolean v2 = false;
+        if (child.universal() && child.tagNumber() == 2) {
+            requireCrlVersion(input, child, cancellation);
+            v2 = true;
+            child = readWithin(input, tbsEnd);
+        }
+
+        requireAlgorithmIdentifier(input, child, cancellation);
+        long algorithmOffset = child.start();
+        long algorithmLength = child.encodedLength();
+
+        Header issuer = readWithin(input, tbsEnd);
+        requireSequence(issuer);
+        if (issuer.length() == 0L) {
+            throw new IOException("TBSCertList issuer Name must not be empty");
+        }
+        skip(input, issuer.length(), cancellation);
+
+        Header thisUpdateHeader = readWithin(input, tbsEnd);
+        Instant thisUpdate = readCrlTime(input, thisUpdateHeader);
+        Optional<Instant> nextUpdate = Optional.empty();
+        Header optional = input.position() < tbsEnd ? readWithin(input, tbsEnd) : null;
+        if (optional != null && isTime(optional)) {
+            Instant parsedNextUpdate = readCrlTime(input, optional);
+            if (!parsedNextUpdate.isAfter(thisUpdate)) {
+                throw new IOException("CRL nextUpdate must follow thisUpdate");
+            }
+            nextUpdate = Optional.of(parsedNextUpdate);
+            optional = input.position() < tbsEnd ? readWithin(input, tbsEnd) : null;
+        }
+        if (optional != null && optional.universal() && optional.tagNumber() == 16) {
+            readRevokedCertificates(input, optional, v2, cancellation);
+            optional = input.position() < tbsEnd ? readWithin(input, tbsEnd) : null;
+        }
+        if (optional != null && optional.contextSpecific(0)) {
+            if (!v2) {
+                throw new IOException("CRL extensions require TBSCertList v2");
+            }
+            readExplicitExtensions(input, optional, cancellation);
+            optional = input.position() < tbsEnd ? readWithin(input, tbsEnd) : null;
+        }
+        if (optional != null || input.position() != tbsEnd) {
+            throw new IOException("Malformed TBSCertList optional fields");
+        }
+        return new AlgorithmAndKey(algorithmOffset, algorithmLength, -1L, 0L, issuer.start(),
+                issuer.encodedLength(), Optional.of(thisUpdate), nextUpdate);
+    }
+
+    private static void requireCrlVersion(CountedInput input, Header version, CancellationSignal cancellation)
+            throws IOException {
+        requireUniversal(version, 2);
+        if (version.constructed() || version.length() != 1L || input.readRequired() != 1) {
+            throw new IOException("TBSCertList version must be canonical v2(1)");
+        }
+        skip(input, version.length() - 1L, cancellation);
+    }
+
+    private static void requireAlgorithmIdentifier(CountedInput input, Header algorithm,
+            CancellationSignal cancellation) throws IOException {
+        requireSequence(algorithm);
+        long end = checkedAdd(algorithm.valueOffset(), algorithm.length());
+        Header oid = readWithin(input, end);
+        requirePrimitiveUniversal(oid, 6);
+        PrimitiveReader.read(input, oid, cancellation);
+        if (input.position() < end) {
+            Header parameters = readWithin(input, end);
+            skip(input, parameters.length(), cancellation);
+        }
+        if (input.position() != end) {
+            throw new IOException("Malformed AlgorithmIdentifier");
+        }
+    }
+
+    private static Instant readCrlTime(CountedInput input, Header time) throws IOException {
+        if (!isTime(time) || time.constructed()) {
+            throw new IOException("Expected TBSCertList Time");
+        }
+        return PrimitiveReader.readTime(input, time.length(), time.tagNumber() == 24).toInstant(ZoneOffset.UTC);
+    }
+
+    private static boolean isTime(Header header) {
+        return header.universal() && (header.tagNumber() == 23 || header.tagNumber() == 24);
+    }
+
+    private static void readRevokedCertificates(CountedInput input, Header revokedCertificates, boolean v2,
+            CancellationSignal cancellation) throws IOException {
+        requireSequence(revokedCertificates);
+        long end = checkedAdd(revokedCertificates.valueOffset(), revokedCertificates.length());
+        while (input.position() < end) {
+            cancellation.throwIfCancelled();
+            Header entry = readWithin(input, end);
+            requireSequence(entry);
+            readRevokedCertificate(input, entry, v2, cancellation);
+        }
+        if (input.position() != end) {
+            throw new IOException("Malformed revokedCertificates");
+        }
+    }
+
+    private static void readRevokedCertificate(CountedInput input, Header entry, boolean v2,
+            CancellationSignal cancellation) throws IOException {
+        long end = checkedAdd(entry.valueOffset(), entry.length());
+        Header serial = readWithin(input, end);
+        readPositiveSerial(input, serial, cancellation);
+        Header revocationDate = readWithin(input, end);
+        readCrlTime(input, revocationDate);
+        if (input.position() < end) {
+            if (!v2) {
+                throw new IOException("CRL entry extensions require TBSCertList v2");
+            }
+            Header extensions = readWithin(input, end);
+            readExtensions(input, extensions, cancellation);
+        }
+        if (input.position() != end) {
+            throw new IOException("Malformed revoked certificate entry");
+        }
+    }
+
+    private static void readPositiveSerial(CountedInput input, Header serial, CancellationSignal cancellation)
+            throws IOException {
+        requirePrimitiveUniversal(serial, 2);
+        if (serial.length() == 0L || serial.length() > 20L) {
+            throw new IOException("CRL serial number must be positive");
+        }
+        int first = input.readRequired();
+        if ((first & CONTINUATION_BIT) != 0 || first == 0 && serial.length() == 1L) {
+            throw new IOException("CRL serial number must be positive");
+        }
+        skip(input, serial.length() - 1L, cancellation);
+    }
+
+    private static void readExplicitExtensions(CountedInput input, Header explicit,
+            CancellationSignal cancellation) throws IOException {
+        if (!explicit.constructed()) {
+            throw new IOException("CRL extensions must be [0] EXPLICIT");
+        }
+        long end = checkedAdd(explicit.valueOffset(), explicit.length());
+        Header extensions = readWithin(input, end);
+        readExtensions(input, extensions, cancellation);
+        if (input.position() != end) {
+            throw new IOException("Malformed explicit CRL extensions");
+        }
+    }
+
+    private static void readExtensions(CountedInput input, Header extensions, CancellationSignal cancellation)
+            throws IOException {
+        requireSequence(extensions);
+        long end = checkedAdd(extensions.valueOffset(), extensions.length());
+        if (input.position() == end) {
+            throw new IOException("Extensions must contain at least one Extension");
+        }
+        while (input.position() < end) {
+            cancellation.throwIfCancelled();
+            Header extension = readWithin(input, end);
+            requireSequence(extension);
+            readExtension(input, extension, cancellation);
+        }
+        if (input.position() != end) {
+            throw new IOException("Malformed Extensions");
+        }
+    }
+
+    private static void readExtension(CountedInput input, Header extension, CancellationSignal cancellation)
+            throws IOException {
+        long end = checkedAdd(extension.valueOffset(), extension.length());
+        Header oid = readWithin(input, end);
+        requirePrimitiveUniversal(oid, 6);
+        PrimitiveReader.read(input, oid, cancellation);
+        Header value = readWithin(input, end);
+        if (value.universal() && value.tagNumber() == 1) {
+            requirePrimitiveUniversal(value, 1);
+            if (value.length() != 1L || input.readRequired() != 0xff) {
+                throw new IOException("Extension critical DEFAULT FALSE must be omitted");
+            }
+            value = readWithin(input, end);
+        }
+        requirePrimitiveUniversal(value, 4);
+        skip(input, value.length(), cancellation);
+        if (input.position() != end) {
+            throw new IOException("Malformed Extension");
+        }
+    }
+
+    private static Header readWithin(CountedInput input, long end) throws IOException {
+        if (input.position() >= end) {
+            throw new IOException("Missing required DER field");
+        }
+        Header header = HeaderReader.read(input);
+        if (checkedAdd(input.position(), header.length()) > end) {
+            throw new IOException("DER field exceeds enclosing structure");
+        }
+        return header;
+    }
+
+    private static void requirePrimitiveUniversal(Header header, int tagNumber) throws IOException {
+        requireUniversal(header, tagNumber);
+        if (header.constructed()) {
+            throw new IOException("Expected primitive DER field");
         }
     }
 
@@ -189,7 +472,7 @@ public final class StreamingDerReader {
         if (depth >= MAXIMUM_X509_STRUCTURE_DEPTH) {
             throw new IOException("DER nesting exceeds X.509 adapter capability");
         }
-        long end = Math.addExact(input.position(), header.length());
+        long end = checkedAdd(input.position(), header.length());
         if (header.constructed()) {
             requireConstructedForm(header);
             SetOrdering setOrdering = header.universal() && header.tagNumber() == 17
@@ -198,7 +481,7 @@ public final class StreamingDerReader {
             while (input.position() < end) {
                 cancellation.throwIfCancelled();
                 Header child = HeaderReader.read(input);
-                long childEnd = Math.addExact(input.position(), child.length());
+                long childEnd = checkedAdd(input.position(), child.length());
                 if (childEnd > end) {
                     throw new IOException("DER child exceeds parent: code=MALFORMED_SIGNED_OBJECT");
                 }
@@ -232,8 +515,11 @@ public final class StreamingDerReader {
     }
 
     private static void skip(CountedInput input, long length, CancellationSignal cancellation) throws IOException {
-        byte[] buffer = new byte[BUFFER_BYTES];
         long remaining = length;
+        if (remaining == 0L) {
+            return;
+        }
+        byte[] buffer = input.scratch();
         while (remaining != 0L) {
             cancellation.throwIfCancelled();
             int read = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
@@ -246,6 +532,14 @@ public final class StreamingDerReader {
             } else {
                 remaining -= read;
             }
+        }
+    }
+
+    private static long checkedAdd(long left, long right) throws IOException {
+        try {
+            return Math.addExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new IOException("DER length overflow: code=CONTENT_LENGTH_OVERFLOW", exception);
         }
     }
 
@@ -272,14 +566,30 @@ public final class StreamingDerReader {
      * @param subjectPublicKeyInfoLength SPKI TLV length, or zero for CRLs
      * @param signatureOffset signature octets offset
      * @param signatureLength signature octets length
+     * @param issuerOffset issuer Name TLV offset, or {@code -1} for certificates
+     * @param issuerLength issuer Name TLV length, or zero for certificates
+     * @param thisUpdate exact CRL {@code thisUpdate}, or empty for certificates
+     * @param nextUpdate exact optional CRL {@code nextUpdate}, or empty when absent
+     *                   and for certificates
      */
     public record SignedObjectLayout(long tbsOffset, long tbsLength, long tbsAlgorithmOffset,
             long tbsAlgorithmLength, long outerAlgorithmOffset, long outerAlgorithmLength,
             long subjectPublicKeyInfoOffset, long subjectPublicKeyInfoLength, long signatureOffset,
-            long signatureLength) {
+            long signatureLength, long issuerOffset, long issuerLength, Optional<Instant> thisUpdate,
+            Optional<Instant> nextUpdate) {
+        /**
+         * Creates an immutable layout for one validated signed object.
+         *
+         * @throws NullPointerException if either time container is {@code null}
+         */
+        public SignedObjectLayout {
+            Objects.requireNonNull(thisUpdate, "thisUpdate");
+            Objects.requireNonNull(nextUpdate, "nextUpdate");
+        }
     }
 
-    private record AlgorithmAndKey(long algorithmOffset, long algorithmLength, long spkiOffset, long spkiLength) {
+    private record AlgorithmAndKey(long algorithmOffset, long algorithmLength, long spkiOffset, long spkiLength,
+            long issuerOffset, long issuerLength, Optional<Instant> thisUpdate, Optional<Instant> nextUpdate) {
     }
 
     private record Header(int firstTag, int tagNumber, long length, long start, long valueOffset) {
@@ -295,8 +605,8 @@ public final class StreamingDerReader {
             return (firstTag & 0xc0) == 0x80 && tagNumber == expectedTag;
         }
 
-        private long encodedLength() {
-            return Math.addExact(valueOffset - start, length);
+        private long encodedLength() throws IOException {
+            return checkedAdd(valueOffset - start, length);
         }
     }
 
@@ -320,10 +630,20 @@ public final class StreamingDerReader {
                 if ((octet & 0x7f) == 0) {
                     throw new IOException("Non-minimal DER high tag");
                 }
-                while ((octet & CONTINUATION_BIT) != 0) {
+                tagNumber = 0;
+                while (true) {
+                    if (tagNumber > (Integer.MAX_VALUE >>> 7)) {
+                        throw new IOException("DER tag number overflow: code=CONTENT_LENGTH_OVERFLOW");
+                    }
+                    tagNumber = (tagNumber << 7) | (octet & 0x7f);
+                    if ((octet & CONTINUATION_BIT) == 0) {
+                        break;
+                    }
                     octet = input.readRequired();
                 }
-                tagNumber = -1;
+                if (tagNumber < HIGH_TAG_NUMBER) {
+                    throw new IOException("Non-minimal DER high tag");
+                }
             }
             return tagNumber;
         }
@@ -539,6 +859,7 @@ public final class StreamingDerReader {
     private static final class CountedInput extends InputStream {
         private final InputStream delegate;
         private long position;
+        private byte[] scratch;
 
         private CountedInput(InputStream delegate) {
             super();
@@ -549,7 +870,7 @@ public final class StreamingDerReader {
         public int read() throws IOException {
             int value = delegate.read();
             if (value >= 0) {
-                position = Math.addExact(position, 1L);
+                position = checkedAdd(position, 1L);
             }
             return value;
         }
@@ -558,7 +879,7 @@ public final class StreamingDerReader {
         public int read(byte[] bytes, int offset, int length) throws IOException {
             int count = delegate.read(bytes, offset, length);
             if (count > 0) {
-                position = Math.addExact(position, count);
+                position = checkedAdd(position, count);
             }
             return count;
         }
@@ -579,6 +900,13 @@ public final class StreamingDerReader {
         private long position() {
             return position;
         }
+
+        private byte[] scratch() {
+            if (scratch == null) {
+                scratch = new byte[BUFFER_BYTES];
+            }
+            return scratch;
+        }
     }
 
     /**
@@ -596,11 +924,21 @@ public final class StreamingDerReader {
             }
             switch (header.tagNumber()) {
                 case 1 -> readBoolean(input, header.length());
-                case 2 -> readInteger(input, header.length(), cancellation);
+                case 2, 10 -> readInteger(input, header.length(), cancellation);
                 case 3 -> readBitString(input, header.length(), cancellation);
+                case 4, 20 -> skip(input, header.length(), cancellation);
                 case 5 -> readNull(header.length());
                 case 6 -> readOid(input, header.length(), cancellation);
-                default -> skip(input, header.length(), cancellation);
+                case 12 -> readUtf8String(input, header.length(), cancellation);
+                case 18 -> readRestrictedString(input, header.length(), StringKind.NUMERIC, cancellation);
+                case 19 -> readRestrictedString(input, header.length(), StringKind.PRINTABLE, cancellation);
+                case 22 -> readRestrictedString(input, header.length(), StringKind.IA5, cancellation);
+                case 23 -> readTime(input, header.length(), false);
+                case 24 -> readTime(input, header.length(), true);
+                case 26 -> readRestrictedString(input, header.length(), StringKind.VISIBLE, cancellation);
+                case 28 -> readUniversalString(input, header.length(), cancellation);
+                case 30 -> readBmpString(input, header.length(), cancellation);
+                default -> throw new IOException("Unsupported universal DER primitive");
             }
         }
 
@@ -676,6 +1014,208 @@ public final class StreamingDerReader {
             if (!atComponentStart) {
                 throw new IOException("Truncated DER OID");
             }
+        }
+
+        private static void readUtf8String(CountedInput input, long length, CancellationSignal cancellation)
+                throws IOException {
+            long remaining = length;
+            while (remaining > 0L) {
+                cancellation.throwIfCancelled();
+                int first = input.readRequired();
+                remaining--;
+                if (first <= 0x7f) {
+                    continue;
+                }
+                int continuationCount;
+                int codePoint;
+                int minimum;
+                if (first >= 0xc2 && first <= 0xdf) {
+                    continuationCount = 1;
+                    codePoint = first & 0x1f;
+                    minimum = 0x80;
+                } else if (first >= 0xe0 && first <= 0xef) {
+                    continuationCount = 2;
+                    codePoint = first & 0x0f;
+                    minimum = 0x800;
+                } else if (first >= 0xf0 && first <= 0xf4) {
+                    continuationCount = 3;
+                    codePoint = first & 0x07;
+                    minimum = 0x10000;
+                } else {
+                    throw new IOException("Malformed DER UTF8String");
+                }
+                if (remaining < continuationCount) {
+                    throw new IOException("Truncated DER UTF8String");
+                }
+                for (int index = 0; index < continuationCount; index++) {
+                    int octet = input.readRequired();
+                    if ((octet & 0xc0) != 0x80) {
+                        throw new IOException("Malformed DER UTF8String");
+                    }
+                    codePoint = (codePoint << 6) | (octet & 0x3f);
+                }
+                remaining -= continuationCount;
+                if (codePoint < minimum || codePoint > 0x10ffff
+                        || codePoint >= 0xd800 && codePoint <= 0xdfff) {
+                    throw new IOException("Non-canonical DER UTF8String");
+                }
+            }
+        }
+
+        private static void readRestrictedString(CountedInput input, long length, StringKind kind,
+                CancellationSignal cancellation) throws IOException {
+            for (long index = 0L; index < length; index++) {
+                cancellation.throwIfCancelled();
+                int octet = input.readRequired();
+                if (!kind.accepts(octet)) {
+                    throw new IOException("Malformed DER " + kind.label());
+                }
+            }
+        }
+
+        private static LocalDateTime readTime(CountedInput input, long length, boolean generalized)
+                throws IOException {
+            int expectedLength = generalized ? 15 : 13;
+            if (length != expectedLength) {
+                throw new IOException("Non-canonical DER time");
+            }
+            byte[] value = new byte[expectedLength];
+            for (int index = 0; index < value.length; index++) {
+                value[index] = (byte) input.readRequired();
+            }
+            if (value[value.length - 1] != 'Z') {
+                throw new IOException("Non-canonical DER time");
+            }
+            int digitCount = value.length - 1;
+            for (int index = 0; index < digitCount; index++) {
+                if (value[index] < '0' || value[index] > '9') {
+                    throw new IOException("Malformed DER time");
+                }
+            }
+            int offset;
+            int year;
+            if (generalized) {
+                year = decimal(value, 0, 4);
+                offset = 4;
+            } else {
+                int shortYear = decimal(value, 0, 2);
+                year = shortYear >= 50 ? 1900 + shortYear : 2000 + shortYear;
+                offset = 2;
+            }
+            try {
+                return LocalDateTime.of(year, decimal(value, offset, 2), decimal(value, offset + 2, 2),
+                        decimal(value, offset + 4, 2), decimal(value, offset + 6, 2),
+                        decimal(value, offset + 8, 2));
+            } catch (DateTimeException exception) {
+                throw new IOException("Malformed DER time", exception);
+            }
+        }
+
+        private static int decimal(byte[] value, int offset, int length) {
+            int result = 0;
+            for (int index = 0; index < length; index++) {
+                result = result * 10 + value[offset + index] - '0';
+            }
+            return result;
+        }
+
+        private static void readUniversalString(CountedInput input, long length, CancellationSignal cancellation)
+                throws IOException {
+            if ((length & 3L) != 0L) {
+                throw new IOException("Malformed DER UniversalString");
+            }
+            for (long index = 0L; index < length; index += 4L) {
+                cancellation.throwIfCancelled();
+                long codePoint = ((long) input.readRequired() << 24) | ((long) input.readRequired() << 16)
+                        | ((long) input.readRequired() << 8) | input.readRequired();
+                if (codePoint > 0x10ffffL || codePoint >= 0xd800L && codePoint <= 0xdfffL) {
+                    throw new IOException("Malformed DER UniversalString");
+                }
+            }
+        }
+
+        private static void readBmpString(CountedInput input, long length, CancellationSignal cancellation)
+                throws IOException {
+            if ((length & 1L) != 0L) {
+                throw new IOException("Malformed DER BMPString");
+            }
+            for (long index = 0L; index < length; index += 2L) {
+                cancellation.throwIfCancelled();
+                int codeUnit = (input.readRequired() << 8) | input.readRequired();
+                if (codeUnit >= 0xd800 && codeUnit <= 0xdfff) {
+                    throw new IOException("Malformed DER BMPString");
+                }
+            }
+        }
+
+        /** Supported restricted X.509 character-string alphabets. */
+        private enum StringKind {
+            NUMERIC("NumericString") {
+                @Override
+                boolean accepts(int octet) {
+                    return octet == ' ' || octet >= '0' && octet <= '9';
+                }
+            },
+            PRINTABLE("PrintableString") {
+                @Override
+                boolean accepts(int octet) {
+                    return octet >= 'A' && octet <= 'Z' || octet >= 'a' && octet <= 'z'
+                            || octet >= '0' && octet <= '9' || " '()+,-./:=?".indexOf(octet) >= 0;
+                }
+            },
+            IA5("IA5String") {
+                @Override
+                boolean accepts(int octet) {
+                    return octet <= 0x7f;
+                }
+            },
+            VISIBLE("VisibleString") {
+                @Override
+                boolean accepts(int octet) {
+                    return octet >= 0x20 && octet <= 0x7e;
+                }
+            };
+
+            private final String label;
+
+            StringKind(String label) {
+                this.label = label;
+            }
+
+            abstract boolean accepts(int octet);
+
+            private String label() {
+                return label;
+            }
+        }
+    }
+
+    /** Non-copying adapter whose lifetime is confined to one synchronous call. */
+    private static final class ByteArrayContent implements RepeatableContent {
+        private final byte[] encoded;
+
+        private ByteArrayContent(byte[] encoded) {
+            this.encoded = encoded;
+        }
+
+        @Override
+        public InputStream openStream() {
+            return new ByteArrayInputStream(encoded);
+        }
+
+        @Override
+        public OptionalLong length() {
+            return OptionalLong.of(encoded.length);
+        }
+
+        @Override
+        public String contentId() {
+            return "bounded-byte-array";
+        }
+
+        @Override
+        public void close() {
+            // Caller retains ownership of the bounded array.
         }
     }
 }

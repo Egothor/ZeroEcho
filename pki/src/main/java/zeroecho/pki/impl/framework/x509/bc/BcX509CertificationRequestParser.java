@@ -33,11 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
@@ -60,9 +58,6 @@ import org.bouncycastle.asn1.x509.Extensions;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
-import org.bouncycastle.util.io.pem.PemObject;
-import org.bouncycastle.util.io.pem.PemReader;
-
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
@@ -74,6 +69,7 @@ import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.api.request.SubjectRdn;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.spi.framework.CertificationRequestParser;
 
 /**
@@ -133,8 +129,13 @@ import zeroecho.pki.spi.framework.CertificationRequestParser;
 public final class BcX509CertificationRequestParser implements CertificationRequestParser {
     private static final int MAXIMUM_SUBJECT_DER_BYTES = 16 * 1024;
     private static final int MAXIMUM_SAN_DER_BYTES = 32 * 1024;
+    /* default */ static final int MAXIMUM_CSR_DER_BYTES = 1024 * 1024;
+    private static final int MAXIMUM_CSR_ENCODED_BYTES = 2 * 1024 * 1024;
     private static final int MAXIMUM_SUBJECT_RDNS = 32;
     private static final int SINGLE_ATTRIBUTE_VALUE = 1;
+    private static final String CERTIFICATE_REQUEST = "CERTIFICATE REQUEST";
+    private static final String NEW_CERTIFICATE_REQUEST = "NEW CERTIFICATE REQUEST";
+    private static final String CSR_PEM_INVALID = "Invalid PEM: code=CSR_PEM_INVALID";
 
     /**
      * Parses a PKCS#10 certification request into the normalized PKI request
@@ -179,12 +180,20 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
         }
 
         EncodedObject enc = request.encoded();
-        byte[] csrDer = toDer(enc);
+        byte[] csrDer;
+        try {
+            csrDer = toDer(enc);
+        } catch (IllegalArgumentException exception) {
+            if (enc.encoding() != Encoding.DER && enc.encoding() != Encoding.PEM) {
+                throw exception;
+            }
+            throw new PkiException("Invalid PKCS#10 certification request: code=CSR_MALFORMED");
+        }
         byte[] spki = null;
         try {
             PKCS10CertificationRequest csr;
             try {
-                BcX509AlgorithmAdapter.requireCanonicalDer(csrDer);
+                new StreamingDerReader().validate(csrDer, MAXIMUM_CSR_DER_BYTES);
                 csr = new PKCS10CertificationRequest(csrDer);
             } catch (Exception ex) {
                 throw new PkiException("Invalid PKCS#10 certification request: code=CSR_MALFORMED");
@@ -364,20 +373,21 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      */
     private static byte[] toDer(EncodedObject obj) {
         Objects.requireNonNull(obj, "obj");
-
-        return switch (obj.encoding()) {
-            case DER -> obj.bytes();
-            case PEM -> pemToDer(obj);
-            default -> throw new IllegalArgumentException("Unsupported CSR encoding: " + obj.encoding());
-        };
-    }
-
-    private static byte[] pemToDer(EncodedObject obj) {
-        byte[] pemBytes = obj.bytes();
+        byte[] encoded = obj.bytes();
+        if (obj.encoding() == Encoding.DER) {
+            return requireDecodedLimit(encoded);
+        }
         try {
-            return readPemContentOrThrow(pemBytes);
+            if (encoded.length > MAXIMUM_CSR_ENCODED_BYTES) {
+                throw new IllegalArgumentException("CSR encoding exceeds element limit");
+            }
+            return switch (obj.encoding()) {
+                case DER -> throw new IllegalStateException("DER handled before PEM conversion");
+                case PEM -> readPemContentOrThrow(encoded);
+                default -> throw new IllegalArgumentException("Unsupported CSR encoding: " + obj.encoding());
+            };
         } finally {
-            java.util.Arrays.fill(pemBytes, (byte) 0);
+            java.util.Arrays.fill(encoded, (byte) 0);
         }
     }
 
@@ -385,9 +395,8 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      * Reads the binary content of a PEM object.
      *
      * <p>
-     * The input is interpreted as US-ASCII text and parsed using {@link PemReader}.
-     * If the PEM container is syntactically valid and contains an object, the raw
-     * decoded content of that object is returned.
+     * The input is interpreted as US-ASCII and must contain exactly one accepted
+     * PKCS#10 PEM object with whitespace only outside the object.
      * </p>
      *
      * <p>
@@ -401,20 +410,89 @@ public final class BcX509CertificationRequestParser implements CertificationRequ
      * @throws IllegalArgumentException if the PEM input is empty or cannot be
      *                                  parsed
      */
+    @SuppressWarnings("PMD.AvoidThrowingNewInstanceOfSameException")
     private static byte[] readPemContentOrThrow(byte[] pemBytes) {
         Objects.requireNonNull(pemBytes, "pemBytes");
-
-        try (PemReader reader = new PemReader(
-                new InputStreamReader(new ByteArrayInputStream(pemBytes), StandardCharsets.US_ASCII))) {
-
-            PemObject pemObject = reader.readPemObject();
-            if (pemObject == null) {
-                throw new IllegalArgumentException("Empty PEM");
+        for (byte value : pemBytes) {
+            if (value < 0) {
+                throw new IllegalArgumentException(CSR_PEM_INVALID);
             }
-            return pemObject.getContent();
-        } catch (java.io.IOException ex) {
-            throw new IllegalArgumentException("Invalid PEM: code=CSR_PEM_INVALID");
         }
+        String text = new String(pemBytes, java.nio.charset.StandardCharsets.US_ASCII);
+        int begin = skipWhitespace(text, 0);
+        String label;
+        String certificateRequestBegin = "-----BEGIN " + CERTIFICATE_REQUEST + "-----";
+        String newCertificateRequestBegin = "-----BEGIN " + NEW_CERTIFICATE_REQUEST + "-----";
+        if (text.startsWith(certificateRequestBegin, begin)) {
+            label = CERTIFICATE_REQUEST;
+        } else if (text.startsWith(newCertificateRequestBegin, begin)) {
+            label = NEW_CERTIFICATE_REQUEST;
+        } else {
+            throw new IllegalArgumentException(CSR_PEM_INVALID);
+        }
+        int bodyStart = begin + "-----BEGIN ".length() + label.length() + "-----".length();
+        if (bodyStart >= text.length() || text.charAt(bodyStart) != '\n'
+                && (text.charAt(bodyStart) != '\r' || bodyStart + 1 >= text.length()
+                        || text.charAt(bodyStart + 1) != '\n')) {
+            throw new IllegalArgumentException(CSR_PEM_INVALID);
+        }
+        String endMarker = "-----END " + label + "-----";
+        int end = text.indexOf(endMarker, bodyStart);
+        if (end <= bodyStart || text.charAt(end - 1) != '\n'
+                || skipWhitespace(text, end + endMarker.length()) != text.length()) {
+            throw new IllegalArgumentException(CSR_PEM_INVALID);
+        }
+        StringBuilder compact = new StringBuilder(end - bodyStart);
+        for (int index = bodyStart; index < end; index++) {
+            char value = text.charAt(index);
+            if (isWhitespace(value)) {
+                continue;
+            }
+            if (isBase64(value) || value == '=') {
+                compact.append(value);
+            } else {
+                throw new IllegalArgumentException(CSR_PEM_INVALID);
+            }
+        }
+        if (compact.isEmpty() || (compact.length() + 3L) / 4L * 3L > MAXIMUM_CSR_DER_BYTES + 2L) {
+            throw new IllegalArgumentException(CSR_PEM_INVALID);
+        }
+        byte[] decoded;
+        try {
+            decoded = Base64.getDecoder().decode(compact.toString());
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(CSR_PEM_INVALID);
+        }
+        if (!Base64.getEncoder().encodeToString(decoded).contentEquals(compact)) {
+            java.util.Arrays.fill(decoded, (byte) 0);
+            throw new IllegalArgumentException(CSR_PEM_INVALID);
+        }
+        return requireDecodedLimit(decoded);
+    }
+
+    private static byte[] requireDecodedLimit(byte[] decoded) {
+        if (decoded.length > MAXIMUM_CSR_DER_BYTES) {
+            java.util.Arrays.fill(decoded, (byte) 0);
+            throw new IllegalArgumentException("CSR DER exceeds element limit");
+        }
+        return decoded;
+    }
+
+    private static int skipWhitespace(String value, int offset) {
+        int index = offset;
+        while (index < value.length() && isWhitespace(value.charAt(index))) {
+            index++;
+        }
+        return index;
+    }
+
+    private static boolean isWhitespace(char value) {
+        return value == ' ' || value == '\t' || value == '\r' || value == '\n';
+    }
+
+    private static boolean isBase64(char value) {
+        return value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
+                || value >= '0' && value <= '9' || value == '+' || value == '/';
     }
 
     /**

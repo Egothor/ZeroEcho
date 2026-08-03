@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
+import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
@@ -72,6 +73,7 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport;
@@ -84,6 +86,7 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport;
 final class CertificateProfileValidator {
 
     private static final String EC_FAMILY = "ec";
+    private static final int MAXIMUM_SPKI_BYTES = 1024 * 1024;
 
     private CertificateProfileValidator() {
     }
@@ -233,6 +236,7 @@ final class CertificateProfileValidator {
         }
         byte[] encoded = exactPublicKey.bytes();
         try {
+            new StreamingDerReader().validateSubjectPublicKeyInfo(encoded, MAXIMUM_SPKI_BYTES);
             SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(encoded);
             AlgorithmIdentity identity;
             try {
@@ -262,7 +266,7 @@ final class CertificateProfileValidator {
             }
         } catch (PkiException exception) {
             throw exception;
-        } catch (GeneralSecurityException | IllegalArgumentException exception) {
+        } catch (GeneralSecurityException | IllegalArgumentException | IOException exception) {
             throw reject("SUBJECT_KEY_UNSUPPORTED");
         } finally {
             java.util.Arrays.fill(encoded, (byte) 0);

@@ -36,6 +36,7 @@ package zeroecho.core.alg.common.sig;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -115,6 +116,41 @@ public final class SignatureInteropProfilesTest {
         assertTrue(ok);
 
         System.out.println("resolveSha256WithEcdsa_roundTripsDerAndP1363...ok");
+    }
+
+    @Test
+    public void ecdsaDerConversionRejectsEveryNonCanonicalIntegerShape() throws Exception {
+        System.out.println("ecdsaDerConversionRejectsEveryNonCanonicalIntegerShape");
+        SignatureInteropProfile profile = SignatureInteropProfiles.resolve("SHA256withECDSA").orElseThrow();
+        byte[] canonical = { 0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01 };
+        assertEquals(EcdsaCurveSpec.P256.signFixedLength(), profile.externalToInternalSignature(canonical).length);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> profile.externalToInternalSignature(java.util.Arrays.copyOf(canonical, canonical.length + 1)));
+        assertThrows(IllegalArgumentException.class,
+                () -> profile.externalToInternalSignature(new byte[] { 0x30, (byte) 0x80, 0x02, 0x01, 0x01,
+                        0x02, 0x01, 0x01, 0x00, 0x00 }));
+        assertThrows(IllegalArgumentException.class,
+                () -> profile.externalToInternalSignature(new byte[] { 0x30, 0x06, 0x02, 0x01, (byte) 0xff,
+                        0x02, 0x01, 0x01 }));
+        assertThrows(IllegalArgumentException.class,
+                () -> profile.externalToInternalSignature(new byte[] { 0x30, 0x06, 0x02, 0x01, 0x00,
+                        0x02, 0x01, 0x01 }));
+        assertThrows(IllegalArgumentException.class,
+                () -> profile.externalToInternalSignature(new byte[] { 0x30, 0x07, 0x02, 0x02, 0x00, 0x01,
+                        0x02, 0x01, 0x01 }));
+        byte[] oversized = new byte[40];
+        oversized[0] = 0x30;
+        oversized[1] = 0x26;
+        oversized[2] = 0x02;
+        oversized[3] = 0x21;
+        oversized[4] = 0x01;
+        oversized[37] = 0x02;
+        oversized[38] = 0x01;
+        oversized[39] = 0x01;
+        assertThrows(IllegalArgumentException.class, () -> profile.externalToInternalSignature(oversized));
+        System.out.println("...rejected=trailing, BER, negative, zero, redundant, oversize");
+        System.out.println("ecdsaDerConversionRejectsEveryNonCanonicalIntegerShape...ok");
     }
 
     private static String hexPrefix(byte[] bytes) {

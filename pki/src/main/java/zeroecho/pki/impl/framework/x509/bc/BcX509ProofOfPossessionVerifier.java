@@ -49,6 +49,7 @@ import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.spi.framework.ProofOfPossessionVerifier;
 
 /**
@@ -199,7 +200,8 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
         try {
             PKCS10CertificationRequest csr;
             try {
-                BcX509AlgorithmAdapter.requireCanonicalDer(csrDer);
+                new StreamingDerReader().validate(csrDer,
+                        BcX509CertificationRequestParser.MAXIMUM_CSR_DER_BYTES);
                 csr = new PKCS10CertificationRequest(csrDer);
             } catch (Exception ex) {
                 return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("Invalid CSR"));

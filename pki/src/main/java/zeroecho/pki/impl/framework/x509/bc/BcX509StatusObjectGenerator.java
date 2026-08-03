@@ -57,6 +57,7 @@ import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.ContentSlice;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
@@ -161,6 +162,7 @@ import zeroecho.pki.spi.store.TemporaryUniqueIndex;
  * </p>
  */
 public final class BcX509StatusObjectGenerator implements StatusObjectGenerator {
+    private static final int MAXIMUM_CERTIFICATE_BYTES = 1024 * 1024;
 
     private static final long EMPTY_CONTENT_LENGTH = 0L;
 
@@ -252,7 +254,7 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         }
 
         IssuerMaterial issuerMaterial = extractIssuerMaterialOrThrow(command.attributes());
-        Instant thisUpdate = Instant.now();
+        Instant thisUpdate = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         Instant nextUpdate = thisUpdate.plus(Duration.ofDays(7));
         DurableContentReference entries = null;
         DurableContentReference tbs = null;
@@ -514,7 +516,8 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
      *                      unexpected type, or contain an invalid issuer
      *                      certificate
      */
-    private static IssuerMaterial extractIssuerMaterialOrThrow(AttributeSet attributes) {
+    @SuppressWarnings("PMD.PreserveStackTrace")
+    private IssuerMaterial extractIssuerMaterialOrThrow(AttributeSet attributes) {
         Optional<AttributeValue> issuerCertAttr = attributes.get(BcX509Attributes.ISSUER_CERT_DER);
         Optional<AttributeValue> issuerKeyAttr = attributes.get(BcX509Attributes.ISSUER_KEYREF);
 
@@ -525,14 +528,21 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
             throw new PkiException("Missing issuer keyRef");
         }
 
-        byte[] issuerDer = ((AttributeValue.BytesValue) issuerCertAttr.get()).value();
+        byte[] issuerDer = ((AttributeValue.BytesValue) issuerCertAttr.get()).value().clone();
+        if (issuerDer.length > MAXIMUM_CERTIFICATE_BYTES) {
+            throw new PkiException("Invalid issuer certificate");
+        }
         KeyRef keyRef = new KeyRef(((AttributeValue.StringValue) issuerKeyAttr.get()).value());
 
         X509CertificateHolder issuerHolder;
         try {
+            new BcX509SignedObjectValidator(signingBus.authority()).validateCertificate(
+                    new ImmutableByteContent(issuerDer), Optional.empty(), CancellationSignal.NONE);
             issuerHolder = new X509CertificateHolder(issuerDer);
-        } catch (Exception ex) {
-            throw new PkiException("Invalid issuer certificate", ex);
+        } catch (IOException | IllegalArgumentException ex) {
+            throw new PkiException("Invalid issuer certificate");
+        } finally {
+            Arrays.fill(issuerDer, (byte) 0);
         }
 
         return new IssuerMaterial(issuerHolder, keyRef);

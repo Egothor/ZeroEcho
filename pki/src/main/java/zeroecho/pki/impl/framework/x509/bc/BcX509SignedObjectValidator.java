@@ -36,16 +36,19 @@ package zeroecho.pki.impl.framework.x509.bc;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
 import org.bouncycastle.asn1.ASN1Primitive;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.operator.OperatorCreationException;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.ContentSlice;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
@@ -71,6 +74,8 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
 public final class BcX509SignedObjectValidator {
 
     private static final int COMPARE_BUFFER_BYTES = 4096;
+    private static final int MAXIMUM_CERTIFICATE_BYTES = 1024 * 1024;
+    private static final int MAXIMUM_ELEMENT_BYTES = 1024 * 1024;
 
     private final X509AuthoritySnapshot authority;
     private final StreamingDerReader reader;
@@ -100,6 +105,10 @@ public final class BcX509SignedObjectValidator {
         Objects.requireNonNull(content, "content");
         Objects.requireNonNull(expectedSignature, "expectedSignature");
         Objects.requireNonNull(cancellation, "cancellation");
+        long contentLength = content.length().orElse(-1L);
+        if (contentLength <= 0L || contentLength > MAXIMUM_CERTIFICATE_BYTES) {
+            throw new IOException("Certificate exceeds adapter domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
+        }
         StreamingDerReader.SignedObjectLayout layout = reader.inspectSignedObject(content,
                 StreamingDerReader.SignedObjectKind.CERTIFICATE, cancellation);
         ContentSlice tbsAlgorithm = new ContentSlice(content, layout.tbsAlgorithmOffset(),
@@ -141,25 +150,43 @@ public final class BcX509SignedObjectValidator {
 
     /**
      * Validates a generated CRL against its exact live signing plan and issuer
-     * public key.
+     * certificate.
      *
      * @param content original complete CRL DER
      * @param plan exact non-forgeable SIGN plan used for generation
-     * @param issuerPublicKey authorized issuer SPKI
+     * @param issuerCertificate authorized issuer certificate whose exact subject
+     *                          Name and SPKI must bind the CRL
+     * @param expectedThisUpdate exact {@code thisUpdate} metadata to bind to the
+     *                           signed TBSCertList
+     * @param expectedNextUpdate exact optional {@code nextUpdate} metadata to bind
+     *                           to the signed TBSCertList
      * @param cancellation operation cancellation signal
      * @throws IOException if canonical DER, binding, suite, or signature
      *                     validation fails
      * @throws IllegalArgumentException if the plan belongs to another runtime
      */
     public void validateGeneratedCrl(RepeatableContent content, X509ExecutionPlan<SignatureWorkflow> plan,
-            SubjectPublicKeyInfo issuerPublicKey, CancellationSignal cancellation) throws IOException {
+            X509CertificateHolder issuerCertificate, Instant expectedThisUpdate,
+            Optional<Instant> expectedNextUpdate, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(content, "content");
         Objects.requireNonNull(plan, "plan");
-        Objects.requireNonNull(issuerPublicKey, "issuerPublicKey");
+        Objects.requireNonNull(issuerCertificate, "issuerCertificate");
+        Objects.requireNonNull(expectedThisUpdate, "expectedThisUpdate");
+        Objects.requireNonNull(expectedNextUpdate, "expectedNextUpdate");
         Objects.requireNonNull(cancellation, "cancellation");
         authority.authorize(plan, plan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
         StreamingDerReader.SignedObjectLayout layout = reader.inspectSignedObject(content,
                 StreamingDerReader.SignedObjectKind.CRL, cancellation);
+        if (!layout.thisUpdate().equals(Optional.of(expectedThisUpdate))
+                || !layout.nextUpdate().equals(expectedNextUpdate)) {
+            throw new IOException("CRL update times differ from metadata: code=STATUS_OBJECT_BINDING_MISMATCH");
+        }
+        ContentSlice issuer = new ContentSlice(content, layout.issuerOffset(), layout.issuerLength());
+        try (RepeatableContent expectedIssuer = new ImmutableByteContent(issuerCertificate.getSubject().getEncoded())) {
+            if (!equalContent(issuer, expectedIssuer, cancellation)) {
+                throw new IOException("CRL issuer differs from issuer certificate: code=STATUS_OBJECT_BINDING_MISMATCH");
+            }
+        }
         ContentSlice tbsAlgorithm = new ContentSlice(content, layout.tbsAlgorithmOffset(),
                 layout.tbsAlgorithmLength());
         ContentSlice outerAlgorithm = new ContentSlice(content, layout.outerAlgorithmOffset(),
@@ -172,6 +199,7 @@ public final class BcX509SignedObjectValidator {
         if (!plan.selection().requested().equals(signatureIdentity)) {
             throw new IOException("CRL signature differs from execution plan: code=STATUS_OBJECT_BINDING_MISMATCH");
         }
+        SubjectPublicKeyInfo issuerPublicKey = issuerCertificate.getSubjectPublicKeyInfo();
         AlgorithmIdentity issuerKey = new BcX509AlgorithmAdapter(authority.bindings()).decode(
                 issuerPublicKey.getAlgorithm(), X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
         X509SuiteCompatibility.requireCompatible(signatureIdentity, issuerKey);
@@ -231,8 +259,8 @@ public final class BcX509SignedObjectValidator {
     }
 
     private static byte[] materializeElement(RepeatableContent content) throws IOException {
-        long length = content.length().orElseThrow();
-        if (length > Integer.MAX_VALUE) {
+        long length = content.length().orElse(-1L);
+        if (length <= 0L || length > MAXIMUM_ELEMENT_BYTES) {
             throw new IOException("X.509 element exceeds adapter domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
         }
         byte[] encoded = new byte[(int) length];

@@ -53,10 +53,15 @@ import zeroecho.pki.spi.store.PkiStore;
  * Internal individual-certificate adapter around store-owned content.
  */
 final class CredentialContent {
+    /* default */ static final int MAXIMUM_CERTIFICATE_BYTES = 1024 * 1024;
+
     private CredentialContent() {
     }
 
     /* default */ static DurableContentReference stage(PkiStore store, byte[] encoded) {
+        if (encoded.length > MAXIMUM_CERTIFICATE_BYTES) {
+            throw new PkiException("Certificate exceeds artifact limit: code=CERTIFICATE_TOO_LARGE");
+        }
         try (ContentSink sink = store.stagedContent().beginContent(Encoding.DER, DurableContentReference.Lifecycle.PERSISTED);
                 OutputStream output = sink.outputStream()) {
             output.write(encoded);
@@ -67,10 +72,11 @@ final class CredentialContent {
     }
 
     /* default */ static byte[] materializeForBc(PkiStore store, DurableContentReference reference) {
-        if (reference.length() > Integer.MAX_VALUE) {
-            throw new PkiException("Credential exceeds BC adapter element domain: code=ADAPTER_ELEMENT_LIMIT_EXCEEDED");
+        long length = reference.length();
+        if (reference.encoding() != Encoding.DER || length <= 0L || length > MAXIMUM_CERTIFICATE_BYTES) {
+            throw new PkiException("Certificate exceeds artifact limit: code=CERTIFICATE_TOO_LARGE");
         }
-        byte[] result = new byte[(int) reference.length()];
+        byte[] result = new byte[(int) length];
         try {
             readExact(store, reference, result);
             return result;
@@ -83,6 +89,10 @@ final class CredentialContent {
     /* default */ static BcX509SignedObjectValidator.CertificateBindings validateCertificate(PkiStore store,
             DurableContentReference reference, X509AuthoritySnapshot authority,
             Optional<AlgorithmIdentity> expectedSignature) {
+        long length = reference.length();
+        if (reference.encoding() != Encoding.DER || length <= 0L || length > MAXIMUM_CERTIFICATE_BYTES) {
+            throw new PkiException("Certificate exceeds artifact limit: code=CERTIFICATE_TOO_LARGE");
+        }
         try (RepeatableContent content = store.stagedContent().openContent(reference)) {
             return new BcX509SignedObjectValidator(authority).validateCertificate(content, expectedSignature,
                     CancellationSignal.NONE);

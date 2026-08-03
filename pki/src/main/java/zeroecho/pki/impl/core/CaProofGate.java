@@ -66,6 +66,7 @@ import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 import zeroecho.pki.spi.audit.AuditSink;
@@ -85,6 +86,7 @@ final class CaProofGate {
     private static final byte[] MANAGED_KEY_CHALLENGE_DOMAIN = "ZeroEcho/PKI/managed-key-possession/v1\0"
             .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
     private static final int CHALLENGE_NONCE_BYTES = 32;
+    private static final int MAXIMUM_SPKI_BYTES = 1024 * 1024;
     private static final SecureRandom CHALLENGE_RANDOM = new SecureRandom();
 
     private final PublicKeyInfoResolver publicKeyResolver;
@@ -114,10 +116,16 @@ final class CaProofGate {
     }
 
     /* default */ SubjectPublicKeyInfo parseRootSpki(EncodedObject spki, FormatId formatId) {
-        try {
-            return SubjectPublicKeyInfo.getInstance(spki.bytes());
-        } catch (RuntimeException ex) { // NOPMD - malformed resolver output fails closed
+        if (spki.encoding() != Encoding.DER) {
             throw rejection("CREATE_ROOT_REJECTED", formatId, Optional.empty(), "ROOT_MANAGED_KEY_INVALID");
+        }
+        byte[] encoded = spki.bytes();
+        try {
+            return parseValidatedSpki(encoded);
+        } catch (IOException | RuntimeException ex) { // NOPMD - malformed resolver output fails closed
+            throw rejection("CREATE_ROOT_REJECTED", formatId, Optional.empty(), "ROOT_MANAGED_KEY_INVALID");
+        } finally {
+            Arrays.fill(encoded, (byte) 0);
         }
     }
 
@@ -169,6 +177,7 @@ final class CaProofGate {
             }
             return new ManagedKeyProof(keyRef, formatId, new EncodedObject(Encoding.DER, exactSpki.clone()));
         } finally {
+            Arrays.fill(exactSpki, (byte) 0);
             Arrays.fill(challenge, (byte) 0);
             if (signature != null) {
                 Arrays.fill(signature, (byte) 0);
@@ -187,7 +196,15 @@ final class CaProofGate {
         if (resolved == null || resolved.encoding() != Encoding.DER) {
             throw rejection(auditAction, formatId, subjectCaId, "MANAGED_KEY_INVALID");
         }
-        return new EncodedObject(Encoding.DER, resolved.bytes());
+        byte[] encoded = resolved.bytes();
+        try {
+            parseValidatedSpki(encoded);
+            return new EncodedObject(Encoding.DER, encoded);
+        } catch (IOException | RuntimeException exception) { // NOPMD - hostile resolver output is redacted
+            throw rejection(auditAction, formatId, subjectCaId, "MANAGED_KEY_INVALID");
+        } finally {
+            Arrays.fill(encoded, (byte) 0);
+        }
     }
 
     /* default */ PkiException rejection(String action, FormatId formatId, Optional<PkiId> objectId, String code) {
@@ -213,7 +230,7 @@ final class CaProofGate {
 
     private boolean verifyChallenge(byte[] spkiDer, byte[] challenge, byte[] signature) {
         try {
-            SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(spkiDer);
+            SubjectPublicKeyInfo spki = parseValidatedSpki(spkiDer);
             BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(signingBus.authority().bindings());
             AlgorithmIdentity keyIdentity = adapter.decode(spki.getAlgorithm(),
                     X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
@@ -228,6 +245,14 @@ final class CaProofGate {
         } catch (Exception ex) {
             return false;
         }
+    }
+
+    private SubjectPublicKeyInfo parseValidatedSpki(byte[] encoded) throws IOException {
+        new StreamingDerReader().validateSubjectPublicKeyInfo(encoded, MAXIMUM_SPKI_BYTES);
+        SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(encoded);
+        new BcX509AlgorithmAdapter(signingBus.authority().bindings()).decode(spki.getAlgorithm(),
+                X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+        return spki;
     }
 
     /**

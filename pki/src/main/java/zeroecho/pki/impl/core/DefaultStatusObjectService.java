@@ -222,8 +222,12 @@ public final class DefaultStatusObjectService implements StatusObjectService {
 
         SimpleAttributeSet.Builder b = SimpleAttributeSet.builder();
         b.putAll(command.attributes());
-        b.put(BcX509Attributes.ISSUER_CERT_DER,
-                new AttributeValue.BytesValue(CredentialContent.materializeForBc(store, issuerCred.content())));
+        byte[] issuerDer = materializeValidatedCertificate(issuerCred);
+        try {
+            b.put(BcX509Attributes.ISSUER_CERT_DER, new AttributeValue.BytesValue(issuerDer.clone()));
+        } finally {
+            Arrays.fill(issuerDer, (byte) 0);
+        }
         b.put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(ca.issuerKeyRef().value()));
 
         StatusObjectGenerateCommand wired = new StatusObjectGenerateCommand(command.issuerCaId(), command.type(),
@@ -248,11 +252,12 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         requirePersistableContent(generated.content());
         boolean accepted = false;
         try {
-            byte[] issuerDer = CredentialContent.materializeForBc(store, issuer.content());
+            requireGeneratedMetadata(command, generated);
+            byte[] issuerDer = materializeValidatedCertificate(issuer);
             try (RepeatableContent content = store.stagedContent().openContent(generated.content())) {
                 X509CertificateHolder holder = new X509CertificateHolder(issuerDer);
                 new BcX509SignedObjectValidator(authority).validateGeneratedCrl(content, signingPlan,
-                        holder.getSubjectPublicKeyInfo(), CancellationSignal.NONE);
+                        holder, generated.thisUpdate(), generated.nextUpdate(), CancellationSignal.NONE);
             } finally {
                 Arrays.fill(issuerDer, (byte) 0);
             }
@@ -274,8 +279,17 @@ public final class DefaultStatusObjectService implements StatusObjectService {
 
     private void requirePersistableContent(DurableContentReference content) {
         if (content.lifecycle() != DurableContentReference.Lifecycle.PERSISTED
-                || !store.stagedContent().contentStoreId().equals(content.storeId())) {
+                || !store.stagedContent().contentStoreId().equals(content.storeId())
+                || content.encoding() != Encoding.DER) {
             throw new PkiException("Status content lifecycle invalid: code=STAGED_CONTENT_FOREIGN_RUNTIME");
+        }
+    }
+
+    private static void requireGeneratedMetadata(StatusObjectGenerateCommand command, StatusObject generated) {
+        if (generated.type() != command.type() || !generated.formatId().equals(command.formatId())
+                || !generated.issuerCaId().equals(command.issuerCaId())
+                || generated.nextUpdate().filter(next -> !next.isAfter(generated.thisUpdate())).isPresent()) {
+            throw new PkiException("Status metadata binding invalid: code=STATUS_OBJECT_BINDING_MISMATCH");
         }
     }
 
@@ -443,7 +457,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
     // cause is intentionally removed at this public service boundary.
     @SuppressWarnings("PMD.PreserveStackTrace")
     private BigInteger certificateSerial(Credential credential) {
-        byte[] der = CredentialContent.materializeForBc(store, credential.content());
+        byte[] der = materializeValidatedCertificate(credential);
         BigInteger serial;
         try {
             serial = new X509CertificateHolder(der).getSerialNumber();
@@ -456,6 +470,16 @@ public final class DefaultStatusObjectService implements StatusObjectService {
             throw crlGenerationFailure();
         }
         return serial;
+    }
+
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    private byte[] materializeValidatedCertificate(Credential credential) {
+        try {
+            CredentialContent.validateCertificate(store, credential.content(), authority, Optional.empty());
+            return CredentialContent.materializeForBc(store, credential.content());
+        } catch (RuntimeException exception) {
+            throw crlGenerationFailure();
+        }
     }
 
     private static PkiException crlGenerationFailure() {

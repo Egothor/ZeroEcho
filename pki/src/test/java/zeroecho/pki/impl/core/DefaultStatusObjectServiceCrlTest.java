@@ -57,6 +57,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
 
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.CRLReason;
@@ -250,6 +251,23 @@ final class DefaultStatusObjectServiceCrlTest {
                             EVALUATION_TIME.minusSeconds(1), Optional.empty())),
                     Map.of(malformed.credentialId(), malformed), false);
 
+            byte[] certificateWithTrailing = Arrays.copyOf(runtime.credentialBytes(template),
+                    runtime.credentialBytes(template).length + 1);
+            Credential trailing = copy(template, "trailing", BcX509CredentialFramework.FORMAT_ID,
+                    runtime.stageCredential(certificateWithTrailing));
+            assertCrlFailure(runtime, command,
+                    List.of(record(trailing.credentialId(), RevocationState.HELD,
+                            EVALUATION_TIME.minusSeconds(1), Optional.empty())),
+                    Map.of(trailing.credentialId(), trailing), false);
+
+            byte[] csrInsteadOfCertificate = certificationRequest(generateRsa(), "Type Confusion").getEncoded();
+            Credential typeConfused = copy(template, "type-confused", BcX509CredentialFramework.FORMAT_ID,
+                    runtime.stageCredential(csrInsteadOfCertificate));
+            assertCrlFailure(runtime, command,
+                    List.of(record(typeConfused.credentialId(), RevocationState.HELD,
+                            EVALUATION_TIME.minusSeconds(1), Optional.empty())),
+                    Map.of(typeConfused.credentialId(), typeConfused), false);
+
             Credential duplicateOne = copy(template, "duplicate-one", BcX509CredentialFramework.FORMAT_ID,
                     template.content());
             Credential duplicateTwo = copy(template, "duplicate-two", BcX509CredentialFramework.FORMAT_ID,
@@ -316,6 +334,93 @@ final class DefaultStatusObjectServiceCrlTest {
             assertEquals(statusCount, runtime.store().listStatusObjects(caId).size());
             assertEquals(signCount + 1, runtime.submittedSignCount());
         }
+    }
+
+    @Test
+    void maliciousCompletionMetadataAbortsBeforePersistence(@TempDir Path root) throws Exception {
+        System.out.println("maliciousCompletionMetadataAbortsBeforePersistence");
+        KeyPair rootKey = generateRsa();
+        KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:crl-metadata");
+        try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
+                Map.of(rootKeyRef, rootKey))) {
+            PkiId caId = createRoot(runtime, rootKeyRef, "CRL Metadata Root");
+            StatusObjectGenerateCommand command = new StatusObjectGenerateCommand(caId, StatusObjectType.CRL,
+                    runtime.framework().formatId(), emptyAttributes());
+            List<UnaryOperator<StatusObject>> mutations = List.of(
+                    status -> copyStatus(status, new FormatId("wrong-format"), status.issuerCaId(), status.type(),
+                            status.thisUpdate(), status.nextUpdate()),
+                    status -> copyStatus(status, status.formatId(), new PkiId("ca:wrong-issuer"), status.type(),
+                            status.thisUpdate(), status.nextUpdate()),
+                    status -> copyStatus(status, status.formatId(), status.issuerCaId(), StatusObjectType.DELTA_CRL,
+                            status.thisUpdate(), status.nextUpdate()),
+                    status -> copyStatus(status, status.formatId(), status.issuerCaId(), status.type(),
+                            status.thisUpdate(), Optional.of(status.thisUpdate())),
+                    status -> copyStatus(status, status.formatId(), status.issuerCaId(), status.type(),
+                            status.thisUpdate().plusSeconds(1L), status.nextUpdate()),
+                    status -> copyStatus(status, status.formatId(), status.issuerCaId(), status.type(),
+                            status.thisUpdate(), Optional.empty()),
+                    status -> copyStatus(status, status.formatId(), status.issuerCaId(), status.type(),
+                            status.thisUpdate(), status.nextUpdate().map(next -> next.plusSeconds(1L))));
+            int signCount = runtime.submittedSignCount();
+            int statusCount = runtime.store().listStatusObjects(caId).size();
+            AtomicInteger persistenceCalls = new AtomicInteger();
+
+            for (UnaryOperator<StatusObject> mutation : mutations) {
+                StatusObjectGenerator delegate = runtime.framework().statusObjectGenerator();
+                StatusObjectGenerator malicious = (wired, entries) -> {
+                    X509SignedObjectCompletion completion = delegate.generate(wired, entries);
+                    StatusObject modified = mutation.apply(
+                            runtime.signingBus().authority().requireStatusCompletion(completion));
+                    return runtime.signingBus().authority().completeStatusObject(modified,
+                            runtime.signingBus().authority().requireStatusSigningPlan(completion));
+                };
+                DefaultStatusObjectService service = new DefaultStatusObjectService(
+                        failingPersistenceStore(runtime.store(), persistenceCalls),
+                        frameworkView(runtime.framework(), malicious), runtime.auditSink(), usableResolver(),
+                        runtime.signingBus().authority());
+                assertBoundaryFailure(assertThrows(PkiException.class, () -> service.generate(command)));
+            }
+
+            assertEquals(0, persistenceCalls.get());
+            assertEquals(statusCount, runtime.store().listStatusObjects(caId).size());
+            assertEquals(signCount + mutations.size(), runtime.submittedSignCount());
+            System.out.println("...rejected=type, format, issuer, time order, changed/omitted/later signed times");
+        }
+        System.out.println("maliciousCompletionMetadataAbortsBeforePersistence...ok");
+    }
+
+    @Test
+    void generatedCrlIssuerNameMustMatchSelectedIssuerCertificate(@TempDir Path root) throws Exception {
+        System.out.println("generatedCrlIssuerNameMustMatchSelectedIssuerCertificate");
+        KeyPair expectedKey = generateRsa();
+        KeyPair substitutedKey = generateRsa();
+        KeyRef expectedKeyRef = new KeyRef("kref:v1:keyring:test:crl-expected-issuer");
+        KeyRef substitutedKeyRef = new KeyRef("kref:v1:keyring:test:crl-substituted-issuer");
+        try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
+                Map.of(expectedKeyRef, expectedKey, substitutedKeyRef, substitutedKey))) {
+            PkiId expectedCaId = createRoot(runtime, expectedKeyRef, "Expected CRL Issuer");
+            PkiId substitutedCaId = createRoot(runtime, substitutedKeyRef, "Substituted CRL Issuer");
+            Credential substitutedIssuer = runtime.caCredential(runtime.caService().getCa(substitutedCaId), 0);
+            StatusObjectGenerateCommand command = new StatusObjectGenerateCommand(expectedCaId,
+                    StatusObjectType.CRL, runtime.framework().formatId(), emptyAttributes());
+            StatusObjectGenerateCommand substituted = crlCommand(runtime, expectedCaId, substitutedIssuer,
+                    substitutedKeyRef);
+            StatusObjectGenerator delegate = runtime.framework().statusObjectGenerator();
+            StatusObjectGenerator malicious = (wired, entries) -> delegate.generate(
+                    new StatusObjectGenerateCommand(wired.issuerCaId(), wired.type(), wired.formatId(),
+                            substituted.attributes()), entries);
+            AtomicInteger persistenceCalls = new AtomicInteger();
+            DefaultStatusObjectService service = new DefaultStatusObjectService(
+                    failingPersistenceStore(runtime.store(), persistenceCalls),
+                    frameworkView(runtime.framework(), malicious), runtime.auditSink(), usableResolver(),
+                    runtime.signingBus().authority());
+
+            assertBoundaryFailure(assertThrows(PkiException.class, () -> service.generate(command)));
+            assertEquals(0, persistenceCalls.get());
+            assertTrue(runtime.store().listStatusObjects(expectedCaId).isEmpty());
+            System.out.println("...rejected=exact issuer Name mismatch");
+        }
+        System.out.println("generatedCrlIssuerNameMustMatchSelectedIssuerCertificate...ok");
     }
 
     private static void assertCrlFailure(PkiTestRuntime runtime, StatusObjectGenerateCommand command,
@@ -484,6 +589,12 @@ final class DefaultStatusObjectServiceCrlTest {
         return new Credential(new PkiId("credential:" + suffix), formatId, template.issuerRef(), template.subjectRef(),
                 template.validity(), template.serialOrUniqueId(), template.publicKeyId(),
                 new CaProfileBinding(binding.reference()), CredentialStatus.ISSUED, content, template.attributes());
+    }
+
+    private static StatusObject copyStatus(StatusObject source, FormatId formatId, PkiId issuerCaId,
+            StatusObjectType type, Instant thisUpdate, Optional<Instant> nextUpdate) {
+        return new StatusObject(source.statusObjectId(), formatId, issuerCaId, type, thisUpdate, nextUpdate,
+                source.content(), source.attributes());
     }
 
     private static StatusObjectGenerateCommand crlCommand(PkiTestRuntime runtime, PkiId caId, Credential issuer,
