@@ -171,6 +171,32 @@ public final class ServerRealmContext implements AutoCloseable {
     public AuditorViews auditorViews() { requireOpen(); return auditorViews; }
     /** @return authorized typed-operation gateway */
     public ServerOperationGateway gateway() { requireOpen(); return gateway; }
+    /**
+     * Resolves one persisted principal for transport authentication.
+     *
+     * @param principalId canonical principal identity
+     * @return persisted identity metadata without credentials or grants
+     * @throws IllegalArgumentException when the principal is unavailable
+     * @throws IllegalStateException when this realm is not open
+     */
+    public SecurityPrincipal principal(String principalId) {
+        requireOpen();
+        return control.requirePrincipal(principalId);
+    }
+    /**
+     * Records one transport-safe lifecycle or request classification through the
+     * shared realm audit authority.
+     *
+     * @param action stable transport action
+     * @param principalId authenticated principal or {@code system}
+     * @param safeDetails finite pre-redacted details
+     */
+    public void auditTransport(String action, String principalId, Map<String, String> safeDetails) {
+        requireOpen();
+        Permission.requireBounded(action, 128, "audit action");
+        Permission.requirePrincipal(principalId);
+        audit.record(action, principalId, Optional.empty(), Map.copyOf(safeDetails));
+    }
     /** @return current lifecycle state */
     public State state() { return state.get(); }
 

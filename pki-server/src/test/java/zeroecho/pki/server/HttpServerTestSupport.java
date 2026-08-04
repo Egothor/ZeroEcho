@@ -1,0 +1,176 @@
+/*******************************************************************************
+ * Copyright (C) 2026, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+package zeroecho.pki.server;
+
+import java.math.BigInteger;
+import java.net.InetAddress;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Date;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+
+import zeroecho.pki.application.PkiSessionConfiguration;
+import zeroecho.pki.server.http.TestTlsProvider;
+import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.store.MetadataStoreId;
+
+/** Shared deterministic TLS, realm and server configuration fixtures. */
+final class HttpServerTestSupport {
+    static final char[] PASSWORD = "test-password".toCharArray();
+
+    private HttpServerTestSupport() { }
+
+    static Fixture tls() throws Exception {
+        KeyPair rootKey = keyPair();
+        X509Certificate root = certificate(rootKey, rootKey, "CN=ZeroEcho Test Root", "CN=ZeroEcho Test Root",
+                BigInteger.ONE, true, false);
+        KeyPair serverKey = keyPair();
+        X509Certificate server = certificate(serverKey, rootKey, "CN=localhost", "CN=ZeroEcho Test Root",
+                BigInteger.TWO, false, true);
+        KeyPair clientKey = keyPair();
+        X509Certificate client = certificate(clientKey, rootKey, "CN=client", "CN=ZeroEcho Test Root",
+                BigInteger.valueOf(3), false, false);
+        SSLContext serverContext = context(serverKey, server, root, true);
+        SSLContext clientContext = context(clientKey, client, root, true);
+        SSLContext anonymousContext = context(clientKey, client, root, false);
+        TestTlsProvider.install(serverContext);
+        return new Fixture(client, clientContext, anonymousContext);
+    }
+
+    static PkiServerConfiguration configuration(java.nio.file.Path directory, X509Certificate client)
+            throws Exception {
+        ApprovalService.Policy approval = new ApprovalService.Policy("high-risk", 1, Set.of("approver"),
+                Set.of(), true, Duration.ofHours(1), true);
+        PkiSessionConfiguration session = new PkiSessionConfiguration(1,
+                new ProviderConfig("fs", Map.of("root", directory.resolve("pki-store").toString())),
+                new ProviderConfig("memory", Map.of("size", "128")), Optional.empty(), List.of(), List.of());
+        ServerRealmConfiguration realm = new ServerRealmConfiguration(ServerTestSupport.REALM, "Production",
+                session, new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES,
+                        Set.of(), true), ServerTestSupport.DIGEST, approval.commitment(), ServerTestSupport.DIGEST,
+                DisclosureService.Defaults.recommended(), directory.resolve("control.log"),
+                new MetadataStoreId("fedcba9876543210fedcba9876543210"),
+                Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval));
+        String certificateDigest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(client.getEncoded()));
+        PkiServerConfiguration.ClientCertificateMapping mapping =
+                new PkiServerConfiguration.ClientCertificateMapping("administrator-map", "administrator",
+                        Optional.of(certificateDigest), Optional.empty(), Optional.empty());
+        return new PkiServerConfiguration(1, "test-server", realm,
+                new PkiServerConfiguration.Listener(InetAddress.getByName("127.0.0.1"), 0,
+                        new ProviderConfig("test-tls", Map.of()), true, 16_384, 65_536),
+                new PkiServerConfiguration.Authentication(List.of(mapping)),
+                new PkiServerConfiguration.Execution(2, 4, 2, 4, 8, Duration.ofSeconds(5),
+                        Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofSeconds(1)),
+                new PkiServerConfiguration.RuntimeCapabilities(Optional.empty()));
+    }
+
+    static SecureRandom random() throws Exception {
+        SecureRandom random = SecureRandom.getInstance("SHA1PRNG");
+        random.setSeed(new byte[] { 1, 3, 5, 7, 9 });
+        return random;
+    }
+
+    private static KeyPair keyPair() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048, random());
+        return generator.generateKeyPair();
+    }
+
+    private static X509Certificate certificate(KeyPair subjectKey, KeyPair issuerKey, String subject,
+            String issuer, BigInteger serial, boolean ca, boolean server) throws Exception {
+        Instant before = Instant.parse("2026-01-01T00:00:00Z");
+        Instant after = Instant.parse("2027-01-01T00:00:00Z");
+        JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(new X500Name(issuer), serial,
+                Date.from(before), Date.from(after), new X500Name(subject), subjectKey.getPublic());
+        builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(ca));
+        if (server) {
+            builder.addExtension(Extension.subjectAlternativeName, false,
+                    new GeneralNames(new GeneralName[] { new GeneralName(GeneralName.dNSName, "localhost"),
+                            new GeneralName(GeneralName.iPAddress, "127.0.0.1") }));
+        }
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(issuerKey.getPrivate());
+        X509CertificateHolder holder = builder.build(signer);
+        X509Certificate result = new JcaX509CertificateConverter().getCertificate(holder);
+        result.verify(issuerKey.getPublic());
+        return result;
+    }
+
+    private static SSLContext context(KeyPair identity, X509Certificate certificate, X509Certificate root,
+            boolean includeIdentity) throws Exception {
+        KeyStore keys = KeyStore.getInstance("PKCS12");
+        keys.load(null, PASSWORD);
+        if (includeIdentity) {
+            keys.setKeyEntry("identity", identity.getPrivate(), PASSWORD,
+                    new java.security.cert.Certificate[] { certificate, root });
+        }
+        KeyManagerFactory keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        keyManagers.init(keys, PASSWORD);
+        KeyStore trust = KeyStore.getInstance("PKCS12");
+        trust.load(null, PASSWORD);
+        trust.setCertificateEntry("root", root);
+        TrustManagerFactory trustManagers = TrustManagerFactory.getInstance(
+                TrustManagerFactory.getDefaultAlgorithm());
+        trustManagers.init(trust);
+        SSLContext context = SSLContext.getInstance("TLSv1.3");
+        context.init(keyManagers.getKeyManagers(), trustManagers.getTrustManagers(), random());
+        return context;
+    }
+
+    record Fixture(X509Certificate clientCertificate, SSLContext clientContext, SSLContext anonymousContext) { }
+}

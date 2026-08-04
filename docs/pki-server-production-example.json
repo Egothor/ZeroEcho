@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "serverName": "zeroecho-admin",
+  "realm": {
+    "realmId": "production",
+    "displayName": "ZeroEcho Production",
+    "authorityExposure": {
+      "mode": "ALL_REALM_AUTHORITIES",
+      "authorityIds": [],
+      "creationPermitted": true
+    },
+    "authorizationCommitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "approvalCommitment": "96f85d99cb556b16af9b963833a832f905010681f437a757d94aab4a22e4c29c",
+    "disclosureCommitment": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "disclosureDefaults": {
+      "rootCa": "PUBLIC",
+      "intermediateCa": "PUBLIC",
+      "caChain": "PUBLIC",
+      "crl": "PUBLIC",
+      "leaf": "OWNER_ONLY",
+      "sensitiveLeaf": "RESTRICTED"
+    },
+    "controlLog": "state/server-control.log",
+    "controlStoreId": "0123456789abcdef0123456789abcdef",
+    "approvalPolicy": {
+      "policyId": "high-risk",
+      "threshold": 1,
+      "eligibleApprovers": ["bootstrap-approver"],
+      "requiredRoleTemplateIds": [],
+      "requesterSeparation": true,
+      "lifetimeMillis": 3600000,
+      "justificationRequired": true
+    },
+    "pkiSession": {
+      "version": 1,
+      "store": {"id": "fs", "properties": {"root": "state/pki"}},
+      "audit": {"id": "file", "properties": {"root": "state/audit"}},
+      "publishers": [],
+      "bindingProviders": []
+    }
+  },
+  "listener": {
+    "address": "0.0.0.0",
+    "port": 8443,
+    "tlsProvider": {
+      "id": "jsse-pkcs12",
+      "properties": {
+        "keyStore": "tls/server-identity.p12",
+        "keyStorePasswordEnvironment": "ZEROECHO_TLS_KEYSTORE_PASSWORD",
+        "trustStore": "tls/administrators-trust.p12",
+        "trustStorePasswordEnvironment": "ZEROECHO_TLS_TRUSTSTORE_PASSWORD"
+      }
+    },
+    "clientCertificateRequired": true,
+    "maximumHeaderBytes": 32768,
+    "maximumBodyBytes": 1048576
+  },
+  "authentication": {
+    "mappings": [{
+      "mappingId": "bootstrap-administrator",
+      "principalId": "bootstrap-admin",
+      "certificateSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }]
+  },
+  "execution": {
+    "transportWorkers": 32,
+    "transportQueueCapacity": 256,
+    "operationWorkers": 16,
+    "operationQueueCapacity": 128,
+    "maximumAdmittedRequests": 384,
+    "defaultDeadlineMillis": 30000,
+    "maximumDeadlineMillis": 120000,
+    "gracefulShutdownMillis": 30000,
+    "forcedShutdownMillis": 10000
+  },
+  "runtime": {}
+}

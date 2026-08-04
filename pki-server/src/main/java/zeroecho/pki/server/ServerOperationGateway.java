@@ -58,7 +58,7 @@ import zeroecho.pki.application.PkiResourceScopeResolver;
  * exactly once to the session executor, and preserves the returned outcome.</p>
  */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
-        "PMD.ExcessiveParameterList", "PMD.CyclomaticComplexity" })
+        "PMD.ExcessiveParameterList", "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops" })
 public final class ServerOperationGateway {
     /**
      * Complete transport-neutral request admission input.
@@ -216,6 +216,92 @@ public final class ServerOperationGateway {
                 Map.of("operation", exact.operation().name(), "result", classification(backend),
                         "correlation", exact.correlationId()));
         return new Outcome.Executed(backend);
+    }
+
+    /**
+     * Authorizes one non-PKI administrative control resource through the same
+     * default-deny engine used for typed operations.
+     *
+     * @param principalId authenticated persisted principal
+     * @param action exact control action
+     * @param resource exact realm control resource
+     * @param context safe closed-condition context
+     * @param correlationId bounded request correlation identity
+     * @return safe authorization decision
+     */
+    public AuthorizationEngine.Decision authorizeControl(String principalId, Permission.Action action,
+            Permission.Resource resource, Permission.Context context, String correlationId) {
+        openCheck.run();
+        Permission.requirePrincipal(principalId);
+        Permission.requireBounded(correlationId, 256, "correlation ID");
+        SecurityPrincipal principal = control.requirePrincipal(principalId);
+        List<Permission.Grant> grants = grants(principal);
+        BreakGlassService.ActiveGrants emergency = breakGlass.activeFor(principalId);
+        grants.addAll(emergency.grants());
+        AuthorizationEngine.Decision decision = authorization.authorize(new AuthorizationEngine.Request(realmId,
+                exposure, principal, action, resource, Permission.Relationship.ANY,
+                Permission.DataView.METADATA_REDACTED, context, grants, emergency.grantIds()));
+        audit.record(decision.allowed() ? "AUTHORIZATION_ALLOW" : "AUTHORIZATION_DENY", principalId,
+                Optional.empty(), Map.of("action", action.name(), "code", decision.code().name(),
+                        "correlation", correlationId));
+        if (decision.usedBreakGlass()) breakGlass.auditUse(principalId);
+        return decision;
+    }
+
+    /**
+     * Returns operation descriptors discoverable by one principal without
+     * returning grant scopes or protected resource identities.
+     *
+     * @param principalId authenticated persisted principal
+     * @return descriptors ordered by stable operation identity
+     */
+    public List<OperationSecurityDescriptors.Descriptor> discoverableOperations(String principalId) {
+        openCheck.run();
+        SecurityPrincipal principal = control.requirePrincipal(principalId);
+        List<Permission.Grant> grants = grants(principal);
+        BreakGlassService.ActiveGrants emergency = breakGlass.activeFor(principalId);
+        grants.addAll(emergency.grants());
+        return descriptors.descriptors().values().stream()
+                .filter(descriptor -> discoverable(descriptor, principal, grants, emergency.grantIds()))
+                .sorted(java.util.Comparator.comparing(OperationSecurityDescriptors.Descriptor::operationId))
+                .toList();
+    }
+
+    /**
+     * Resolves the existing security descriptor for a decoded typed operation.
+     *
+     * @param operation decoded transport-neutral operation
+     * @return immutable descriptor from the sole gateway descriptor authority
+     * @throws SecurityException when the operation is not remotely exposed
+     */
+    public OperationSecurityDescriptors.Descriptor descriptor(PkiOperation operation) {
+        openCheck.run();
+        return descriptors.require(operation);
+    }
+
+    private List<Permission.Grant> grants(SecurityPrincipal principal) {
+        List<Permission.Grant> grants = new ArrayList<>(control.grantsFor(principal.principalId()));
+        for (RoleTemplateCatalog.Assignment assignment : control.assignmentsFor(principal.principalId())) {
+            grants.addAll(roles.instantiate(assignment));
+        }
+        return grants;
+    }
+
+    private boolean discoverable(OperationSecurityDescriptors.Descriptor descriptor,
+            SecurityPrincipal principal, List<Permission.Grant> grants,
+            java.util.Set<String> breakGlassIds) {
+        for (Permission.Grant grant : grants) {
+            if (grant.action() != descriptor.action() || grant.resourceType() != descriptor.resourceType()) {
+                continue;
+            }
+            Permission.Resource resource = new Permission.Resource(descriptor.resourceType(), grant.scope(),
+                    Optional.empty(), Optional.empty());
+            AuthorizationEngine.Decision decision = authorization.authorize(new AuthorizationEngine.Request(
+                    realmId, exposure, principal, descriptor.action(), resource, Permission.Relationship.ANY,
+                    descriptor.dataView(), Permission.Context.empty(), grants, breakGlassIds));
+            if (decision.allowed()) return true;
+        }
+        return false;
     }
 
     private PkiOperationOutcome filterAuthorities(PkiOperationOutcome outcome, SecurityPrincipal principal,

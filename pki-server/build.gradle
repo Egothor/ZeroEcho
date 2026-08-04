@@ -1,5 +1,6 @@
 plugins {
     id 'buildlogic.java-library-conventions'
+    id 'application'
     id 'com.palantir.git-version'
 }
 
@@ -10,6 +11,22 @@ dependencies {
     implementation project(':lib')
     implementation platform('tools.jackson:jackson-bom:3.1.5')
     implementation 'tools.jackson.core:jackson-core'
+    testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.84'
+}
+
+application {
+    mainClass = 'zeroecho.pki.server.PkiServerMain'
+    applicationName = 'zeroecho-pki-server'
+}
+
+jar {
+    manifest {
+        attributes(
+            'Main-Class': application.mainClass,
+            'Implementation-Title': 'ZeroEcho PKI Server',
+            'Implementation-Version': "${version}"
+        )
+    }
 }
 
 javadoc {
