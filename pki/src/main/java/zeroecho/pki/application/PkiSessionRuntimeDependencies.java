@@ -37,18 +37,31 @@ import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.core.spi.KeyringUnlockProvider;
+import zeroecho.pki.spi.audit.AuditSink;
 
-/** Immutable process-local capabilities for one PKI session composition. */
-public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyringUnlockProvider) {
+/**
+ * Immutable process-local capabilities for one PKI session composition.
+ *
+ * @param keyringUnlockProvider optional secure key-unlock capability
+ * @param auditSink optional precomposed lifecycle-owned audit sink
+ */
+public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyringUnlockProvider,
+        Optional<AuditSink> auditSink) {
+
+    /** Creates dependencies without an externally composed audit sink. */
+    public PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyringUnlockProvider) {
+        this(keyringUnlockProvider, Optional.empty());
+    }
 
     /** Validates the optional capability container. */
     public PkiSessionRuntimeDependencies {
         keyringUnlockProvider = Objects.requireNonNull(keyringUnlockProvider, "keyringUnlockProvider");
+        auditSink = Objects.requireNonNull(auditSink, "auditSink");
     }
 
     /** @return an immutable dependency set without key-unlock access */
     public static PkiSessionRuntimeDependencies none() {
-        return new PkiSessionRuntimeDependencies(Optional.empty());
+        return new PkiSessionRuntimeDependencies(Optional.empty(), Optional.empty());
     }
 
     /**
@@ -58,6 +71,22 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      * @return immutable runtime dependencies
      */
     public static PkiSessionRuntimeDependencies withKeyringUnlockProvider(KeyringUnlockProvider provider) {
-        return new PkiSessionRuntimeDependencies(Optional.of(Objects.requireNonNull(provider, "provider")));
+        return new PkiSessionRuntimeDependencies(Optional.of(Objects.requireNonNull(provider, "provider")),
+                Optional.empty());
+    }
+
+    /**
+     * Returns a dependency set using one lifecycle-owned shared audit sink.
+     *
+     * <p>The opened session assumes ownership and closes the sink. This enables
+     * transport-neutral compositions to share one audit authority with adjacent
+     * control services without exposing it through {@link PkiSession}.</p>
+     *
+     * @param sink configured audit sink transferred to the session
+     * @return immutable dependencies preserving any key-unlock capability
+     */
+    public PkiSessionRuntimeDependencies withAuditSink(AuditSink sink) {
+        return new PkiSessionRuntimeDependencies(keyringUnlockProvider,
+                Optional.of(Objects.requireNonNull(sink, "sink")));
     }
 }

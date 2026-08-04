@@ -100,6 +100,31 @@ class PkiSessionLifecycleTest {
     }
 
     @Test
+    void ownsOneExplicitlyPrecomposedAuditSink() throws Exception {
+        System.out.println("ownsOneExplicitlyPrecomposedAuditSink");
+        AtomicInteger closes = new AtomicInteger();
+        AuditSink shared = new AuditSink() {
+            @Override
+            public void record(zeroecho.pki.api.audit.AuditEvent event) {
+                // The lifecycle assertion does not require emitting an event.
+            }
+
+            @Override
+            public void close() {
+                closes.incrementAndGet();
+            }
+        };
+        PkiSessionRuntimeDependencies dependencies = PkiSessionRuntimeDependencies.none().withAuditSink(shared);
+        PkiSession session = PkiSession.open(configuration(temporaryDirectory.resolve("shared-audit-store")),
+                dependencies);
+        session.close();
+        session.close();
+        assertEquals(1, closes.get());
+        System.out.println("...shared-audit-closes=" + closes.get());
+        System.out.println("...ok");
+    }
+
+    @Test
     void explicitlyActivatesAuthorizedDeployerBindingProvider() throws Exception {
         System.out.println("explicitlyActivatesAuthorizedDeployerBindingProvider");
         PkiSessionConfiguration.BindingProviderConfiguration bindings =

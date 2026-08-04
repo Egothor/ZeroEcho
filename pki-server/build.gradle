@@ -1,0 +1,18 @@
+plugins {
+    id 'buildlogic.java-library-conventions'
+    id 'com.palantir.git-version'
+}
+
+group = 'org.egothor'
+
+dependencies {
+    api project(':pki')
+    implementation project(':lib')
+    implementation platform('tools.jackson:jackson-bom:3.1.5')
+    implementation 'tools.jackson.core:jackson-core'
+}
+
+javadoc {
+    options.links("https://www.egothor.org/javadoc/zeroecho/lib")
+    options.links("https://www.egothor.org/javadoc/zeroecho/pki")
+}

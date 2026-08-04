@@ -114,6 +114,7 @@ final class DefaultPkiSession implements PkiSession {
     private final Optional<PkiSigningBus> signingBus;
     private final Optional<SignatureWorkflow> signatureWorkflow;
     private final X509AlgorithmBindingRegistry algorithmBindings;
+    private final PkiResourceScopeResolver resourceScopes;
     private final PkiOperationExecutor operations;
     private final AtomicBoolean closed = new AtomicBoolean();
 
@@ -132,6 +133,7 @@ final class DefaultPkiSession implements PkiSession {
         this.signingBus = graph.signingBus();
         this.signatureWorkflow = graph.signatureWorkflow();
         this.algorithmBindings = Objects.requireNonNull(algorithmBindings, "algorithmBindings");
+        this.resourceScopes = new DefaultPkiResourceScopeResolver(store, this::requireOpen);
         this.operations = new DefaultPkiOperationExecutor(configuration, store, profiles, revocations, authorities,
                 requests, issuance, statusObjects, publications, algorithmBindings, this::requireOpen);
     }
@@ -175,7 +177,8 @@ final class DefaultPkiSession implements PkiSession {
         ServiceGraph graph = ServiceGraph.empty();
         try {
             store = Objects.requireNonNull(bootstrap.openStore(exact.store()), "opened store");
-            audit = Objects.requireNonNull(bootstrap.openAudit(exact.audit()), "opened audit sink");
+            audit = dependencies.auditSink().orElseGet(
+                    () -> Objects.requireNonNull(bootstrap.openAudit(exact.audit()), "opened audit sink"));
             ProfileService profiles = new DefaultProfileService(store, clock, audit, algorithmBindings,
                     exact.signing().isPresent(),
                     exact.signing().flatMap(PkiSessionConfiguration.SigningConfiguration::certificateSignatureBinding),
@@ -238,6 +241,12 @@ final class DefaultPkiSession implements PkiSession {
     public X509AlgorithmBindingRegistry algorithmBindings() {
         requireOpen();
         return algorithmBindings;
+    }
+
+    @Override
+    public PkiResourceScopeResolver resourceScopes() {
+        requireOpen();
+        return resourceScopes;
     }
 
     @Override

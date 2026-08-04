@@ -115,6 +115,23 @@ public interface PkiSession extends AutoCloseable {
      */
     X509AlgorithmBindingRegistry algorithmBindings();
 
+    /**
+     * Returns the read-only authoritative identifier resolver used to cross-check
+     * realm and authority scopes before protected operations.
+     *
+     * @return session-owned resource-scope resolver
+     */
+    default PkiResourceScopeResolver resourceScopes() {
+        return new PkiResourceScopeResolver() {
+            @Override public Optional<zeroecho.pki.api.PkiId> credentialAuthority(
+                    zeroecho.pki.api.PkiId credentialId) { return Optional.empty(); }
+            @Override public Optional<zeroecho.pki.api.PkiId> statusObjectAuthority(
+                    zeroecho.pki.api.PkiId statusObjectId) { return Optional.empty(); }
+            @Override public Optional<zeroecho.pki.api.PkiId> publicationAuthority(
+                    zeroecho.pki.api.PkiId publicationId) { return Optional.empty(); }
+        };
+    }
+
     /** @return shared typed operation executor owned by this session */
     PkiOperationExecutor operations();
 
