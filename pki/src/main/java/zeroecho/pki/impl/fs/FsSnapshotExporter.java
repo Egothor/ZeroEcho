@@ -60,6 +60,8 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.publication.PublicationCursor;
@@ -219,12 +221,18 @@ final class FsSnapshotExporter {
         private SnapshotAuthority plan(Instant at) throws IOException {
             CredentialInventory inventory = inventoryCredentials();
             List<CaRecord> cas = selectCas(at, inventory.credentials());
+            List<IssuerGeneration> generations = cas.stream().flatMap(ca -> ca.issuerIds().stream())
+                    .map(id -> source.getIssuerGeneration(id).orElseThrow(
+                            () -> new SnapshotAuthorityFailure("Snapshot issuer generation is missing"))).toList();
+            List<IssuerChainPath> paths = generations.stream()
+                    .flatMap(generation -> source.listIssuerChainPaths(generation.issuerId()).stream()).toList();
             List<StatusObject> statuses = source.snapshotStatusObjects();
             Set<String> remintedContentIds = new HashSet<>(inventory.contentIds());
             for (StatusObject status : statuses) {
                 remintedContentIds.add(status.content().contentId());
             }
-            return new SnapshotAuthority(cas, inventory.credentials(), statuses, remintedContentIds);
+            return new SnapshotAuthority(cas, generations, paths, inventory.credentials(), statuses,
+                    remintedContentIds);
         }
 
         private CredentialInventory inventoryCredentials() throws IOException {
@@ -277,13 +285,31 @@ final class FsSnapshotExporter {
             List<CaRecord> selected = new ArrayList<>();
             for (Path record : selectedRecords) {
                 CaRecord ca = loadCa(record);
-                if (ca != null && credentials.keySet().containsAll(ca.credentialIds())) {
+                if (ca != null && validCa(ca, credentials)) {
                     selected.add(ca);
                 } else if (ca != null) {
                     rejectCa();
                 }
             }
             return List.copyOf(selected);
+        }
+
+        private boolean validCa(CaRecord ca, Map<PkiId, Credential> credentials) {
+            try {
+                for (PkiId issuerId : ca.issuerIds()) {
+                    IssuerGeneration generation = source.getIssuerGeneration(issuerId).orElseThrow();
+                    if (!ca.caId().equals(generation.authorityId())
+                            || !credentials.containsKey(generation.credentialId())) {
+                        return false;
+                    }
+                }
+                IssuerChainPath path = source.getIssuerChainPath(ca.issuanceChainPathId()).orElseThrow();
+                return ca.caId().equals(path.authorityId())
+                        && ca.currentIssuanceIssuerId().equals(path.issuerId())
+                        && path.orderedCredentialIds().stream().allMatch(credentials::containsKey);
+            } catch (IllegalStateException | java.util.NoSuchElementException failure) {
+                return false;
+            }
         }
 
         private CaRecord loadCa(Path record) throws IOException {
@@ -448,8 +474,19 @@ final class FsSnapshotExporter {
                         transferred.add(entry.getKey());
                     }
                 }
+                for (IssuerGeneration generation : authority.generations()) {
+                    if (transferred.contains(generation.credentialId())) {
+                        target.putIssuerGeneration(generation);
+                    }
+                }
+                for (IssuerChainPath path : authority.paths()) {
+                    if (transferred.containsAll(path.orderedCredentialIds())) {
+                        target.putIssuerChainPath(path);
+                    }
+                }
                 for (CaRecord ca : authority.cas()) {
-                    if (transferred.containsAll(ca.credentialIds())) {
+                    if (ca.issuerIds().stream().allMatch(id -> target.getIssuerGeneration(id).isPresent())
+                            && target.getIssuerChainPath(ca.issuanceChainPathId()).isPresent()) {
                         persistCa(target, ca);
                     }
                 }
@@ -789,10 +826,13 @@ final class FsSnapshotExporter {
         }
     }
 
-    private record SnapshotAuthority(List<CaRecord> cas, Map<PkiId, Credential> credentials,
+    private record SnapshotAuthority(List<CaRecord> cas, List<IssuerGeneration> generations,
+            List<IssuerChainPath> paths, Map<PkiId, Credential> credentials,
             List<StatusObject> statuses, Set<String> remintedContentIds) {
         private SnapshotAuthority {
             cas = List.copyOf(cas);
+            generations = List.copyOf(generations);
+            paths = List.copyOf(paths);
             credentials = Collections.unmodifiableMap(new LinkedHashMap<>(credentials));
             statuses = List.copyOf(statuses);
             remintedContentIds = Set.copyOf(remintedContentIds);

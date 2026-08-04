@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "serverName": "zeroecho-admin",
   "realm": {
     "realmId": "production",
@@ -73,6 +73,46 @@
     "maximumDeadlineMillis": 120000,
     "gracefulShutdownMillis": 30000,
     "forcedShutdownMillis": 10000
+  },
+  "publicListener": {
+    "enabled": true,
+    "address": "127.0.0.1",
+    "port": 8444,
+    "tlsProvider": {
+      "id": "jsse-pkcs12",
+      "properties": {
+        "keyStore": "tls/public-server-identity.p12",
+        "keyStorePasswordEnvironment": "ZEROECHO_PUBLIC_TLS_KEYSTORE_PASSWORD",
+        "trustStore": "tls/repository-clients-trust.p12",
+        "trustStorePasswordEnvironment": "ZEROECHO_PUBLIC_TLS_TRUSTSTORE_PASSWORD"
+      }
+    },
+    "allowPlaintextLoopback": false,
+    "authentication": {
+      "mode": "DIRECT_MTLS",
+      "directClientMappings": [{
+        "mappingId": "repository-client",
+        "principalId": "repository-client",
+        "subjectPublicKeyInfoSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+      }]
+    },
+    "maximumHeaderBytes": 32768,
+    "maximumBodyBytes": 1024,
+    "execution": {
+      "transportWorkers": 4,
+      "transportQueueCapacity": 32,
+      "operationWorkers": 4,
+      "operationQueueCapacity": 32,
+      "maximumAdmittedRequests": 32,
+      "defaultDeadlineMillis": 30000,
+      "maximumDeadlineMillis": 120000,
+      "gracefulShutdownMillis": 30000,
+      "forcedShutdownMillis": 10000
+    },
+    "maximumStreamDurationMillis": 120000,
+    "publicImmutableCacheMillis": 86400000,
+    "publicAliasCacheMillis": 300000,
+    "authorityListExposed": true
   },
   "runtime": {}
 }

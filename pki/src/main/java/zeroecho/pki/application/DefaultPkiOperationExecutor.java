@@ -386,7 +386,8 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         Map<String, PkiOperationValue> fields = fields();
         fields.put("credentialId", text(credential.credentialId().value()));
         fields.put(FORMAT_ID, text(credential.formatId().value()));
-        fields.put("issuerId", text(credential.issuerRef().caId().value()));
+        fields.put("authorityId", text(credential.issuerRef().caId().value()));
+        fields.put("issuerId", text(credential.issuerRef().issuerId().value()));
         fields.put("publicKeyId", text(credential.publicKeyId().value()));
         fields.put("profileId", text(profile.profileId()));
         fields.put("profileVersion", integer(profile.profileVersion()));
@@ -623,7 +624,8 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         fields.put("caId", text(record.caId().value()));
         fields.put("kind", text(record.kind().name()));
         fields.put("state", text(record.state().name()));
-        fields.put("credentialCount", integer(record.credentialIds().size()));
+        fields.put("issuerGenerationCount", integer(record.issuerIds().size()));
+        fields.put("currentIssuanceIssuerId", text(record.currentIssuanceIssuerId().value()));
         return fields;
     }
 

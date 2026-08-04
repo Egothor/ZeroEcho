@@ -48,25 +48,25 @@ import zeroecho.pki.api.SubjectRef;
 final class CaRecordTest {
 
     @Test
-    void credentialIdentifiersAreOrderedImmutableAndUnique() {
-        System.out.println("credentialIdentifiersAreOrderedImmutableAndUnique");
-        PkiId first = new PkiId("credential-first");
-        PkiId second = new PkiId("credential-second");
+    void issuerIdentifiersAreOrderedImmutableAndUnique() {
+        System.out.println("issuerIdentifiersAreOrderedImmutableAndUnique");
+        PkiId first = new PkiId("issuer-first");
+        PkiId second = new PkiId("issuer-second");
         List<PkiId> source = new ArrayList<>(List.of(first, second));
 
         CaRecord record = record(source);
         source.clear();
 
-        assertEquals(List.of(first, second), record.credentialIds());
+        assertEquals(List.of(first, second), record.issuerIds());
         assertThrows(UnsupportedOperationException.class,
-                () -> record.credentialIds().add(new PkiId("credential-third")));
+                () -> record.issuerIds().add(new PkiId("issuer-third")));
         assertThrows(IllegalArgumentException.class, () -> record(List.of(first, first)));
         assertThrows(IllegalArgumentException.class, () -> record(java.util.Arrays.asList(first, null)));
-        System.out.println("credentialIdentifiersAreOrderedImmutableAndUnique...ok");
+        System.out.println("issuerIdentifiersAreOrderedImmutableAndUnique...ok");
     }
 
-    private static CaRecord record(List<PkiId> credentialIds) {
+    private static CaRecord record(List<PkiId> issuerIds) {
         return new CaRecord(new PkiId("ca-test"), CaKind.ROOT, CaState.ACTIVE, new KeyRef("key-test"),
-                new SubjectRef("CN=Test"), credentialIds);
+                new SubjectRef("CN=Test"), issuerIds, issuerIds.getFirst(), new PkiId("path-test"));
     }
 }

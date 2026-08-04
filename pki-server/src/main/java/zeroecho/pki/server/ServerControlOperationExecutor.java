@@ -60,6 +60,7 @@ public final class ServerControlOperationExecutor {
     private final BreakGlassService breakGlass;
     private final DisclosureService disclosure;
     private final AuditorViews auditorViews;
+    private final Optional<RepositoryAliasService> repositoryAliases;
     private final OperationSecurityDescriptors descriptors;
     private final Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies;
 
@@ -68,6 +69,7 @@ public final class ServerControlOperationExecutor {
             ServerControlStore store, RoleTemplateCatalog roles, AuthorizationEngine authorization,
             ApprovalService approvals, BreakGlassService breakGlass, DisclosureService disclosure,
             AuditorViews auditorViews,
+            Optional<RepositoryAliasService> repositoryAliases,
             OperationSecurityDescriptors descriptors,
             Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies) {
         this.realmId = Objects.requireNonNull(realmId, "realmId");
@@ -79,6 +81,7 @@ public final class ServerControlOperationExecutor {
         this.breakGlass = Objects.requireNonNull(breakGlass, "breakGlass");
         this.disclosure = Objects.requireNonNull(disclosure, "disclosure");
         this.auditorViews = Objects.requireNonNull(auditorViews, "auditorViews");
+        this.repositoryAliases = Objects.requireNonNull(repositoryAliases, "repositoryAliases");
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.approvalPolicies = Map.copyOf(Objects.requireNonNull(approvalPolicies, "approvalPolicies"));
     }
@@ -165,6 +168,29 @@ public final class ServerControlOperationExecutor {
             case ServerControlOperation.RevokeCapability value -> ordinary(operation,
                     capability(disclosure.revokeCapability(value.capabilityId(), actor)));
             case ServerControlOperation.InspectAuditView value -> ordinary(operation, auditView(value, actor));
+            case ServerControlOperation.InspectRepositoryAlias value -> ordinary(operation,
+                    alias(aliases().require(value.authorityId(), value.type())));
+            case ServerControlOperation.ListRepositoryAliases value -> ordinary(operation,
+                    page(aliases().list(value.offset(), value.limit()), ServerControlOperationExecutor::alias));
+            case ServerControlOperation.SetRepositoryAlias value -> ordinary(operation,
+                    alias(publishAlias(value, actor)));
+            case ServerControlOperation.RemoveRepositoryAlias value -> ordinary(operation,
+                    alias(aliases().remove(value.authorityId(), value.type(), value.expectedCurrentCommitment(), actor)));
+        };
+    }
+
+    private RepositoryAliasService aliases() {
+        return repositoryAliases.orElseThrow(() -> new IllegalStateException("Repository aliases are unavailable"));
+    }
+
+    private RepositoryAliasService.Record publishAlias(ServerControlOperation.SetRepositoryAlias value,
+            String actor) {
+        return switch (value.type()) {
+            case CURRENT_CRL -> aliases().setCurrentCrl(value.authorityId(), value.targetObjectId(),
+                    value.expectedCurrentCommitment(), actor);
+            case CURRENT_CHAIN -> aliases().setCurrentChain(value.authorityId(),
+                    value.issuerId().orElseThrow(() -> new IllegalArgumentException("issuerId is required")),
+                    value.targetObjectId(), value.expectedCurrentCommitment(), actor);
         };
     }
 
@@ -290,6 +316,19 @@ public final class ServerControlOperationExecutor {
     private static PkiOperationValue principal(SecurityPrincipal value) {
         return object("principalId", text(value.principalId()), "type", text(value.type().name()),
                 "displayName", text(value.displayName()), "enabled", bool(value.enabled()));
+    }
+
+    private static PkiOperationValue alias(RepositoryAliasService.Record value) {
+        Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
+        fields.put("aliasId", text(value.aliasId()));
+        fields.put("authorityId", text(value.authorityId().value()));
+        fields.put("type", text(value.type().name()));
+        fields.put("targetObjectId", text(value.targetObjectId().value()));
+        value.issuerId().ifPresent(id -> fields.put("issuerId", text(id.value())));
+        value.pathId().ifPresent(id -> fields.put("pathId", text(id.value())));
+        fields.put("state", text(value.state().name()));
+        fields.put("recordCommitment", text(value.recordCommitment()));
+        return new PkiOperationValue.ObjectValue(fields);
     }
     private static PkiOperationValue template(RoleTemplateCatalog.Template value) {
         List<PkiOperationValue> actions = value.actions().stream().sorted(Comparator.comparingInt(Permission.Action::code))

@@ -234,10 +234,6 @@ public final class DefaultIssuanceService implements IssuanceService {
         if (issuer.state() != CaState.ACTIVE) {
             throw new PkiException("Issuer CA not ACTIVE");
         }
-        if (issuer.credentialIds().isEmpty()) {
-            throw new PkiException("Issuer CA has no credentials");
-        }
-
         VerifiedIssuanceCandidate candidate = verifyIssuanceCandidate(command);
         ActiveCertificateProfile active;
         try {
@@ -257,6 +253,8 @@ public final class DefaultIssuanceService implements IssuanceService {
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCred = CredentialSnapshots.copy(selectIssuerCredential(issuer, framework.formatId(),
                 CredentialUse.END_ENTITY_ISSUER, statusEvaluation));
+        zeroecho.pki.api.ca.IssuerGeneration generation = IssuerAuthorities.current(store, issuer);
+        zeroecho.pki.api.ca.IssuerChainPath issuancePath = IssuerAuthorities.issuancePath(store, issuer);
         ValidatedCertificateRequest validated;
         try {
             validated = CertificateProfileValidator.validate(candidate, profile, active.reference(), issuerCred,
@@ -274,8 +272,10 @@ public final class DefaultIssuanceService implements IssuanceService {
             throw rejection(candidate.request(), "BACKEND_CREDENTIAL_MISMATCH");
         }
         requireIssuedCredentialMatches(validated, issuerCred, serial, bundle, candidate.request());
-        store.putCredential(bundle.credential());
-        return bundle;
+        Credential exactCredential = IssuerAuthorities.withIssuer(bundle.credential(),
+                new zeroecho.pki.api.IssuerRef(issuer.caId(), generation.issuerId(), issuancePath.pathId()));
+        store.putCredential(exactCredential);
+        return new CredentialBundle(exactCredential, pathContent(issuancePath));
     }
 
     /**
@@ -303,32 +303,17 @@ public final class DefaultIssuanceService implements IssuanceService {
         Objects.requireNonNull(issuer, "issuer");
         Objects.requireNonNull(formatId, "formatId");
 
-        Credential lastRejected = null;
-        EffectiveCredentialStatus lastStatus = null;
-        for (PkiId credentialId : issuer.credentialIds()) {
-            Credential c = requireIssuerCredential(credentialId);
-            if (c == null || !formatId.equals(c.formatId())) {
-                continue;
-            }
-            EffectiveCredentialStatus status;
-            try {
-                status = evaluation.resolve(c);
-            } catch (PkiException exception) {
-                CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), c, use,
-                        StoreBackedEffectiveCredentialStatusResolver.RESOLUTION_FAILED_CODE, null);
-                throw exception;
-            }
-            if (status == EffectiveCredentialStatus.USABLE) {
-                return c;
-            }
-            lastRejected = c;
-            lastStatus = status;
+        Credential credential = IssuerAuthorities.currentCredential(store, issuer);
+        if (!formatId.equals(credential.formatId())) {
+            throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
         }
-        if (lastRejected != null) {
-            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), lastRejected, use,
-                    "ISSUER_CREDENTIAL_UNAVAILABLE", lastStatus);
+        EffectiveCredentialStatus status = evaluation.resolve(credential);
+        if (status != EffectiveCredentialStatus.USABLE) {
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), credential, use,
+                    "ISSUER_CREDENTIAL_UNAVAILABLE", status);
+            throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
         }
-        throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
+        return credential;
     }
 
     private Credential requireIssuerCredential(PkiId credentialId) {
@@ -459,7 +444,7 @@ public final class DefaultIssuanceService implements IssuanceService {
                     validated.profileReference());
             if (!framework.formatId().equals(credential.formatId()) || credential.content().encoding() != Encoding.DER
                     || !credential.subjectRef().equals(validated.subjectRef())
-                    || !credential.issuerRef().equals(new zeroecho.pki.api.IssuerRef(validated.issuerCaId()))
+                    || !credential.issuerRef().caId().equals(validated.issuerCaId())
                     || credential.status() != CredentialStatus.ISSUED) {
                 throw rejection(auditRequest, "BACKEND_CREDENTIAL_MISMATCH");
             }
@@ -585,16 +570,15 @@ public final class DefaultIssuanceService implements IssuanceService {
      * credential.
      *
      * <p>
-     * This implementation currently returns a minimal bundle containing only the
-     * resolved leaf credential and an empty chain. Chain discovery, issuer path
-     * construction, and publication-aware bundle assembly are intentionally left to
-     * higher layers.
+     * This implementation returns the resolved leaf credential with the exact
+     * immutable chain path selected and persisted when the credential was issued.
+     * It never infers a path from collection order, dates, filenames, or the public
+     * repository's independently managed current-chain alias.
      * </p>
      *
      * @param command bundle construction command identifying the leaf credential;
      *                must not be {@code null}
-     * @return minimal credential bundle containing the resolved leaf credential and
-     *         no chain elements
+     * @return credential bundle containing the resolved leaf and its exact issuance path
      * @throws NullPointerException if {@code command} is {@code null}
      * @throws PkiException         if the requested credential does not exist in
      *                              the store or is not currently usable
@@ -619,8 +603,18 @@ public final class DefaultIssuanceService implements IssuanceService {
             throw new PkiException(
                     "Credential trust rejected: code=" + StoreBackedEffectiveCredentialStatusResolver.NOT_USABLE_CODE);
         }
-        // Minimal bundle: leaf only. Chain selection and publication are higher-layer
-        // concerns.
-        return new CredentialBundle(leaf, List.of());
+        zeroecho.pki.api.ca.IssuerChainPath path = store.getIssuerChainPath(leaf.issuerRef().chainPathId())
+                .orElseThrow(() -> new PkiException("Credential issuance chain path not found"));
+        if (!leaf.issuerRef().issuerId().equals(path.issuerId())
+                || !leaf.issuerRef().caId().equals(path.authorityId())) {
+            throw new PkiException("Credential issuance chain path mismatch");
+        }
+        return new CredentialBundle(leaf, pathContent(path));
+    }
+
+    private List<zeroecho.pki.api.content.DurableContentReference> pathContent(
+            zeroecho.pki.api.ca.IssuerChainPath path) {
+        return path.orderedCredentialIds().stream().map(this::requireIssuerCredential)
+                .map(Credential::content).toList();
     }
 }

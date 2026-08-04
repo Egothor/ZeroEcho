@@ -44,6 +44,8 @@ import zeroecho.pki.api.ca.CaRolloverCommand;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.ca.IntermediateCertIssueCommand;
 import zeroecho.pki.api.ca.IntermediateCreateCommand;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.credential.Credential;
 
 /**
@@ -179,4 +181,27 @@ public interface CaService {
      * @throws PkiException             if listing fails
      */
     List<CaRecord> listCas(CaQuery query);
+
+    /** Returns one exact issuer generation owned by this PKI authority. */
+    IssuerGeneration getIssuerGeneration(PkiId issuerId);
+
+    /** Returns one exact immutable issuer chain path. */
+    IssuerChainPath getIssuerChainPath(PkiId pathId);
+
+    /** Lists all explicit paths for an exact issuer generation. */
+    List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId);
+
+    /**
+     * Atomically selects the exact issuer generation and path used for future
+     * issuance and bundle construction.
+     */
+    void selectIssuancePath(PkiId caId, PkiId issuerId, PkiId pathId, String reason);
+
+    /**
+     * Registers an additional explicit path for an existing issuer generation by
+     * appending one already-authoritative parent path.
+     *
+     * @return immutable registered path
+     */
+    IssuerChainPath registerIssuerChainPath(PkiId caId, PkiId issuerId, PkiId parentPathId);
 }

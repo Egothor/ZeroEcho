@@ -214,9 +214,6 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         if (ca.state() != CaState.ACTIVE) {
             throw new PkiException("Issuer CA not ACTIVE");
         }
-        if (ca.credentialIds().isEmpty()) {
-            throw new PkiException("Issuer CA has no credentials");
-        }
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCred = selectIssuerCredential(ca, command, statusEvaluation);
 
@@ -488,35 +485,17 @@ public final class DefaultStatusObjectService implements StatusObjectService {
 
     private Credential selectIssuerCredential(CaRecord ca, StatusObjectGenerateCommand command,
             EffectiveCredentialStatusResolver.Evaluation evaluation) {
-        Credential lastRejected = null;
-        EffectiveCredentialStatus lastStatus = null;
-        List<PkiId> credentialIds = ca.credentialIds();
-        for (int index = credentialIds.size() - 1; index >= 0; index--) {
-            Credential credential = store.getCredential(credentialIds.get(index))
-                    .orElseThrow(DefaultStatusObjectService::crlGenerationFailure);
-            if (credential == null || !command.formatId().equals(credential.formatId())) {
-                continue;
-            }
-            EffectiveCredentialStatus status;
-            try {
-                status = evaluation.resolve(credential);
-            } catch (PkiException exception) {
-                CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), credential,
-                        CredentialUse.STATUS_OBJECT_ISSUER,
-                        StoreBackedEffectiveCredentialStatusResolver.RESOLUTION_FAILED_CODE, null);
-                throw exception;
-            }
-            if (status == EffectiveCredentialStatus.USABLE) {
-                return credential;
-            }
-            lastRejected = credential;
-            lastStatus = status;
+        Credential credential = IssuerAuthorities.currentCredential(store, ca);
+        if (!command.formatId().equals(credential.formatId())) {
+            throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
         }
-        if (lastRejected != null) {
-            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), lastRejected,
-                    CredentialUse.STATUS_OBJECT_ISSUER, "ISSUER_CREDENTIAL_UNAVAILABLE", lastStatus);
+        EffectiveCredentialStatus status = evaluation.resolve(credential);
+        if (status != EffectiveCredentialStatus.USABLE) {
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), credential,
+                    CredentialUse.STATUS_OBJECT_ISSUER, "ISSUER_CREDENTIAL_UNAVAILABLE", status);
+            throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
         }
-        throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
+        return credential;
     }
 
     /**

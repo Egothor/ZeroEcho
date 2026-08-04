@@ -33,17 +33,14 @@
  ******************************************************************************/
 package zeroecho.pki.api.ca;
 
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 
 /**
- * Represents a CA entity and the ordered identifiers of its issued CA
- * credentials.
+ * Represents one logical CA authority and its explicit issuer generations.
  *
  * <p>
  * A CA entity may have multiple CA credentials to support:
@@ -60,12 +57,12 @@ import zeroecho.pki.api.SubjectRef;
  * @param issuerKeyRef  key reference used for issuing operations (private key
  *                      reference)
  * @param subjectRef    normalized subject reference
- * @param credentialIds ordered identifiers of the credentials currently
- *                      associated with the entity (historical and active);
- *                      duplicates and {@code null} elements are rejected
+ * @param issuerIds canonical issuer-generation identifiers owned by the authority
+ * @param currentIssuanceIssuerId exact generation selected for new issuance
+ * @param issuanceChainPathId exact chain path selected for issuance bundles
  */
 public record CaRecord(PkiId caId, CaKind kind, CaState state, KeyRef issuerKeyRef, SubjectRef subjectRef,
-        List<PkiId> credentialIds) {
+        List<PkiId> issuerIds, PkiId currentIssuanceIssuerId, PkiId issuanceChainPathId) {
 
     /**
      * Creates a CA record.
@@ -90,18 +87,19 @@ public record CaRecord(PkiId caId, CaKind kind, CaState state, KeyRef issuerKeyR
         if (subjectRef == null) {
             throw new IllegalArgumentException("subjectRef must not be null");
         }
-        if (credentialIds == null) {
-            throw new IllegalArgumentException("credentialIds must not be null");
+        if (issuerIds == null || issuerIds.isEmpty()) {
+            throw new IllegalArgumentException("issuerIds must not be null/empty");
         }
-        Set<PkiId> uniqueCredentialIds = new HashSet<>(credentialIds.size());
-        for (PkiId credentialId : credentialIds) {
-            if (credentialId == null) {
-                throw new IllegalArgumentException("credentialIds must not contain null");
-            }
-            if (!uniqueCredentialIds.add(credentialId)) {
-                throw new IllegalArgumentException("credentialIds must not contain duplicates");
-            }
+        if (issuerIds.stream().anyMatch(java.util.Objects::isNull)
+                || issuerIds.size() != new java.util.HashSet<>(issuerIds).size()) {
+            throw new IllegalArgumentException("issuerIds must contain unique non-null identifiers");
         }
-        credentialIds = List.copyOf(credentialIds);
+        if (currentIssuanceIssuerId == null || !issuerIds.contains(currentIssuanceIssuerId)) {
+            throw new IllegalArgumentException("currentIssuanceIssuerId must identify an owned generation");
+        }
+        if (issuanceChainPathId == null) {
+            throw new IllegalArgumentException("issuanceChainPathId must not be null");
+        }
+        issuerIds = List.copyOf(issuerIds);
     }
 }

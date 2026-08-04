@@ -39,6 +39,8 @@ import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.api.policy.PolicyTrace;
@@ -105,8 +107,8 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
      * <p>
      * Implementations must store CA records atomically. Replacing an existing
      * record should be either fully visible or not visible at all. Every
-     * identifier in {@link CaRecord#credentialIds()} must resolve through
-     * {@link #getCredential(PkiId)} before the CA record is published.
+     * identifier in {@link CaRecord#issuerIds()} must resolve through
+     * {@link #getIssuerGeneration(PkiId)} before the CA record is published.
      * </p>
      *
      * @param record CA record (never {@code null})
@@ -138,6 +140,33 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
      *                               missing or invalid
      */
     List<CaRecord> listCas();
+
+    /**
+     * Returns a bounded canonical keyset page of CA records.
+     *
+     * @param afterCaId optional exclusive lower bound
+     * @param limit positive finite page size
+     * @return records ordered by canonical CA identity
+     */
+    List<CaRecord> listCasPage(Optional<PkiId> afterCaId, int limit);
+
+    /** Persists one immutable canonical issuer-generation record. */
+    void putIssuerGeneration(IssuerGeneration generation);
+
+    /** Retrieves one canonical issuer-generation record. */
+    Optional<IssuerGeneration> getIssuerGeneration(PkiId issuerId);
+
+    /** Lists issuer generations owned by an exact logical authority. */
+    List<IssuerGeneration> listIssuerGenerations(PkiId authorityId);
+
+    /** Persists one immutable, already validated issuer chain path. */
+    void putIssuerChainPath(IssuerChainPath path);
+
+    /** Retrieves one immutable issuer chain path. */
+    Optional<IssuerChainPath> getIssuerChainPath(PkiId pathId);
+
+    /** Lists explicit paths for an exact issuer generation. */
+    List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId);
 
     /**
      * Persists a credential record.

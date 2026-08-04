@@ -125,6 +125,16 @@ final class FsPaths {
         return caDir(caId).resolve(HISTORY_DIR);
     }
 
+    /* default */ Path issuerGenerationPath(final PkiId issuerId) {
+        Objects.requireNonNull(issuerId, "issuerId");
+        return root.resolve("issuer-generations").resolve(BY_ID).resolve(FsUtil.safeId(issuerId) + BINARY_EXTENSION);
+    }
+
+    /* default */ Path issuerChainPath(final PkiId pathId) {
+        Objects.requireNonNull(pathId, "pathId");
+        return root.resolve("issuer-chain-paths").resolve(BY_ID).resolve(FsUtil.safeId(pathId) + BINARY_EXTENSION);
+    }
+
     // -------------------------------------------------------------------------
     // Profiles (immutable versions plus one active pointer)
     // -------------------------------------------------------------------------

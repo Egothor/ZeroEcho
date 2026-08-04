@@ -73,10 +73,16 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+
+
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
@@ -167,12 +173,12 @@ import zeroecho.pki.spi.store.RevocationHistory;
  */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods",
         "PMD.ExcessivePublicCount", "PMD.UseTryWithResources", "PMD.ExceptionAsFlowControl",
-        "PMD.PreserveStackTrace" })
+        "PMD.PreserveStackTrace", "PMD.NcssCount" })
 public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
 
-    /* package */ static final String CURRENT_STORE_VERSION = "v4";
+    /* package */ static final String CURRENT_STORE_VERSION = "v5";
     private static final String SIGN_RECORD_NAMESPACE = "io.zeroecho.pki.signing-record";
     private static final String SIGN_OWNER_NAMESPACE = "io.zeroecho.pki.signing-owner";
     private static final String STATUS_RECORD_NAMESPACE = "io.zeroecho.pki.status-object-record";
@@ -581,6 +587,101 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     }
 
     @Override
+    public List<CaRecord> listCasPage(Optional<PkiId> afterCaId, int limit) {
+        requireStoreUsable();
+        Objects.requireNonNull(afterCaId, "afterCaId");
+        if (limit <= 0 || limit > 1_000) {
+            throw new IllegalArgumentException("limit must be between 1 and 1000");
+        }
+        Path root = paths.root().resolve("cas").resolve("by-id");
+        if (!Files.isDirectory(root)) {
+            return List.of();
+        }
+        String after = afterCaId.map(PkiId::value).orElse("");
+        List<CaRecord> selected = new ArrayList<>(limit);
+        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(root)) {
+            for (Path entry : entries) {
+                Path current = entry.resolve(FsPaths.CURRENT_FILE);
+                if (!Files.isDirectory(entry) || !Files.isRegularFile(current)) {
+                    continue;
+                }
+                CaRecord record = validateCaCredentialReferences(
+                        FsCodec.decode(FsCodec.CA_RECORD, FsOperations.readAll(current), stagedContent));
+                if (record.caId().value().compareTo(after) <= 0) {
+                    continue;
+                }
+                int position = java.util.Collections.binarySearch(selected, record,
+                        Comparator.comparing(value -> value.caId().value()));
+                selected.add(position < 0 ? -position - 1 : position, record);
+                if (selected.size() > limit) {
+                    selected.remove(limit);
+                }
+            }
+            return List.copyOf(selected);
+        } catch (IOException exception) {
+            throw new IllegalStateException("list CA page failed", exception);
+        }
+    }
+
+    @Override
+    public void putIssuerGeneration(IssuerGeneration generation) {
+        requireStoreUsable();
+        Objects.requireNonNull(generation, "generation");
+        Credential credential = getCredential(generation.credentialId())
+                .orElseThrow(() -> new IllegalStateException("Issuer credential reference is missing"));
+        if (!credential.credentialId().equals(generation.credentialId())) {
+            throw new IllegalStateException("Issuer credential identity mismatch");
+        }
+        writeOnce(paths.issuerGenerationPath(generation.issuerId()),
+                FsCodec.encode(FsCodec.ISSUER_GENERATION, generation), "ISSUER_GENERATION",
+                FsUtil.safeId(generation.issuerId()));
+    }
+
+    @Override
+    public Optional<IssuerGeneration> getIssuerGeneration(PkiId issuerId) {
+        requireStoreUsable();
+        Objects.requireNonNull(issuerId, "issuerId");
+        return readOptional(paths.issuerGenerationPath(issuerId), FsCodec.ISSUER_GENERATION)
+                .map(this::validateIssuerGeneration);
+    }
+
+    @Override
+    public List<IssuerGeneration> listIssuerGenerations(PkiId authorityId) {
+        requireStoreUsable();
+        Objects.requireNonNull(authorityId, "authorityId");
+        Path root = paths.root().resolve("issuer-generations").resolve("by-id");
+        return listBinaryRecords(root, FsCodec.ISSUER_GENERATION).stream().map(this::validateIssuerGeneration)
+                .filter(value -> authorityId.equals(value.authorityId())).toList();
+    }
+
+    @Override
+    public void putIssuerChainPath(IssuerChainPath path) {
+        requireStoreUsable();
+        Objects.requireNonNull(path, "path");
+        validateIssuerChainPath(path);
+        writeOnce(paths.issuerChainPath(path.pathId()), FsCodec.encode(FsCodec.ISSUER_CHAIN_PATH, path),
+                "ISSUER_CHAIN_PATH", FsUtil.safeId(path.pathId()));
+    }
+
+    @Override
+    public Optional<IssuerChainPath> getIssuerChainPath(PkiId pathId) {
+        requireStoreUsable();
+        Objects.requireNonNull(pathId, "pathId");
+        return readOptional(paths.issuerChainPath(pathId), FsCodec.ISSUER_CHAIN_PATH)
+                .map(this::validateIssuerChainPath);
+    }
+
+    @Override
+    public List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId) {
+        requireStoreUsable();
+        Objects.requireNonNull(issuerId, "issuerId");
+        Path root = paths.root().resolve("issuer-chain-paths").resolve("by-id");
+        return listBinaryRecords(root, FsCodec.ISSUER_CHAIN_PATH).stream()
+                .map(this::validateIssuerChainPath)
+                .filter(value -> issuerId.equals(value.issuerId())).toList();
+    }
+
+    @Override
     public void putCredential(final Credential credential) {
         requireStoreUsable();
         Objects.requireNonNull(credential, "credential");
@@ -603,13 +704,110 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         }
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private CaRecord validateCaCredentialReferences(CaRecord record) {
-        for (PkiId credentialId : record.credentialIds()) {
-            if (getCredential(credentialId).isEmpty()) {
-                throw new IllegalStateException("CA credential reference is missing");
+        for (PkiId issuerId : record.issuerIds()) {
+            IssuerGeneration generation = getIssuerGeneration(issuerId)
+                    .orElseThrow(() -> new IllegalStateException("CA issuer-generation reference is missing"));
+            if (!record.caId().equals(generation.authorityId())) {
+                throw new IllegalStateException("CA issuer-generation authority mismatch");
             }
         }
+        IssuerChainPath issuancePath = getIssuerChainPath(record.issuanceChainPathId())
+                .orElseThrow(() -> new IllegalStateException("CA issuance chain path is missing"));
+        if (!record.caId().equals(issuancePath.authorityId())
+                || !record.currentIssuanceIssuerId().equals(issuancePath.issuerId())) {
+            throw new IllegalStateException("CA issuance selection mismatch");
+        }
         return record;
+    }
+
+    private IssuerGeneration validateIssuerGeneration(IssuerGeneration generation) {
+        getCredential(generation.credentialId())
+                .orElseThrow(() -> new IllegalStateException("Issuer credential reference is missing"));
+        return generation;
+    }
+
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    private IssuerChainPath validateIssuerChainPath(IssuerChainPath path) {
+        IssuerGeneration generation = getIssuerGeneration(path.issuerId())
+                .orElseThrow(() -> new IllegalStateException("Issuer generation is missing"));
+        if (!path.authorityId().equals(generation.authorityId())
+                || !path.orderedCredentialIds().get(0).equals(generation.credentialId())) {
+            throw new IllegalStateException("Issuer chain path generation mismatch");
+        }
+        List<Credential> credentials = path.orderedCredentialIds().stream()
+                .map(id -> getCredential(id).orElseThrow(
+                        () -> new IllegalStateException("Issuer chain credential is missing"))).toList();
+        long aggregate = 0L;
+        for (Credential credential : credentials) {
+            aggregate = Math.addExact(aggregate, credential.content().length());
+            if (aggregate > 32L * 1024L * 1024L) {
+                throw new IllegalStateException("Issuer chain exceeds the aggregate artifact limit");
+            }
+        }
+        try {
+            List<X509CertificateHolder> holders = new ArrayList<>(credentials.size());
+            for (Credential credential : credentials) {
+                holders.add(certificateHolder(credential));
+            }
+            for (int index = 0; index + 1 < credentials.size(); index++) {
+                Credential credential = credentials.get(index);
+                Credential parent = credentials.get(index + 1);
+                X509CertificateHolder holder = holders.get(index);
+                X509CertificateHolder parentHolder = holders.get(index + 1);
+                IssuerGeneration signingGeneration = getIssuerGeneration(credential.issuerRef().issuerId())
+                        .orElseThrow(() -> new IllegalStateException("Issuer chain parent generation is missing"));
+                boolean parentGeneration = listIssuerGenerations(credential.issuerRef().caId()).stream()
+                        .anyMatch(candidate -> parent.credentialId().equals(candidate.credentialId()));
+                if (!credential.issuerRef().caId().equals(signingGeneration.authorityId())
+                        || !parentGeneration
+                        || !holder.getIssuer().equals(parentHolder.getSubject())
+                        || !holder.isSignatureValid(new JcaContentVerifierProviderBuilder()
+                                .build(parentHolder.getSubjectPublicKeyInfo()))) {
+                    throw new IllegalStateException("Issuer chain relationship is invalid");
+                }
+            }
+            X509CertificateHolder anchor = holders.get(holders.size() - 1);
+            if (!anchor.getIssuer().equals(anchor.getSubject()) || !anchor.isSignatureValid(
+                    new JcaContentVerifierProviderBuilder().build(anchor.getSubjectPublicKeyInfo()))) {
+                throw new IllegalStateException("Issuer chain trust anchor is invalid");
+            }
+        } catch (IllegalStateException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("Issuer chain validation failed", exception);
+        }
+        return path;
+    }
+
+    private X509CertificateHolder certificateHolder(Credential credential) throws IOException {
+        long length = credential.content().length();
+        if (length <= 0L || length > 1024L * 1024L || length > Integer.MAX_VALUE) {
+            throw new IllegalStateException("Issuer certificate exceeds the artifact limit");
+        }
+        byte[] encoded = new byte[(int) length];
+        try (RepeatableContent content = stagedContent.openContent(credential.content());
+                InputStream input = content.openStream()) {
+            int offset = 0;
+            while (offset < encoded.length) {
+                int count = input.read(encoded, offset, encoded.length - offset);
+                if (count < 0) {
+                    throw new IOException("Issuer certificate is truncated");
+                }
+                offset += count;
+            }
+            if (input.read() >= 0) {
+                throw new IOException("Issuer certificate length changed");
+            }
+            X509CertificateHolder holder = new X509CertificateHolder(encoded);
+            if (!MessageDigest.isEqual(encoded, holder.getEncoded())) {
+                throw new IOException("Issuer certificate is not canonical DER");
+            }
+            return holder;
+        } finally {
+            Arrays.fill(encoded, (byte) 0);
+        }
     }
 
     @Override
@@ -2647,6 +2845,22 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             return out;
         } catch (IOException e) {
             throw new IllegalStateException("list current records failed: " + byIdDir, e);
+        }
+    }
+
+    private <T> List<T> listBinaryRecords(final Path byIdDir, final FsCodec.Schema<T> schema) {
+        if (!Files.isDirectory(byIdDir)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.list(byIdDir)) {
+            List<T> records = new ArrayList<>();
+            for (Path file : files.filter(Files::isRegularFile)
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString())).toList()) {
+                records.add(FsCodec.decode(schema, FsOperations.readAll(file), stagedContent));
+            }
+            return List.copyOf(records);
+        } catch (IOException exception) {
+            throw new IllegalStateException("list immutable records failed", exception);
         }
     }
 

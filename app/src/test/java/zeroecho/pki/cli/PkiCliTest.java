@@ -460,6 +460,11 @@ class PkiCliTest {
                 }
 
                 @Override
+                public zeroecho.pki.application.PkiRepository repository() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
                 public void close() throws Exception {
                     closes.incrementAndGet();
                     if (failClose) {

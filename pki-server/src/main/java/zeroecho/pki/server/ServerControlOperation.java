@@ -56,7 +56,9 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.InspectBreakGlass, ServerControlOperation.ListBreakGlass,
         ServerControlOperation.RevokeBreakGlass, ServerControlOperation.InspectDisclosure,
         ServerControlOperation.SetDisclosure, ServerControlOperation.IssueCapability,
-        ServerControlOperation.RevokeCapability, ServerControlOperation.InspectAuditView {
+        ServerControlOperation.RevokeCapability, ServerControlOperation.InspectAuditView,
+        ServerControlOperation.InspectRepositoryAlias, ServerControlOperation.ListRepositoryAliases,
+        ServerControlOperation.SetRepositoryAlias, ServerControlOperation.RemoveRepositoryAlias {
 
     /** @return stable operation identity */
     String name();
@@ -269,6 +271,41 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
             reasonReference = Objects.requireNonNull(reasonReference); }
         @Override public String name() { return switch (view) { case METADATA_REDACTED -> REDACTED;
             case METADATA_FULL, CONTENT_FULL -> FULL; case PII_FULL -> PII; }; }
+    }
+
+    /** Exact repository alias inspection. */
+    record InspectRepositoryAlias(PkiId authorityId, RepositoryAliasService.Type type)
+            implements ServerControlOperation {
+        public static final String NAME = "repository.alias.inspect";
+        public InspectRepositoryAlias { Objects.requireNonNull(authorityId); Objects.requireNonNull(type); }
+        @Override public String name() { return NAME; }
+    }
+
+    /** Bounded repository alias page. */
+    record ListRepositoryAliases(int offset, int limit) implements ServerControlOperation {
+        public static final String NAME = "repository.alias.list";
+        public ListRepositoryAliases { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+
+    /** Exact CRL or chain alias publication with expected-current protection. */
+    record SetRepositoryAlias(PkiId authorityId, RepositoryAliasService.Type type, PkiId targetObjectId,
+            Optional<PkiId> issuerId, Optional<String> expectedCurrentCommitment) implements ServerControlOperation {
+        public static final String NAME = "repository.alias.set";
+        public SetRepositoryAlias {
+            Objects.requireNonNull(authorityId); Objects.requireNonNull(type); Objects.requireNonNull(targetObjectId);
+            issuerId = Objects.requireNonNull(issuerId); expectedCurrentCommitment = Objects.requireNonNull(expectedCurrentCommitment);
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /** Durable repository alias removal without target mutation. */
+    record RemoveRepositoryAlias(PkiId authorityId, RepositoryAliasService.Type type,
+            String expectedCurrentCommitment) implements ServerControlOperation {
+        public static final String NAME = "repository.alias.remove";
+        public RemoveRepositoryAlias { Objects.requireNonNull(authorityId); Objects.requireNonNull(type);
+            if (expectedCurrentCommitment == null || !expectedCurrentCommitment.matches("[0-9a-f]{64}")) throw invalid(); }
+        @Override public String name() { return NAME; }
     }
 
     private static void page(int offset, int limit) {

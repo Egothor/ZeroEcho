@@ -123,16 +123,11 @@ public final class PkiCoreE2eTest {
     }
 
     @Test
-    void everyIssuerPathSkipsEarlierUnusableCredentialAndSelectsLaterUsable(@TempDir Path tempDir) throws Exception {
+    void explicitIssuerSelectionNeverFallsBackByCollectionOrder(@TempDir Path tempDir) throws Exception {
         KeyPair rootKey = genRsa();
-        KeyPair intermediateKey = genRsa();
-        KeyPair nextIntermediateKey = genRsa();
         KeyPair leafKey = genRsa();
         KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:matrix-root");
-        KeyRef intermediateKeyRef = new KeyRef("kref:v1:keyring:test:matrix-intermediate");
-        KeyRef nextIntermediateKeyRef = new KeyRef("kref:v1:keyring:test:matrix-next");
-        Map<KeyRef, KeyPair> keys = Map.of(rootKeyRef, rootKey, intermediateKeyRef, intermediateKey,
-                nextIntermediateKeyRef, nextIntermediateKey);
+        Map<KeyRef, KeyPair> keys = Map.of(rootKeyRef, rootKey);
 
         try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"), keys)) {
             PkiId rootCaId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
@@ -141,8 +136,7 @@ public final class PkiCoreE2eTest {
             Credential unusable = copyWithId(usable, new PkiId("credential:matrix-unusable"));
             runtime.store().putCredential(unusable);
             CaRecord root = runtime.caService().getCa(rootCaId);
-            runtime.store().putCa(new CaRecord(root.caId(), root.kind(), root.state(), root.issuerKeyRef(),
-                    root.subjectRef(), List.of(unusable.credentialId(), usable.credentialId())));
+            runtime.selectIssuerCredential(root, unusable, true);
 
             List<PkiId> resolved = new ArrayList<>();
             EffectiveCredentialStatusResolver resolver = scriptedResolver(credential -> {
@@ -152,35 +146,62 @@ public final class PkiCoreE2eTest {
             }, false);
             CountingIssuerBackend backend = new CountingIssuerBackend(runtime.issuerBackend());
             IssuanceService issuance = runtime.issuanceService(backend, resolver);
-            CaService caService = runtime.caService(backend, resolver);
-            StatusObjectService statusService = runtime.statusObjectService(resolver);
             ParsedCertificationRequest leafRequest = runtime.certificationRequestService()
                     .parse(new CertificationRequest(runtime.framework().formatId(),
                             new EncodedObject(Encoding.DER, makeCsr(leafKey, "CN=Matrix Leaf").getEncoded())));
 
+            assertThrows(PkiException.class, () -> issuance.issueEndEntity(
+                    new IssueEndEntityCommand(rootCaId, leafRequest, "default", Optional.empty())));
+            assertEquals(List.of(unusable.credentialId()), List.copyOf(resolved));
+            resolved.clear();
+
+            runtime.caService().selectIssuancePath(rootCaId, root.currentIssuanceIssuerId(),
+                    root.issuanceChainPathId(), "restore explicit test selection");
             issuance.issueEndEntity(new IssueEndEntityCommand(rootCaId, leafRequest, "default", Optional.empty()));
-            assertEquals(List.of(unusable.credentialId(), usable.credentialId()), List.copyOf(resolved));
-            resolved.clear();
-
-            PkiId intermediateCaId = caService.createIntermediate(new IntermediateCreateCommand(
-                    runtime.framework().formatId(), rootCaId, new SubjectRef("CN=Matrix Intermediate"),
-                    "intermediate-ca", Optional.of(intermediateKeyRef), emptyAttributes()));
-            assertEquals(List.of(unusable.credentialId(), usable.credentialId()), List.copyOf(resolved));
-            resolved.clear();
-
-            caService.issueIntermediateCertificate(new IntermediateCertIssueCommand(runtime.framework().formatId(),
-                    rootCaId, intermediateCaId, "intermediate-ca", Optional.empty(), emptyAttributes()));
-            assertEquals(List.of(unusable.credentialId(), usable.credentialId()), List.copyOf(resolved));
-            resolved.clear();
-
-            runtime.store().putCa(new CaRecord(root.caId(), root.kind(), root.state(), root.issuerKeyRef(),
-                    root.subjectRef(), List.of(usable.credentialId(), unusable.credentialId())));
-            statusService.generate(new StatusObjectGenerateCommand(rootCaId, StatusObjectType.CRL,
-                    runtime.framework().formatId(), emptyAttributes()));
-            assertEquals(List.of(unusable.credentialId(), usable.credentialId()), List.copyOf(resolved));
+            assertEquals(List.of(usable.credentialId()), List.copyOf(resolved));
             assertEquals(1, backend.endEntityCalls.get());
-            assertEquals(2, backend.intermediateCalls.get());
         }
+    }
+
+    @Test
+    void crossSignedIssuerPathsRemainExplicitAndDoNotChangeIssuanceSelection(@TempDir Path tempDir)
+            throws Exception {
+        System.out.println("crossSignedIssuerPathsRemainExplicitAndDoNotChangeIssuanceSelection");
+        KeyPair rootKey = genRsa();
+        KeyPair intermediateKey = genRsa();
+        KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:cross-root");
+        KeyRef intermediateKeyRef = new KeyRef("kref:v1:keyring:test:cross-intermediate");
+        try (PkiTestRuntime runtime = PkiTestRuntime.create(tempDir, tempDir.resolve("bus.log"),
+                Map.of(rootKeyRef, rootKey, intermediateKeyRef, intermediateKey))) {
+            PkiId rootId = runtime.caService().createRoot(new CaCreateCommand(runtime.framework().formatId(),
+                    new SubjectRef("CN=Cross Root"), "root-ca", Optional.of(rootKeyRef), emptyAttributes()));
+            PkiId intermediateId = runtime.caService().createIntermediate(new IntermediateCreateCommand(
+                    runtime.framework().formatId(), rootId, new SubjectRef("CN=Cross Intermediate"),
+                    "intermediate-ca", Optional.of(intermediateKeyRef), emptyAttributes()));
+            CaRecord originalRoot = runtime.caService().getCa(rootId);
+            CaRecord intermediate = runtime.caService().getCa(intermediateId);
+            PkiId originalIssuancePath = intermediate.issuanceChainPathId();
+
+            Credential rootCredential = runtime.caCredential(originalRoot, 0);
+            Credential alternateRootCredential = copyWithId(rootCredential,
+                    new PkiId("credential:cross-root-alternate"));
+            runtime.store().putCredential(alternateRootCredential);
+            CaRecord rotatedRoot = runtime.selectIssuerCredential(originalRoot, alternateRootCredential, true);
+            PkiId alternateRootPath = rotatedRoot.issuanceChainPathId();
+
+            zeroecho.pki.api.ca.IssuerChainPath alternate = runtime.caService().registerIssuerChainPath(
+                    intermediateId, intermediate.currentIssuanceIssuerId(), alternateRootPath);
+            assertEquals(2, runtime.caService().listIssuerChainPaths(
+                    intermediate.currentIssuanceIssuerId()).size());
+            assertFalse(originalIssuancePath.equals(alternate.pathId()));
+            assertEquals(originalIssuancePath,
+                    runtime.caService().getCa(intermediateId).issuanceChainPathId());
+            assertEquals(alternateRootCredential.credentialId(),
+                    alternate.orderedCredentialIds().getLast());
+            System.out.println("...issuerId=" + intermediate.currentIssuanceIssuerId().value()
+                    + " paths=2 selected=" + originalIssuancePath.value());
+        }
+        System.out.println("...ok");
     }
 
     @Test
@@ -202,7 +223,8 @@ public final class PkiCoreE2eTest {
                     .createIntermediate(new IntermediateCreateCommand(runtime.framework().formatId(), rootCaId,
                             new SubjectRef("CN=H6 Intermediate"), "intermediate-ca", Optional.of(intermediateKeyRef),
                             emptyAttributes()));
-            PkiId rootCredentialId = runtime.caService().getCa(rootCaId).credentialIds().get(0);
+            PkiId rootCredentialId = runtime.store().getIssuerGeneration(
+                    runtime.caService().getCa(rootCaId).currentIssuanceIssuerId()).orElseThrow().credentialId();
             runtime.revocationService().revokePermanently(new RevocationCommand.RevokePermanently(rootCredentialId,
                     RevocationReason.KEY_COMPROMISE, emptyAttributes()));
             int submissionsBeforeRejections = runtime.submittedSignCount();
@@ -231,7 +253,7 @@ public final class PkiCoreE2eTest {
 
             assertEquals(submissionsBeforeRejections, runtime.submittedSignCount());
             assertTrue(runtime.store().getCredential(rootCredentialId).isPresent());
-            assertTrue(runtime.caService().getCa(intermediateCaId).credentialIds().size() == 1);
+            assertTrue(runtime.caService().getCa(intermediateCaId).issuerIds().size() == 1);
         }
     }
 
@@ -280,6 +302,10 @@ public final class PkiCoreE2eTest {
                     .issueEndEntity(new IssueEndEntityCommand(rootCaId, parsed, "default", Optional.empty()));
 
             assertNotNull(bundle);
+            assertEquals(1, bundle.supportingObjects().size());
+            CredentialBundle rebuilt = issSvc.buildBundle(new BundleCommand(
+                    bundle.credential().credentialId(), Optional.empty(), Optional.empty()));
+            assertEquals(bundle.supportingObjects(), rebuilt.supportingObjects());
             System.out.println("...issuedCredentialId=" + bundle.credential().credentialId().value());
 
             X509CertificateHolder eeCert = new X509CertificateHolder(runtime.credentialBytes(bundle.credential()));
@@ -333,7 +359,7 @@ public final class PkiCoreE2eTest {
             int signCount = runtime.submittedSignCount();
             int caCount = runtime.store().listCas().size();
             int statusCount = runtime.store().listStatusObjects(rootCaId).size();
-            int intermediateCredentialCount = runtime.caService().getCa(intermediateCaId).credentialIds().size();
+            int intermediateCredentialCount = runtime.caService().getCa(intermediateCaId).issuerIds().size();
 
             assertThrows(PkiException.class, () -> issuance
                     .issueEndEntity(new IssueEndEntityCommand(rootCaId, leafRequest, "default", Optional.empty())));
@@ -356,7 +382,7 @@ public final class PkiCoreE2eTest {
             assertEquals(caCount, runtime.store().listCas().size());
             assertEquals(statusCount, runtime.store().listStatusObjects(rootCaId).size());
             assertEquals(intermediateCredentialCount,
-                    runtime.caService().getCa(intermediateCaId).credentialIds().size());
+                    runtime.caService().getCa(intermediateCaId).issuerIds().size());
             assertTrue(runtime.store().getCredential(rootCredential.credentialId()).isPresent());
             assertFalse(runtime.auditSink().snapshot().toString().contains("DO_NOT_EXPOSE_REVOCATION_SENTINEL"));
         }

@@ -249,15 +249,16 @@ final class FsCodecTest {
     @Test
     void caRecordRoundTripsOnlyOrderedCredentialIdentifiersAndRejectsEmbeddedValueTag() {
         System.out.println("caRecordRoundTripsOnlyOrderedCredentialIdentifiersAndRejectsEmbeddedValueTag");
-        PkiId first = new PkiId("credential-first");
-        PkiId second = new PkiId("credential-second");
+        PkiId first = new PkiId("issuer-first");
+        PkiId second = new PkiId("issuer-second");
         CaRecord original = new CaRecord(new PkiId("ca-codec"), CaKind.ROOT, CaState.ACTIVE,
-                new KeyRef("key-codec"), new SubjectRef("CN=Codec"), List.of(first, second));
+                new KeyRef("key-codec"), new SubjectRef("CN=Codec"), List.of(first, second), first,
+                new PkiId("path-codec"));
 
         byte[] encoded = FsCodec.encode(FsCodec.CA_RECORD, original);
         CaRecord decoded = FsCodec.decode(FsCodec.CA_RECORD, encoded);
         assertEquals(original, decoded);
-        assertEquals(List.of(first, second), decoded.credentialIds());
+        assertEquals(List.of(first, second), decoded.issuerIds());
 
         byte[] embeddedValueTag = encoded.clone();
         int firstIdentifier = indexOf(embeddedValueTag, first.value().getBytes(StandardCharsets.UTF_8));

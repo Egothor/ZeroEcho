@@ -76,6 +76,8 @@ public final class ServerRealmContext implements AutoCloseable {
     private final ApprovalService approvals;
     private final BreakGlassService breakGlass;
     private final DisclosureService disclosure;
+    private final RepositoryAliasService repositoryAliases;
+    private final PublicRepositoryGateway publicRepository;
     private final AuditorViews auditorViews;
     private final ServerOperationGateway gateway;
     private final SafeAudit audit;
@@ -84,6 +86,7 @@ public final class ServerRealmContext implements AutoCloseable {
     private ServerRealmContext(ServerRealmConfiguration configuration, ServerControlStore control,
             PkiSession session, RoleTemplateCatalog roles, AuthorizationEngine authorization,
             ApprovalService approvals, BreakGlassService breakGlass, DisclosureService disclosure,
+            RepositoryAliasService repositoryAliases,
             AuditorViews auditorViews, AuditSink auditSink, Clock clock) {
         this.configuration = configuration;
         this.control = control;
@@ -93,10 +96,15 @@ public final class ServerRealmContext implements AutoCloseable {
         this.approvals = approvals;
         this.breakGlass = breakGlass;
         this.disclosure = disclosure;
+        this.repositoryAliases = repositoryAliases;
+        this.publicRepository = new PublicRepositoryGateway(configuration.realmId(), configuration.authorityExposure(),
+                session.repository(), control, roles, authorization, breakGlass, disclosure, repositoryAliases,
+                this::requireOpen);
         this.auditorViews = auditorViews;
         this.audit = new SafeAudit(clock, auditSink);
         this.gateway = new ServerOperationGateway(configuration.realmId(), configuration.authorityExposure(),
                 control, roles, authorization, approvals, breakGlass, disclosure, auditorViews,
+                Optional.of(repositoryAliases),
                 new OperationSecurityDescriptors(),
                 session.operations(), session.resourceScopes(), configuration.approvalPolicies(), clock, auditSink,
                 this::requireOpen);
@@ -143,9 +151,11 @@ public final class ServerRealmContext implements AutoCloseable {
             BreakGlassService breakGlass = new BreakGlassService(control, clock, audit);
             DisclosureService disclosure = new DisclosureService(exact.realmId(), control,
                     exact.disclosureDefaults(), clock, random, audit);
+            RepositoryAliasService aliases = new RepositoryAliasService(exact.realmId(), control,
+                    session.repository(), disclosure, clock, audit);
             AuditorViews views = new AuditorViews(clock, audit);
             ServerRealmContext result = new ServerRealmContext(exact, control, session, roles, authorization,
-                    approvals, breakGlass, disclosure, views, audit, clock);
+                    approvals, breakGlass, disclosure, aliases, views, audit, clock);
             result.audit.record("REALM_OPEN", "system", Optional.empty(), Map.of("realm", exact.realmId().value()));
             return result;
         } catch (RuntimeException | Error primary) {
@@ -168,6 +178,10 @@ public final class ServerRealmContext implements AutoCloseable {
     public BreakGlassService breakGlass() { requireOpen(); return breakGlass; }
     /** @return durable disclosure decision service */
     public DisclosureService disclosure() { requireOpen(); return disclosure; }
+    /** @return durable non-authoritative public repository alias service */
+    public RepositoryAliasService repositoryAliases() { requireOpen(); return repositoryAliases; }
+    /** @return read-only disclosed public repository gateway */
+    public PublicRepositoryGateway publicRepository() { requireOpen(); return publicRepository; }
     /** @return explicit auditor projection service */
     public AuditorViews auditorViews() { requireOpen(); return auditorViews; }
     /** @return authorized typed-operation gateway */

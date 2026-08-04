@@ -63,10 +63,10 @@ class ServerControlOperationExecutorTest {
     void catalogContainsOneExplicitPairOfOperationFamilies() {
         System.out.println("catalogContainsOneExplicitPairOfOperationFamilies");
         OperationSecurityDescriptors catalog = new OperationSecurityDescriptors();
-        assertEquals(50, catalog.descriptors().size());
+        assertEquals(54, catalog.descriptors().size());
         assertEquals(16, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
-        assertEquals(34, catalog.descriptors().values().stream()
+        assertEquals(38, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION)
                 .count());
         assertEquals(OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION,
@@ -211,7 +211,7 @@ class ServerControlOperationExecutorTest {
                 new AuthorizationEngine(ServerTestSupport.CLOCK),
                 new ApprovalService(opened.store(), ServerTestSupport.CLOCK, opened.audit()),
                 new BreakGlassService(opened.store(), ServerTestSupport.CLOCK, opened.audit()), disclosure,
-                new AuditorViews(ServerTestSupport.CLOCK, opened.audit()), descriptors,
+                new AuditorViews(ServerTestSupport.CLOCK, opened.audit()), Optional.empty(), descriptors,
                 Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, policy));
     }
 

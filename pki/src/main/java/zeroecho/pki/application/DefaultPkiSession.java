@@ -116,6 +116,7 @@ final class DefaultPkiSession implements PkiSession {
     private final X509AlgorithmBindingRegistry algorithmBindings;
     private final PkiResourceScopeResolver resourceScopes;
     private final PkiOperationExecutor operations;
+    private final PkiRepository repository;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     private DefaultPkiSession(PkiSessionConfiguration configuration, PkiStore store, AuditSink audit,
@@ -134,8 +135,15 @@ final class DefaultPkiSession implements PkiSession {
         this.signatureWorkflow = graph.signatureWorkflow();
         this.algorithmBindings = Objects.requireNonNull(algorithmBindings, "algorithmBindings");
         this.resourceScopes = new DefaultPkiResourceScopeResolver(store, this::requireOpen);
+        this.repository = new DefaultPkiRepository(store, this::requireOpen);
         this.operations = new DefaultPkiOperationExecutor(configuration, store, profiles, revocations, authorities,
                 requests, issuance, statusObjects, publications, algorithmBindings, this::requireOpen);
+    }
+
+    @Override
+    public PkiRepository repository() {
+        requireOpen();
+        return repository;
     }
 
     /* default */ static PkiSession open(PkiSessionConfiguration configuration) {

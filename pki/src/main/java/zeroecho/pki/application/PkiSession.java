@@ -135,6 +135,9 @@ public interface PkiSession extends AutoCloseable {
     /** @return shared typed operation executor owned by this session */
     PkiOperationExecutor operations();
 
+    /** @return read-only authoritative repository facade owned by this session */
+    PkiRepository repository();
+
     /**
      * Closes services and backend resources in reverse construction order.
      * Repeated calls are harmless; primary and suppressed failures are preserved.

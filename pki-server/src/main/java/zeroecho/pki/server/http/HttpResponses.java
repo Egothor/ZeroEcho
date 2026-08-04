@@ -84,12 +84,12 @@ final class HttpResponses {
         byte[] token = sensitive.consumeToken();
         try {
             MapBuilder result = new MapBuilder(sensitive.safeResult().fields());
-            result.put("token", new PkiOperationValue.Text(java.util.Base64.getUrlEncoder()
-                    .withoutPadding().encodeToString(token)));
-            Response encoded = encode(200, requestId, operation, "SUCCEEDED",
-                    new PkiOperationValue.ObjectValue(result.values()), null);
             String capabilityId = ((PkiOperationValue.Text) sensitive.safeResult().fields()
                     .get("capabilityId")).value();
+            result.put("token", new PkiOperationValue.Text(
+                    zeroecho.pki.server.DisclosureService.bearerCredential(capabilityId, token)));
+            Response encoded = encode(200, requestId, operation, "SUCCEEDED",
+                    new PkiOperationValue.ObjectValue(result.values()), null);
             return new Response(encoded.statusCode(), encoded.body(), true, java.util.Optional.of(capabilityId));
         } finally {
             java.util.Arrays.fill(token, (byte) 0);

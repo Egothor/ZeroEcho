@@ -78,6 +78,8 @@ import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.ca.CaCreateCommand;
 import zeroecho.pki.api.ca.CaImportCommand;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.IntermediateCertIssueCommand;
 import zeroecho.pki.api.ca.IntermediateCreateCommand;
@@ -140,7 +142,7 @@ final class CaProfileIssuanceEnforcementTest {
             assertEquals(holder.getSubject().toString(), intermediate.subjectRef().value());
             assertEquals(intermediate.subjectRef(), credential.subjectRef());
             assertEquals(intermediate.subjectRef(), additional.subjectRef());
-            assertEquals(2, intermediate.credentialIds().size());
+            assertEquals(2, intermediate.issuerIds().size());
         }
     }
 
@@ -225,7 +227,7 @@ final class CaProfileIssuanceEnforcementTest {
                     .caCredential(runtime.caService().getCa(rootId), 0)
                     .profileBinding();
             assertEquals(1, issuerBinding.reference().profileVersion());
-            assertEquals(1, runtime.caService().getCa(intermediateId).credentialIds().size());
+            assertEquals(1, runtime.caService().getCa(intermediateId).issuerIds().size());
         }
     }
 
@@ -436,8 +438,18 @@ final class CaProfileIssuanceEnforcementTest {
                     original.serialOrUniqueId(), original.publicKeyId(), new CaProfileBinding(wrongFormat),
                     original.status(), original.content(), original.attributes());
             runtime.store().putCredential(mutated);
+            IssuerGeneration originalGeneration = runtime.store()
+                    .getIssuerGeneration(root.currentIssuanceIssuerId()).orElseThrow();
+            IssuerGeneration generation = new IssuerGeneration(
+                    IssuerGeneration.idFor(root.caId(), mutated.credentialId()), root.caId(),
+                    mutated.credentialId(), originalGeneration.signingKeyRef(), originalGeneration.state(),
+                    originalGeneration.profilePolicyCommitment(), originalGeneration.x509BindingCommitment());
+            runtime.store().putIssuerGeneration(generation);
+            IssuerChainPath path = IssuerChainPath.create(root.caId(), generation.issuerId(),
+                    List.of(mutated.credentialId()));
+            runtime.store().putIssuerChainPath(path);
             runtime.store().putCa(new CaRecord(root.caId(), root.kind(), root.state(), root.issuerKeyRef(),
-                    root.subjectRef(), List.of(mutated.credentialId())));
+                    root.subjectRef(), List.of(generation.issuerId()), generation.issuerId(), path.pathId()));
 
             int signCount = runtime.submittedSignCount();
             assertThrows(PkiException.class,
@@ -521,7 +533,7 @@ final class CaProfileIssuanceEnforcementTest {
                             new IntermediateCertIssueCommand(runtime.framework().formatId(), rootId, rootId,
                                     "intermediate-ca", Optional.empty(), new SimpleAttributeSet())));
             assertEquals(signCount, runtime.submittedSignCount());
-            assertEquals(1, runtime.caService().getCa(rootId).credentialIds().size());
+            assertEquals(1, runtime.caService().getCa(rootId).issuerIds().size());
         }
     }
 
@@ -548,7 +560,7 @@ final class CaProfileIssuanceEnforcementTest {
                                     runtime.framework().formatId(), rootId, intermediateId, "intermediate-ca",
                                     Optional.of(invalid), new SimpleAttributeSet())));
             assertEquals(signCount, runtime.submittedSignCount());
-            assertEquals(1, runtime.caService().getCa(intermediateId).credentialIds().size());
+            assertEquals(1, runtime.caService().getCa(intermediateId).issuerIds().size());
         }
     }
 
@@ -670,7 +682,7 @@ final class CaProfileIssuanceEnforcementTest {
 
     private static Credential onlyCredential(PkiTestRuntime runtime, PkiId caId) {
         CaRecord ca = runtime.caService().getCa(caId);
-        assertEquals(1, ca.credentialIds().size());
+        assertEquals(1, ca.issuerIds().size());
         return runtime.caCredential(ca, 0);
     }
 

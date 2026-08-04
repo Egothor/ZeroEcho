@@ -49,7 +49,8 @@ import zeroecho.pki.api.PkiId;
 
 /** Durable disclosure authority and capability-based retrieval decision service. */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.AvoidLiteralsInIfCondition",
-        "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel" })
+        "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel",
+        "PMD.CyclomaticComplexity" })
 public final class DisclosureService {
     /** Durable one-time delivery classification without retaining the raw token. */
     public enum DeliveryState {
@@ -267,16 +268,54 @@ public final class DisclosureService {
         return switch (record.policy()) {
             case PUBLIC -> Decision.ALLOWED;
             case PUBLIC_UNLISTED -> capabilityToken.filter(token -> validCapability(record.objectId(), token))
-                    .isPresent() ? Decision.ALLOWED : Decision.DENIED;
+                    .isPresent() || principal.isPresent() && (ownerRelationship || explicitAdministrativePermission)
+                            ? Decision.ALLOWED : Decision.DENIED;
             case AUTHENTICATED -> principal.filter(SecurityPrincipal::enabled)
                     .filter(value -> value.type() != SecurityPrincipal.Type.PUBLIC)
                     .map(ignored -> Decision.ALLOWED).orElse(Decision.DENIED);
             case OWNER_ONLY -> ownerRelationship || explicitAdministrativePermission
                     ? Decision.ALLOWED : Decision.DENIED;
             case RESTRICTED -> explicitAdministrativePermission ? Decision.ALLOWED : Decision.DENIED;
-            case NOT_PUBLISHED -> explicitAdministrativePermission || ownerRelationship
-                    ? Decision.ALLOWED : Decision.DENIED;
+            case NOT_PUBLISHED -> Decision.DENIED;
         };
+    }
+
+    /**
+     * Evaluates public repository retrieval using a point-addressable bearer
+     * credential. Capability and principal authority are not combined.
+     */
+    public synchronized Decision decideRepository(PkiId objectId, Optional<SecurityPrincipal> principal,
+            boolean ownerRelationship, boolean explicitAdministrativePermission, Optional<String> bearer) {
+        Record record = store.requireDisclosure(objectId);
+        if (bearer.isPresent()) {
+            return record.policy() == Policy.PUBLIC_UNLISTED
+                    && validBearer(objectId, bearer.orElseThrow()) ? Decision.ALLOWED : Decision.DENIED;
+        }
+        return switch (record.policy()) {
+            case PUBLIC -> Decision.ALLOWED;
+            case PUBLIC_UNLISTED -> principal.isPresent() && (ownerRelationship || explicitAdministrativePermission)
+                    ? Decision.ALLOWED : Decision.DENIED;
+            case AUTHENTICATED -> principal.filter(SecurityPrincipal::enabled)
+                    .filter(value -> value.type() != SecurityPrincipal.Type.PUBLIC)
+                    .map(ignored -> Decision.ALLOWED).orElse(Decision.DENIED);
+            case OWNER_ONLY -> ownerRelationship || explicitAdministrativePermission
+                    ? Decision.ALLOWED : Decision.DENIED;
+            case RESTRICTED -> explicitAdministrativePermission ? Decision.ALLOWED : Decision.DENIED;
+            case NOT_PUBLISHED -> Decision.DENIED;
+        };
+    }
+
+    /** Returns the strict one-time bearer credential for an issued capability. */
+    public static String bearerCredential(Capability capability, byte[] token) {
+        Objects.requireNonNull(capability, "capability");
+        return bearerCredential(capability.capabilityId(), token);
+    }
+
+    /** Returns the strict bearer credential for one non-secret capability ID. */
+    public static String bearerCredential(String capabilityId, byte[] token) {
+        Permission.requireId(capabilityId, "capability");
+        if (token == null || token.length != 32) throw new IllegalArgumentException("Capability token length");
+        return capabilityId + '.' + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(token);
     }
 
     /** Issues 256 random capability bits and persists only their commitment. */
@@ -333,6 +372,32 @@ public final class DisclosureService {
                             capabilityCommitment(objectId, capability.expiresAt(), token))) return true;
         }
         return false;
+    }
+
+    private boolean validBearer(PkiId objectId, String bearer) {
+        if (bearer == null || !bearer.matches("cap-[0-9a-f]{32}\\.[A-Za-z0-9_-]{43}")) return false;
+        int separator = bearer.indexOf('.');
+        DisclosureService.Capability capability;
+        try {
+            capability = store.requireCapability(bearer.substring(0, separator));
+        } catch (IllegalArgumentException unavailable) {
+            return false;
+        }
+        byte[] token;
+        try {
+            token = java.util.Base64.getUrlDecoder().decode(bearer.substring(separator + 1));
+        } catch (IllegalArgumentException malformed) {
+            return false;
+        }
+        try {
+            return token.length == 32 && !capability.revoked() && capability.realmId().equals(realmId)
+                    && capability.objectId().equals(objectId) && "RETRIEVE".equals(capability.action())
+                    && clock.instant().isBefore(capability.expiresAt())
+                    && MessageDigest.isEqual(capability.tokenCommitment(),
+                            capabilityCommitment(objectId, capability.expiresAt(), token));
+        } finally {
+            java.util.Arrays.fill(token, (byte) 0);
+        }
     }
 
     private byte[] capabilityCommitment(PkiId objectId, Instant expiry, byte[] token) {

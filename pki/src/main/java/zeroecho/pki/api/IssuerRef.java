@@ -34,21 +34,38 @@
 package zeroecho.pki.api;
 
 /**
- * References an issuing CA entity.
+ * References the exact issuer generation that produced a credential.
  *
  * @param caId identifier of the CA entity acting as issuer
+ * @param issuerId canonical issuer-generation identifier
+ * @param chainPathId exact issuance chain path selected for the credential
  */
-public record IssuerRef(PkiId caId) {
+public record IssuerRef(PkiId caId, PkiId issuerId, PkiId chainPathId) {
+
+    /**
+     * Creates a transient unresolved reference used only at framework adapter
+     * boundaries. Application services must replace it before persistence.
+     *
+     * @param caId logical issuer authority
+     */
+    public IssuerRef(PkiId caId) {
+        this(caId, new PkiId("issuer-unresolved:" + caId.value()), new PkiId("path-unresolved:" + caId.value()));
+    }
 
     /**
      * Creates an issuer reference.
      *
-     * @param caId CA identifier
-     * @throws IllegalArgumentException if {@code caId} is null
+     * @throws IllegalArgumentException if either identifier is {@code null}
      */
     public IssuerRef {
         if (caId == null) {
             throw new IllegalArgumentException("caId must not be null");
+        }
+        if (issuerId == null) {
+            throw new IllegalArgumentException("issuerId must not be null");
+        }
+        if (chainPathId == null) {
+            throw new IllegalArgumentException("chainPathId must not be null");
         }
     }
 }

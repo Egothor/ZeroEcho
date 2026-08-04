@@ -209,8 +209,34 @@ public final class PkiTestRuntime implements AutoCloseable {
     }
 
     public Credential caCredential(zeroecho.pki.api.ca.CaRecord ca, int index) {
-        PkiId credentialId = ca.credentialIds().get(index);
+        PkiId credentialId = store.getIssuerGeneration(ca.issuerIds().get(index)).orElseThrow().credentialId();
         return store.getCredential(credentialId).orElseThrow();
+    }
+
+    public zeroecho.pki.api.ca.CaRecord selectIssuerCredential(zeroecho.pki.api.ca.CaRecord authority,
+            Credential credential, boolean retainExisting) {
+        zeroecho.pki.api.ca.IssuerGeneration previous = store
+                .getIssuerGeneration(authority.currentIssuanceIssuerId()).orElseThrow();
+        zeroecho.pki.api.ca.IssuerGeneration generation = new zeroecho.pki.api.ca.IssuerGeneration(
+                zeroecho.pki.api.ca.IssuerGeneration.idFor(authority.caId(), credential.credentialId()),
+                authority.caId(), credential.credentialId(), previous.signingKeyRef(), previous.state(),
+                previous.profilePolicyCommitment(), previous.x509BindingCommitment());
+        store.putIssuerGeneration(generation);
+        zeroecho.pki.api.ca.IssuerChainPath oldPath = store
+                .getIssuerChainPath(authority.issuanceChainPathId()).orElseThrow();
+        java.util.List<PkiId> credentials = new java.util.ArrayList<>(oldPath.orderedCredentialIds());
+        credentials.set(0, credential.credentialId());
+        zeroecho.pki.api.ca.IssuerChainPath path = zeroecho.pki.api.ca.IssuerChainPath.create(authority.caId(),
+                generation.issuerId(), credentials);
+        store.putIssuerChainPath(path);
+        java.util.List<PkiId> issuers = new java.util.ArrayList<>();
+        if (retainExisting) issuers.addAll(authority.issuerIds());
+        issuers.add(generation.issuerId());
+        zeroecho.pki.api.ca.CaRecord updated = new zeroecho.pki.api.ca.CaRecord(authority.caId(), authority.kind(),
+                authority.state(), authority.issuerKeyRef(), authority.subjectRef(), issuers,
+                generation.issuerId(), path.pathId());
+        store.putCa(updated);
+        return updated;
     }
 
     private record UntrustedReference(String storeId, String contentId, Encoding encoding, long length, String sha256,

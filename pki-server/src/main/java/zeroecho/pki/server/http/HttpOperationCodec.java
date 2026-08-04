@@ -56,6 +56,7 @@ import zeroecho.pki.server.ApprovalService;
 import zeroecho.pki.server.DisclosureService;
 import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.RealmId;
+import zeroecho.pki.server.RepositoryAliasService;
 import zeroecho.pki.server.RoleTemplateCatalog;
 import zeroecho.pki.server.SecurityPrincipal;
 import zeroecho.pki.server.ServerControlOperation;
@@ -366,6 +367,30 @@ final class HttpOperationCodec {
                 yield new ServerControlOperation.InspectAuditView(fields.pkiId("objectId"), view,
                         fields.optionalText("reasonReference"));
             }
+            case ServerControlOperation.InspectRepositoryAlias.NAME -> {
+                fields.exact("authorityId", "type");
+                yield new ServerControlOperation.InspectRepositoryAlias(fields.pkiId("authorityId"),
+                        RepositoryAliasService.Type.valueOf(fields.text("type")));
+            }
+            case ServerControlOperation.ListRepositoryAliases.NAME -> {
+                fields.exact("offset", "limit");
+                yield new ServerControlOperation.ListRepositoryAliases(fields.integer("offset"),
+                        fields.integer("limit"));
+            }
+            case ServerControlOperation.SetRepositoryAlias.NAME -> {
+                fields.allowed(Set.of("authorityId", "type", "targetObjectId", "issuerId",
+                        "expectedCurrentCommitment"));
+                yield new ServerControlOperation.SetRepositoryAlias(fields.pkiId("authorityId"),
+                        RepositoryAliasService.Type.valueOf(fields.text("type")),
+                        fields.pkiId("targetObjectId"), fields.optionalText("issuerId").map(PkiId::new),
+                        fields.optionalText("expectedCurrentCommitment"));
+            }
+            case ServerControlOperation.RemoveRepositoryAlias.NAME -> {
+                fields.exact("authorityId", "type", "expectedCurrentCommitment");
+                yield new ServerControlOperation.RemoveRepositoryAlias(fields.pkiId("authorityId"),
+                        RepositoryAliasService.Type.valueOf(fields.text("type")),
+                        fields.text("expectedCurrentCommitment"));
+            }
             default -> throw new SecurityException("Control operation is not exposed");
         };
     }
@@ -378,6 +403,12 @@ final class HttpOperationCodec {
             case ServerControlOperation.EvaluateAuthorization value -> value.resource().scope();
             case ServerControlOperation.RequestApproval value -> value.targetResource().scope();
             case ServerControlOperation.CreateBreakGlass value -> value.grant().scope();
+            case ServerControlOperation.InspectRepositoryAlias value -> authorityScope(realmId, authority,
+                    value.authorityId());
+            case ServerControlOperation.SetRepositoryAlias value -> authorityScope(realmId, authority,
+                    value.authorityId());
+            case ServerControlOperation.RemoveRepositoryAlias value -> authorityScope(realmId, authority,
+                    value.authorityId());
             default -> new Permission.Scope(realmId, authority, Optional.empty(), Optional.empty());
         };
     }
@@ -388,8 +419,17 @@ final class HttpOperationCodec {
             case ServerControlOperation.SetDisclosure value -> Optional.of(value.objectId());
             case ServerControlOperation.IssueCapability value -> Optional.of(value.objectId());
             case ServerControlOperation.InspectAuditView value -> Optional.of(value.objectId());
+            case ServerControlOperation.SetRepositoryAlias value -> Optional.of(value.targetObjectId());
             default -> Optional.empty();
         };
+    }
+
+    private static Permission.Scope authorityScope(RealmId realmId, Optional<PkiId> requested,
+            PkiId embedded) {
+        if (requested.isEmpty() || !requested.orElseThrow().equals(embedded)) {
+            throw new IllegalArgumentException("Repository alias and authority scope differ");
+        }
+        return new Permission.Scope(realmId, requested, Optional.empty(), Optional.empty());
     }
 
     private static boolean realmWide(PkiOperation operation) {

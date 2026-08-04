@@ -376,10 +376,13 @@ public final class DefaultCaService implements CaService {
 
         PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
         PkiId caId = new PkiId("ca:" + sha256Hex(certDer).substring(0, 16));
+        PkiId issuerId = zeroecho.pki.api.ca.IssuerGeneration.idFor(caId, credId);
+        zeroecho.pki.api.ca.IssuerChainPath rootPath = IssuerAuthorities.rootPath(caId, issuerId, credId);
 
         PkiId publicKeyId = new PkiId("spki:" + sha256Hex(spki.bytes()));
 
-        Credential credential = new Credential(credId, command.formatId(), new IssuerRef(caId), request.subjectRef(),
+        Credential credential = new Credential(credId, command.formatId(),
+                new IssuerRef(caId, issuerId, rootPath.pathId()), request.subjectRef(),
                 validity, serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
                 CredentialStatus.ISSUED, CredentialContent.stage(store, certDer),
                 SimpleAttributeSet.builder().build());
@@ -387,8 +390,10 @@ public final class DefaultCaService implements CaService {
 
         requireCaCertificateMatches(credential, credential, request, caId, CREATE_ROOT_REJECTED, BACKEND_CRED_MISMATCH);
         store.putCredential(credential);
+        store.putIssuerGeneration(IssuerAuthorities.generation(caId, keyRef, credential));
+        store.putIssuerChainPath(rootPath);
         CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, keyRef, request.subjectRef(),
-                List.of(credential.credentialId()));
+                List.of(issuerId), issuerId, rootPath.pathId());
         store.putCa(ca);
         return caId;
     }
@@ -448,6 +453,8 @@ public final class DefaultCaService implements CaService {
 
         PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
         PkiId caId = new PkiId("ca:" + sha256Hex(certDer).substring(0, 16));
+        PkiId issuerId = zeroecho.pki.api.ca.IssuerGeneration.idFor(caId, credId);
+        zeroecho.pki.api.ca.IssuerChainPath rootPath = IssuerAuthorities.rootPath(caId, issuerId, credId);
 
         byte[] spkiDer;
         try {
@@ -464,7 +471,8 @@ public final class DefaultCaService implements CaService {
                 ValidatedCaCertificateRequest.Operation.IMPORT_ROOT, activeProfile, CertificateProfileKind.ROOT_CA,
                 command.formatId(), caId, caId, command.subjectRef(), spki, Optional.of(validity), evaluationTime,
                 Optional.empty(), serial, authority);
-        Credential credential = new Credential(credId, command.formatId(), new IssuerRef(caId), request.subjectRef(),
+        Credential credential = new Credential(credId, command.formatId(),
+                new IssuerRef(caId, issuerId, rootPath.pathId()), request.subjectRef(),
                 validity, serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
                 CredentialStatus.ISSUED, command.existingCaCredential(),
                 SimpleAttributeSet.builder().build());
@@ -473,8 +481,10 @@ public final class DefaultCaService implements CaService {
                 ROOT_CREDENTIAL_INVALID);
         requireValidImportedRoot(command, holder);
         store.putCredential(credential);
+        store.putIssuerGeneration(IssuerAuthorities.generation(caId, command.keyRef(), credential));
+        store.putIssuerChainPath(rootPath);
         CaRecord ca = new CaRecord(caId, CaKind.ROOT, CaState.ACTIVE, command.keyRef(), request.subjectRef(),
-                List.of(credential.credentialId()));
+                List.of(issuerId), issuerId, rootPath.pathId());
         store.putCa(ca);
         return caId;
     }
@@ -526,15 +536,14 @@ public final class DefaultCaService implements CaService {
 
         CaRecord issuer = getCa(command.issuerCaId());
         ensureActive(issuer, "issuer");
-        if (issuer.credentialIds().isEmpty()) {
-            throw new PkiException("Issuer CA has no credentials");
-        }
         if (!framework.formatId().equals(command.formatId())) {
             throw proofGate.rejection(CREATE_INT_REJECTED, command.formatId(), Optional.empty(), "FORMAT_UNSUPPORTED");
         }
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, command.formatId(),
                 CredentialUse.INTERMEDIATE_ISSUER, statusEvaluation));
+        zeroecho.pki.api.ca.IssuerGeneration parentGeneration = IssuerAuthorities.current(store, issuer);
+        zeroecho.pki.api.ca.IssuerChainPath parentPath = IssuerAuthorities.issuancePath(store, issuer);
         requireHistoricalCaProfile(issuerCredential,
                 issuer.kind() == CaKind.ROOT ? CertificateProfileKind.ROOT_CA : CertificateProfileKind.INTERMEDIATE_CA);
 
@@ -568,18 +577,28 @@ public final class DefaultCaService implements CaService {
         }
         requireCaBinding(backendCredential, issue.profileReference(), CREATE_INT_REJECTED, command.formatId(),
                 Optional.of(caId));
-        Credential cred;
+        Credential rawCredential;
         try {
-            cred = CredentialSnapshots.copy(backendCredential);
+            rawCredential = CredentialSnapshots.copy(backendCredential);
         } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
             throw proofGate.rejection(CREATE_INT_REJECTED, command.formatId(), Optional.of(caId),
                     BACKEND_CRED_MISMATCH);
         }
-        requireCaCertificateMatches(cred, issuerCredential, issue, caId, CREATE_INT_REJECTED, BACKEND_CRED_MISMATCH);
+        requireCaCertificateMatches(rawCredential, issuerCredential, issue, caId, CREATE_INT_REJECTED,
+                BACKEND_CRED_MISMATCH);
+        Credential cred = IssuerAuthorities.withIssuer(rawCredential,
+                new IssuerRef(issuer.caId(), parentGeneration.issuerId(), parentPath.pathId()));
         store.putCredential(cred);
+        zeroecho.pki.api.ca.IssuerGeneration subjectGeneration = IssuerAuthorities.generation(caId,
+                command.keyRef().orElseThrow(), cred);
+        zeroecho.pki.api.ca.IssuerChainPath subjectPath = IssuerAuthorities.childPath(caId,
+                subjectGeneration.issuerId(), cred.credentialId(), parentPath);
+        store.putIssuerGeneration(subjectGeneration);
+        store.putIssuerChainPath(subjectPath);
 
         CaRecord subject = new CaRecord(caId, CaKind.INTERMEDIATE, CaState.ACTIVE, command.keyRef().get(),
-                issue.subjectRef(), List.of(cred.credentialId()));
+                issue.subjectRef(), List.of(subjectGeneration.issuerId()), subjectGeneration.issuerId(),
+                subjectPath.pathId());
         store.putCa(subject);
         return caId;
     }
@@ -631,6 +650,8 @@ public final class DefaultCaService implements CaService {
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, command.formatId(),
                 CredentialUse.INTERMEDIATE_ISSUER, statusEvaluation));
+        zeroecho.pki.api.ca.IssuerGeneration parentGeneration = IssuerAuthorities.current(store, issuer);
+        zeroecho.pki.api.ca.IssuerChainPath parentPath = IssuerAuthorities.issuancePath(store, issuer);
         requireHistoricalCaProfile(issuerCredential,
                 issuer.kind() == CaKind.ROOT ? CertificateProfileKind.ROOT_CA : CertificateProfileKind.INTERMEDIATE_CA);
 
@@ -661,21 +682,30 @@ public final class DefaultCaService implements CaService {
         }
         requireCaBinding(backendCredential, gated.profileReference(), ISSUE_INT_REJECTED, command.formatId(),
                 Optional.of(subject.caId()));
-        Credential cred;
+        Credential rawCredential;
         try {
-            cred = CredentialSnapshots.copy(backendCredential);
+            rawCredential = CredentialSnapshots.copy(backendCredential);
         } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
             throw proofGate.rejection(ISSUE_INT_REJECTED, command.formatId(), Optional.of(subject.caId()),
                     BACKEND_CRED_MISMATCH);
         }
-        requireCaCertificateMatches(cred, issuerCredential, gated, subject.caId(), ISSUE_INT_REJECTED,
+        requireCaCertificateMatches(rawCredential, issuerCredential, gated, subject.caId(), ISSUE_INT_REJECTED,
                 BACKEND_CRED_MISMATCH);
+        Credential cred = IssuerAuthorities.withIssuer(rawCredential,
+                new IssuerRef(issuer.caId(), parentGeneration.issuerId(), parentPath.pathId()));
         store.putCredential(cred);
+        zeroecho.pki.api.ca.IssuerGeneration subjectGeneration = IssuerAuthorities.generation(subject.caId(),
+                subject.issuerKeyRef(), cred);
+        zeroecho.pki.api.ca.IssuerChainPath subjectPath = IssuerAuthorities.childPath(subject.caId(),
+                subjectGeneration.issuerId(), cred.credentialId(), parentPath);
+        store.putIssuerGeneration(subjectGeneration);
+        store.putIssuerChainPath(subjectPath);
 
-        List<PkiId> updated = new ArrayList<>(subject.credentialIds());
-        updated.add(cred.credentialId());
+        List<PkiId> updated = new ArrayList<>(subject.issuerIds());
+        updated.add(subjectGeneration.issuerId());
         CaRecord updatedCa = new CaRecord(subject.caId(), subject.kind(), subject.state(), subject.issuerKeyRef(),
-                subject.subjectRef(), List.copyOf(updated));
+                subject.subjectRef(), List.copyOf(updated), subject.currentIssuanceIssuerId(),
+                subject.issuanceChainPathId());
         store.putCa(updatedCa);
         return cred;
     }
@@ -758,7 +788,8 @@ public final class DefaultCaService implements CaService {
         }
 
         CaRecord updated = new CaRecord(existing.caId(), existing.kind(), state, existing.issuerKeyRef(),
-                existing.subjectRef(), existing.credentialIds());
+                existing.subjectRef(), existing.issuerIds(), existing.currentIssuanceIssuerId(),
+                existing.issuanceChainPathId());
         store.putCa(updated);
 
         if (LOG.isLoggable(Level.INFO)) {
@@ -810,15 +841,65 @@ public final class DefaultCaService implements CaService {
                 return false;
             }
             if (query.formatId().isPresent()) {
-                if (r.credentialIds().isEmpty()) {
-                    return false;
-                }
-                PkiId lastId = r.credentialIds().get(r.credentialIds().size() - 1);
-                Credential last = requireCredential(lastId);
-                return query.formatId().get().equals(last.formatId());
+                Credential current = IssuerAuthorities.currentCredential(store, r);
+                return query.formatId().get().equals(current.formatId());
             }
             return true;
         }).toList();
+    }
+
+    @Override
+    public zeroecho.pki.api.ca.IssuerGeneration getIssuerGeneration(PkiId issuerId) {
+        Objects.requireNonNull(issuerId, "issuerId");
+        return store.getIssuerGeneration(issuerId).orElseThrow(() -> new PkiException("Issuer generation not found"));
+    }
+
+    @Override
+    public zeroecho.pki.api.ca.IssuerChainPath getIssuerChainPath(PkiId pathId) {
+        Objects.requireNonNull(pathId, "pathId");
+        return store.getIssuerChainPath(pathId).orElseThrow(() -> new PkiException("Issuer chain path not found"));
+    }
+
+    @Override
+    public List<zeroecho.pki.api.ca.IssuerChainPath> listIssuerChainPaths(PkiId issuerId) {
+        return store.listIssuerChainPaths(Objects.requireNonNull(issuerId, "issuerId"));
+    }
+
+    @Override
+    public void selectIssuancePath(PkiId caId, PkiId issuerId, PkiId pathId, String reason) {
+        Objects.requireNonNull(caId, "caId");
+        Objects.requireNonNull(issuerId, "issuerId");
+        Objects.requireNonNull(pathId, "pathId");
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("reason must not be null/blank");
+        }
+        CaRecord ca = getCa(caId);
+        zeroecho.pki.api.ca.IssuerGeneration generation = getIssuerGeneration(issuerId);
+        zeroecho.pki.api.ca.IssuerChainPath path = getIssuerChainPath(pathId);
+        if (!ca.issuerIds().contains(issuerId) || !caId.equals(generation.authorityId())
+                || generation.state() != zeroecho.pki.api.ca.IssuerGenerationState.ACTIVE
+                || !caId.equals(path.authorityId()) || !issuerId.equals(path.issuerId())) {
+            throw new PkiException("Issuance selection is outside the authority");
+        }
+        store.putCa(new CaRecord(ca.caId(), ca.kind(), ca.state(), ca.issuerKeyRef(), ca.subjectRef(),
+                ca.issuerIds(), issuerId, pathId));
+    }
+
+    @Override
+    public zeroecho.pki.api.ca.IssuerChainPath registerIssuerChainPath(PkiId caId, PkiId issuerId,
+            PkiId parentPathId) {
+        CaRecord ca = getCa(Objects.requireNonNull(caId, "caId"));
+        zeroecho.pki.api.ca.IssuerGeneration generation = getIssuerGeneration(
+                Objects.requireNonNull(issuerId, "issuerId"));
+        zeroecho.pki.api.ca.IssuerChainPath parent = getIssuerChainPath(
+                Objects.requireNonNull(parentPathId, "parentPathId"));
+        if (!ca.issuerIds().contains(issuerId) || !caId.equals(generation.authorityId())) {
+            throw new PkiException("Issuer generation is outside the authority");
+        }
+        zeroecho.pki.api.ca.IssuerChainPath path = IssuerAuthorities.childPath(caId, issuerId,
+                generation.credentialId(), parent);
+        store.putIssuerChainPath(path);
+        return path;
     }
 
     private static void ensureActive(CaRecord ca, String role) {
@@ -829,37 +910,17 @@ public final class DefaultCaService implements CaService {
 
     private Credential selectIssuerCredential(CaRecord issuer, FormatId formatId, CredentialUse use,
             EffectiveCredentialStatusResolver.Evaluation evaluation) {
-        Credential lastRejected = null;
-        EffectiveCredentialStatus lastStatus = null;
-        for (PkiId credentialId : issuer.credentialIds()) {
-            Credential credential = requireCredential(credentialId);
-            if (credential == null || !formatId.equals(credential.formatId())) {
-                continue;
-            }
-            EffectiveCredentialStatus status;
-            try {
-                status = evaluation.resolve(credential);
-            } catch (PkiException exception) {
-                CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), credential, use,
-                        StoreBackedEffectiveCredentialStatusResolver.RESOLUTION_FAILED_CODE, null);
-                throw exception;
-            }
-            if (status == EffectiveCredentialStatus.USABLE) {
-                return credential;
-            }
-            lastRejected = credential;
-            lastStatus = status;
+        Credential credential = IssuerAuthorities.currentCredential(store, issuer);
+        if (!formatId.equals(credential.formatId())) {
+            throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
         }
-        if (lastRejected != null) {
-            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), lastRejected, use,
-                    "ISSUER_CREDENTIAL_UNAVAILABLE", lastStatus);
+        EffectiveCredentialStatus status = evaluation.resolve(credential);
+        if (status != EffectiveCredentialStatus.USABLE) {
+            CredentialTrustAudit.rejected(auditSink, evaluation.evaluationTime(), credential, use,
+                    "ISSUER_CREDENTIAL_UNAVAILABLE", status);
+            throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
         }
-        throw new PkiException("Issuer credential unavailable: code=ISSUER_CREDENTIAL_UNAVAILABLE");
-    }
-
-    private Credential requireCredential(PkiId credentialId) {
-        return store.getCredential(credentialId)
-                .orElseThrow(() -> new PkiException("CA credential not found"));
+        return credential;
     }
 
     private void requireValidImportedRoot(CaImportCommand command, X509CertificateHolder holder) {
@@ -943,9 +1004,9 @@ public final class DefaultCaService implements CaService {
         return framework.formatId().equals(credential.formatId()) && credential.content().encoding() == Encoding.DER
                 && credential.status() == CredentialStatus.ISSUED
                 && credential.subjectRef().equals(request.subjectRef())
-                && credential.issuerRef()
-                        .equals(new IssuerRef(request.certificateType() == CertificateProfileKind.ROOT_CA ? subjectCaId
-                                : request.issuerCaId()));
+                && credential.issuerRef().caId()
+                        .equals(request.certificateType() == CertificateProfileKind.ROOT_CA ? subjectCaId
+                                : request.issuerCaId());
     }
 
     private static boolean matchesCaCertificateIdentity(X509CertificateHolder holder,

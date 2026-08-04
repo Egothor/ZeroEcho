@@ -122,6 +122,35 @@ public final class AdministrativeAuthenticator implements PkiServerAuthenticator
         return proxy(context);
     }
 
+    /**
+     * Authenticates only the backend transport for an anonymous public request.
+     * This method is valid solely in trusted-proxy mode and never manufactures an
+     * end-client principal.
+     *
+     * @param context backend TLS peer context without operation data
+     * @return authorized trusted-proxy principal, or empty on any safe failure
+     */
+    public Optional<String> authenticatePublicProxyTransport(PkiServerAuthenticationContext context) {
+        Objects.requireNonNull(context, "context");
+        if (configuration.mode() != AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY) {
+            return Optional.empty();
+        }
+        PkiServerAuthenticationResult result = transportMapper.authenticate(context);
+        if (!(result instanceof PkiServerAuthenticationResult.Authenticated authenticated)) {
+            return Optional.empty();
+        }
+        String principalId = authenticated.endClientPrincipalId();
+        if (!configuration.trustedProxyPrincipalIds().contains(principalId)) {
+            return Optional.empty();
+        }
+        try {
+            return forwardingAuthorization.apply(principalId, context.requestId()).allowed()
+                    ? Optional.of(principalId) : Optional.empty();
+        } catch (RuntimeException unavailable) {
+            return Optional.empty();
+        }
+    }
+
     private PkiServerAuthenticationResult direct(PkiServerAuthenticationContext context) {
         if (ForwardedClientCertificateParser.containsForwardedIdentity(context.requestHeaders())) {
             return rejected(AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(),

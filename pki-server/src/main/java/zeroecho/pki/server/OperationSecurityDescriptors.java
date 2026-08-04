@@ -140,7 +140,15 @@ public final class OperationSecurityDescriptors {
                 control(ServerControlOperation.RevokeCapability.NAME, Permission.Action.DISCLOSURE_CAPABILITY_REVOKE, Permission.ResourceType.CAPABILITY, true, false),
                 control(ServerControlOperation.InspectAuditView.REDACTED, Permission.Action.AUDIT_READ_REDACTED, Permission.ResourceType.AUDIT, false, false),
                 control(ServerControlOperation.InspectAuditView.FULL, Permission.Action.AUDIT_READ_FULL, Permission.ResourceType.AUDIT, false, false),
-                control(ServerControlOperation.InspectAuditView.PII, Permission.Action.AUDIT_READ_PII, Permission.ResourceType.AUDIT, false, false)));
+                control(ServerControlOperation.InspectAuditView.PII, Permission.Action.AUDIT_READ_PII, Permission.ResourceType.AUDIT, false, false),
+                control(ServerControlOperation.InspectRepositoryAlias.NAME, Permission.Action.REPOSITORY_ALIAS_READ,
+                        Permission.ResourceType.REPOSITORY_ALIAS, false, false),
+                control(ServerControlOperation.ListRepositoryAliases.NAME, Permission.Action.REPOSITORY_ALIAS_READ,
+                        Permission.ResourceType.REPOSITORY_ALIAS, false, false),
+                control(ServerControlOperation.SetRepositoryAlias.NAME, Permission.Action.REPOSITORY_ALIAS_MANAGE,
+                        Permission.ResourceType.REPOSITORY_ALIAS, true, true),
+                control(ServerControlOperation.RemoveRepositoryAlias.NAME, Permission.Action.REPOSITORY_ALIAS_MANAGE,
+                        Permission.ResourceType.REPOSITORY_ALIAS, true, true)));
     }
 
     /** Creates a registry and rejects duplicate operation identities. */
@@ -360,6 +368,18 @@ public final class OperationSecurityDescriptors {
             case ServerControlOperation.RevokeCapability value -> "capability=" + atom(value.capabilityId());
             case ServerControlOperation.InspectAuditView value -> "object=" + atom(value.objectId().value())
                     + ";view=" + value.view().name();
+            case ServerControlOperation.InspectRepositoryAlias value -> "authority="
+                    + atom(value.authorityId().value()) + ";type=" + value.type().name();
+            case ServerControlOperation.ListRepositoryAliases value -> "offset=" + value.offset()
+                    + ";limit=" + value.limit();
+            case ServerControlOperation.SetRepositoryAlias value -> "authority="
+                    + atom(value.authorityId().value()) + ";type=" + value.type().name() + ";target="
+                    + atom(value.targetObjectId().value()) + ";issuer="
+                    + atom(value.issuerId().map(zeroecho.pki.api.PkiId::value).orElse("")) + ";expected="
+                    + atom(value.expectedCurrentCommitment().orElse(""));
+            case ServerControlOperation.RemoveRepositoryAlias value -> "authority="
+                    + atom(value.authorityId().value()) + ";type=" + value.type().name() + ";expected="
+                    + atom(value.expectedCurrentCommitment());
         };
     }
 }

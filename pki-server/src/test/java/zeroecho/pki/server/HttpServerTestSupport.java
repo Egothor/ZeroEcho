@@ -126,6 +126,18 @@ public final class HttpServerTestSupport {
         return configuration(directory, authentication);
     }
 
+    public static PkiServerConfiguration withPublicListener(PkiServerConfiguration source,
+            PkiServerConfiguration.Authentication authentication) throws Exception {
+        PkiServerConfiguration.Execution publicExecution = new PkiServerConfiguration.Execution(2, 4, 2, 4, 4,
+                Duration.ofSeconds(5), Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofSeconds(1));
+        PkiServerConfiguration.PublicListener listener = new PkiServerConfiguration.PublicListener(
+                InetAddress.getByName("127.0.0.1"), 0,
+                Optional.of(new ProviderConfig("test-tls", Map.of())), false, authentication, 16_384,
+                1_024, publicExecution, Duration.ofSeconds(10), Duration.ofHours(1), Duration.ofMinutes(1), true);
+        return new PkiServerConfiguration(source.version(), source.serverName(), source.realm(), source.listener(),
+                source.authentication(), source.execution(), source.runtime(), Optional.of(listener));
+    }
+
     private static PkiServerConfiguration.Authentication directAuthentication(X509Certificate client)
             throws Exception {
         PkiServerConfiguration.ClientCertificateMapping mapping = mapping("administrator-map", "administrator",

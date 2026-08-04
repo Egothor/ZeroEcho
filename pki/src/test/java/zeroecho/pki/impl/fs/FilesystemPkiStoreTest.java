@@ -51,6 +51,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -68,6 +71,10 @@ import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
@@ -90,6 +97,9 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.ca.CaKind;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
+import zeroecho.pki.api.ca.IssuerGenerationState;
 import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialStatus;
@@ -557,7 +567,7 @@ public final class FilesystemPkiStoreTest {
             store.putCa(ca1);
 
             CaRecord ca2 = new CaRecord(ca1.caId(), ca1.kind(), CaState.DISABLED, ca1.issuerKeyRef(), ca1.subjectRef(),
-                    ca1.credentialIds());
+                    ca1.issuerIds(), ca1.currentIssuanceIssuerId(), ca1.issuanceChainPathId());
             store.putCa(ca2);
 
             Optional<CaRecord> loaded = store.getCa(ca1.caId());
@@ -572,27 +582,41 @@ public final class FilesystemPkiStoreTest {
     }
 
     @Test
+    void caKeysetPageUsesCanonicalIdentityRatherThanFilesystemEncoding() throws Exception {
+        System.out.println("caKeysetPageUsesCanonicalIdentityRatherThanFilesystemEncoding");
+        Path root = tmp.resolve("store-ca-keyset-page");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            CaRecord first = TestObjects.minimalCaRecord(store, "ca:z", CaState.ACTIVE);
+            CaRecord second = TestObjects.minimalCaRecord(store, "ca:zz", CaState.ACTIVE);
+            store.putCa(first);
+            store.putCa(second);
+            assertEquals(List.of(first.caId()), store.listCasPage(Optional.empty(), 1).stream()
+                    .map(CaRecord::caId).toList());
+            assertEquals(List.of(second.caId()), store.listCasPage(Optional.of(first.caId()), 1).stream()
+                    .map(CaRecord::caId).toList());
+            System.out.println("...after=" + first.caId() + " next=" + second.caId());
+        }
+        System.out.println("caKeysetPageUsesCanonicalIdentityRatherThanFilesystemEncoding...ok");
+    }
+
+    @Test
     void caReferencesRequireValidStandaloneCredentialsAndPreserveOrder() throws Exception {
         System.out.println("caReferencesRequireValidStandaloneCredentialsAndPreserveOrder");
         Path root = tmp.resolve("store-ca-authority");
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
-            Credential first = TestObjects.minimalCredential(store, "SERIAL-FIRST", "profile-ca");
-            Credential second = TestObjects.minimalCredential(store, "SERIAL-SECOND", "profile-ca");
-            store.putCredential(first);
-            store.putCredential(second);
-            CaRecord ordered = new CaRecord(new PkiId("ca-ordered"), CaKind.ROOT, CaState.ACTIVE,
-                    new KeyRef("key-ordered"), new SubjectRef("CN=Ordered"),
-                    List.of(second.credentialId(), first.credentialId()));
+            CaRecord ordered = TestObjects.minimalCaRecord(store, "ca-ordered", CaState.ACTIVE);
             store.putCa(ordered);
 
-            assertEquals(List.of(second.credentialId(), first.credentialId()),
-                    store.getCa(ordered.caId()).orElseThrow().credentialIds());
+            assertEquals(ordered.issuerIds(), store.getCa(ordered.caId()).orElseThrow().issuerIds());
+            PkiId missingIssuer = new PkiId("issuer-missing");
             CaRecord missing = new CaRecord(new PkiId("ca-missing"), CaKind.ROOT, CaState.ACTIVE,
                     new KeyRef("key-missing"), new SubjectRef("CN=Missing"),
-                    List.of(new PkiId("credential-missing")));
+                    List.of(missingIssuer), missingIssuer, new PkiId("path-missing"));
             assertThrows(IllegalStateException.class, () -> store.putCa(missing));
 
-            Files.write(root.resolve("staged-content").resolve(first.content().contentId() + ".content"),
+            Credential selected = store.getCredential(store.getIssuerGeneration(
+                    ordered.currentIssuanceIssuerId()).orElseThrow().credentialId()).orElseThrow();
+            Files.write(root.resolve("staged-content").resolve(selected.content().contentId() + ".content"),
                     new byte[] { 9, 9, 9 });
             assertThrows(IllegalStateException.class, () -> store.getCa(ordered.caId()));
             assertThrows(IllegalStateException.class, store::listCas);
@@ -613,22 +637,20 @@ public final class FilesystemPkiStoreTest {
     }
 
     @Test
-    void snapshotReconstructsSharedCredentialOnceWithNewTargetReference() throws Exception {
-        System.out.println("snapshotReconstructsSharedCredentialOnceWithNewTargetReference");
+    void snapshotReconstructsIssuerGenerationsWithNewTargetReferences() throws Exception {
+        System.out.println("snapshotReconstructsIssuerGenerationsWithNewTargetReferences");
         Path root = tmp.resolve("store-snapshot-authority");
         Path snapshot = tmp.resolve("snapshot-authority");
         FsPkiStoreOptions options = nonStrictSnapshotOptions();
         PkiId credentialId;
         String sourceContentId;
         try (FilesystemPkiStore source = new FilesystemPkiStore(root, options)) {
-            Credential shared = TestObjects.minimalCredential(source, "SERIAL-SHARED", "profile-ca");
-            source.putCredential(shared);
-            credentialId = shared.credentialId();
-            sourceContentId = shared.content().contentId();
-            source.putCa(new CaRecord(new PkiId("ca-shared-one"), CaKind.ROOT, CaState.ACTIVE,
-                    new KeyRef("key-shared-one"), new SubjectRef("CN=Shared One"), List.of(credentialId)));
-            source.putCa(new CaRecord(new PkiId("ca-shared-two"), CaKind.ROOT, CaState.ACTIVE,
-                    new KeyRef("key-shared-two"), new SubjectRef("CN=Shared Two"), List.of(credentialId)));
+            CaRecord first = TestObjects.minimalCaRecord(source, "ca-shared-one", CaState.ACTIVE);
+            CaRecord second = TestObjects.minimalCaRecord(source, "ca-shared-two", CaState.ACTIVE);
+            source.putCa(first);
+            source.putCa(second);
+            credentialId = source.getIssuerGeneration(first.currentIssuanceIssuerId()).orElseThrow().credentialId();
+            sourceContentId = source.getCredential(credentialId).orElseThrow().content().contentId();
             source.exportSnapshot(snapshot, Instant.now());
         }
 
@@ -636,16 +658,17 @@ public final class FilesystemPkiStoreTest {
             assertEquals(2, restored.listCas().size());
             Credential credential = restored.getCredential(credentialId).orElseThrow();
             assertFalse(sourceContentId.equals(credential.content().contentId()));
-            assertEquals(List.of(credentialId),
-                    restored.getCa(new PkiId("ca-shared-one")).orElseThrow().credentialIds());
+            CaRecord restoredAuthority = restored.getCa(new PkiId("ca-shared-one")).orElseThrow();
+            assertEquals(credentialId, restored.getIssuerGeneration(
+                    restoredAuthority.currentIssuanceIssuerId()).orElseThrow().credentialId());
         }
         try (java.util.stream.Stream<Path> records = Files.list(snapshot.resolve("credentials").resolve("by-id"))) {
-            assertEquals(1, records.filter(Files::isRegularFile).count());
+            assertEquals(2, records.filter(Files::isRegularFile).count());
         }
         assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".content")));
         assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".meta")));
         assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".owners")));
-        System.out.println("snapshotReconstructsSharedCredentialOnceWithNewTargetReference...ok");
+        System.out.println("snapshotReconstructsIssuerGenerationsWithNewTargetReferences...ok");
     }
 
     @Test
@@ -672,7 +695,8 @@ public final class FilesystemPkiStoreTest {
             Credential standalone = restored.getCredential(standaloneId).orElseThrow();
             assertFalse(standaloneSourceContentId.equals(standalone.content().contentId()));
             CaRecord ca = restored.getCa(caId).orElseThrow();
-            assertTrue(restored.getCredential(ca.credentialIds().get(0)).isPresent());
+            assertTrue(restored.getCredential(restored.getIssuerGeneration(
+                    ca.currentIssuanceIssuerId()).orElseThrow().credentialId()).isPresent());
         }
         System.out.println("snapshotPreservesStandaloneCredentialWithNewReferenceAndResolvableCa...ok");
     }
@@ -755,8 +779,8 @@ public final class FilesystemPkiStoreTest {
     }
 
     @Test
-    void snapshotStrictFailsAndNonStrictOmitsOnlyInconsistentCa() throws Exception {
-        System.out.println("snapshotStrictFailsAndNonStrictOmitsOnlyInconsistentCa");
+    void snapshotFailsClosedForMissingIssuerAuthorityInEveryMode() throws Exception {
+        System.out.println("snapshotFailsClosedForMissingIssuerAuthorityInEveryMode");
         Path root = tmp.resolve("store-snapshot-inconsistent");
         Path strictSnapshot = tmp.resolve("snapshot-inconsistent-strict");
         Path nonStrictSnapshot = tmp.resolve("snapshot-inconsistent-nonstrict");
@@ -766,20 +790,19 @@ public final class FilesystemPkiStoreTest {
             CaRecord inconsistent = TestObjects.minimalCaRecord(source, "ca-inconsistent", CaState.ACTIVE);
             source.putCa(valid);
             source.putCa(inconsistent);
-            Files.delete(new FsPaths(root).credentialPath(inconsistent.credentialIds().get(0)));
+            Files.delete(new FsPaths(root).credentialPath(source.getIssuerGeneration(
+                    inconsistent.currentIssuanceIssuerId()).orElseThrow().credentialId()));
 
             FsPkiStoreOptions strict = strictSnapshotOptions();
             assertThrows(IllegalStateException.class,
                     () -> new FsSnapshotExporter(strict).exportSnapshot(source, strictSnapshot, Instant.now()));
             assertFalse(Files.exists(strictSnapshot));
 
-            source.exportSnapshot(nonStrictSnapshot, Instant.now());
+            assertThrows(IllegalStateException.class, () -> source.exportSnapshot(nonStrictSnapshot, Instant.now()));
+            assertFalse(Files.exists(nonStrictSnapshot));
         }
-        try (FilesystemPkiStore restored = new FilesystemPkiStore(nonStrictSnapshot, nonStrict)) {
-            assertEquals(List.of("ca-valid"), restored.listCas().stream()
-                    .map(ca -> ca.caId().value()).toList());
-        }
-        System.out.println("snapshotStrictFailsAndNonStrictOmitsOnlyInconsistentCa...ok");
+        System.out.println("...missing-issuer-authority=rejected");
+        System.out.println("snapshotFailsClosedForMissingIssuerAuthorityInEveryMode...ok");
     }
 
     @Test
@@ -1283,14 +1306,46 @@ public final class FilesystemPkiStoreTest {
 
         static CaRecord minimalCaRecord(PkiStore store, String caId, CaState state) throws IOException {
             PkiId id = new PkiId(caId);
-
             KeyRef issuerKeyRef = new KeyRef("issuer-key-" + caId);
             SubjectRef subjectRef = new SubjectRef("CN=" + caId);
-
-            Credential cred = minimalCredential(store, "CA-" + caId, "profile-ca");
-            store.putCredential(cred);
+            PkiId credentialId = new PkiId("cred-ca-" + caId);
+            PkiId issuerId = IssuerGeneration.idFor(id, credentialId);
+            IssuerChainPath path = IssuerChainPath.create(id, issuerId, List.of(credentialId));
+            Credential credential = caCredential(store, id, credentialId, issuerId, path.pathId(), subjectRef);
+            store.putCredential(credential);
+            String commitment = "0".repeat(64);
+            store.putIssuerGeneration(new IssuerGeneration(issuerId, id, credentialId, issuerKeyRef,
+                    IssuerGenerationState.ACTIVE, commitment, commitment));
+            store.putIssuerChainPath(path);
             return new CaRecord(id, CaKind.ROOT, state, issuerKeyRef, subjectRef,
-                    List.of(cred.credentialId()));
+                    List.of(issuerId), issuerId, path.pathId());
+        }
+
+        private static Credential caCredential(PkiStore store, PkiId authorityId, PkiId credentialId,
+                PkiId issuerId, PkiId pathId, SubjectRef subject) throws IOException {
+            try {
+                KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+                generator.initialize(2048);
+                KeyPair keyPair = generator.generateKeyPair();
+                X500Name name = new X500Name(subject.value());
+                Instant notBefore = Instant.parse("2020-01-01T00:00:00Z");
+                Instant notAfter = Instant.parse("2030-01-01T00:00:00Z");
+                X509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(name, BigInteger.ONE,
+                        java.util.Date.from(notBefore), java.util.Date.from(notAfter), name, keyPair.getPublic());
+                byte[] der = builder.build(new JcaContentSignerBuilder("SHA256withRSA")
+                        .build(keyPair.getPrivate())).getEncoded();
+                zeroecho.pki.api.content.DurableContentReference content =
+                        zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(), Encoding.DER, der);
+                return new Credential(credentialId, new FormatId("fmt-x509"),
+                        new IssuerRef(authorityId, issuerId, pathId), subject,
+                        new Validity(notBefore, notAfter), "CA-" + authorityId.value(),
+                        new PkiId("pk-" + authorityId.value()),
+                        new CaProfileBinding(new CertificateProfileRef("profile-ca", 1, new byte[32])),
+                        CredentialStatus.ISSUED, content, emptyAttributes());
+            } catch (java.security.GeneralSecurityException | org.bouncycastle.operator.OperatorCreationException
+                    exception) {
+                throw new IOException("CA fixture construction failed", exception);
+            }
         }
 
         static CertificateProfile minimalProfile(String profileId) {

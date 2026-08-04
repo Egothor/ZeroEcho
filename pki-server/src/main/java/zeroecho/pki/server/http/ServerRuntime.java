@@ -54,6 +54,8 @@ import zeroecho.pki.server.PkiServerConfiguration;
 final class ServerRuntime implements AutoCloseable {
     static final String TRANSPORT_PREFIX = "zeroecho-pki-https-";
     static final String OPERATION_PREFIX = "zeroecho-pki-operation-";
+    static final String PUBLIC_TRANSPORT_PREFIX = "zeroecho-pki-public-https-";
+    static final String PUBLIC_STREAM_PREFIX = "zeroecho-pki-public-stream-";
     static final String SHUTDOWN_NAME = "zeroecho-pki-shutdown";
 
     private final ThreadPoolExecutor transport;
@@ -65,11 +67,15 @@ final class ServerRuntime implements AutoCloseable {
     private final AtomicBoolean accepting = new AtomicBoolean(true);
 
     ServerRuntime(PkiServerConfiguration.Execution configuration) {
+        this(configuration, false);
+    }
+
+    ServerRuntime(PkiServerConfiguration.Execution configuration, boolean publicLane) {
         this.configuration = configuration;
         transport = pool(configuration.transportWorkers(), configuration.transportQueueCapacity(),
-                new NamedThreadFactory(TRANSPORT_PREFIX));
+                new NamedThreadFactory(publicLane ? PUBLIC_TRANSPORT_PREFIX : TRANSPORT_PREFIX));
         operations = pool(configuration.operationWorkers(), configuration.operationQueueCapacity(),
-                new NamedThreadFactory(OPERATION_PREFIX));
+                new NamedThreadFactory(publicLane ? PUBLIC_STREAM_PREFIX : OPERATION_PREFIX));
         admitted = new Semaphore(configuration.maximumAdmittedRequests(), true);
     }
 
@@ -132,8 +138,10 @@ final class ServerRuntime implements AutoCloseable {
         quiesce();
         transport.shutdown();
         operations.shutdown();
-        boolean transportWorker = Thread.currentThread().getName().startsWith(TRANSPORT_PREFIX);
-        boolean operationWorker = Thread.currentThread().getName().startsWith(OPERATION_PREFIX);
+        boolean transportWorker = Thread.currentThread().getName().startsWith(TRANSPORT_PREFIX)
+                || Thread.currentThread().getName().startsWith(PUBLIC_TRANSPORT_PREFIX);
+        boolean operationWorker = Thread.currentThread().getName().startsWith(OPERATION_PREFIX)
+                || Thread.currentThread().getName().startsWith(PUBLIC_STREAM_PREFIX);
         if (!operationWorker) {
             await(operations, configuration.gracefulShutdown());
         }

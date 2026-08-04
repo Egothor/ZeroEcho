@@ -163,6 +163,7 @@ public final class ServerOperationGateway {
     public ServerOperationGateway(RealmId realmId, AuthorityExposurePolicy exposure, ServerControlStore control,
             RoleTemplateCatalog roles, AuthorizationEngine authorization, ApprovalService approvals,
             BreakGlassService breakGlass, DisclosureService disclosure, AuditorViews auditorViews,
+            Optional<RepositoryAliasService> repositoryAliases,
             OperationSecurityDescriptors descriptors, PkiOperationExecutor executor,
             PkiResourceScopeResolver resourceScopes,
             Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies,
@@ -177,7 +178,8 @@ public final class ServerOperationGateway {
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.executor = Objects.requireNonNull(executor, "executor");
         this.controlExecutor = new ServerControlOperationExecutor(realmId, exposure, control, roles,
-                authorization, approvals, breakGlass, disclosure, auditorViews, descriptors, approvalPolicies);
+                authorization, approvals, breakGlass, disclosure, auditorViews, repositoryAliases, descriptors,
+                approvalPolicies);
         this.resourceScopes = Objects.requireNonNull(resourceScopes, "resourceScopes");
         this.approvalPolicies = Map.copyOf(Objects.requireNonNull(approvalPolicies, "approvalPolicies"));
         this.audit = new SafeAudit(clock, auditSink);
@@ -194,7 +196,8 @@ public final class ServerOperationGateway {
         this(realmId, exposure, control, roles, authorization, approvals, breakGlass,
                 new DisclosureService(realmId, control, DisclosureService.Defaults.recommended(), clock,
                         new java.security.SecureRandom(), auditSink), new AuditorViews(clock, auditSink),
-                descriptors, executor, resourceScopes, approvalPolicies, clock, auditSink, openCheck);
+                Optional.empty(), descriptors, executor, resourceScopes, approvalPolicies, clock, auditSink,
+                openCheck);
     }
 
     /**

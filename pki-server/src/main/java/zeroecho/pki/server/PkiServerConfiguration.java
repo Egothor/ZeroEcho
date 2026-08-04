@@ -58,13 +58,15 @@ import zeroecho.pki.spi.ProviderConfig;
  * @param authentication strict client-certificate mappings
  * @param execution bounded execution and shutdown policy
  * @param runtime process-local capability references
+ * @param publicListener optional separately bounded public repository listener
  */
 @SuppressWarnings("PMD")
 public record PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
-        Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
+        Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
+        Optional<PublicListener> publicListener) {
 
     /** Current server configuration schema. */
-    public static final int CURRENT_VERSION = 2;
+    public static final int CURRENT_VERSION = 3;
 
     /** Validates all security-sensitive fields before resource allocation. */
     public PkiServerConfiguration {
@@ -75,9 +77,27 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Objects.requireNonNull(authentication, "authentication");
         Objects.requireNonNull(execution, "execution");
         Objects.requireNonNull(runtime, "runtime");
+        publicListener = Objects.requireNonNull(publicListener, "publicListener");
         if (!listener.clientCertificateRequired()) {
             throw new IllegalArgumentException("Administrative HTTPS requires client certificates");
         }
+        publicListener.ifPresent(publicConfiguration -> {
+            if (listener.port() != 0
+                    && listener.port() == publicConfiguration.port()) {
+                boolean addressOverlap = listener.address().equals(publicConfiguration.address())
+                        || listener.address().isAnyLocalAddress()
+                        || publicConfiguration.address().isAnyLocalAddress();
+                if (addressOverlap) {
+                    throw new IllegalArgumentException("Administrative and public listeners conflict");
+                }
+            }
+        });
+    }
+
+    /** Creates a configuration with the public repository listener disabled. */
+    public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
+            Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
+        this(version, serverName, realm, listener, authentication, execution, runtime, Optional.empty());
     }
 
     /**
@@ -329,6 +349,53 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     }
 
     /**
+     * Separately bounded public repository listener configuration.
+     *
+     * @param address canonical bind address
+     * @param port TCP port, including zero for an ephemeral test listener
+     * @param tlsProvider optional explicit TLS provider; absent only for explicitly permitted loopback development
+     * @param allowPlaintextLoopback whether the loopback-only development exception is selected
+     * @param authentication direct or trusted-proxy optional-client authentication configuration
+     * @param maximumHeaderBytes bounded public request-header bytes
+     * @param maximumBodyBytes bounded public request-body bytes; repository methods still reject bodies
+     * @param execution isolated public transport and stream execution bounds
+     * @param maximumStreamDuration finite stream deadline
+     * @param publicImmutableCache immutable-object public cache duration
+     * @param publicAliasCache stable-alias public cache duration
+     * @param authorityListExposed whether safe public authority metadata routes are enabled
+     */
+    public record PublicListener(InetAddress address, int port, Optional<ProviderConfig> tlsProvider,
+            boolean allowPlaintextLoopback, Authentication authentication, int maximumHeaderBytes,
+            int maximumBodyBytes, Execution execution,
+            Duration maximumStreamDuration, Duration publicImmutableCache, Duration publicAliasCache,
+            boolean authorityListExposed) {
+        /** Validates public-listener transport policy and independent finite bounds. */
+        public PublicListener {
+            Objects.requireNonNull(address, "address");
+            if (port < 0 || port > 65_535) throw new IllegalArgumentException("Public listener port is invalid");
+            tlsProvider = Objects.requireNonNull(tlsProvider, "tlsProvider");
+            Objects.requireNonNull(authentication, "authentication");
+            bounded(maximumHeaderBytes, 1_024, 1_048_576, "public header bound");
+            bounded(maximumBodyBytes, 1, 65_536, "public body bound");
+            Objects.requireNonNull(execution, "execution");
+            positive(maximumStreamDuration, Duration.ofHours(1), "maximum stream duration");
+            nonNegative(publicImmutableCache, Duration.ofDays(365), "immutable cache duration");
+            nonNegative(publicAliasCache, Duration.ofDays(1), "alias cache duration");
+            if (tlsProvider.isEmpty() && (!allowPlaintextLoopback || !address.isLoopbackAddress())) {
+                throw new IllegalArgumentException("Public listener TLS is required");
+            }
+            if (tlsProvider.isPresent() && allowPlaintextLoopback) {
+                throw new IllegalArgumentException("Public listener transport policy is contradictory");
+            }
+        }
+
+        /** @return exact public socket address without DNS resolution */
+        public InetSocketAddress socketAddress() {
+            return new InetSocketAddress(address, port);
+        }
+    }
+
+    /**
      * Process-local capability references.
      *
      * @param keyUnlockEnvironmentVariable optional external unlock reference
@@ -353,6 +420,13 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     private static void positive(Duration value, Duration maximum, String name) {
         Objects.requireNonNull(value, name);
         if (value.isZero() || value.isNegative() || value.compareTo(maximum) > 0) {
+            throw new IllegalArgumentException(name + " is invalid");
+        }
+    }
+
+    private static void nonNegative(Duration value, Duration maximum, String name) {
+        Objects.requireNonNull(value, name);
+        if (value.isNegative() || value.compareTo(maximum) > 0) {
             throw new IllegalArgumentException(name + " is invalid");
         }
     }

@@ -85,11 +85,12 @@ public final class PkiServerConfigurationCodec {
     /** Decodes one bounded strict configuration document. */
     public static PkiServerConfiguration decode(byte[] document) {
         Fields root = Fields.of(StrictJson.parse(document, MAXIMUM_CONFIGURATION_BYTES));
-        root.exact("version", "serverName", "realm", "listener", "authentication", "execution", "runtime");
+        root.allowed(Set.of("version", "serverName", "realm", "listener", "authentication", "execution",
+                "runtime", "publicListener"));
         PkiServerConfiguration configuration = new PkiServerConfiguration(root.integer("version"),
                 root.text("serverName"), realm(root.object("realm")), listener(root.object("listener")),
                 authentication(root.object("authentication")), execution(root.object("execution")),
-                runtime(root.object("runtime")));
+                runtime(root.object("runtime")), publicListener(root.object("publicListener")));
         root.complete();
         return configuration;
     }
@@ -269,6 +270,31 @@ public final class PkiServerConfigurationCodec {
                 Duration.ofMillis(value.longValue("forcedShutdownMillis")));
         value.complete();
         return result;
+    }
+
+    private static Optional<PkiServerConfiguration.PublicListener> publicListener(Fields value) {
+        value.allowed(Set.of("enabled", "address", "port", "tlsProvider", "allowPlaintextLoopback", "authentication",
+                "maximumHeaderBytes", "maximumBodyBytes", "execution", "maximumStreamDurationMillis",
+                "publicImmutableCacheMillis",
+                "publicAliasCacheMillis", "authorityListExposed"));
+        if (!value.bool("enabled")) {
+            value.exact("enabled");
+            value.complete();
+            return Optional.empty();
+        }
+        Optional<ProviderConfig> tlsProvider = value.optionalObject("tlsProvider")
+                .map(PkiServerConfigurationCodec::provider);
+        PkiServerConfiguration.PublicListener result = new PkiServerConfiguration.PublicListener(
+                address(value.text("address")), value.integer("port"), tlsProvider,
+                value.bool("allowPlaintextLoopback"), authentication(value.object("authentication")),
+                value.integer("maximumHeaderBytes"), value.integer("maximumBodyBytes"),
+                execution(value.object("execution")),
+                Duration.ofMillis(value.longValue("maximumStreamDurationMillis")),
+                Duration.ofMillis(value.longValue("publicImmutableCacheMillis")),
+                Duration.ofMillis(value.longValue("publicAliasCacheMillis")),
+                value.bool("authorityListExposed"));
+        value.complete();
+        return Optional.of(result);
     }
 
     private static PkiServerConfiguration.RuntimeCapabilities runtime(Fields value) {

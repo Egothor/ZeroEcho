@@ -64,6 +64,9 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.ca.CaKind;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
+import zeroecho.pki.api.ca.IssuerGenerationState;
 import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialProfileBinding;
@@ -112,7 +115,7 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 final class FsCodec {
 
     /* package */ static final int MAX_COMPONENT_BYTES = 256 * 1024;
-    /* package */ static final int CURRENT_CODEC_VERSION = 3;
+    /* package */ static final int CURRENT_CODEC_VERSION = 4;
 
     private static final int CODEC_MAGIC = 0x5A454346;
     private static final int MAX_COLLECTION_ELEMENTS = MAX_COMPONENT_BYTES;
@@ -127,6 +130,8 @@ final class FsCodec {
     private static final int DURABLE_CONTENT_VERSION = 1;
     private static final int TOP_PROFILE_VERSION = 11;
     private static final int TOP_ACTIVE_PROFILE_REF = 12;
+    private static final int TOP_ISSUER_GENERATION = 13;
+    private static final int TOP_ISSUER_CHAIN_PATH = 14;
 
     private static final int TYPE_STRING = 1;
     private static final int TYPE_BOOLEAN = 2;
@@ -162,6 +167,7 @@ final class FsCodec {
     private static final int TYPE_PROFILE_REF = 72;
     private static final int TYPE_PROFILE_BINDING = 73;
     private static final int TYPE_DURABLE_CONTENT = 74;
+    private static final int TYPE_ISSUER_GENERATION_STATE_ENUM = 75;
 
     private static final int ATTRIBUTE_STRING = 1;
     private static final int ATTRIBUTE_BOOLEAN = 2;
@@ -218,6 +224,19 @@ final class FsCodec {
         case 4 -> CaState.DISABLED;
         default -> throw unknownEnum("CaState", code);
     });
+    private static final ValueSchema<IssuerGenerationState> ISSUER_GENERATION_STATE = enumSchema(
+            TYPE_ISSUER_GENERATION_STATE_ENUM, value -> switch (value) {
+                case ACTIVE -> 1;
+                case RETIRED -> 2;
+                case COMPROMISED -> 3;
+                case DISABLED -> 4;
+            }, code -> switch (code) {
+                case 1 -> IssuerGenerationState.ACTIVE;
+                case 2 -> IssuerGenerationState.RETIRED;
+                case 3 -> IssuerGenerationState.COMPROMISED;
+                case 4 -> IssuerGenerationState.DISABLED;
+                default -> throw unknownEnum("IssuerGenerationState", code);
+            });
     private static final ValueSchema<CredentialStatus> CREDENTIAL_STATUS = enumSchema(TYPE_CREDENTIAL_STATUS_ENUM,
             value -> switch (value) {
                 case ISSUED -> 1;
@@ -307,8 +326,11 @@ final class FsCodec {
             (writer, value) -> writer.writeValue(STRING, value.value()),
             reader -> new SubjectRef(reader.readValue(STRING)));
     private static final ValueSchema<IssuerRef> ISSUER_REF = valueSchema(TYPE_ISSUER_REF,
-            (writer, value) -> writer.writeValue(PKI_ID, value.caId()),
-            reader -> new IssuerRef(reader.readValue(PKI_ID)));
+            (writer, value) -> {
+                writer.writeValue(PKI_ID, value.caId());
+                writer.writeValue(PKI_ID, value.issuerId());
+                writer.writeValue(PKI_ID, value.chainPathId());
+            }, reader -> new IssuerRef(reader.readValue(PKI_ID), reader.readValue(PKI_ID), reader.readValue(PKI_ID)));
     private static final ValueSchema<FormatId> FORMAT_ID = valueSchema(TYPE_FORMAT_ID,
             (writer, value) -> writer.writeValue(STRING, value.value()),
             reader -> new FormatId(reader.readValue(STRING)));
@@ -377,13 +399,19 @@ final class FsCodec {
             "PROFILE_VERSION", valueSchema(109, FsCodec::writeProfileVersion, FsCodec::readProfileVersion));
     /* package */ static final Schema<CertificateProfileRef> ACTIVE_PROFILE_REF = topLevel(TOP_ACTIVE_PROFILE_REF,
             "ACTIVE_PROFILE_REF", PROFILE_REF);
+    /* package */ static final Schema<IssuerGeneration> ISSUER_GENERATION = topLevel(TOP_ISSUER_GENERATION,
+            "ISSUER_GENERATION", valueSchema(110, FsCodec::writeIssuerGeneration, FsCodec::readIssuerGeneration));
+    /* package */ static final Schema<IssuerChainPath> ISSUER_CHAIN_PATH = topLevel(TOP_ISSUER_CHAIN_PATH,
+            "ISSUER_CHAIN_PATH", valueSchema(111, FsCodec::writeIssuerChainPath, FsCodec::readIssuerChainPath));
 
     private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(Map.entry(TOP_CA_RECORD, CA_RECORD),
             Map.entry(TOP_CREDENTIAL, CREDENTIAL), Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
             Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
             Map.entry(TOP_POLICY_TRACE, POLICY_TRACE),
             Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE), Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD),
-            Map.entry(TOP_PROFILE_VERSION, PROFILE_VERSION), Map.entry(TOP_ACTIVE_PROFILE_REF, ACTIVE_PROFILE_REF));
+            Map.entry(TOP_PROFILE_VERSION, PROFILE_VERSION), Map.entry(TOP_ACTIVE_PROFILE_REF, ACTIVE_PROFILE_REF),
+            Map.entry(TOP_ISSUER_GENERATION, ISSUER_GENERATION),
+            Map.entry(TOP_ISSUER_CHAIN_PATH, ISSUER_CHAIN_PATH));
 
     private FsCodec() {
         // utility
@@ -616,12 +644,44 @@ final class FsCodec {
         writer.writeValue(CA_STATE, value.state());
         writer.writeValue(KEY_REF, value.issuerKeyRef());
         writer.writeValue(SUBJECT_REF, value.subjectRef());
-        writer.writeValue(PKI_IDS, value.credentialIds());
+        writer.writeValue(PKI_IDS, value.issuerIds());
+        writer.writeValue(PKI_ID, value.currentIssuanceIssuerId());
+        writer.writeValue(PKI_ID, value.issuanceChainPathId());
     }
 
     private static CaRecord readCaRecord(Reader reader) throws IOException {
         return new CaRecord(reader.readValue(PKI_ID), reader.readValue(CA_KIND), reader.readValue(CA_STATE),
-                reader.readValue(KEY_REF), reader.readValue(SUBJECT_REF), reader.readValue(PKI_IDS));
+                reader.readValue(KEY_REF), reader.readValue(SUBJECT_REF), reader.readValue(PKI_IDS),
+                reader.readValue(PKI_ID), reader.readValue(PKI_ID));
+    }
+
+    private static void writeIssuerGeneration(Writer writer, IssuerGeneration value) throws IOException {
+        writer.writeValue(PKI_ID, value.issuerId());
+        writer.writeValue(PKI_ID, value.authorityId());
+        writer.writeValue(PKI_ID, value.credentialId());
+        writer.writeValue(KEY_REF, value.signingKeyRef());
+        writer.writeValue(ISSUER_GENERATION_STATE, value.state());
+        writer.writeValue(STRING, value.profilePolicyCommitment());
+        writer.writeValue(STRING, value.x509BindingCommitment());
+    }
+
+    private static IssuerGeneration readIssuerGeneration(Reader reader) throws IOException {
+        return new IssuerGeneration(reader.readValue(PKI_ID), reader.readValue(PKI_ID), reader.readValue(PKI_ID),
+                reader.readValue(KEY_REF), reader.readValue(ISSUER_GENERATION_STATE), reader.readValue(STRING),
+                reader.readValue(STRING));
+    }
+
+    private static void writeIssuerChainPath(Writer writer, IssuerChainPath value) throws IOException {
+        writer.writeValue(PKI_ID, value.pathId());
+        writer.writeValue(PKI_ID, value.authorityId());
+        writer.writeValue(PKI_ID, value.issuerId());
+        writer.writeValue(PKI_IDS, value.orderedCredentialIds());
+        writer.writeValue(STRING, value.pathCommitment());
+    }
+
+    private static IssuerChainPath readIssuerChainPath(Reader reader) throws IOException {
+        return new IssuerChainPath(reader.readValue(PKI_ID), reader.readValue(PKI_ID), reader.readValue(PKI_ID),
+                reader.readValue(PKI_IDS), reader.readValue(STRING));
     }
 
     private static void writeParsedRequest(Writer writer, ParsedCertificationRequest value) throws IOException {

@@ -79,7 +79,7 @@ import zeroecho.pki.spi.store.TransactionalMetadataStore;
         "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel",
         "PMD.ControlStatementBraces", "PMD.PreserveStackTrace", "PMD.CloseResource",
         "PMD.UseEnumCollections", "PMD.CommentRequired", "PMD.UncommentedEmptyMethodBody",
-        "PMD.TooManyMethods" })
+        "PMD.TooManyMethods", "PMD.ExcessivePublicCount" })
 public final class ServerControlStore implements AutoCloseable {
     /** Stable namespace for the realm record. */ public static final String REALM = "io.zeroecho.server.realm";
     /** Stable namespace for principals. */ public static final String PRINCIPAL = "io.zeroecho.server.principal";
@@ -89,9 +89,11 @@ public final class ServerControlStore implements AutoCloseable {
     /** Stable namespace for break-glass records. */ public static final String BREAK_GLASS = "io.zeroecho.server.break-glass";
     /** Stable namespace for disclosure records. */ public static final String DISCLOSURE = "io.zeroecho.server.disclosure";
     /** Stable namespace for capability commitments. */ public static final String CAPABILITY = "io.zeroecho.server.capability";
+    /** Stable namespace for non-authoritative public repository aliases. */
+    public static final String REPOSITORY_ALIAS = "io.zeroecho.server.repository-alias";
 
     private static final int MAGIC = 0x5a455331;
-    private static final int SCHEMA = 2;
+    private static final int SCHEMA = 3;
     private static final int MAXIMUM_RECORD_BYTES = 1_048_576;
     private static final int MAXIMUM_STRING_BYTES = 16_384;
     private static final int MAXIMUM_COLLECTION = 4_096;
@@ -103,6 +105,7 @@ public final class ServerControlStore implements AutoCloseable {
     private static final int KIND_BREAK_GLASS = 6;
     private static final int KIND_DISCLOSURE = 7;
     private static final int KIND_CAPABILITY = 8;
+    private static final int KIND_REPOSITORY_ALIAS = 9;
 
     /**
      * Durable realm-control identity and commitments.
@@ -308,6 +311,11 @@ public final class ServerControlStore implements AutoCloseable {
                 .orElseThrow(() -> new IllegalArgumentException("Disclosure record is unavailable"));
     }
 
+    /** Finds one disclosure record without converting absence into an error. */
+    public synchronized Optional<DisclosureService.Record> findDisclosure(PkiId objectId) {
+        return read(DISCLOSURE, objectId.value(), KIND_DISCLOSURE, ServerControlStore::readDisclosure);
+    }
+
     /** Returns a bounded stable page of disclosure records. */
     public synchronized Page<DisclosureService.Record> disclosures(int offset, int limit) {
         return scanPage(DISCLOSURE, KIND_DISCLOSURE, ServerControlStore::readDisclosure, offset, limit);
@@ -346,6 +354,43 @@ public final class ServerControlStore implements AutoCloseable {
                 .filter(item -> item.objectId().equals(objectId)).toList();
     }
 
+    /** Creates one exact repository alias record. */
+    public synchronized void createRepositoryAlias(RepositoryAliasService.Record value) {
+        create(REPOSITORY_ALIAS, value.aliasId(), output -> writeRepositoryAlias(output, value));
+    }
+
+    /** Finds one exact repository alias record. */
+    public synchronized Optional<RepositoryAliasService.Record> findRepositoryAlias(String aliasId) {
+        return read(REPOSITORY_ALIAS, aliasId, KIND_REPOSITORY_ALIAS, ServerControlStore::readRepositoryAlias);
+    }
+
+    /** Returns one exact repository alias record. */
+    public synchronized RepositoryAliasService.Record requireRepositoryAlias(String aliasId) {
+        return findRepositoryAlias(aliasId)
+                .orElseThrow(() -> new IllegalArgumentException("Repository alias is unavailable"));
+    }
+
+    /** Atomically replaces an alias after exact expected-current validation. */
+    public synchronized void replaceRepositoryAlias(RepositoryAliasService.Record current,
+            RepositoryAliasService.Record updated, Optional<String> expectedCurrentCommitment) {
+        requireSame(current.aliasId(), updated.aliasId());
+        RepositoryAliasService.Record authoritative = requireRepositoryAlias(current.aliasId());
+        if (!authoritative.equals(current)) {
+            throw new IllegalStateException("Repository alias changed concurrently");
+        }
+        if (expectedCurrentCommitment.isPresent()
+                && !expectedCurrentCommitment.orElseThrow().equals(current.recordCommitment())) {
+            throw new IllegalStateException("Repository alias expected-current commitment differs");
+        }
+        replace(REPOSITORY_ALIAS, current.aliasId(), output -> writeRepositoryAlias(output, updated));
+    }
+
+    /** Returns a bounded repository alias page. */
+    public synchronized Page<RepositoryAliasService.Record> repositoryAliases(int offset, int limit) {
+        return scanPage(REPOSITORY_ALIAS, KIND_REPOSITORY_ALIAS, ServerControlStore::readRepositoryAlias,
+                offset, limit);
+    }
+
     /**
      * Strictly decodes and cross-checks every authoritative control record from
      * stable metadata snapshots before the realm is exposed.
@@ -359,6 +404,7 @@ public final class ServerControlStore implements AutoCloseable {
         scan(BREAK_GLASS, KIND_BREAK_GLASS, ServerControlStore::readBreakGlass);
         scan(DISCLOSURE, KIND_DISCLOSURE, ServerControlStore::readDisclosure);
         scan(CAPABILITY, KIND_CAPABILITY, ServerControlStore::readCapability);
+        scan(REPOSITORY_ALIAS, KIND_REPOSITORY_ALIAS, ServerControlStore::readRepositoryAlias);
     }
 
     /** Validates durable relationships against the active strict role catalog. */
@@ -391,6 +437,10 @@ public final class ServerControlStore implements AutoCloseable {
         for (DisclosureService.Capability capability
                 : scan(CAPABILITY, KIND_CAPABILITY, ServerControlStore::readCapability)) {
             requirePrincipalReference(principals, capability.issuerPrincipalId());
+        }
+        for (RepositoryAliasService.Record alias
+                : scan(REPOSITORY_ALIAS, KIND_REPOSITORY_ALIAS, ServerControlStore::readRepositoryAlias)) {
+            requirePrincipalReference(principals, alias.actorPrincipalId());
         }
     }
 
@@ -555,6 +605,7 @@ public final class ServerControlStore implements AutoCloseable {
             case BreakGlassService.Record item -> item.breakGlassId();
             case DisclosureService.Record item -> item.objectId().value();
             case DisclosureService.Capability item -> item.capabilityId();
+            case RepositoryAliasService.Record item -> item.aliasId();
             default -> throw new IllegalArgumentException("Unsupported control record type");
         };
     }
@@ -702,6 +753,32 @@ public final class ServerControlStore implements AutoCloseable {
         return new DisclosureService.Capability(readString(in), new RealmId(readString(in)), new PkiId(readString(in)),
                 readString(in), readString(in), readBytes(in, 32), readInstant(in),
                 DisclosureService.DeliveryState.fromCode(in.readInt()), in.readBoolean());
+    }
+
+    private static void writeRepositoryAlias(DataOutputStream out, RepositoryAliasService.Record value)
+            throws IOException {
+        out.writeInt(KIND_REPOSITORY_ALIAS);
+        writeString(out, value.aliasId());
+        writeString(out, value.realmId().value());
+        writeString(out, value.authorityId().value());
+        out.writeInt(value.type().code());
+        writeString(out, value.targetObjectId().value());
+        writeOptionalPki(out, value.issuerId());
+        writeOptionalPki(out, value.pathId());
+        writeString(out, value.targetCommitment());
+        writeInstant(out, value.createdAt());
+        writeInstant(out, value.updatedAt());
+        writeString(out, value.actorPrincipalId());
+        out.writeInt(value.state().code());
+        writeString(out, value.recordCommitment());
+    }
+
+    private static RepositoryAliasService.Record readRepositoryAlias(DataInputStream in) throws IOException {
+        return new RepositoryAliasService.Record(readString(in), new RealmId(readString(in)),
+                new PkiId(readString(in)), RepositoryAliasService.Type.fromCode(in.readInt()),
+                new PkiId(readString(in)), readOptionalPki(in), readOptionalPki(in), readString(in),
+                readInstant(in), readInstant(in), readString(in), RepositoryAliasService.State.fromCode(in.readInt()),
+                readString(in));
     }
 
     private static void writeScope(DataOutputStream out, Permission.Scope value) throws IOException {

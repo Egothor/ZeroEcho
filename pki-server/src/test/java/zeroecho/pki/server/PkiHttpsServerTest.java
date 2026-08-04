@@ -43,6 +43,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.HexFormat;
@@ -56,6 +57,28 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.IssuerRef;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.SubjectRef;
+import zeroecho.pki.api.Validity;
+import zeroecho.pki.api.ca.CaKind;
+import zeroecho.pki.api.ca.CaRecord;
+import zeroecho.pki.api.ca.CaState;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
+import zeroecho.pki.api.ca.IssuerGenerationState;
+import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.credential.CaProfileBinding;
+import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.impl.framework.x509.bc.SimpleAttributeSet;
+import zeroecho.pki.impl.fs.FilesystemPkiStore;
+import zeroecho.pki.impl.fs.FsPkiStoreOptions;
+import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pki.server.http.MutualTlsAuthenticator;
 import zeroecho.pki.server.http.TestTlsProvider;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
@@ -79,6 +102,33 @@ class PkiHttpsServerTest {
                 "{\"version\":1,\"version\":1}".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         assertThrows(IllegalArgumentException.class, () -> new PkiServerConfiguration.Execution(1, 1, 1, 1,
                 1, Duration.ofSeconds(2), Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1)));
+        PkiServerConfiguration.Execution publicExecution = new PkiServerConfiguration.Execution(1, 1, 1, 1, 1,
+                Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1));
+        assertThrows(IllegalArgumentException.class, () -> new PkiServerConfiguration.PublicListener(
+                java.net.InetAddress.getByName("192.0.2.1"), 8444, Optional.empty(), true,
+                valid.authentication(), 4_096, 1_024, publicExecution, Duration.ofSeconds(1), Duration.ZERO,
+                Duration.ZERO, true));
+        PkiServerConfiguration.PublicListener conflicting = new PkiServerConfiguration.PublicListener(
+                valid.listener().address(), 8443, Optional.of(valid.listener().tlsProvider()), false,
+                valid.authentication(), 4_096, 1_024, publicExecution, Duration.ofSeconds(1), Duration.ZERO,
+                Duration.ZERO, true);
+        PkiServerConfiguration.Listener fixedAdministrative = new PkiServerConfiguration.Listener(
+                valid.listener().address(), 8443, valid.listener().tlsProvider(), true, 16_384, 65_536);
+        assertThrows(IllegalArgumentException.class, () -> new PkiServerConfiguration(valid.version(),
+                valid.serverName(), valid.realm(), fixedAdministrative, valid.authentication(), valid.execution(),
+                valid.runtime(), Optional.of(conflicting)));
+        assertThrows(IllegalArgumentException.class, () -> new PkiServerConfiguration(2, valid.serverName(),
+                valid.realm(), valid.listener(), valid.authentication(), valid.execution(), valid.runtime()));
+        String production = java.nio.file.Files.readString(java.nio.file.Path.of(
+                "..", "docs", "pki-server-production-example.json"));
+        assertTrue(PkiServerConfigurationCodec.decode(production.getBytes(
+                java.nio.charset.StandardCharsets.UTF_8)).publicListener().isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
+                .replace("\"publicListener\": {\"enabled\": false},\n", "")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
+                .replace("{\"enabled\": false}", "{\"enabled\":false,\"port\":8444}")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         System.out.println("...strict-security-fields=true");
         System.out.println("...ok");
     }
@@ -180,6 +230,124 @@ class PkiHttpsServerTest {
             assertThrows(java.io.IOException.class,
                     () -> client.send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.ofString()));
             System.out.println("...tls-client-certificate=required");
+        }
+        System.out.println("...ok");
+    }
+
+    @Test
+    void isolatedPublicListenerAllowsAnonymousMetadataWithoutAdminRouteOverlap() throws Exception {
+        System.out.println("isolatedPublicListenerAllowsAnonymousMetadataWithoutAdminRouteOverlap");
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        PkiServerConfiguration administrative = HttpServerTestSupport.configuration(
+                temporaryDirectory.resolve("public-direct"), tls.clientCertificate());
+        PkiServerConfiguration configuration = HttpServerTestSupport.withPublicListener(administrative,
+                administrative.authentication());
+        seed(configuration);
+        try (PkiHttpsServer server = PkiHttpsServer.start(configuration, PkiSessionRuntimeDependencies.none(),
+                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader())) {
+            HttpClient anonymous = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+            URI publicBase = URI.create("https://localhost:" + server.publicAddress().orElseThrow().getPort());
+            HttpResponse<String> authorities = get(anonymous, publicBase.resolve("/public/v1/authorities"));
+            assertEquals(200, authorities.statusCode());
+            assertTrue(authorities.body().contains("\"count\":0"));
+            assertEquals(404, get(anonymous, publicBase.resolve("/admin/v1/realm")).statusCode());
+
+            HttpClient administrator = HttpClient.newBuilder().sslContext(tls.clientContext()).build();
+            URI adminBase = URI.create("https://localhost:" + server.address().getPort());
+            assertEquals(404, get(administrator, adminBase.resolve("/public/v1/authorities")).statusCode());
+            System.out.println("...adminPort=" + server.address().getPort() + " publicPort="
+                    + server.publicAddress().orElseThrow().getPort());
+        }
+        assertFalse(Thread.getAllStackTraces().keySet().stream().anyMatch(thread -> thread.isAlive()
+                && thread.getName().startsWith("zeroecho-pki-public-")));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void trustedProxyPublicRequestMayRemainAnonymousButTransportIsAuthenticated() throws Exception {
+        System.out.println("trustedProxyPublicRequestMayRemainAnonymousButTransportIsAuthenticated");
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        PkiServerConfiguration administrative = HttpServerTestSupport.proxyConfiguration(
+                temporaryDirectory.resolve("public-proxy"), tls, ForwardedCertificateFormat.RFC9440);
+        PkiServerConfiguration configuration = HttpServerTestSupport.withPublicListener(administrative,
+                administrative.authentication());
+        seed(configuration);
+        try (PkiHttpsServer server = PkiHttpsServer.start(configuration, PkiSessionRuntimeDependencies.none(),
+                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader())) {
+            HttpClient proxy = HttpClient.newBuilder().sslContext(tls.proxyContext()).build();
+            URI uri = URI.create("https://localhost:" + server.publicAddress().orElseThrow().getPort()
+                    + "/public/v1/authorities");
+            assertEquals(200, get(proxy, uri).statusCode());
+            HttpClient untrusted = HttpClient.newBuilder().sslContext(tls.clientContext()).build();
+            assertEquals(401, get(untrusted, uri).statusCode());
+            System.out.println("...proxyTransport=authenticated,endClient=anonymous");
+        }
+        System.out.println("...ok");
+    }
+
+    @Test
+    void publicIssuerAndAliasedChainUseExactAuthoritativeRecordsAndValidators() throws Exception {
+        System.out.println("publicIssuerAndAliasedChainUseExactAuthoritativeRecordsAndValidators");
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        java.nio.file.Path directory = temporaryDirectory.resolve("public-content");
+        PkiServerConfiguration administrative = HttpServerTestSupport.configuration(directory,
+                tls.clientCertificate());
+        PkiServerConfiguration configuration = HttpServerTestSupport.withPublicListener(administrative,
+                administrative.authentication());
+        SeededIssuer seeded = seedIssuer(directory.resolve("pki-store"), tls.rootCertificate());
+        seed(configuration);
+        try (PkiHttpsServer server = PkiHttpsServer.start(configuration, PkiSessionRuntimeDependencies.none(),
+                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader())) {
+            server.realm().repositoryAliases().setCurrentChain(seeded.authorityId(), seeded.issuerId(),
+                    seeded.pathId(), Optional.empty(), "administrator");
+            HttpClient anonymous = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+            URI base = URI.create("https://localhost:" + server.publicAddress().orElseThrow().getPort());
+            URI certificateUri = base.resolve("/public/v1/authorities/" + seeded.authorityId().value()
+                    + "/issuers/" + seeded.issuerId().value() + "/certificate");
+            HttpResponse<byte[]> certificate = anonymous.send(HttpRequest.newBuilder(certificateUri).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(200, certificate.statusCode());
+            assertTrue(MessageDigest.isEqual(tls.rootCertificate().getEncoded(), certificate.body()));
+            String etag = certificate.headers().firstValue("ETag").orElseThrow();
+            HttpResponse<Void> head = anonymous.send(HttpRequest.newBuilder(certificateUri)
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.discarding());
+            assertEquals(200, head.statusCode());
+            assertEquals(Long.toString(tls.rootCertificate().getEncoded().length),
+                    head.headers().firstValue("Content-Length").orElseThrow());
+            HttpResponse<Void> unchanged = anonymous.send(HttpRequest.newBuilder(certificateUri)
+                    .header("If-None-Match", etag).GET().build(), HttpResponse.BodyHandlers.discarding());
+            assertEquals(304, unchanged.statusCode());
+            URI chainUri = base.resolve("/public/v1/authorities/" + seeded.authorityId().value() + "/chain");
+            HttpResponse<String> chain = get(anonymous, chainUri);
+            assertEquals(200, chain.statusCode());
+            assertTrue(chain.body().contains(seeded.pathId().value()));
+            assertTrue(chain.body().contains(seeded.credentialId().value()));
+            server.realm().disclosure().register(seeded.credentialId(), DisclosureService.ObjectType.LEAF_CERTIFICATE,
+                    DisclosureService.Policy.PUBLIC_UNLISTED, Optional.empty(), "2".repeat(64), "administrator");
+            DisclosureService.IssuedCapability issued = server.realm().disclosure().issueCapability(
+                    seeded.credentialId(), ServerTestSupport.CLOCK.instant().plusSeconds(600), "administrator");
+            byte[] rawToken = issued.token();
+            String bearer;
+            try {
+                bearer = DisclosureService.bearerCredential(issued.capability(), rawToken);
+            } finally {
+                java.util.Arrays.fill(rawToken, (byte) 0);
+            }
+            URI leafUri = base.resolve("/public/v1/certificates/" + seeded.credentialId().value());
+            assertEquals(404, get(anonymous, leafUri).statusCode());
+            HttpResponse<byte[]> capable = anonymous.send(HttpRequest.newBuilder(leafUri)
+                    .header("Authorization", "Bearer " + bearer).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(200, capable.statusCode());
+            assertEquals("private, no-store", capable.headers().firstValue("Cache-Control").orElseThrow());
+            assertTrue(MessageDigest.isEqual(tls.rootCertificate().getEncoded(), capable.body()));
+            assertEquals(400, get(anonymous, URI.create(leafUri + "?token=" + bearer)).statusCode());
+            server.realm().disclosure().revokeCapability(issued.capability().capabilityId(), "administrator");
+            assertEquals(404, anonymous.send(HttpRequest.newBuilder(leafUri)
+                    .header("Authorization", "Bearer " + bearer).GET().build(),
+                    HttpResponse.BodyHandlers.discarding()).statusCode());
+            System.out.println("...issuer=" + seeded.issuerId().value().substring(0, 16)
+                    + " path=" + seeded.pathId().value().substring(0, 16));
         }
         System.out.println("...ok");
     }
@@ -321,6 +489,40 @@ class PkiHttpsServerTest {
         System.out.println("...ok");
     }
 
+    private SeededIssuer seedIssuer(java.nio.file.Path root, java.security.cert.X509Certificate certificate)
+            throws Exception {
+        PkiId authorityId = new PkiId("authority-public-root");
+        PkiId credentialId = new PkiId("credential-public-root");
+        PkiId issuerId = IssuerGeneration.idFor(authorityId, credentialId);
+        IssuerChainPath path = IssuerChainPath.create(authorityId, issuerId, List.of(credentialId));
+        DurableContentReference reference;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(),
+                ServerTestSupport.CLOCK);
+                ContentSink sink = store.stagedContent().beginContent(Encoding.DER,
+                        DurableContentReference.Lifecycle.PERSISTED);
+                OutputStream output = sink.outputStream()) {
+            output.write(certificate.getEncoded());
+            reference = sink.complete();
+            InstantBounds bounds = new InstantBounds(certificate.getNotBefore().toInstant(),
+                    certificate.getNotAfter().toInstant());
+            KeyRef key = new KeyRef("public-root-key");
+            SubjectRef subject = new SubjectRef(certificate.getSubjectX500Principal().getName());
+            Credential credential = new Credential(credentialId, new FormatId("x509"),
+                    new IssuerRef(authorityId, issuerId, path.pathId()), subject,
+                    new Validity(bounds.notBefore(), bounds.notAfter()), certificate.getSerialNumber().toString(),
+                    new PkiId("public-key-public-root"),
+                    new CaProfileBinding(new CertificateProfileRef("public-root-profile", 1, new byte[32])),
+                    CredentialStatus.ISSUED, reference, new SimpleAttributeSet());
+            store.putCredential(credential);
+            store.putIssuerGeneration(new IssuerGeneration(issuerId, authorityId, credentialId, key,
+                    IssuerGenerationState.ACTIVE, "0".repeat(64), "1".repeat(64)));
+            store.putIssuerChainPath(path);
+            store.putCa(new CaRecord(authorityId, CaKind.ROOT, CaState.ACTIVE, key, subject,
+                    List.of(issuerId), issuerId, path.pathId()));
+        }
+        return new SeededIssuer(authorityId, credentialId, issuerId, path.pathId());
+    }
+
     private void seed(PkiServerConfiguration configuration) throws Exception {
         seed(configuration, true);
     }
@@ -394,4 +596,8 @@ class PkiHttpsServerTest {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
+
+    private record SeededIssuer(PkiId authorityId, PkiId credentialId, PkiId issuerId, PkiId pathId) { }
+
+    private record InstantBounds(java.time.Instant notBefore, java.time.Instant notAfter) { }
 }
