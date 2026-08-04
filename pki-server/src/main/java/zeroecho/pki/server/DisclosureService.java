@@ -51,6 +51,18 @@ import zeroecho.pki.api.PkiId;
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.AvoidLiteralsInIfCondition",
         "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel" })
 public final class DisclosureService {
+    /** Durable one-time delivery classification without retaining the raw token. */
+    public enum DeliveryState {
+        PENDING(1), DELIVERED(2), DELIVERY_UNKNOWN(3);
+        private final int code;
+        DeliveryState(int code) { this.code = code; }
+        /** @return stable persistence code */ public int code() { return code; }
+        /** Resolves one stable persistence code. */
+        public static DeliveryState fromCode(int code) {
+            return switch (code) { case 1 -> PENDING; case 2 -> DELIVERED; case 3 -> DELIVERY_UNKNOWN;
+                default -> throw new IllegalArgumentException("Unknown capability delivery code"); };
+        }
+    }
     /** Persisted disclosure states, independent of issuance and publication. */
     public enum Policy {
         PUBLIC(1), PUBLIC_UNLISTED(2), AUTHENTICATED(3), OWNER_ONLY(4), RESTRICTED(5), NOT_PUBLISHED(6);
@@ -133,32 +145,58 @@ public final class DisclosureService {
 
     /** Persisted commitment-only capability authority. */
     public record Capability(String capabilityId, RealmId realmId, PkiId objectId, String action,
-            byte[] tokenCommitment, Instant expiresAt, boolean revoked) {
+            String issuerPrincipalId, byte[] tokenCommitment, Instant expiresAt,
+            DeliveryState deliveryState, boolean revoked) {
         /** Validates and snapshots capability metadata. */
         public Capability {
             Permission.requireId(capabilityId, "capability");
             Objects.requireNonNull(realmId, "realmId");
             Objects.requireNonNull(objectId, "objectId");
             Permission.requireBounded(action, 128, "capability action");
+            Permission.requirePrincipal(issuerPrincipalId);
             tokenCommitment = Objects.requireNonNull(tokenCommitment, "tokenCommitment").clone();
             if (tokenCommitment.length != 32) throw new IllegalArgumentException("Capability commitment length");
             Objects.requireNonNull(expiresAt, "expiresAt");
+            Objects.requireNonNull(deliveryState, "deliveryState");
         }
 
         /** Returns a defensive commitment copy. */
         @Override public byte[] tokenCommitment() { return tokenCommitment.clone(); }
+
+        /** Creates legacy test metadata with an explicit non-secret system issuer. */
+        public Capability(String capabilityId, RealmId realmId, PkiId objectId, String action,
+                byte[] tokenCommitment, Instant expiresAt, boolean revoked) {
+            this(capabilityId, realmId, objectId, action, "system", tokenCommitment, expiresAt, revoked);
+        }
+
+        /** Creates capability metadata in the delivered state for embedded compatibility. */
+        public Capability(String capabilityId, RealmId realmId, PkiId objectId, String action,
+                String issuerPrincipalId, byte[] tokenCommitment, Instant expiresAt, boolean revoked) {
+            this(capabilityId, realmId, objectId, action, issuerPrincipalId, tokenCommitment, expiresAt,
+                    DeliveryState.DELIVERED, revoked);
+        }
     }
 
     /** One-time raw-token issuance result. */
-    public record IssuedCapability(Capability capability, byte[] token) {
+    public static final class IssuedCapability {
+        private final Capability capability;
+        private final byte[] token;
+        private boolean consumed;
         /** Validates and snapshots the one-time token. */
-        public IssuedCapability {
-            Objects.requireNonNull(capability, "capability");
-            token = Objects.requireNonNull(token, "token").clone();
+        public IssuedCapability(Capability capability, byte[] token) {
+            this.capability = Objects.requireNonNull(capability, "capability");
+            this.token = Objects.requireNonNull(token, "token").clone();
             if (token.length != 32) throw new IllegalArgumentException("Capability token length");
         }
-        /** Returns a defensive one-time token copy. */
-        @Override public byte[] token() { return token.clone(); }
+        /** @return persisted commitment-only metadata */ public Capability capability() { return capability; }
+        /** Returns and clears the raw token exactly once. */
+        public synchronized byte[] token() {
+            if (consumed) throw new IllegalStateException("Capability token was already consumed");
+            consumed = true;
+            byte[] result = token.clone();
+            java.util.Arrays.fill(token, (byte) 0);
+            return result;
+        }
     }
 
     /** Safe retrieval result that reveals no protected-object existence. */
@@ -244,6 +282,7 @@ public final class DisclosureService {
     /** Issues 256 random capability bits and persists only their commitment. */
     public synchronized IssuedCapability issueCapability(PkiId objectId, Instant expiresAt,
             String actorPrincipalId) {
+        store.requirePrincipal(actorPrincipalId);
         Record record = store.requireDisclosure(objectId);
         if (record.policy() != Policy.PUBLIC_UNLISTED || !expiresAt.isAfter(clock.instant())) {
             throw new IllegalStateException("Capability issuance is unavailable for this object");
@@ -253,8 +292,8 @@ public final class DisclosureService {
         random.nextBytes(token);
         random.nextBytes(identity);
         String capabilityId = "cap-" + HexFormat.of().formatHex(identity);
-        Capability capability = new Capability(capabilityId, realmId, objectId, "RETRIEVE",
-                capabilityCommitment(objectId, expiresAt, token), expiresAt, false);
+        Capability capability = new Capability(capabilityId, realmId, objectId, "RETRIEVE", actorPrincipalId,
+                capabilityCommitment(objectId, expiresAt, token), expiresAt, DeliveryState.PENDING, false);
         store.createCapability(capability);
         audit.record("CAPABILITY_ISSUE", actorPrincipalId, Optional.of(objectId), Map.of("issued", "true"));
         return new IssuedCapability(capability, token);
@@ -264,10 +303,24 @@ public final class DisclosureService {
     public synchronized Capability revokeCapability(String capabilityId, String actorPrincipalId) {
         Capability current = store.requireCapability(capabilityId);
         Capability revoked = new Capability(current.capabilityId(), current.realmId(), current.objectId(),
-                current.action(), current.tokenCommitment(), current.expiresAt(), true);
+                current.action(), current.issuerPrincipalId(), current.tokenCommitment(), current.expiresAt(),
+                current.deliveryState(), true);
         store.replaceCapability(current, revoked);
         audit.record("CAPABILITY_REVOKE", actorPrincipalId, Optional.of(current.objectId()), Map.of("revoked", "true"));
         return revoked;
+    }
+
+    /** Persists the safe post-write delivery classification without changing token validity. */
+    public synchronized Capability classifyDelivery(String capabilityId, boolean delivered) {
+        Capability current = store.requireCapability(capabilityId);
+        if (current.deliveryState() != DeliveryState.PENDING) return current;
+        Capability updated = new Capability(current.capabilityId(), current.realmId(), current.objectId(),
+                current.action(), current.issuerPrincipalId(), current.tokenCommitment(), current.expiresAt(),
+                delivered ? DeliveryState.DELIVERED : DeliveryState.DELIVERY_UNKNOWN, current.revoked());
+        store.replaceCapability(current, updated);
+        audit.record(delivered ? "CAPABILITY_DELIVERED" : "CAPABILITY_DELIVERY_UNKNOWN",
+                current.issuerPrincipalId(), Optional.of(current.objectId()), Map.of("delivered", Boolean.toString(delivered)));
+        return updated;
     }
 
     private boolean validCapability(PkiId objectId, byte[] token) {

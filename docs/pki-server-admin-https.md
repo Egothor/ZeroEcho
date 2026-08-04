@@ -45,3 +45,25 @@ Shutdown first removes readiness and admission, stops listener acceptance, drain
 ## Request correlation
 
 Clients may supply `X-ZeroEcho-Request-Id` using 16–128 ASCII letters, digits, underscore, or hyphen. Otherwise the server creates a random opaque identifier. It is correlation metadata—not an idempotency key, object identity, approval, or capability token.
+
+## Security-control administration
+
+The operation catalog is the single administrative namespace for both existing
+PKI operations and closed `SERVER_CONTROL_OPERATION` requests. Subject to scoped
+authorization, it exposes principal lifecycle, immutable role-template
+inspection, scoped assignments and grants, approval decisions, break-glass
+lifecycle, disclosure policy, and auditor projections. Lists are explicitly
+paged; revocation disables a control record without erasing its history.
+
+High-risk changes use a separately created approval request committed to the
+exact typed target operation and scope. An approval decision never executes the
+target. The later ordinary operation request supplies the approval ID and the
+gateway claims and completes it exactly once.
+
+`security.disclosure.capability.issue` is the only one-time-sensitive response.
+The durable store receives the token commitment before the raw 256-bit token is
+returned. Its HTTPS response additionally carries `Cache-Control: no-store`,
+`Pragma: no-cache`, and `Referrer-Policy: no-referrer`. The token is absent from
+catalogs, inspection results and audit details. A response-write failure is
+classified as delivery-unknown; the server neither regenerates nor retries the
+token automatically.

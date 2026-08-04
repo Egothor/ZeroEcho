@@ -335,9 +335,11 @@ final class AdminHttpHandler implements HttpHandler {
     private static PkiOperationValue.ObjectValue descriptorValue(OperationSecurityDescriptors.Descriptor value) {
         Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
         fields.put("operation", new PkiOperationValue.Text(value.operationId()));
+        fields.put("family", new PkiOperationValue.Text(value.family().name()));
         fields.put("mutating", new PkiOperationValue.BooleanValue(value.mutating()));
         fields.put("resourceType", new PkiOperationValue.Text(value.resourceType().name()));
         fields.put("approval", new PkiOperationValue.Text(value.approvalCategory().name()));
+        fields.put("dataView", new PkiOperationValue.Text(value.dataView().name()));
         return new PkiOperationValue.ObjectValue(fields);
     }
 
@@ -370,17 +372,46 @@ final class AdminHttpHandler implements HttpHandler {
                 "MALFORMED_REQUEST", "MALFORMED_REQUEST", false, false));
     }
 
-    private static void send(HttpExchange exchange, String requestId, HttpResponses.Response response)
+    private void send(HttpExchange exchange, String requestId, HttpResponses.Response response)
             throws IOException {
         byte[] body = response.body();
         exchange.getResponseHeaders().set("Content-Type", JSON);
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        if (response.oneTimeSensitive()) {
+            exchange.getResponseHeaders().set("Pragma", "no-cache");
+            exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
+        }
         exchange.getResponseHeaders().set(RequestIds.HEADER, requestId);
         exchange.sendResponseHeaders(response.statusCode(), body.length);
         try (java.io.OutputStream output = exchange.getResponseBody()) {
             output.write(body);
+            classifyCapabilityDelivery(response, true, requestId);
+        } catch (IOException failure) {
+            if (response.oneTimeSensitive()) {
+                try {
+                    classifyCapabilityDelivery(response, false, requestId);
+                } catch (RuntimeException classificationFailure) {
+                    failure.addSuppressed(classificationFailure);
+                }
+                realm.auditTransport("CAPABILITY_DELIVERY_UNKNOWN", "system",
+                        Map.of("request", requestId, "classification", "CAPABILITY_DELIVERY_UNKNOWN"));
+            }
+            throw failure;
         } finally {
+            java.util.Arrays.fill(body, (byte) 0);
+            response.clearSensitiveBody();
             exchange.close();
+        }
+    }
+
+    private void classifyCapabilityDelivery(HttpResponses.Response response, boolean delivered,
+            String requestId) {
+        try {
+            response.capabilityId().ifPresent(value -> realm.disclosure().classifyDelivery(value, delivered));
+        } catch (RuntimeException failure) {
+            realm.auditTransport("CAPABILITY_DELIVERY_UNKNOWN", "system",
+                    Map.of("request", requestId, "classification", "CAPABILITY_DELIVERY_UNKNOWN"));
+            if (!delivered) throw failure;
         }
     }
 

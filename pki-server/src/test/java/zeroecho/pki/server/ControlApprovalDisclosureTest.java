@@ -143,13 +143,33 @@ class ControlApprovalDisclosureTest {
                     Permission.ResourceType.REVOCATION, ServerTestSupport.scope(), Permission.Relationship.ANY,
                     Permission.DataView.METADATA_REDACTED);
             BreakGlassService service = new BreakGlassService(opened.store(), ServerTestSupport.CLOCK, opened.audit());
-            BreakGlassService.Record active = service.activate("break-a", "officer", emergency,
-                    "incident-response", "security-admin", Optional.empty(),
-                    ServerTestSupport.CLOCK.instant().plus(Duration.ofHours(1)));
+            ApprovalService.Policy emergencyPolicy = new ApprovalService.Policy("emergency-policy", 1,
+                    Set.of("security-admin"), Set.of(), true, Duration.ofHours(1), true);
+            ApprovalService approvalService = new ApprovalService(opened.store(), ServerTestSupport.CLOCK,
+                    opened.audit());
+            ApprovalService.Request creation = approvalService.request("approval-break-create",
+                    ServerControlOperation.CreateBreakGlass.CREATE, ServerTestSupport.DIGEST,
+                    ServerTestSupport.scope(), "officer", emergencyPolicy);
+            approvalService.decide(creation.approvalId(), "security-admin", ApprovalService.Choice.APPROVE,
+                    "independent emergency review");
+            approvalService.claim(creation.approvalId(), ServerControlOperation.CreateBreakGlass.CREATE,
+                    ServerTestSupport.DIGEST, ServerTestSupport.scope());
+            service.create("break-a", "officer", emergency, "incident-response", "security-admin",
+                    Optional.of(creation.approvalId()), ServerTestSupport.CLOCK.instant().plus(Duration.ofHours(1)));
+            ApprovalService.Request activation = approvalService.request("approval-break-activate",
+                    ServerControlOperation.ActivateBreakGlass.ACTIVATE, ServerTestSupport.DIGEST,
+                    ServerTestSupport.scope(), "officer", emergencyPolicy);
+            approvalService.decide(activation.approvalId(), "security-admin", ApprovalService.Choice.APPROVE,
+                    "activation reviewed");
+            approvalService.claim(activation.approvalId(), ServerControlOperation.ActivateBreakGlass.ACTIVATE,
+                    ServerTestSupport.DIGEST, ServerTestSupport.scope());
+            BreakGlassService.Record active = service.activatePending("break-a", "security-admin",
+                    Optional.of(activation.approvalId()));
             assertEquals(BreakGlassService.State.ACTIVE, active.state());
             assertEquals(1, service.activeFor("officer").grants().size());
-            assertThrows(IllegalArgumentException.class, () -> service.activate("break-b", "officer", emergency,
-                    "incident", "officer", Optional.empty(), ServerTestSupport.CLOCK.instant().plusSeconds(60)));
+            assertThrows(IllegalStateException.class, () -> service.create("break-b", "officer", emergency,
+                    "incident", "security-admin", Optional.empty(),
+                    ServerTestSupport.CLOCK.instant().plusSeconds(60)));
             assertTrue(opened.audit().events().stream().anyMatch(event -> event.action().contains("ACTIVATE")));
             BreakGlassService expired = new BreakGlassService(opened.store(),
                     Clock.fixed(active.expiresAt(), ZoneOffset.UTC), opened.audit());
@@ -164,6 +184,7 @@ class ControlApprovalDisclosureTest {
         System.out.println("disclosureSeparatesIdentityOwnershipPublicationAndCapability");
         try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
             opened.store().createPrincipal(ServerTestSupport.principal("owner-a"));
+            opened.store().createPrincipal(ServerTestSupport.principal("officer"));
             SecureRandom deterministic = SecureRandom.getInstance("SHA1PRNG");
             deterministic.setSeed(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
             DisclosureService service = new DisclosureService(ServerTestSupport.REALM, opened.store(),
@@ -192,24 +213,26 @@ class ControlApprovalDisclosureTest {
             service.change(leaf, DisclosureService.Policy.PUBLIC_UNLISTED, true, true, "officer");
             DisclosureService.IssuedCapability issued = service.issueCapability(leaf,
                     ServerTestSupport.CLOCK.instant().plusSeconds(600), "officer");
-            assertNotEquals(java.util.HexFormat.of().formatHex(issued.token()),
+            byte[] issuedToken = issued.token();
+            assertNotEquals(java.util.HexFormat.of().formatHex(issuedToken),
                     java.util.HexFormat.of().formatHex(issued.capability().tokenCommitment()));
             assertEquals(DisclosureService.Decision.ALLOWED,
-                    service.decide(leaf, Optional.empty(), false, false, Optional.of(issued.token())));
+                    service.decide(leaf, Optional.empty(), false, false, Optional.of(issuedToken)));
             DisclosureService.Capability wrongAction = new DisclosureService.Capability("cap-wrong-action",
                     ServerTestSupport.REALM, leaf, "INSPECT", issued.capability().tokenCommitment(),
                     issued.capability().expiresAt(), false);
             opened.store().createCapability(wrongAction);
             service.revokeCapability(issued.capability().capabilityId(), "officer");
             assertEquals(DisclosureService.Decision.DENIED,
-                    service.decide(leaf, Optional.empty(), false, false, Optional.of(issued.token())));
-            byte[] wrong = issued.token();
+                    service.decide(leaf, Optional.empty(), false, false, Optional.of(issuedToken)));
+            byte[] wrong = issuedToken.clone();
             wrong[0] ^= 1;
             assertEquals(DisclosureService.Decision.DENIED,
                     service.decide(leaf, Optional.empty(), false, false, Optional.of(wrong)));
             assertArrayEquals(issued.capability().tokenCommitment(),
                     opened.store().requireCapability(issued.capability().capabilityId()).tokenCommitment());
-            System.out.println("...token-bytes=" + issued.token().length + ", persisted=commitment-only");
+            assertThrows(IllegalStateException.class, issued::token);
+            System.out.println("...token-bytes=" + issuedToken.length + ", persisted=commitment-only");
         }
         System.out.println("...ok");
     }

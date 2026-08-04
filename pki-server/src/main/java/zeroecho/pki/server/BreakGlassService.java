@@ -43,17 +43,18 @@ import java.util.Optional;
 
 /** Durable, scoped, mandatory-expiry emergency authorization service. */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
-        "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel" })
+        "PMD.UseObjectForClearerAPI", "PMD.AvoidSynchronizedAtMethodLevel",
+        "PMD.ExcessiveParameterList" })
 public final class BreakGlassService {
     /** Break-glass lifecycle states. */
     public enum State {
-        ACTIVE(1), REVOKED(2), EXPIRED(3);
+        ACTIVE(1), REVOKED(2), EXPIRED(3), PENDING(4);
         private final int code;
         State(int code) { this.code = code; }
         /** @return stable persistence code */ public int code() { return code; }
         /** Resolves one stable persistence code. */
         public static State fromCode(int code) {
-            return switch (code) { case 1 -> ACTIVE; case 2 -> REVOKED; case 3 -> EXPIRED;
+            return switch (code) { case 1 -> ACTIVE; case 2 -> REVOKED; case 3 -> EXPIRED; case 4 -> PENDING;
                 default -> throw new IllegalArgumentException("Unknown break-glass state code"); };
         }
     }
@@ -74,7 +75,7 @@ public final class BreakGlassService {
      * @param auditCommitment stable safe commitment
      */
     public record Record(String breakGlassId, String principalId, Permission.Grant grant, String reason,
-            String issuerPrincipalId, Optional<String> approvalId, Instant createdAt, Instant activatedAt,
+            String issuerPrincipalId, Optional<String> approvalId, Instant createdAt, Optional<Instant> activatedAt,
             Instant expiresAt, State state, String auditCommitment) {
         /** Validates the strict time-limited scoped record. */
         public Record {
@@ -91,16 +92,29 @@ public final class BreakGlassService {
             }
             approvalId = Objects.requireNonNull(approvalId, "approvalId");
             Objects.requireNonNull(createdAt, "createdAt");
-            Objects.requireNonNull(activatedAt, "activatedAt");
+            activatedAt = Objects.requireNonNull(activatedAt, "activatedAt");
             Objects.requireNonNull(expiresAt, "expiresAt");
-            if (activatedAt.isBefore(createdAt) || !expiresAt.isAfter(activatedAt)
-                    || Duration.between(activatedAt, expiresAt).compareTo(Duration.ofHours(24)) > 0) {
+            Instant lifetimeStart = activatedAt.orElse(createdAt);
+            if (activatedAt.filter(value -> value.isBefore(createdAt)).isPresent() || !expiresAt.isAfter(lifetimeStart)
+                    || Duration.between(lifetimeStart, expiresAt).compareTo(Duration.ofHours(24)) > 0) {
                 throw new IllegalArgumentException("Break-glass lifetime is invalid");
             }
             Objects.requireNonNull(state, "state");
+            if (state == State.PENDING && activatedAt.isPresent()
+                    || state == State.ACTIVE && activatedAt.isEmpty()) {
+                throw new IllegalArgumentException("Break-glass activation state is invalid");
+            }
             if (auditCommitment == null || !auditCommitment.matches("[0-9a-f]{64}")) {
                 throw new IllegalArgumentException("Break-glass audit commitment is invalid");
             }
+        }
+
+        /** Creates an activated record for existing embedded callers. */
+        public Record(String breakGlassId, String principalId, Permission.Grant grant, String reason,
+                String issuerPrincipalId, Optional<String> approvalId, Instant createdAt, Instant activatedAt,
+                Instant expiresAt, State state, String auditCommitment) {
+            this(breakGlassId, principalId, grant, reason, issuerPrincipalId, approvalId, createdAt,
+                    Optional.of(activatedAt), expiresAt, state, auditCommitment);
         }
     }
 
@@ -124,19 +138,36 @@ public final class BreakGlassService {
         this.audit = new SafeAudit(clock, auditSink);
     }
 
-    /** Creates and immediately activates one independently issued emergency grant. */
-    public synchronized Record activate(String breakGlassId, String principalId, Permission.Grant grant, String reason,
+    /** Creates one durable pending emergency grant without activating it. */
+    public synchronized Record create(String breakGlassId, String principalId, Permission.Grant grant, String reason,
             String issuerPrincipalId, Optional<String> approvalId, Instant expiresAt) {
-        store.requirePrincipal(principalId);
-        store.requirePrincipal(issuerPrincipalId);
+        store.requirePrincipal(principalId); store.requirePrincipal(issuerPrincipalId);
+        requireExecutingApproval(approvalId, ServerControlOperation.CreateBreakGlass.CREATE, grant.scope());
         Instant now = clock.instant();
         String commitment = ApprovalService.digest(breakGlassId + '|' + principalId + '|' + grant.grantId()
                 + '|' + issuerPrincipalId + '|' + now + '|' + expiresAt);
         Record record = new Record(breakGlassId, principalId, grant, reason, issuerPrincipalId, approvalId,
-                now, now, expiresAt, State.ACTIVE, commitment);
+                now, Optional.empty(), expiresAt, State.PENDING, commitment);
         store.createBreakGlass(record);
-        audit.record("BREAK_GLASS_ACTIVATE", issuerPrincipalId, Optional.empty(), Map.of("state", "ACTIVE"));
+        audit.record("BREAK_GLASS_CREATE", issuerPrincipalId, Optional.empty(), Map.of("state", "PENDING"));
         return record;
+    }
+
+    /** Activates one independently approved pending emergency grant. */
+    public synchronized Record activatePending(String breakGlassId, String actorPrincipalId,
+            Optional<String> approvalId) {
+        Record current = requireCurrent(breakGlassId);
+        if (current.state() != State.PENDING) {
+            throw new IllegalStateException("Break-glass record is not approved for activation");
+        }
+        requireExecutingApproval(approvalId, ServerControlOperation.ActivateBreakGlass.ACTIVATE,
+                current.grant().scope());
+        Record active = new Record(current.breakGlassId(), current.principalId(), current.grant(), current.reason(),
+                current.issuerPrincipalId(), approvalId, current.createdAt(), Optional.of(clock.instant()),
+                current.expiresAt(), State.ACTIVE, current.auditCommitment());
+        store.replaceBreakGlass(current, active);
+        audit.record("BREAK_GLASS_ACTIVATE", actorPrincipalId, Optional.empty(), Map.of("state", "ACTIVE"));
+        return active;
     }
 
     /** Revokes an active grant. */
@@ -152,7 +183,8 @@ public final class BreakGlassService {
     /** Returns a current record, durably applying expiry when observed. */
     public synchronized Record requireCurrent(String breakGlassId) {
         Record current = store.requireBreakGlass(breakGlassId);
-        if (current.state() == State.ACTIVE && !clock.instant().isBefore(current.expiresAt())) {
+        if ((current.state() == State.ACTIVE || current.state() == State.PENDING)
+                && !clock.instant().isBefore(current.expiresAt())) {
             Record expired = copy(current, State.EXPIRED);
             store.replaceBreakGlass(current, expired);
             audit.record("BREAK_GLASS_EXPIRY", current.principalId(), Optional.empty(), Map.of("state", "EXPIRED"));
@@ -179,5 +211,15 @@ public final class BreakGlassService {
         return new Record(source.breakGlassId(), source.principalId(), source.grant(), source.reason(),
                 source.issuerPrincipalId(), source.approvalId(), source.createdAt(), source.activatedAt(),
                 source.expiresAt(), state, source.auditCommitment());
+    }
+
+    private void requireExecutingApproval(Optional<String> approvalId, String operationId,
+            Permission.Scope scope) {
+        ApprovalService.Request approval = store.requireApproval(approvalId
+                .orElseThrow(() -> new IllegalStateException("Break-glass approval is required")));
+        if (approval.state() != ApprovalService.State.EXECUTING || !approval.operationId().equals(operationId)
+                || !approval.scope().equals(scope)) {
+            throw new IllegalStateException("Break-glass approval is not executable");
+        }
     }
 }

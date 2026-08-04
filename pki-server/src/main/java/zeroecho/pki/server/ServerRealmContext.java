@@ -96,7 +96,8 @@ public final class ServerRealmContext implements AutoCloseable {
         this.auditorViews = auditorViews;
         this.audit = new SafeAudit(clock, auditSink);
         this.gateway = new ServerOperationGateway(configuration.realmId(), configuration.authorityExposure(),
-                control, roles, authorization, approvals, breakGlass, new OperationSecurityDescriptors(),
+                control, roles, authorization, approvals, breakGlass, disclosure, auditorViews,
+                new OperationSecurityDescriptors(),
                 session.operations(), session.resourceScopes(), configuration.approvalPolicies(), clock, auditSink,
                 this::requireOpen);
     }

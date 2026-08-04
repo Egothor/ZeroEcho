@@ -41,8 +41,11 @@ import java.util.Objects;
 import zeroecho.pki.application.PkiOperation;
 
 /** Immutable security descriptors keyed by existing typed-operation identities. */
-@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass" })
+@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
+        "PMD.AvoidDuplicateLiterals" })
 public final class OperationSecurityDescriptors {
+    /** Internally fixed execution family; callers cannot select it. */
+    public enum Family { PKI_OPERATION, SERVER_CONTROL_OPERATION }
     /** Approval treatment for one operation. */
     public enum ApprovalCategory { NONE, HIGH_RISK }
 
@@ -60,17 +63,26 @@ public final class OperationSecurityDescriptors {
      * @param approvalCategory approval treatment
      * @param eligibility future transport eligibility metadata
      */
-    public record Descriptor(String operationId, Permission.Action action, Permission.ResourceType resourceType,
+    public record Descriptor(String operationId, Family family, Permission.Action action, Permission.ResourceType resourceType,
             boolean mutating, Permission.DataView dataView, ApprovalCategory approvalCategory,
             Eligibility eligibility) {
         /** Validates one finite descriptor. */
         public Descriptor {
             Permission.requireBounded(operationId, 256, "operation ID");
+            Objects.requireNonNull(family, "family");
             Objects.requireNonNull(action, "action");
             Objects.requireNonNull(resourceType, "resourceType");
             Objects.requireNonNull(dataView, "dataView");
             Objects.requireNonNull(approvalCategory, "approvalCategory");
             Objects.requireNonNull(eligibility, "eligibility");
+        }
+
+        /** Creates an existing PKI-family descriptor for embedded callers. */
+        public Descriptor(String operationId, Permission.Action action, Permission.ResourceType resourceType,
+                boolean mutating, Permission.DataView dataView, ApprovalCategory approvalCategory,
+                Eligibility eligibility) {
+            this(operationId, Family.PKI_OPERATION, action, resourceType, mutating, dataView,
+                    approvalCategory, eligibility);
         }
     }
 
@@ -94,7 +106,41 @@ public final class OperationSecurityDescriptors {
                 read(PkiOperation.InspectPublication.NAME, Permission.Action.PUBLICATION_READ, Permission.ResourceType.PUBLICATION),
                 mutate(PkiOperation.ProcessPublication.NAME, Permission.Action.PUBLICATION_PROCESS, Permission.ResourceType.PUBLICATION, false),
                 read(PkiOperation.ListAlgorithmBindings.NAME, Permission.Action.X509_BINDING_READ, Permission.ResourceType.X509_BINDING),
-                read(PkiOperation.InspectAlgorithmBinding.NAME, Permission.Action.X509_BINDING_READ, Permission.ResourceType.X509_BINDING)));
+                read(PkiOperation.InspectAlgorithmBinding.NAME, Permission.Action.X509_BINDING_READ, Permission.ResourceType.X509_BINDING),
+                control(ServerControlOperation.RegisterPrincipal.NAME, Permission.Action.PRINCIPAL_MANAGE, Permission.ResourceType.PRINCIPAL, true, false),
+                control(ServerControlOperation.InspectPrincipal.NAME, Permission.Action.PRINCIPAL_MANAGE, Permission.ResourceType.PRINCIPAL, false, false),
+                control(ServerControlOperation.ListPrincipals.NAME, Permission.Action.PRINCIPAL_MANAGE, Permission.ResourceType.PRINCIPAL, false, false),
+                control(ServerControlOperation.SetPrincipalEnabled.ENABLE, Permission.Action.PRINCIPAL_MANAGE, Permission.ResourceType.PRINCIPAL, true, false),
+                control(ServerControlOperation.SetPrincipalEnabled.DISABLE, Permission.Action.PRINCIPAL_MANAGE, Permission.ResourceType.PRINCIPAL, true, true),
+                control(ServerControlOperation.ListRoleTemplates.NAME, Permission.Action.ROLE_MANAGE, Permission.ResourceType.ROLE, false, false),
+                control(ServerControlOperation.InspectRoleTemplate.NAME, Permission.Action.ROLE_MANAGE, Permission.ResourceType.ROLE, false, false),
+                control(ServerControlOperation.CreateRoleAssignment.NAME, Permission.Action.ROLE_MANAGE, Permission.ResourceType.ROLE, true, true),
+                control(ServerControlOperation.InspectRoleAssignment.NAME, Permission.Action.ROLE_MANAGE, Permission.ResourceType.ROLE, false, false),
+                control(ServerControlOperation.ListRoleAssignments.NAME, Permission.Action.ROLE_MANAGE, Permission.ResourceType.ROLE, false, false),
+                control(ServerControlOperation.RevokeRoleAssignment.NAME, Permission.Action.ROLE_MANAGE, Permission.ResourceType.ROLE, true, false),
+                control(ServerControlOperation.CreateGrant.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.GRANT, true, true),
+                control(ServerControlOperation.InspectGrant.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.GRANT, false, false),
+                control(ServerControlOperation.ListGrants.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.GRANT, false, false),
+                control(ServerControlOperation.RevokeGrant.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.GRANT, true, false),
+                control(ServerControlOperation.EvaluateAuthorization.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.GRANT, false, false),
+                control(ServerControlOperation.RequestApproval.NAME, Permission.Action.REQUEST_SUBMIT, Permission.ResourceType.APPROVAL, true, false),
+                control(ServerControlOperation.InspectApproval.NAME, Permission.Action.REQUEST_READ_ANY, Permission.ResourceType.APPROVAL, false, false),
+                control(ServerControlOperation.ListApprovals.NAME, Permission.Action.REQUEST_READ_ANY, Permission.ResourceType.APPROVAL, false, false),
+                control(ServerControlOperation.DecideApproval.APPROVE, Permission.Action.REQUEST_APPROVE, Permission.ResourceType.APPROVAL, true, false),
+                control(ServerControlOperation.DecideApproval.REJECT, Permission.Action.REQUEST_REJECT, Permission.ResourceType.APPROVAL, true, false),
+                control(ServerControlOperation.CancelApproval.NAME, Permission.Action.REQUEST_CANCEL, Permission.ResourceType.APPROVAL, true, false),
+                control(ServerControlOperation.CreateBreakGlass.CREATE, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.BREAK_GLASS, true, true),
+                control(ServerControlOperation.ActivateBreakGlass.ACTIVATE, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.BREAK_GLASS, true, true),
+                control(ServerControlOperation.InspectBreakGlass.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.BREAK_GLASS, false, false),
+                control(ServerControlOperation.ListBreakGlass.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.BREAK_GLASS, false, false),
+                control(ServerControlOperation.RevokeBreakGlass.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.BREAK_GLASS, true, false),
+                control(ServerControlOperation.InspectDisclosure.NAME, Permission.Action.DISCLOSURE_READ, Permission.ResourceType.DISCLOSURE, false, false),
+                control(ServerControlOperation.SetDisclosure.NAME, Permission.Action.DISCLOSURE_CHANGE, Permission.ResourceType.DISCLOSURE, true, true),
+                control(ServerControlOperation.IssueCapability.NAME, Permission.Action.DISCLOSURE_CAPABILITY_ISSUE, Permission.ResourceType.CAPABILITY, true, false),
+                control(ServerControlOperation.RevokeCapability.NAME, Permission.Action.DISCLOSURE_CAPABILITY_REVOKE, Permission.ResourceType.CAPABILITY, true, false),
+                control(ServerControlOperation.InspectAuditView.REDACTED, Permission.Action.AUDIT_READ_REDACTED, Permission.ResourceType.AUDIT, false, false),
+                control(ServerControlOperation.InspectAuditView.FULL, Permission.Action.AUDIT_READ_FULL, Permission.ResourceType.AUDIT, false, false),
+                control(ServerControlOperation.InspectAuditView.PII, Permission.Action.AUDIT_READ_PII, Permission.ResourceType.AUDIT, false, false)));
     }
 
     /** Creates a registry and rejects duplicate operation identities. */
@@ -117,9 +163,28 @@ public final class OperationSecurityDescriptors {
         return descriptor;
     }
 
+    /** Resolves either operation family through the sole descriptor authority. */
+    public Descriptor require(AdministrativeOperation operation) {
+        Objects.requireNonNull(operation, "operation");
+        Descriptor descriptor = descriptors.get(operation.name());
+        if (descriptor == null) throw new SecurityException("Operation is not exposed by the server gateway");
+        Family expected = operation instanceof AdministrativeOperation.Pki ? Family.PKI_OPERATION
+                : Family.SERVER_CONTROL_OPERATION;
+        if (descriptor.family() != expected) throw new SecurityException("Operation family differs");
+        return descriptor;
+    }
+
     /** @return immutable descriptor map keyed by operation ID */
     public Map<String, Descriptor> descriptors() {
         return descriptors;
+    }
+
+    /** Resolves one descriptor by stable ID for strict transport decoding. */
+    public Descriptor require(String operationId) {
+        Permission.requireBounded(operationId, 256, "operation ID");
+        Descriptor descriptor = descriptors.get(operationId);
+        if (descriptor == null) throw new SecurityException("Operation is not exposed by the server gateway");
+        return descriptor;
     }
 
     /** Computes an exact deterministic safe operation commitment. */
@@ -127,6 +192,15 @@ public final class OperationSecurityDescriptors {
         Descriptor descriptor = require(operation);
         return ApprovalService.digest(realmId.value() + '|' + descriptor.operationId() + '|'
                 + canonicalArguments(operation) + '|' + canonicalResource(resource));
+    }
+
+    /** Computes an exact deterministic commitment for either closed operation family. */
+    public String commitment(RealmId realmId, AdministrativeOperation operation, Permission.Resource resource) {
+        require(operation);
+        String arguments = operation instanceof AdministrativeOperation.Pki pki
+                ? canonicalArguments(pki.operation()) : canonicalControl(((AdministrativeOperation.Control) operation).operation());
+        return ApprovalService.digest(realmId.value() + '|' + operation.name() + '|' + arguments + '|'
+                + canonicalResource(resource));
     }
 
     /** Verifies that caller-supplied security scope matches operation identities. */
@@ -214,19 +288,78 @@ public final class OperationSecurityDescriptors {
     }
 
     private static Descriptor read(String id, Permission.Action action, Permission.ResourceType type) {
-        return new Descriptor(id, action, type, false, Permission.DataView.METADATA_REDACTED,
+        return new Descriptor(id, Family.PKI_OPERATION, action, type, false, Permission.DataView.METADATA_REDACTED,
                 ApprovalCategory.NONE, Eligibility.ADMINISTRATIVE);
     }
 
     private static Descriptor mutate(String id, Permission.Action action, Permission.ResourceType type,
             boolean highRisk) {
-        return new Descriptor(id, action, type, true, Permission.DataView.METADATA_REDACTED,
+        return new Descriptor(id, Family.PKI_OPERATION, action, type, true, Permission.DataView.METADATA_REDACTED,
                 highRisk ? ApprovalCategory.HIGH_RISK : ApprovalCategory.NONE, Eligibility.ADMINISTRATIVE);
     }
 
     private static void validateOperationType(PkiOperation operation, Descriptor descriptor) {
-        if (!operation.name().equals(descriptor.operationId())) {
+        if (descriptor.family() != Family.PKI_OPERATION || !operation.name().equals(descriptor.operationId())) {
             throw new SecurityException("Operation identity and descriptor differ");
         }
+    }
+
+    private static Descriptor control(String id, Permission.Action action, Permission.ResourceType type,
+            boolean mutating, boolean highRisk) {
+        Permission.DataView view = action == Permission.Action.AUDIT_READ_PII
+                ? Permission.DataView.PII_FULL : action == Permission.Action.AUDIT_READ_FULL
+                        ? Permission.DataView.METADATA_FULL : Permission.DataView.METADATA_REDACTED;
+        return new Descriptor(id, Family.SERVER_CONTROL_OPERATION, action, type, mutating,
+                view, highRisk ? ApprovalCategory.HIGH_RISK
+                        : ApprovalCategory.NONE, Eligibility.ADMINISTRATIVE);
+    }
+
+    private static String canonicalControl(ServerControlOperation operation) {
+        return switch (operation) {
+            case ServerControlOperation.RegisterPrincipal value -> "principal=" + atom(value.principal().principalId());
+            case ServerControlOperation.InspectPrincipal value -> "principal=" + atom(value.principalId());
+            case ServerControlOperation.ListPrincipals value -> "offset=" + value.offset() + ";limit=" + value.limit();
+            case ServerControlOperation.SetPrincipalEnabled value -> "principal=" + atom(value.principalId())
+                    + ";enabled=" + value.enabled();
+            case ServerControlOperation.ListRoleTemplates ignored -> "all";
+            case ServerControlOperation.InspectRoleTemplate value -> "template=" + atom(value.templateId())
+                    + ";version=" + value.version();
+            case ServerControlOperation.CreateRoleAssignment value -> "assignment="
+                    + atom(value.assignment().assignmentId()) + ";principal=" + atom(value.assignment().principalId());
+            case ServerControlOperation.InspectRoleAssignment value -> "assignment=" + atom(value.assignmentId());
+            case ServerControlOperation.ListRoleAssignments value -> "offset=" + value.offset() + ";limit=" + value.limit();
+            case ServerControlOperation.RevokeRoleAssignment value -> "assignment=" + atom(value.assignmentId());
+            case ServerControlOperation.CreateGrant value -> "grant=" + atom(value.grant().grantId())
+                    + ";principal=" + atom(value.grant().principalId()) + ";action=" + value.grant().action().name();
+            case ServerControlOperation.InspectGrant value -> "grant=" + atom(value.grantId());
+            case ServerControlOperation.ListGrants value -> "offset=" + value.offset() + ";limit=" + value.limit();
+            case ServerControlOperation.RevokeGrant value -> "grant=" + atom(value.grantId());
+            case ServerControlOperation.EvaluateAuthorization value -> "principal=" + atom(value.principalId())
+                    + ";action=" + value.action().name();
+            case ServerControlOperation.RequestApproval value -> "approval=" + atom(value.approvalId())
+                    + ";target=" + atom(value.targetOperation().name());
+            case ServerControlOperation.InspectApproval value -> "approval=" + atom(value.approvalId());
+            case ServerControlOperation.ListApprovals value -> "offset=" + value.offset() + ";limit=" + value.limit()
+                    + ";state=" + atom(value.state().map(Enum::name).orElse("")) + ";requester="
+                    + atom(value.requesterPrincipalId().orElse("")) + ";target="
+                    + atom(value.targetOperationId().orElse(""));
+            case ServerControlOperation.DecideApproval value -> "approval=" + atom(value.approvalId())
+                    + ";choice=" + value.choice().name();
+            case ServerControlOperation.CancelApproval value -> "approval=" + atom(value.approvalId());
+            case ServerControlOperation.CreateBreakGlass value -> "breakGlass=" + atom(value.breakGlassId())
+                    + ";principal=" + atom(value.principalId()) + ";expiry=" + value.expiresAt();
+            case ServerControlOperation.ActivateBreakGlass value -> "breakGlass=" + atom(value.breakGlassId());
+            case ServerControlOperation.InspectBreakGlass value -> "breakGlass=" + atom(value.breakGlassId());
+            case ServerControlOperation.ListBreakGlass value -> "offset=" + value.offset() + ";limit=" + value.limit();
+            case ServerControlOperation.RevokeBreakGlass value -> "breakGlass=" + atom(value.breakGlassId());
+            case ServerControlOperation.InspectDisclosure value -> "object=" + atom(value.objectId().value());
+            case ServerControlOperation.SetDisclosure value -> "object=" + atom(value.objectId().value())
+                    + ";policy=" + value.policy().name();
+            case ServerControlOperation.IssueCapability value -> "object=" + atom(value.objectId().value())
+                    + ";expiry=" + value.expiresAt();
+            case ServerControlOperation.RevokeCapability value -> "capability=" + atom(value.capabilityId());
+            case ServerControlOperation.InspectAuditView value -> "object=" + atom(value.objectId().value())
+                    + ";view=" + value.view().name();
+        };
     }
 }

@@ -91,7 +91,7 @@ public final class ServerControlStore implements AutoCloseable {
     /** Stable namespace for capability commitments. */ public static final String CAPABILITY = "io.zeroecho.server.capability";
 
     private static final int MAGIC = 0x5a455331;
-    private static final int SCHEMA = 1;
+    private static final int SCHEMA = 2;
     private static final int MAXIMUM_RECORD_BYTES = 1_048_576;
     private static final int MAXIMUM_STRING_BYTES = 16_384;
     private static final int MAXIMUM_COLLECTION = 4_096;
@@ -179,9 +179,32 @@ public final class ServerControlStore implements AutoCloseable {
                 .orElseThrow(() -> new IllegalArgumentException("Principal is unavailable"));
     }
 
+    /** Returns a bounded stable page of principals in metadata-key order. */
+    public synchronized Page<SecurityPrincipal> principals(int offset, int limit) {
+        return scanPage(PRINCIPAL, KIND_PRINCIPAL, ServerControlStore::readPrincipal, offset, limit);
+    }
+
     /** Creates one scoped role assignment. */
     public synchronized void createAssignment(RoleTemplateCatalog.Assignment value) {
         create(ASSIGNMENT, value.assignmentId(), output -> writeAssignment(output, value));
+    }
+
+    /** Returns one role assignment. */
+    public synchronized RoleTemplateCatalog.Assignment requireAssignment(String assignmentId) {
+        return read(ASSIGNMENT, assignmentId, KIND_ASSIGNMENT, ServerControlStore::readAssignment)
+                .orElseThrow(() -> new IllegalArgumentException("Role assignment is unavailable"));
+    }
+
+    /** Replaces one exact role assignment. */
+    public synchronized void replaceAssignment(RoleTemplateCatalog.Assignment current,
+            RoleTemplateCatalog.Assignment updated) {
+        requireSame(current.assignmentId(), updated.assignmentId());
+        replace(ASSIGNMENT, current.assignmentId(), output -> writeAssignment(output, updated));
+    }
+
+    /** Returns a bounded stable page of role assignments. */
+    public synchronized Page<RoleTemplateCatalog.Assignment> assignments(int offset, int limit) {
+        return scanPage(ASSIGNMENT, KIND_ASSIGNMENT, ServerControlStore::readAssignment, offset, limit);
     }
 
     /** Lists assignments for one principal from one stable metadata snapshot. */
@@ -193,6 +216,17 @@ public final class ServerControlStore implements AutoCloseable {
     /** Creates one direct grant. */
     public synchronized void createGrant(Permission.Grant value) {
         create(GRANT, value.grantId(), output -> writeGrant(output, value));
+    }
+
+    /** Returns one direct grant. */
+    public synchronized Permission.Grant requireGrant(String grantId) {
+        return read(GRANT, grantId, KIND_GRANT, ServerControlStore::readGrant)
+                .orElseThrow(() -> new IllegalArgumentException("Permission grant is unavailable"));
+    }
+
+    /** Returns a bounded stable page of direct grants. */
+    public synchronized Page<Permission.Grant> grants(int offset, int limit) {
+        return scanPage(GRANT, KIND_GRANT, ServerControlStore::readGrant, offset, limit);
     }
 
     /** Replaces one direct grant. */
@@ -224,6 +258,11 @@ public final class ServerControlStore implements AutoCloseable {
                 .orElseThrow(() -> new IllegalArgumentException("Approval is unavailable"));
     }
 
+    /** Returns a bounded stable page of approval records. */
+    public synchronized Page<ApprovalService.Request> approvals(int offset, int limit) {
+        return scanPage(APPROVAL, KIND_APPROVAL, ServerControlStore::readApproval, offset, limit);
+    }
+
     /** Creates one break-glass record. */
     public synchronized void createBreakGlass(BreakGlassService.Record value) {
         create(BREAK_GLASS, value.breakGlassId(), output -> writeBreakGlass(output, value));
@@ -247,6 +286,11 @@ public final class ServerControlStore implements AutoCloseable {
                 .filter(item -> item.principalId().equals(principalId)).toList();
     }
 
+    /** Returns a bounded stable page of break-glass records. */
+    public synchronized Page<BreakGlassService.Record> breakGlass(int offset, int limit) {
+        return scanPage(BREAK_GLASS, KIND_BREAK_GLASS, ServerControlStore::readBreakGlass, offset, limit);
+    }
+
     /** Creates one disclosure record. */
     public synchronized void createDisclosure(DisclosureService.Record value) {
         create(DISCLOSURE, value.objectId().value(), output -> writeDisclosure(output, value));
@@ -262,6 +306,11 @@ public final class ServerControlStore implements AutoCloseable {
     public synchronized DisclosureService.Record requireDisclosure(PkiId objectId) {
         return read(DISCLOSURE, objectId.value(), KIND_DISCLOSURE, ServerControlStore::readDisclosure)
                 .orElseThrow(() -> new IllegalArgumentException("Disclosure record is unavailable"));
+    }
+
+    /** Returns a bounded stable page of disclosure records. */
+    public synchronized Page<DisclosureService.Record> disclosures(int offset, int limit) {
+        return scanPage(DISCLOSURE, KIND_DISCLOSURE, ServerControlStore::readDisclosure, offset, limit);
     }
 
     /** Creates one commitment-only capability record. */
@@ -280,6 +329,15 @@ public final class ServerControlStore implements AutoCloseable {
     public synchronized DisclosureService.Capability requireCapability(String capabilityId) {
         return read(CAPABILITY, capabilityId, KIND_CAPABILITY, ServerControlStore::readCapability)
                 .orElseThrow(() -> new IllegalArgumentException("Capability is unavailable"));
+    }
+
+    /** Finite page returned without materializing the complete namespace. */
+    public record Page<T>(List<T> values, int nextOffset, boolean hasMore) {
+        /** Snapshots the bounded page. */
+        public Page {
+            values = List.copyOf(Objects.requireNonNull(values, "values"));
+            if (nextOffset < 0) throw new IllegalArgumentException("Next offset is negative");
+        }
     }
 
     /** Lists capability commitments bound to one object. */
@@ -330,6 +388,10 @@ public final class ServerControlStore implements AutoCloseable {
                 : scan(DISCLOSURE, KIND_DISCLOSURE, ServerControlStore::readDisclosure)) {
             record.ownerPrincipalId().ifPresent(owner -> requirePrincipalReference(principals, owner));
         }
+        for (DisclosureService.Capability capability
+                : scan(CAPABILITY, KIND_CAPABILITY, ServerControlStore::readCapability)) {
+            requirePrincipalReference(principals, capability.issuerPrincipalId());
+        }
     }
 
     /** Opens no sidecar authority and closes the sole metadata authority idempotently. */
@@ -374,6 +436,34 @@ public final class ServerControlStore implements AutoCloseable {
                 }
             }
             return List.copyOf(values);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Server-control metadata scan failed");
+        }
+    }
+
+    private <T> Page<T> scanPage(String namespace, int kind, Decoder<T> decoder, int offset, int limit) {
+        requireOpen();
+        if (offset < 0 || limit <= 0 || limit > 256) {
+            throw new IllegalArgumentException("Control page bounds are invalid");
+        }
+        List<T> values = new ArrayList<>(limit);
+        int seen = 0;
+        boolean more = false;
+        try (MetadataSnapshot snapshot = metadata.snapshot();
+                MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(namespace),
+                        CancellationSignal.NONE)) {
+            Optional<MetadataSnapshot.Record> next;
+            while ((next = cursor.next(CancellationSignal.NONE)).isPresent()) {
+                MetadataSnapshot.Record record = next.orElseThrow();
+                T decoded = decode(record, kind, decoder);
+                if (!record.key().equals(key(namespace, identityOf(decoded)))) {
+                    throw new IllegalStateException("Server-control metadata key mismatch");
+                }
+                if (seen++ < offset) continue;
+                if (values.size() == limit) { more = true; break; }
+                values.add(decoded);
+            }
+            return new Page<>(values, Math.addExact(offset, values.size()), more);
         } catch (IOException failure) {
             throw new IllegalStateException("Server-control metadata scan failed");
         }
@@ -513,12 +603,12 @@ public final class ServerControlStore implements AutoCloseable {
     private static void writeAssignment(DataOutputStream out, RoleTemplateCatalog.Assignment value) throws IOException {
         out.writeInt(KIND_ASSIGNMENT); writeString(out, value.assignmentId()); writeString(out, value.principalId());
         writeString(out, value.templateId()); out.writeInt(value.templateVersion()); writeScope(out, value.scope());
-        out.writeBoolean(value.enabled());
+        writeOptionalInstant(out, value.expiresAt()); out.writeBoolean(value.enabled());
     }
 
     private static RoleTemplateCatalog.Assignment readAssignment(DataInputStream in) throws IOException {
         return new RoleTemplateCatalog.Assignment(readString(in), readString(in), readString(in), in.readInt(),
-                readScope(in), in.readBoolean());
+                readScope(in), readOptionalInstant(in), in.readBoolean());
     }
 
     private static void writeGrant(DataOutputStream out, Permission.Grant value) throws IOException {
@@ -580,13 +670,13 @@ public final class ServerControlStore implements AutoCloseable {
     private static void writeBreakGlass(DataOutputStream out, BreakGlassService.Record value) throws IOException {
         out.writeInt(KIND_BREAK_GLASS); writeString(out, value.breakGlassId()); writeString(out, value.principalId());
         writeGrantBody(out, value.grant()); writeString(out, value.reason()); writeString(out, value.issuerPrincipalId());
-        writeOptionalString(out, value.approvalId()); writeInstant(out, value.createdAt()); writeInstant(out, value.activatedAt());
+        writeOptionalString(out, value.approvalId()); writeInstant(out, value.createdAt()); writeOptionalInstant(out, value.activatedAt());
         writeInstant(out, value.expiresAt()); out.writeInt(value.state().code()); writeString(out, value.auditCommitment());
     }
 
     private static BreakGlassService.Record readBreakGlass(DataInputStream in) throws IOException {
         return new BreakGlassService.Record(readString(in), readString(in), readGrantBody(in), readString(in),
-                readString(in), readOptionalString(in), readInstant(in), readInstant(in), readInstant(in),
+                readString(in), readOptionalString(in), readInstant(in), readOptionalInstant(in), readInstant(in),
                 BreakGlassService.State.fromCode(in.readInt()), readString(in));
     }
 
@@ -603,13 +693,15 @@ public final class ServerControlStore implements AutoCloseable {
 
     private static void writeCapability(DataOutputStream out, DisclosureService.Capability value) throws IOException {
         out.writeInt(KIND_CAPABILITY); writeString(out, value.capabilityId()); writeString(out, value.realmId().value());
-        writeString(out, value.objectId().value()); writeString(out, value.action()); writeBytes(out, value.tokenCommitment());
-        writeInstant(out, value.expiresAt()); out.writeBoolean(value.revoked());
+        writeString(out, value.objectId().value()); writeString(out, value.action());
+        writeString(out, value.issuerPrincipalId()); writeBytes(out, value.tokenCommitment());
+        writeInstant(out, value.expiresAt()); out.writeInt(value.deliveryState().code()); out.writeBoolean(value.revoked());
     }
 
     private static DisclosureService.Capability readCapability(DataInputStream in) throws IOException {
         return new DisclosureService.Capability(readString(in), new RealmId(readString(in)), new PkiId(readString(in)),
-                readString(in), readBytes(in, 32), readInstant(in), in.readBoolean());
+                readString(in), readString(in), readBytes(in, 32), readInstant(in),
+                DisclosureService.DeliveryState.fromCode(in.readInt()), in.readBoolean());
     }
 
     private static void writeScope(DataOutputStream out, Permission.Scope value) throws IOException {

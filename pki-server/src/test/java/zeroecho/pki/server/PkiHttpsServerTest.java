@@ -137,6 +137,16 @@ class PkiHttpsServerTest {
                     "{\"version\":1,\"arguments\":{\"limit\":10}}");
             assertEquals(200, executed.statusCode());
             assertTrue(executed.body().contains("\"status\":\"SUCCEEDED\""));
+            HttpResponse<String> principalCreated = post(client,
+                    base.resolve("/admin/v1/operations/security.principal.register"),
+                    "{\"version\":1,\"arguments\":{\"principalId\":\"operator-b\",\"type\":\"USER\","
+                            + "\"displayName\":\"Operator B\",\"enabled\":true}}");
+            assertEquals(200, principalCreated.statusCode());
+            HttpResponse<String> principalInspected = post(client,
+                    base.resolve("/admin/v1/operations/security.principal.inspect"),
+                    "{\"version\":1,\"arguments\":{\"principalId\":\"operator-b\"}}");
+            assertEquals(200, principalInspected.statusCode());
+            assertTrue(principalInspected.body().contains("operator-b"));
             HttpResponse<String> hidden = get(client, base.resolve("/admin/v1/operations/credential.issue"));
             assertEquals(404, hidden.statusCode());
             HttpResponse<String> malformed = post(client,
@@ -197,6 +207,9 @@ class PkiHttpsServerTest {
                     Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED), "system");
             context.grant(ServerTestSupport.grant("binding-read", "administrator", Permission.Effect.ALLOW,
                     Permission.Action.X509_BINDING_READ, Permission.ResourceType.X509_BINDING, realmScope,
+                    Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED), "system");
+            context.grant(ServerTestSupport.grant("principal-manage", "administrator", Permission.Effect.ALLOW,
+                    Permission.Action.PRINCIPAL_MANAGE, Permission.ResourceType.PRINCIPAL, realmScope,
                     Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED), "system");
         }
     }

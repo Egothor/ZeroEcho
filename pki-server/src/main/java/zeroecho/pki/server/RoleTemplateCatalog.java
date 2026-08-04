@@ -70,7 +70,8 @@ public final class RoleTemplateCatalog {
 
     /** Persistable scoped role assignment; the template itself grants nothing. */
     public record Assignment(String assignmentId, String principalId, String templateId,
-            int templateVersion, Permission.Scope scope, boolean enabled) {
+            int templateVersion, Permission.Scope scope, java.util.Optional<java.time.Instant> expiresAt,
+            boolean enabled) {
         /** Validates the exact scoped assignment. */
         public Assignment {
             Permission.requireId(assignmentId, "assignment");
@@ -78,6 +79,13 @@ public final class RoleTemplateCatalog {
             Permission.requireId(templateId, "role template");
             if (templateVersion <= 0) throw new IllegalArgumentException("Template version must be positive");
             Objects.requireNonNull(scope, "scope");
+            expiresAt = Objects.requireNonNull(expiresAt, "expiresAt");
+        }
+
+        /** Creates an assignment without an expiry for existing embedded callers. */
+        public Assignment(String assignmentId, String principalId, String templateId,
+                int templateVersion, Permission.Scope scope, boolean enabled) {
+            this(assignmentId, principalId, templateId, templateVersion, scope, java.util.Optional.empty(), enabled);
         }
     }
 
@@ -169,7 +177,7 @@ public final class RoleTemplateCatalog {
         return template.actions().stream().sorted(Comparator.comparingInt(Permission.Action::code))
                 .map(action -> new Permission.Grant(exact.assignmentId() + ":" + action.code(), exact.principalId(),
                         Permission.Effect.ALLOW, action, resourceType(action), exact.scope(),
-                        relationship(template, action), dataView(action), Set.of(), java.util.Optional.empty(), true))
+                        relationship(template, action), dataView(action), Set.of(), exact.expiresAt(), true))
                 .toList();
     }
 
@@ -188,6 +196,8 @@ public final class RoleTemplateCatalog {
         if (name.startsWith("AUDIT")) return Permission.ResourceType.AUDIT;
         if (name.startsWith("BACKUP")) return Permission.ResourceType.BACKUP;
         if (name.startsWith("RESTORE")) return Permission.ResourceType.RESTORE;
+        if (name.startsWith("DISCLOSURE_CAPABILITY")) return Permission.ResourceType.CAPABILITY;
+        if (name.startsWith("DISCLOSURE")) return Permission.ResourceType.DISCLOSURE;
         if (name.startsWith("PRINCIPAL")) return Permission.ResourceType.PRINCIPAL;
         if (name.startsWith("ROLE")) return Permission.ResourceType.ROLE;
         if (name.startsWith("PERMISSION")) return Permission.ResourceType.GRANT;

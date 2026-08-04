@@ -58,7 +58,8 @@ import zeroecho.pki.application.PkiResourceScopeResolver;
  * exactly once to the session executor, and preserves the returned outcome.</p>
  */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
-        "PMD.ExcessiveParameterList", "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops" })
+        "PMD.ExcessiveParameterList", "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops",
+        "PMD.NcssCount", "PMD.ConfusingTernary", "PMD.ExceptionAsFlowControl" })
 public final class ServerOperationGateway {
     /**
      * Complete transport-neutral request admission input.
@@ -72,7 +73,7 @@ public final class ServerOperationGateway {
      * @param approvalId optional durable approval reference
      * @param correlationId safe finite request correlation identity
      */
-    public record Request(RealmId realmId, String principalId, PkiOperation operation,
+    public record Request(RealmId realmId, String principalId, AdministrativeOperation operation,
             Permission.Resource resource, Permission.Relationship relationship, Permission.Context context,
             Optional<String> approvalId, String correlationId) {
         /** Validates the immutable request. */
@@ -86,13 +87,26 @@ public final class ServerOperationGateway {
             approvalId = Objects.requireNonNull(approvalId, "approvalId");
             Permission.requireBounded(correlationId, 256, "correlation ID");
         }
+
+        /** Wraps an existing PKI operation for source-compatible embedded callers. */
+        public Request(RealmId realmId, String principalId, PkiOperation operation,
+                Permission.Resource resource, Permission.Relationship relationship, Permission.Context context,
+                Optional<String> approvalId, String correlationId) {
+            this(realmId, principalId, new AdministrativeOperation.Pki(operation), resource, relationship,
+                    context, approvalId, correlationId);
+        }
     }
 
     /** Closed gateway outcome preserving typed backend results. */
-    public sealed interface Outcome permits Outcome.Executed, Outcome.Denied, Outcome.ApprovalRequired {
+    public sealed interface Outcome permits Outcome.Executed, Outcome.ControlExecuted,
+            Outcome.Denied, Outcome.ApprovalRequired {
         /** Successfully admitted operation and exact backend outcome. */
         record Executed(PkiOperationOutcome outcome) implements Outcome {
             /** Validates the backend result. */ public Executed { Objects.requireNonNull(outcome, "outcome"); }
+        }
+        /** Successfully admitted server-control result. */
+        record ControlExecuted(ServerControlOperationOutcome outcome) implements Outcome {
+            /** Validates the control result. */ public ControlExecuted { Objects.requireNonNull(outcome, "outcome"); }
         }
         /** Safe denial without protected-object existence information. */
         record Denied(AuthorizationEngine.Code code) implements Outcome {
@@ -117,6 +131,7 @@ public final class ServerOperationGateway {
     private final BreakGlassService breakGlass;
     private final OperationSecurityDescriptors descriptors;
     private final PkiOperationExecutor executor;
+    private final ServerControlOperationExecutor controlExecutor;
     private final PkiResourceScopeResolver resourceScopes;
     private final Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies;
     private final SafeAudit audit;
@@ -125,7 +140,8 @@ public final class ServerOperationGateway {
     /** Creates one gateway bound to one realm and one session executor. */
     public ServerOperationGateway(RealmId realmId, AuthorityExposurePolicy exposure, ServerControlStore control,
             RoleTemplateCatalog roles, AuthorizationEngine authorization, ApprovalService approvals,
-            BreakGlassService breakGlass, OperationSecurityDescriptors descriptors, PkiOperationExecutor executor,
+            BreakGlassService breakGlass, DisclosureService disclosure, AuditorViews auditorViews,
+            OperationSecurityDescriptors descriptors, PkiOperationExecutor executor,
             PkiResourceScopeResolver resourceScopes,
             Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies,
             java.time.Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink, Runnable openCheck) {
@@ -138,10 +154,25 @@ public final class ServerOperationGateway {
         this.breakGlass = Objects.requireNonNull(breakGlass, "breakGlass");
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.executor = Objects.requireNonNull(executor, "executor");
+        this.controlExecutor = new ServerControlOperationExecutor(realmId, exposure, control, roles,
+                authorization, approvals, breakGlass, disclosure, auditorViews, descriptors, approvalPolicies);
         this.resourceScopes = Objects.requireNonNull(resourceScopes, "resourceScopes");
         this.approvalPolicies = Map.copyOf(Objects.requireNonNull(approvalPolicies, "approvalPolicies"));
         this.audit = new SafeAudit(clock, auditSink);
         this.openCheck = Objects.requireNonNull(openCheck, "openCheck");
+    }
+
+    /** Creates the pre-control-plane gateway surface for embedded source compatibility. */
+    public ServerOperationGateway(RealmId realmId, AuthorityExposurePolicy exposure, ServerControlStore control,
+            RoleTemplateCatalog roles, AuthorizationEngine authorization, ApprovalService approvals,
+            BreakGlassService breakGlass, OperationSecurityDescriptors descriptors, PkiOperationExecutor executor,
+            PkiResourceScopeResolver resourceScopes,
+            Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies,
+            java.time.Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink, Runnable openCheck) {
+        this(realmId, exposure, control, roles, authorization, approvals, breakGlass,
+                new DisclosureService(realmId, control, DisclosureService.Defaults.recommended(), clock,
+                        new java.security.SecureRandom(), auditSink), new AuditorViews(clock, auditSink),
+                descriptors, executor, resourceScopes, approvalPolicies, clock, auditSink, openCheck);
     }
 
     /**
@@ -161,12 +192,21 @@ public final class ServerOperationGateway {
         OperationSecurityDescriptors.Descriptor descriptor;
         try {
             descriptor = descriptors.require(exact.operation());
-            descriptors.validateResource(exact.operation(), exact.resource());
-            validateAuthoritativeScope(exact.operation(), exact.resource());
-        } catch (SecurityException invalid) {
+            if (exact.operation() instanceof AdministrativeOperation.Pki pki) {
+                descriptors.validateResource(pki.operation(), exact.resource());
+                validateAuthoritativeScope(pki.operation(), exact.resource());
+            } else if (descriptor.resourceType() != exact.resource().type()) {
+                throw new SecurityException("Control operation resource type differs");
+            } else {
+                validateControlScope(((AdministrativeOperation.Control) exact.operation()).operation(),
+                        exact.resource());
+            }
+        } catch (SecurityException | IllegalArgumentException invalid) {
             return denied(exact, AuthorizationEngine.Code.NO_MATCHING_GRANT);
         }
-        if (exact.operation() instanceof PkiOperation.CreateAuthority && !exposure.authorityCreationPermitted()) {
+        if (exact.operation() instanceof AdministrativeOperation.Pki pki
+                && pki.operation() instanceof PkiOperation.CreateAuthority
+                && !exposure.authorityCreationPermitted()) {
             return denied(exact, AuthorizationEngine.Code.OUTSIDE_AUTHORITY_SCOPE);
         }
         SecurityPrincipal principal;
@@ -181,15 +221,35 @@ public final class ServerOperationGateway {
         }
         BreakGlassService.ActiveGrants emergency = breakGlass.activeFor(principal.principalId());
         grants.addAll(emergency.grants());
-        Permission.Action action = action(exact.operation(), descriptor.action());
+        Permission.Action action = exact.operation() instanceof AdministrativeOperation.Pki pki
+                ? action(pki.operation(), descriptor.action()) : descriptor.action();
         Permission.Context conditionContext = approvalContext(exact);
         AuthorizationEngine.Decision decision = authorization.authorize(new AuthorizationEngine.Request(realmId,
                 exposure, principal, action, exact.resource(), exact.relationship(), descriptor.dataView(),
                 conditionContext, grants, emergency.grantIds()));
-        boolean filterableList = exact.operation() instanceof PkiOperation.ListAuthorities
+        boolean filterableList = exact.operation() instanceof AdministrativeOperation.Pki pki
+                && pki.operation() instanceof PkiOperation.ListAuthorities
                 && decision.code() == AuthorizationEngine.Code.NO_MATCHING_GRANT;
         if (!decision.allowed() && !filterableList) {
             return denied(exact, decision.code());
+        }
+        if (exact.operation() instanceof AdministrativeOperation.Control controlOperation
+                && controlOperation.operation() instanceof ServerControlOperation.RequestApproval requestApproval) {
+            OperationSecurityDescriptors.Descriptor target = descriptors.require(requestApproval.targetOperation());
+            if (target.resourceType() != requestApproval.targetResource().type()) {
+                return denied(exact, AuthorizationEngine.Code.NO_MATCHING_GRANT);
+            }
+            if (requestApproval.targetOperation() instanceof AdministrativeOperation.Pki targetPki) {
+                try {
+                    descriptors.validateResource(targetPki.operation(), requestApproval.targetResource());
+                } catch (SecurityException mismatch) {
+                    return denied(exact, AuthorizationEngine.Code.NO_MATCHING_GRANT);
+                }
+            }
+            AuthorizationEngine.Decision targetDecision = authorization.authorize(new AuthorizationEngine.Request(
+                    realmId, exposure, principal, target.action(), requestApproval.targetResource(),
+                    exact.relationship(), target.dataView(), exact.context(), grants, emergency.grantIds()));
+            if (!targetDecision.allowed()) return denied(exact, targetDecision.code());
         }
         if (decision.usedBreakGlass()) breakGlass.auditUse(principal.principalId());
         String commitment = descriptors.commitment(realmId, exact.operation(), exact.resource());
@@ -205,17 +265,25 @@ public final class ServerOperationGateway {
             approvals.claim(current.approvalId(), exact.operation().name(), commitment, exact.resource().scope());
             claimedApproval = Optional.of(current.approvalId());
         }
-        PkiOperationOutcome backend = executor.execute(exact.operation(), cancellation);
-        if (exact.operation() instanceof PkiOperation.ListAuthorities) {
-            backend = filterAuthorities(backend, principal, grants, emergency.grantIds(), exact.context());
+        if (exact.operation() instanceof AdministrativeOperation.Pki pki) {
+            PkiOperationOutcome backend = executor.execute(pki.operation(), cancellation);
+            if (pki.operation() instanceof PkiOperation.ListAuthorities) {
+                backend = filterAuthorities(backend, principal, grants, emergency.grantIds(), exact.context());
+            }
+            if (claimedApproval.isPresent()) approvals.complete(claimedApproval.orElseThrow(), classification(backend));
+            audit.record("GATEWAY_RESULT", principal.principalId(), exact.resource().objectId(),
+                    Map.of("operation", exact.operation().name(), "result", classification(backend),
+                            "correlation", exact.correlationId()));
+            return new Outcome.Executed(backend);
         }
-        if (claimedApproval.isPresent()) {
-            approvals.complete(claimedApproval.orElseThrow(), classification(backend));
-        }
+        ServerControlOperation controlOperation = ((AdministrativeOperation.Control) exact.operation()).operation();
+        ServerControlOperationOutcome controlResult = controlExecutor.execute(controlOperation,
+                principal.principalId(), exact.resource(), exact.approvalId(), cancellation);
+        String result = classification(controlResult);
+        if (claimedApproval.isPresent()) approvals.complete(claimedApproval.orElseThrow(), result);
         audit.record("GATEWAY_RESULT", principal.principalId(), exact.resource().objectId(),
-                Map.of("operation", exact.operation().name(), "result", classification(backend),
-                        "correlation", exact.correlationId()));
-        return new Outcome.Executed(backend);
+                Map.of("operation", exact.operation().name(), "result", result, "correlation", exact.correlationId()));
+        return new Outcome.ControlExecuted(controlResult);
     }
 
     /**
@@ -277,6 +345,18 @@ public final class ServerOperationGateway {
     public OperationSecurityDescriptors.Descriptor descriptor(PkiOperation operation) {
         openCheck.run();
         return descriptors.require(operation);
+    }
+
+    /** Resolves one descriptor by its immutable administrative operation family. */
+    public OperationSecurityDescriptors.Descriptor descriptor(AdministrativeOperation operation) {
+        openCheck.run();
+        return descriptors.require(operation);
+    }
+
+    /** Resolves one descriptor by stable ID before closed typed decoding. */
+    public OperationSecurityDescriptors.Descriptor descriptor(String operationId) {
+        openCheck.run();
+        return descriptors.require(operationId);
     }
 
     private List<Permission.Grant> grants(SecurityPrincipal principal) {
@@ -351,6 +431,28 @@ public final class ServerOperationGateway {
         }
     }
 
+    private void validateControlScope(ServerControlOperation operation, Permission.Resource resource) {
+        Permission.Scope actual = switch (operation) {
+            case ServerControlOperation.CreateRoleAssignment value -> value.assignment().scope();
+            case ServerControlOperation.InspectRoleAssignment value -> control.requireAssignment(value.assignmentId()).scope();
+            case ServerControlOperation.RevokeRoleAssignment value -> control.requireAssignment(value.assignmentId()).scope();
+            case ServerControlOperation.CreateGrant value -> value.grant().scope();
+            case ServerControlOperation.InspectGrant value -> control.requireGrant(value.grantId()).scope();
+            case ServerControlOperation.RevokeGrant value -> control.requireGrant(value.grantId()).scope();
+            case ServerControlOperation.EvaluateAuthorization value -> value.resource().scope();
+            case ServerControlOperation.RequestApproval value -> value.targetResource().scope();
+            case ServerControlOperation.InspectApproval value -> approvals.requireCurrent(value.approvalId()).scope();
+            case ServerControlOperation.DecideApproval value -> approvals.requireCurrent(value.approvalId()).scope();
+            case ServerControlOperation.CancelApproval value -> approvals.requireCurrent(value.approvalId()).scope();
+            case ServerControlOperation.CreateBreakGlass value -> value.grant().scope();
+            case ServerControlOperation.ActivateBreakGlass value -> breakGlass.requireCurrent(value.breakGlassId()).grant().scope();
+            case ServerControlOperation.InspectBreakGlass value -> breakGlass.requireCurrent(value.breakGlassId()).grant().scope();
+            case ServerControlOperation.RevokeBreakGlass value -> breakGlass.requireCurrent(value.breakGlassId()).grant().scope();
+            default -> resource.scope();
+        };
+        if (!actual.equals(resource.scope())) throw new SecurityException("Control scope differs");
+    }
+
     private static boolean requiresResolvedAuthority(PkiOperation operation) {
         return operation instanceof PkiOperation.InspectCredential
                 || operation instanceof PkiOperation.RevokeCredential
@@ -382,5 +484,11 @@ public final class ServerOperationGateway {
             case PkiOperationOutcome.Success ignored -> "SUCCEEDED";
             case PkiOperationOutcome.Failure failure -> failure.classification().name();
         };
+    }
+
+    private static String classification(ServerControlOperationOutcome outcome) {
+        if (outcome instanceof ServerControlOperationOutcome.OneTimeSensitive) return "SUCCEEDED";
+        PkiOperationOutcome ordinary = ((ServerControlOperationOutcome.Ordinary) outcome).outcome();
+        return classification(ordinary);
     }
 }

@@ -34,6 +34,7 @@
 package zeroecho.pki.server.http;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -50,21 +51,27 @@ import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.OperationSecurityDescriptors;
+import zeroecho.pki.server.AdministrativeOperation;
+import zeroecho.pki.server.ApprovalService;
+import zeroecho.pki.server.DisclosureService;
 import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.RealmId;
+import zeroecho.pki.server.RoleTemplateCatalog;
+import zeroecho.pki.server.SecurityPrincipal;
+import zeroecho.pki.server.ServerControlOperation;
 
 /** Closed strict HTTP decoding for operations exposed by the existing gateway. */
 @SuppressWarnings("PMD")
 final class HttpOperationCodec {
     /** Fully decoded gateway input excluding authenticated principal and request ID. */
-    record Decoded(PkiOperation operation, Permission.Resource resource, Permission.Context context,
+    record Decoded(AdministrativeOperation operation, Permission.Resource resource, Permission.Context context,
             Optional<String> approvalId, Optional<Duration> requestedDeadline) { }
 
     private HttpOperationCodec() {
     }
 
     static Decoded decode(String operationId, byte[] document, int maximumBytes, RealmId realmId,
-            java.util.function.Function<PkiOperation, OperationSecurityDescriptors.Descriptor> descriptors) {
+            java.util.function.Function<String, OperationSecurityDescriptors.Descriptor> descriptors) {
         Fields root = Fields.of(StrictJson.parse(document, maximumBytes));
         root.allowed(Set.of("version", "authorityId", "approvalId", "deadline", "arguments"));
         if (root.integer("version") != 1) throw new IllegalArgumentException("Request version is unsupported");
@@ -73,22 +80,34 @@ final class HttpOperationCodec {
         approval.ifPresent(value -> requireId(value, "approval ID"));
         Optional<Duration> deadline = root.optionalText("deadline").map(HttpOperationCodec::duration);
         Fields arguments = root.object("arguments");
-        PkiOperation operation = operation(operationId, arguments);
+        OperationSecurityDescriptors.Descriptor descriptor = descriptors.apply(operationId);
+        AdministrativeOperation operation;
+        Permission.Scope scope;
+        Optional<PkiId> objectId;
+        if (descriptor.family() == OperationSecurityDescriptors.Family.PKI_OPERATION) {
+            PkiOperation pki = operation(operationId, arguments);
+            operation = new AdministrativeOperation.Pki(pki);
+            boolean realmWide = realmWide(pki);
+            if (realmWide == authority.isPresent()) {
+                throw new IllegalArgumentException(realmWide
+                        ? "Realm-wide operation must not specify authorityId"
+                        : "Authority-scoped operation requires authorityId");
+            }
+            validateAuthority(pki, authority);
+            scope = new Permission.Scope(realmId, authority, Optional.empty(), profile(pki));
+            objectId = objectId(pki);
+        } else {
+            ServerControlOperation control = control(operationId, arguments, realmId, authority, descriptors);
+            operation = new AdministrativeOperation.Control(control);
+            scope = controlScope(control, realmId, authority);
+            objectId = controlObject(control);
+        }
         arguments.complete();
         root.complete();
-        OperationSecurityDescriptors.Descriptor descriptor = descriptors.apply(operation);
-        boolean realmWide = realmWide(operation);
-        if (realmWide == authority.isPresent()) {
-            throw new IllegalArgumentException(realmWide
-                    ? "Realm-wide operation must not specify authorityId"
-                    : "Authority-scoped operation requires authorityId");
-        }
-        validateAuthority(operation, authority);
-        Permission.Scope scope = new Permission.Scope(realmId, authority, Optional.empty(), profile(operation));
-        Optional<PkiId> objectId = objectId(operation);
         Permission.Resource resource = new Permission.Resource(descriptor.resourceType(), scope, objectId,
                 Optional.empty());
-        Optional<String> reason = operation instanceof PkiOperation.TransitionAuthority transition
+        Optional<String> reason = operation instanceof AdministrativeOperation.Pki pki
+                && pki.operation() instanceof PkiOperation.TransitionAuthority transition
                 ? Optional.of(transition.reason()) : Optional.empty();
         Permission.Context context = new Permission.Context(reason, approval.isPresent(), false, Map.of());
         return new Decoded(operation, resource, context, approval, deadline);
@@ -164,6 +183,212 @@ final class HttpOperationCodec {
                 yield new PkiOperation.InspectAlgorithmBinding(fields.text("bindingId"));
             }
             default -> throw new SecurityException("Operation is not exposed");
+        };
+    }
+
+    private static ServerControlOperation control(String id, Fields fields, RealmId realmId,
+            Optional<PkiId> authority,
+            java.util.function.Function<String, OperationSecurityDescriptors.Descriptor> descriptors) {
+        return switch (id) {
+            case ServerControlOperation.RegisterPrincipal.NAME -> {
+                fields.exact("principalId", "type", "displayName", "enabled");
+                yield new ServerControlOperation.RegisterPrincipal(new SecurityPrincipal(fields.text("principalId"),
+                        SecurityPrincipal.Type.valueOf(fields.text("type")), fields.text("displayName"),
+                        Optional.empty(), Map.of(), fields.bool("enabled")));
+            }
+            case ServerControlOperation.InspectPrincipal.NAME -> {
+                fields.exact("principalId"); yield new ServerControlOperation.InspectPrincipal(fields.text("principalId"));
+            }
+            case ServerControlOperation.ListPrincipals.NAME -> {
+                fields.exact("offset", "limit"); yield new ServerControlOperation.ListPrincipals(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.SetPrincipalEnabled.ENABLE,
+                    ServerControlOperation.SetPrincipalEnabled.DISABLE -> {
+                fields.exact("principalId"); yield new ServerControlOperation.SetPrincipalEnabled(
+                        fields.text("principalId"), id.equals(ServerControlOperation.SetPrincipalEnabled.ENABLE));
+            }
+            case ServerControlOperation.ListRoleTemplates.NAME -> {
+                fields.exact(); yield new ServerControlOperation.ListRoleTemplates();
+            }
+            case ServerControlOperation.InspectRoleTemplate.NAME -> {
+                fields.exact("templateId", "version"); yield new ServerControlOperation.InspectRoleTemplate(
+                        fields.text("templateId"), fields.integer("version"));
+            }
+            case ServerControlOperation.CreateRoleAssignment.NAME -> {
+                fields.allowed(Set.of("assignmentId", "principalId", "templateId", "templateVersion",
+                        "profileId", "expiresAt"));
+                Permission.Scope scope = new Permission.Scope(realmId, authority, Optional.empty(),
+                        fields.optionalText("profileId"));
+                yield new ServerControlOperation.CreateRoleAssignment(new RoleTemplateCatalog.Assignment(
+                        fields.text("assignmentId"), fields.text("principalId"), fields.text("templateId"),
+                        fields.integer("templateVersion"), scope, fields.optionalInstant("expiresAt"), true));
+            }
+            case ServerControlOperation.InspectRoleAssignment.NAME -> {
+                fields.exact("assignmentId"); yield new ServerControlOperation.InspectRoleAssignment(
+                        fields.text("assignmentId"));
+            }
+            case ServerControlOperation.ListRoleAssignments.NAME -> {
+                fields.exact("offset", "limit"); yield new ServerControlOperation.ListRoleAssignments(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.RevokeRoleAssignment.NAME -> {
+                fields.exact("assignmentId"); yield new ServerControlOperation.RevokeRoleAssignment(
+                        fields.text("assignmentId"));
+            }
+            case ServerControlOperation.CreateGrant.NAME -> {
+                fields.allowed(Set.of("grantId", "principalId", "effect", "action", "resourceType",
+                        "issuerId", "profileId", "relationship", "dataView", "conditions", "expiresAt"));
+                Permission.Scope scope = new Permission.Scope(realmId, authority,
+                        fields.optionalText("issuerId").map(PkiId::new), fields.optionalText("profileId"));
+                yield new ServerControlOperation.CreateGrant(new Permission.Grant(fields.text("grantId"),
+                        fields.text("principalId"), Permission.Effect.valueOf(fields.text("effect")),
+                        Permission.Action.valueOf(fields.text("action")),
+                        Permission.ResourceType.valueOf(fields.text("resourceType")), scope,
+                        Permission.Relationship.valueOf(fields.text("relationship")),
+                        Permission.DataView.valueOf(fields.text("dataView")),
+                        fields.enumSet("conditions", Permission.Condition.class), fields.optionalInstant("expiresAt"), true));
+            }
+            case ServerControlOperation.InspectGrant.NAME -> {
+                fields.exact("grantId"); yield new ServerControlOperation.InspectGrant(fields.text("grantId"));
+            }
+            case ServerControlOperation.ListGrants.NAME -> {
+                fields.exact("offset", "limit"); yield new ServerControlOperation.ListGrants(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.RevokeGrant.NAME -> {
+                fields.exact("grantId"); yield new ServerControlOperation.RevokeGrant(fields.text("grantId"));
+            }
+            case ServerControlOperation.EvaluateAuthorization.NAME -> {
+                fields.exact("principalId", "action", "resourceType", "relationship", "dataView");
+                Permission.Resource resource = new Permission.Resource(
+                        Permission.ResourceType.valueOf(fields.text("resourceType")),
+                        new Permission.Scope(realmId, authority, Optional.empty(), Optional.empty()),
+                        Optional.empty(), Optional.empty());
+                yield new ServerControlOperation.EvaluateAuthorization(fields.text("principalId"),
+                        Permission.Action.valueOf(fields.text("action")), resource,
+                        Permission.Relationship.valueOf(fields.text("relationship")),
+                        Permission.DataView.valueOf(fields.text("dataView")), Permission.Context.empty());
+            }
+            case ServerControlOperation.RequestApproval.NAME -> {
+                fields.allowed(Set.of("approvalId", "targetOperation", "targetArguments", "targetAuthorityId"));
+                String targetId = fields.text("targetOperation");
+                Fields targetFields = fields.object("targetArguments");
+                Optional<PkiId> targetAuthority = fields.optionalText("targetAuthorityId").map(PkiId::new);
+                OperationSecurityDescriptors.Descriptor targetDescriptor = descriptors.apply(targetId);
+                AdministrativeOperation targetOperation;
+                Permission.Scope targetScope;
+                Optional<PkiId> targetObject;
+                if (targetDescriptor.family() == OperationSecurityDescriptors.Family.PKI_OPERATION) {
+                    PkiOperation targetPki = operation(targetId, targetFields);
+                    targetOperation = new AdministrativeOperation.Pki(targetPki);
+                    targetScope = new Permission.Scope(realmId, targetAuthority, Optional.empty(), profile(targetPki));
+                    targetObject = objectId(targetPki);
+                } else {
+                    ServerControlOperation targetControl = control(targetId, targetFields, realmId,
+                            targetAuthority, descriptors);
+                    targetOperation = new AdministrativeOperation.Control(targetControl);
+                    targetScope = controlScope(targetControl, realmId, targetAuthority);
+                    targetObject = controlObject(targetControl);
+                }
+                targetFields.complete();
+                Permission.Resource targetResource = new Permission.Resource(targetDescriptor.resourceType(),
+                        targetScope, targetObject, Optional.empty());
+                yield new ServerControlOperation.RequestApproval(fields.text("approvalId"),
+                        targetOperation, targetResource);
+            }
+            case ServerControlOperation.InspectApproval.NAME -> {
+                fields.exact("approvalId"); yield new ServerControlOperation.InspectApproval(fields.text("approvalId"));
+            }
+            case ServerControlOperation.ListApprovals.NAME -> {
+                fields.allowed(Set.of("offset", "limit", "state", "requesterPrincipalId", "targetOperationId"));
+                yield new ServerControlOperation.ListApprovals(fields.integer("offset"), fields.integer("limit"),
+                        fields.optionalText("state").map(ApprovalService.State::valueOf),
+                        fields.optionalText("requesterPrincipalId"), fields.optionalText("targetOperationId"));
+            }
+            case ServerControlOperation.DecideApproval.APPROVE,
+                    ServerControlOperation.DecideApproval.REJECT -> {
+                fields.exact("approvalId", "justification"); yield new ServerControlOperation.DecideApproval(
+                        fields.text("approvalId"), id.equals(ServerControlOperation.DecideApproval.APPROVE)
+                                ? ApprovalService.Choice.APPROVE : ApprovalService.Choice.REJECT,
+                        fields.text("justification"));
+            }
+            case ServerControlOperation.CancelApproval.NAME -> {
+                fields.exact("approvalId"); yield new ServerControlOperation.CancelApproval(fields.text("approvalId"));
+            }
+            case ServerControlOperation.CreateBreakGlass.CREATE -> {
+                fields.exact("breakGlassId", "principalId", "grantId", "action", "resourceType", "reason", "expiresAt");
+                Permission.Scope scope = new Permission.Scope(realmId, authority, Optional.empty(), Optional.empty());
+                Permission.Grant grant = new Permission.Grant(fields.text("grantId"), fields.text("principalId"),
+                        Permission.Effect.ALLOW, Permission.Action.valueOf(fields.text("action")),
+                        Permission.ResourceType.valueOf(fields.text("resourceType")), scope,
+                        Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED, Set.of(),
+                        Optional.of(fields.instant("expiresAt")), true);
+                yield new ServerControlOperation.CreateBreakGlass(fields.text("breakGlassId"),
+                        fields.text("principalId"), grant, fields.text("reason"), fields.instant("expiresAt"));
+            }
+            case ServerControlOperation.ActivateBreakGlass.ACTIVATE -> {
+                fields.exact("breakGlassId");
+                yield new ServerControlOperation.ActivateBreakGlass(fields.text("breakGlassId"));
+            }
+            case ServerControlOperation.InspectBreakGlass.NAME -> {
+                fields.exact("breakGlassId"); yield new ServerControlOperation.InspectBreakGlass(fields.text("breakGlassId"));
+            }
+            case ServerControlOperation.ListBreakGlass.NAME -> {
+                fields.exact("offset", "limit"); yield new ServerControlOperation.ListBreakGlass(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.RevokeBreakGlass.NAME -> {
+                fields.exact("breakGlassId"); yield new ServerControlOperation.RevokeBreakGlass(fields.text("breakGlassId"));
+            }
+            case ServerControlOperation.InspectDisclosure.NAME -> {
+                fields.exact("objectId"); yield new ServerControlOperation.InspectDisclosure(fields.pkiId("objectId"));
+            }
+            case ServerControlOperation.SetDisclosure.NAME -> {
+                fields.exact("objectId", "policy"); yield new ServerControlOperation.SetDisclosure(
+                        fields.pkiId("objectId"), DisclosureService.Policy.valueOf(fields.text("policy")));
+            }
+            case ServerControlOperation.IssueCapability.NAME -> {
+                fields.exact("objectId", "expiresAt"); yield new ServerControlOperation.IssueCapability(
+                        fields.pkiId("objectId"), fields.instant("expiresAt"));
+            }
+            case ServerControlOperation.RevokeCapability.NAME -> {
+                fields.exact("capabilityId"); yield new ServerControlOperation.RevokeCapability(fields.text("capabilityId"));
+            }
+            case ServerControlOperation.InspectAuditView.REDACTED,
+                    ServerControlOperation.InspectAuditView.FULL,
+                    ServerControlOperation.InspectAuditView.PII -> {
+                fields.allowed(Set.of("objectId", "reasonReference"));
+                Permission.DataView view = id.equals(ServerControlOperation.InspectAuditView.REDACTED)
+                        ? Permission.DataView.METADATA_REDACTED
+                        : id.equals(ServerControlOperation.InspectAuditView.FULL)
+                                ? Permission.DataView.METADATA_FULL : Permission.DataView.PII_FULL;
+                yield new ServerControlOperation.InspectAuditView(fields.pkiId("objectId"), view,
+                        fields.optionalText("reasonReference"));
+            }
+            default -> throw new SecurityException("Control operation is not exposed");
+        };
+    }
+
+    private static Permission.Scope controlScope(ServerControlOperation operation, RealmId realmId,
+            Optional<PkiId> authority) {
+        return switch (operation) {
+            case ServerControlOperation.CreateRoleAssignment value -> value.assignment().scope();
+            case ServerControlOperation.CreateGrant value -> value.grant().scope();
+            case ServerControlOperation.EvaluateAuthorization value -> value.resource().scope();
+            case ServerControlOperation.RequestApproval value -> value.targetResource().scope();
+            case ServerControlOperation.CreateBreakGlass value -> value.grant().scope();
+            default -> new Permission.Scope(realmId, authority, Optional.empty(), Optional.empty());
+        };
+    }
+
+    private static Optional<PkiId> controlObject(ServerControlOperation operation) {
+        return switch (operation) {
+            case ServerControlOperation.InspectDisclosure value -> Optional.of(value.objectId());
+            case ServerControlOperation.SetDisclosure value -> Optional.of(value.objectId());
+            case ServerControlOperation.IssueCapability value -> Optional.of(value.objectId());
+            case ServerControlOperation.InspectAuditView value -> Optional.of(value.objectId());
+            default -> Optional.empty();
         };
     }
 
@@ -247,7 +472,24 @@ final class HttpOperationCodec {
         long longValue(String name) { consumed.add(name); PkiOperationValue value = require(name);
             if (!(value instanceof PkiOperationValue.IntegerValue integer)) throw type(); return integer.value(); }
         int integer(String name) { return Math.toIntExact(longValue(name)); }
+        boolean bool(String name) { consumed.add(name); PkiOperationValue value = require(name);
+            if (!(value instanceof PkiOperationValue.BooleanValue bool)) throw type(); return bool.value(); }
         PkiId pkiId(String name) { return new PkiId(text(name)); }
+        Instant instant(String name) { try { return Instant.parse(text(name)); }
+            catch (java.time.format.DateTimeParseException failure) { throw type(); } }
+        Optional<Instant> optionalInstant(String name) { return fields.containsKey(name)
+            ? Optional.of(instant(name)) : Optional.empty(); }
+        <E extends Enum<E>> Set<E> enumSet(String name, Class<E> type) {
+            consumed.add(name); PkiOperationValue value = require(name);
+            if (!(value instanceof PkiOperationValue.ListValue list)) throw type();
+            Set<E> result = new LinkedHashSet<>();
+            for (PkiOperationValue item : list.values()) {
+                if (!(item instanceof PkiOperationValue.Text text) || !result.add(Enum.valueOf(type, text.value()))) {
+                    throw type();
+                }
+            }
+            return Set.copyOf(result);
+        }
         Fields object(String name) { consumed.add(name); return of(require(name)); }
         void complete() { if (!Objects.equals(consumed, fields.keySet()))
             throw new IllegalArgumentException("Request fields were not consumed"); }

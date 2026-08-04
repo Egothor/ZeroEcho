@@ -43,13 +43,18 @@ import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.ServerOperationGateway;
+import zeroecho.pki.server.ServerControlOperationOutcome;
 
 /** Deterministic versioned transport response and status mapping. */
 @SuppressWarnings("PMD")
 final class HttpResponses {
-    record Response(int statusCode, byte[] body) {
-        Response { body = Objects.requireNonNull(body, "body").clone(); }
+    record Response(int statusCode, byte[] body, boolean oneTimeSensitive,
+            java.util.Optional<String> capabilityId) {
+        Response { body = Objects.requireNonNull(body, "body").clone();
+            capabilityId = Objects.requireNonNull(capabilityId, "capabilityId"); }
+        Response(int statusCode, byte[] body) { this(statusCode, body, false, java.util.Optional.empty()); }
         @Override public byte[] body() { return body.clone(); }
+        void clearSensitiveBody() { if (oneTimeSensitive) java.util.Arrays.fill(body, (byte) 0); }
     }
 
     private static final JsonFactory JSON = JsonFactory.builder().build();
@@ -61,11 +66,34 @@ final class HttpResponses {
         return switch (outcome) {
             case ServerOperationGateway.Outcome.Executed executed -> backend(requestId, operation,
                     executed.outcome());
+            case ServerOperationGateway.Outcome.ControlExecuted executed -> control(requestId, operation,
+                    executed.outcome());
             case ServerOperationGateway.Outcome.Denied denied -> failure(403, requestId, operation,
                     "DENIED", "AUTHORIZATION_DENIED", denied.code().name(), false, false);
             case ServerOperationGateway.Outcome.ApprovalRequired required -> successLikeFailure(409, requestId,
                     operation, "APPROVAL_REQUIRED", "APPROVAL_REQUIRED", required.operationCommitment());
         };
+    }
+
+    private static Response control(String requestId, String operation, ServerControlOperationOutcome outcome) {
+        if (outcome instanceof ServerControlOperationOutcome.Ordinary ordinary) {
+            return backend(requestId, operation, ordinary.outcome());
+        }
+        ServerControlOperationOutcome.OneTimeSensitive sensitive =
+                (ServerControlOperationOutcome.OneTimeSensitive) outcome;
+        byte[] token = sensitive.consumeToken();
+        try {
+            MapBuilder result = new MapBuilder(sensitive.safeResult().fields());
+            result.put("token", new PkiOperationValue.Text(java.util.Base64.getUrlEncoder()
+                    .withoutPadding().encodeToString(token)));
+            Response encoded = encode(200, requestId, operation, "SUCCEEDED",
+                    new PkiOperationValue.ObjectValue(result.values()), null);
+            String capabilityId = ((PkiOperationValue.Text) sensitive.safeResult().fields()
+                    .get("capabilityId")).value();
+            return new Response(encoded.statusCode(), encoded.body(), true, java.util.Optional.of(capabilityId));
+        } finally {
+            java.util.Arrays.fill(token, (byte) 0);
+        }
     }
 
     static Response failure(int status, String requestId, String operation, String classification,
@@ -153,4 +181,11 @@ final class HttpResponses {
 
     private record Failure(String classification, String code, String messageKey,
             boolean recoveryRequired, boolean reconciliationRequired) { }
+
+    private static final class MapBuilder {
+        private final java.util.Map<String, PkiOperationValue> values = new java.util.LinkedHashMap<>();
+        private MapBuilder(java.util.Map<String, PkiOperationValue> initial) { values.putAll(initial); }
+        private void put(String key, PkiOperationValue value) { values.put(key, value); }
+        private java.util.Map<String, PkiOperationValue> values() { return values; }
+    }
 }
