@@ -51,6 +51,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.RevocationService;
+import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
+import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationOutcome;
@@ -63,6 +65,88 @@ class PkiCliTest {
 
     @TempDir
     Path temporaryDirectory;
+
+    @Test
+    void helpListsCompletedSafeAdministrationFamilies() {
+        System.out.println("helpListsCompletedSafeAdministrationFamilies");
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { "--help" }, output);
+        String help = output.toString(StandardCharsets.UTF_8);
+        System.out.println("...helpBytes=" + help.length());
+        assertEquals(PkiExitCodes.SUCCESS, code);
+        assertTrue(help.contains("profile.register"));
+        assertTrue(help.contains("ca.list"));
+        assertTrue(help.contains("request.inspect"));
+        assertTrue(help.contains("revocation.snapshot"));
+        assertTrue(help.contains("inventory.status"));
+        assertTrue(help.contains("publication.list"));
+        assertTrue(help.contains("ca.create"));
+        assertTrue(help.contains("credential.issue"));
+        assertTrue(help.contains("status.generate"));
+        assertTrue(help.contains("publication.process"));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void signingAndPublicationFamiliesUseOneTypedBatchSession() throws IOException {
+        System.out.println("signingAndPublicationFamiliesUseOneTypedBatchSession");
+        Path configuration = configuration("capability-workflow");
+        Path request = temporaryDirectory.resolve("request.der");
+        Files.write(request, new byte[] { 0x30, 0x00 });
+        Path workflow = plan("capability-workflow.json", """
+                {"version":1,"failurePolicy":"FAIL_FAST","operations":[
+                  {"id":"ca","operation":"ca.create","arguments":{"formatId":"x509","subjectRef":"CN=Root","profileId":"root-ca","keyRef":"managed:root.prv"}},
+                  {"id":"request","operation":"request.import","arguments":{"formatId":"x509","encoding":"DER","requestFile":"request.der"}},
+                  {"id":"issue","operation":"credential.issue","arguments":{"issuerCaId":"${ca.caId}","requestId":"${request.requestId}","profileId":"server"}},
+                  {"id":"publish","operation":"publication.register","arguments":{"publicationId":"publication-1","sourceType":"CREDENTIAL","sourceId":"${issue.credentialId}","targetType":"FILESYSTEM","targetId":"local"}},
+                  {"id":"process","operation":"publication.process","arguments":{"publicationId":"${publish.publicationId}"}}
+                ]}
+                """);
+        RecordingOpener opener = new RecordingOpener();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { "run", workflow.toString(), "--config", configuration.toString(),
+                "--output", "json" }, output, opener, () -> false);
+        System.out.println("...operations=" + opener.operationTypes.size());
+        assertEquals(PkiExitCodes.SUCCESS, code);
+        assertEquals(1, opener.sessions.get());
+        assertEquals(List.of(PkiOperation.CreateAuthority.class, PkiOperation.ImportRequest.class,
+                PkiOperation.IssueCredential.class, PkiOperation.RegisterPublication.class,
+                PkiOperation.ProcessPublication.class), opener.operationTypes);
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operation\":\"publication.process\""));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void productionProfileWorkflowUsesTypedOperationsAndDurableStore() throws IOException {
+        System.out.println("productionProfileWorkflowUsesTypedOperationsAndDurableStore");
+        Path configuration = configuration("profile-workflow");
+        BuiltInCertificateProfileTemplate template = BuiltInCertificateProfileCatalog
+                .load(getClass().getClassLoader()).get(0);
+        Path profile = temporaryDirectory.resolve("profile.json");
+        Files.write(profile, template.canonicalJson());
+        ByteArrayOutputStream registered = new ByteArrayOutputStream();
+        int registerCode = PkiCli.execute(new String[] { "profile.register", "--profile-file", profile.toString(),
+                "--config", configuration.toString(), "--output", "json" }, registered);
+        ByteArrayOutputStream activated = new ByteArrayOutputStream();
+        int activateCode = PkiCli.execute(new String[] { "profile.activate", "--profile-id",
+                template.definition().profileId(), "--profile-version",
+                Long.toString(template.definition().profileVersion()), "--config", configuration.toString(),
+                "--output", "json" }, activated);
+        ByteArrayOutputStream inspected = new ByteArrayOutputStream();
+        int inspectCode = PkiCli.execute(new String[] { "profile.inspect", "--profile-id",
+                template.definition().profileId(), "--profile-version",
+                Long.toString(template.definition().profileVersion()), "--config", configuration.toString(),
+                "--output", "json" }, inspected);
+        String rendered = registered.toString(StandardCharsets.UTF_8)
+                + activated.toString(StandardCharsets.UTF_8) + inspected.toString(StandardCharsets.UTF_8);
+        System.out.println("...profileId=" + template.definition().profileId());
+        assertEquals(PkiExitCodes.SUCCESS, registerCode);
+        assertEquals(PkiExitCodes.SUCCESS, activateCode);
+        assertEquals(PkiExitCodes.SUCCESS, inspectCode);
+        assertTrue(rendered.contains("\"profileVersion\":" + template.definition().profileVersion()));
+        assertFalse(rendered.contains("canonicalJson"));
+        System.out.println("...ok");
+    }
 
     @Test
     void productionSessionExecutesMachineAndHumanSingleCommands() throws IOException {
@@ -81,6 +165,27 @@ class PkiCliTest {
         assertTrue(json.contains("\"mode\":\"single\""));
         assertTrue(json.contains("\"storeProvider\":\"fs\""));
         assertTrue(human.toString(StandardCharsets.UTF_8).contains("configuration.validate SUCCEEDED"));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void versionTwoConfigurationKeepsCapabilitiesExplicit() throws IOException {
+        System.out.println("versionTwoConfigurationKeepsCapabilitiesExplicit");
+        Path configuration = temporaryDirectory.resolve("capabilities.json");
+        Files.writeString(configuration, """
+                {"version":2,
+                 "store":{"provider":"fs","properties":{"root":"store"}},
+                 "audit":{"provider":"memory","properties":{"size":"16"}},
+                 "signing":{"workflow":{"provider":"zeroecho-lib","properties":{"keyringPath":"keys.zek","operationRoot":"signing-operations"}},
+                            "framework":{"provider":"x509-bc","properties":{}},
+                            "busPath":"signing-bus","signatureAlgorithm":"SHA256withRSA","signingTtlSeconds":30,
+                            "unlockEnvironmentVariable":"ZEROECHO_TEST_UNLOCK"},
+                 "publishers":[{"provider":"filesystem","properties":{"root":"published","targetId":"local"}}]}
+                """);
+        PkiSessionConfiguration parsed = PkiCliConfiguration.read(configuration);
+        System.out.println("...publishers=" + parsed.publishers().size());
+        assertTrue(parsed.signing().isPresent());
+        assertEquals(1, parsed.publishers().size());
         System.out.println("...ok");
     }
 
@@ -125,6 +230,22 @@ class PkiCliTest {
         assertEquals(List.of(PkiOperation.RevokeCredential.class), opener.operationTypes);
         assertTrue(rendered.contains("\"state\":\"PERMANENTLY_REVOKED\""));
         assertEquals(1, opener.closes.get());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void directSigningDependentCommandUsesTheSharedTypedExecutor() throws IOException {
+        System.out.println("directSigningDependentCommandUsesTheSharedTypedExecutor");
+        Path configuration = configuration("direct-ca");
+        RecordingOpener opener = new RecordingOpener();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { "ca.create", "--format-id", "x509", "--subject-ref",
+                "CN=Root", "--profile-id", "root-ca", "--key-ref", "managed:root.prv", "--config",
+                configuration.toString(), "--output", "json" }, output, opener, () -> false);
+        System.out.println("...exit=" + code);
+        assertEquals(PkiExitCodes.SUCCESS, code);
+        assertEquals(List.of(PkiOperation.CreateAuthority.class), opener.operationTypes);
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"caId\":\"ca-1\""));
         System.out.println("...ok");
     }
 
@@ -302,6 +423,17 @@ class PkiCliTest {
             } else if (operation instanceof PkiOperation.RevokeCredential revoke) {
                 fields.put("credentialId", new PkiOperationValue.Text(revoke.credentialId().value()));
                 fields.put("state", new PkiOperationValue.Text("PERMANENTLY_REVOKED"));
+            } else if (operation instanceof PkiOperation.CreateAuthority) {
+                fields.put("caId", new PkiOperationValue.Text("ca-1"));
+            } else if (operation instanceof PkiOperation.ImportRequest) {
+                fields.put("requestId", new PkiOperationValue.Text("request-1"));
+            } else if (operation instanceof PkiOperation.IssueCredential) {
+                fields.put("credentialId", new PkiOperationValue.Text("credential-1"));
+            } else if (operation instanceof PkiOperation.RegisterPublication register) {
+                fields.put("publicationId", new PkiOperationValue.Text(register.publicationId().value()));
+            } else if (operation instanceof PkiOperation.ProcessPublication process) {
+                fields.put("publicationId", new PkiOperationValue.Text(process.publicationId().value()));
+                fields.put("status", new PkiOperationValue.Text("SUCCEEDED"));
             } else {
                 fields.put("status", new PkiOperationValue.Text("OK"));
             }

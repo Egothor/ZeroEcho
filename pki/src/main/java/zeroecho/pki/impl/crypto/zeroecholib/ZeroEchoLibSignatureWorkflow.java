@@ -60,6 +60,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -97,9 +98,11 @@ import zeroecho.core.storage.KeyringStore;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
 import zeroecho.sdk.ZeroEchoSession;
 
 /**
@@ -238,7 +241,7 @@ import zeroecho.sdk.ZeroEchoSession;
  */
 // The provider deliberately centralizes operation lifecycle and cleanup in one implementation.
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
-public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
+public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, PublicKeyInfoSource {
 
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSignatureWorkflow.class.getName());
 
@@ -306,7 +309,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
             KeyringUnlockProvider keyringUnlockProvider, KeyringStore keyring) {
         this(id, keyringPath, operationRoot, clock, operationHorizon, keyRefPrefix, requireComponentSuffix,
                 keyringUnlockProvider);
-        this.keyringOrNull = java.util.Objects.requireNonNull(keyring, "keyring must not be null");
+        this.keyringOrNull = Objects.requireNonNull(keyring, "keyring must not be null");
     }
 
     /* default */ ZeroEchoLibSignatureWorkflow(String id, Path keyringPath, Path operationRoot, Clock clock,
@@ -362,7 +365,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         this.requireComponentSuffix = requireComponentSuffix;
         this.cleanupObserver = cleanupObserver;
         this.keyringUnlockProvider = keyringUnlockProvider;
-        this.session = java.util.Objects.requireNonNull(session, "session must not be null");
+        this.session = Objects.requireNonNull(session, "session must not be null");
 
         this.statuses = new ConcurrentHashMap<>();
         this.fingerprints = new ConcurrentHashMap<>();
@@ -1004,6 +1007,21 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
         throw new InvalidRequestException(DC_UNSUPPORTED_PUBLICKEY_FORM);
     }
 
+    @Override
+    public EncodedObject resolvePublicKeyInfo(KeyRef keyRef) {
+        Objects.requireNonNull(keyRef, "keyRef");
+        try {
+            KeyRefParts parts = parseKeyRefOrThrow(keyRef, true);
+            String privateAlias = parts.privateAlias;
+            String logicalAlias = privateAlias.endsWith(".prv")
+                    ? privateAlias.substring(0, privateAlias.length() - ".prv".length()) : privateAlias;
+            PublicKey publicKey = requireKeyringOrThrow().getPublic(logicalAlias);
+            return new EncodedObject(Encoding.DER, publicKey.getEncoded());
+        } catch (InvalidRequestException | IOException | GeneralSecurityException failure) {
+            throw new PkiException("Managed public key resolution failed: code=PUBLIC_KEY_RESOLUTION_FAILED", failure);
+        }
+    }
+
     private <S extends AlgorithmKeySpec> PublicKey importPublic(String algorithmId, S spec)
             throws GeneralSecurityException {
         @SuppressWarnings("unchecked")
@@ -1642,8 +1660,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow {
     /** Package-local dependencies used to exercise provider failure boundaries. */
     /* default */ record SigningDependencies(KeyringStore keyring, ZeroEchoSession session) {
         SigningDependencies {
-            java.util.Objects.requireNonNull(keyring, "keyring must not be null");
-            java.util.Objects.requireNonNull(session, "session must not be null");
+            Objects.requireNonNull(keyring, "keyring must not be null");
+            Objects.requireNonNull(session, "session must not be null");
         }
     }
 

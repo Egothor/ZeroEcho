@@ -49,8 +49,19 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.ProfileService;
+import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.RevocationService;
+import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
+import zeroecho.pki.api.publication.PublicationCursor;
+import zeroecho.pki.api.publication.PublicationQuery;
+import zeroecho.pki.api.publication.PublicationRecord;
+import zeroecho.pki.api.publication.PublicationRequest;
+import zeroecho.pki.api.publication.PublicationResult;
+import zeroecho.pki.api.publication.PublicationStatus;
 import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationQuery;
 import zeroecho.pki.api.revocation.RevocationReason;
@@ -120,6 +131,36 @@ class PkiOperationExecutorTest {
         System.out.println("...ok");
     }
 
+    @Test
+    void rejectsSigningDependentOperationWhenCapabilityIsNotConfigured() {
+        System.out.println("rejectsSigningDependentOperationWhenCapabilityIsNotConfigured");
+        DefaultPkiOperationExecutor executor = executor(new AtomicInteger());
+        PkiOperation operation = new PkiOperation.CreateAuthority(new FormatId("x509"),
+                new SubjectRef("CN=Unavailable"), "root-ca", new KeyRef("managed:root.prv"));
+        PkiOperationOutcome.Failure failure = (PkiOperationOutcome.Failure) executor.execute(operation,
+                CancellationSignal.NONE);
+        System.out.println("...classification=" + failure.classification());
+        assertEquals(PkiOperationFailure.VALIDATION_FAILURE, failure.classification());
+        assertEquals("CAPABILITY_NOT_CONFIGURED", failure.code());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void preservesExplicitPublicationResultsAndUnknownOutcome() {
+        System.out.println("preservesExplicitPublicationResultsAndUnknownOutcome");
+        PkiId publicationId = new PkiId("publication:test");
+        DefaultPkiOperationExecutor executor = publicationExecutor();
+        PkiOperationOutcome processed = executor.execute(new PkiOperation.ProcessPublication(publicationId),
+                CancellationSignal.NONE);
+        PkiOperationOutcome reconciled = executor.execute(new PkiOperation.ReconcilePublication(publicationId),
+                CancellationSignal.NONE);
+        System.out.println("...process=" + processed.getClass().getSimpleName());
+        assertInstanceOf(PkiOperationOutcome.Success.class, processed);
+        assertEquals(PkiOperationFailure.EXTERNAL_OUTCOME_UNKNOWN,
+                ((PkiOperationOutcome.Failure) reconciled).classification());
+        System.out.println("...ok");
+    }
+
     private static DefaultPkiOperationExecutor executor(AtomicInteger mutations) {
         PkiSessionConfiguration configuration = new PkiSessionConfiguration(1,
                 new ProviderConfig("fs", Map.of("root", "unused")), new ProviderConfig("memory", Map.of()));
@@ -129,8 +170,65 @@ class PkiOperationExecutorTest {
                     case "close" -> null;
                     default -> throw new UnsupportedOperationException(method.getName());
                 });
-        return new DefaultPkiOperationExecutor(configuration, store, revocations(mutations), () -> {
+        ProfileService profiles = (ProfileService) Proxy.newProxyInstance(ProfileService.class.getClassLoader(),
+                new Class<?>[] { ProfileService.class }, (proxy, method, arguments) -> {
+                    throw new UnsupportedOperationException(method.getName());
+                });
+        return new DefaultPkiOperationExecutor(configuration, store, profiles, revocations(mutations), () -> {
         });
+    }
+
+    private static DefaultPkiOperationExecutor publicationExecutor() {
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(1,
+                new ProviderConfig("fs", Map.of("root", "unused")), new ProviderConfig("memory", Map.of()));
+        PkiStore store = (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(),
+                new Class<?>[] { PkiStore.class }, (proxy, method, arguments) -> {
+                    throw new UnsupportedOperationException(method.getName());
+                });
+        ProfileService profiles = (ProfileService) Proxy.newProxyInstance(ProfileService.class.getClassLoader(),
+                new Class<?>[] { ProfileService.class }, (proxy, method, arguments) -> {
+                    throw new UnsupportedOperationException(method.getName());
+                });
+        PublicationService publications = new PublicationService() {
+            @Override
+            public PublicationRecord register(PublicationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public PublicationResult process(PkiId selected) {
+                return new PublicationResult(selected, PublicationStatus.SUCCEEDED, 1L);
+            }
+
+            @Override
+            public PublicationResult retry(PkiId selected) {
+                return new PublicationResult(selected, PublicationStatus.SUCCEEDED, 2L);
+            }
+
+            @Override
+            public PublicationResult reconcile(PkiId selected) {
+                return new PublicationResult(selected, PublicationStatus.OUTCOME_UNKNOWN, 1L);
+            }
+
+            @Override
+            public Optional<PublicationRecord> find(PkiId selected) {
+                return Optional.empty();
+            }
+
+            @Override
+            public PublicationCursor openPublications(PublicationQuery query) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void close() {
+                // no-op
+            }
+        };
+        return new DefaultPkiOperationExecutor(configuration, store, profiles, revocations(new AtomicInteger()),
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(publications),
+                () -> {
+                });
     }
 
     private static RevocationService revocations(AtomicInteger mutations) {

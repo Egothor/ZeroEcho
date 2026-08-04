@@ -303,7 +303,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 }
             }
 
-            LOG.log(Level.INFO, "running in {0}", root);
+            LOG.log(Level.INFO, "Filesystem PKI store opened");
             this.ownership = acquiredOwnership;
             ownershipTransferred = true;
         } catch (IOException e) {

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "failurePolicy": "FAIL_FAST",
+  "operations": [
+    {
+      "id": "validate-configuration",
+      "operation": "configuration.validate",
+      "arguments": {}
+    },
+    {
+      "id": "list-publications",
+      "operation": "publication.list",
+      "arguments": {
+        "limit": 25
+      }
+    }
+  ]
+}

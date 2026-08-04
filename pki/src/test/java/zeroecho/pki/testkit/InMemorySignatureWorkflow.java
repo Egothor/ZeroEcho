@@ -48,12 +48,13 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 
 /**
  * Test-only in-memory signature workflow.
  */
-public final class InMemorySignatureWorkflow implements SignatureWorkflow {
+public final class InMemorySignatureWorkflow implements SignatureWorkflow, PublicKeyInfoSource {
 
     private final Map<String, KeyPair> keys;
     private final Map<PkiId, OperationStatus> status;
@@ -243,6 +244,15 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow {
     @Override
     public Set<String> supportedAlgorithms() {
         return Set.of("SHA256withRSA");
+    }
+
+    @Override
+    public EncodedObject resolvePublicKeyInfo(KeyRef keyRef) {
+        KeyPair keyPair = keys.get(Objects.requireNonNull(keyRef, "keyRef").value());
+        if (keyPair == null) {
+            throw new IllegalArgumentException("Managed test key is unavailable");
+        }
+        return new EncodedObject(Encoding.DER, keyPair.getPublic().getEncoded());
     }
 
     public int submittedSignCount() {

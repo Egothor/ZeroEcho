@@ -51,6 +51,8 @@ import zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
 import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialFrameworkProvider;
+import zeroecho.pki.spi.publish.Publisher;
+import zeroecho.pki.spi.publish.PublisherProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreProvider;
 import zeroecho.pki.util.async.AsyncBus;
@@ -287,6 +289,38 @@ public final class PkiBootstrap {
     }
 
     /**
+     * Validates one explicit signature-workflow provider configuration without
+     * allocating key access or workflow resources.
+     *
+     * @param config immutable workflow-provider configuration
+     * @throws RuntimeException if the provider identity, property set, or
+     *         provider-specific values are invalid
+     */
+    public static void validateSignatureWorkflowConfiguration(ProviderConfig config) {
+        SignatureWorkflowProvider provider = selectSignatureWorkflowProvider(
+                Objects.requireNonNull(config, "config").backendId());
+        requireKnownKeys(provider, config);
+        provider.validateConfig(config);
+    }
+
+    /**
+     * Opens one explicitly configured signature workflow with process-local key
+     * access supplied outside persistent configuration.
+     *
+     * @param config immutable workflow-provider configuration
+     * @param dependencies process-local security capabilities
+     * @return opened workflow owned by the caller
+     * @throws IllegalArgumentException if configuration or capabilities are invalid
+     * @throws RuntimeException if secure workflow allocation fails
+     */
+    public static SignatureWorkflow openConfiguredSignatureWorkflow(ProviderConfig config,
+            SignatureWorkflowRuntimeDependencies dependencies) {
+        validateSignatureWorkflowConfiguration(config);
+        return selectSignatureWorkflowProvider(config.backendId()).allocate(config,
+                Objects.requireNonNull(dependencies, "dependencies"));
+    }
+
+    /**
      * Opens an async operation bus using {@link AsyncBusProvider} discovered via
      * ServiceLoader.
      *
@@ -381,6 +415,44 @@ public final class PkiBootstrap {
     }
 
     /**
+     * Validates one explicit credential-framework provider configuration without
+     * constructing a framework instance.
+     *
+     * @param config immutable framework-provider configuration
+     * @throws RuntimeException if provider selection or configuration is invalid
+     */
+    public static void validateCredentialFrameworkConfiguration(ProviderConfig config) {
+        CredentialFrameworkProvider provider = selectCredentialFrameworkProvider(
+                Objects.requireNonNull(config, "config").backendId());
+        requireKnownKeys(provider, config);
+        provider.validateConfig(config);
+    }
+
+    /**
+     * Validates one explicitly enabled publication destination without opening it.
+     *
+     * @param config immutable publisher-provider configuration
+     * @throws RuntimeException if provider selection or configuration is invalid
+     */
+    public static void validatePublisherConfiguration(ProviderConfig config) {
+        PublisherProvider provider = selectPublisherProvider(Objects.requireNonNull(config, "config").backendId());
+        requireKnownKeys(provider, config);
+        provider.validateConfig(config);
+    }
+
+    /**
+     * Opens one explicitly configured publication destination.
+     *
+     * @param config immutable publisher-provider configuration
+     * @return configured publisher selected by stable provider identity
+     * @throws RuntimeException if provider selection, configuration, or allocation fails
+     */
+    public static Publisher openPublisher(ProviderConfig config) {
+        validatePublisherConfiguration(config);
+        return selectPublisherProvider(config.backendId()).allocate(config);
+    }
+
+    /**
      * Logs provider help information (supported keys) for diagnostics.
      *
      * <p>
@@ -409,6 +481,33 @@ public final class PkiBootstrap {
         return SpiSelector.select(AuditSinkProvider.class, requestedId, new SpiSelector.ProviderId<>() {
             @Override
             public String id(AuditSinkProvider provider) {
+                return provider.id();
+            }
+        });
+    }
+
+    private static SignatureWorkflowProvider selectSignatureWorkflowProvider(String requestedId) {
+        return SpiSelector.select(SignatureWorkflowProvider.class, requestedId, new SpiSelector.ProviderId<>() {
+            @Override
+            public String id(SignatureWorkflowProvider provider) {
+                return provider.id();
+            }
+        });
+    }
+
+    private static CredentialFrameworkProvider selectCredentialFrameworkProvider(String requestedId) {
+        return SpiSelector.select(CredentialFrameworkProvider.class, requestedId, new SpiSelector.ProviderId<>() {
+            @Override
+            public String id(CredentialFrameworkProvider provider) {
+                return provider.id();
+            }
+        });
+    }
+
+    private static PublisherProvider selectPublisherProvider(String requestedId) {
+        return SpiSelector.select(PublisherProvider.class, requestedId, new SpiSelector.ProviderId<>() {
+            @Override
+            public String id(PublisherProvider provider) {
                 return provider.id();
             }
         });

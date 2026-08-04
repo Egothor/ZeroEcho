@@ -33,8 +33,15 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
+import java.util.Optional;
+
+import zeroecho.pki.api.CaService;
+import zeroecho.pki.api.CertificationRequestService;
+import zeroecho.pki.api.IssuanceService;
+import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.RevocationService;
+import zeroecho.pki.api.StatusObjectService;
 
 /**
  * Lifecycle-owned synchronous PKI backend session.
@@ -58,11 +65,47 @@ public interface PkiSession extends AutoCloseable {
         return DefaultPkiSession.open(configuration);
     }
 
+    /**
+     * Opens a production session with explicit process-local security capabilities.
+     *
+     * @param configuration validated immutable provider configuration
+     * @param dependencies process-local key-access capabilities
+     * @return opened lifecycle-owned session
+     */
+    static PkiSession open(PkiSessionConfiguration configuration, PkiSessionRuntimeDependencies dependencies) {
+        return DefaultPkiSession.open(configuration, dependencies);
+    }
+
     /** @return profile lifecycle service owned by this session */
     ProfileService profiles();
 
     /** @return revocation service owned by this session */
     RevocationService revocations();
+
+    /** @return configured CA service, or empty for a read-only session */
+    default Optional<CaService> authorities() {
+        return Optional.empty();
+    }
+
+    /** @return configured certification-request service, or empty when X.509 is unavailable */
+    default Optional<CertificationRequestService> requests() {
+        return Optional.empty();
+    }
+
+    /** @return configured issuance service, or empty when signing is unavailable */
+    default Optional<IssuanceService> issuance() {
+        return Optional.empty();
+    }
+
+    /** @return configured status-object service, or empty when signing is unavailable */
+    default Optional<StatusObjectService> statusObjects() {
+        return Optional.empty();
+    }
+
+    /** @return configured publication service, or empty when no destination is enabled */
+    default Optional<PublicationService> publications() {
+        return Optional.empty();
+    }
 
     /** @return shared typed operation executor owned by this session */
     PkiOperationExecutor operations();

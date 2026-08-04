@@ -33,17 +33,53 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
+import java.nio.file.Path;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.spec.AlgorithmSuite;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
+import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
+import zeroecho.core.spi.KeyringUnlockProvider;
+import zeroecho.core.storage.KeyringPassword;
+import zeroecho.pki.api.CaService;
+import zeroecho.pki.api.CertificationRequestService;
+import zeroecho.pki.api.IssuanceService;
+import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.RevocationService;
+import zeroecho.pki.api.StatusObjectService;
+import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.DefaultProfileService;
 import zeroecho.pki.impl.core.DefaultRevocationService;
+import zeroecho.pki.impl.core.DefaultCaService;
+import zeroecho.pki.impl.core.DefaultCertificationRequestService;
+import zeroecho.pki.impl.core.DefaultIssuanceService;
+import zeroecho.pki.impl.core.DefaultPublicationService;
+import zeroecho.pki.impl.core.DefaultStatusObjectService;
+import zeroecho.pki.impl.core.StoreBackedEffectiveCredentialStatusResolver;
+import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialIssuerBackend;
+import zeroecho.pki.impl.framework.x509.bc.BcX509ProofOfPossessionVerifier;
+import zeroecho.pki.impl.framework.x509.bc.BcX509StatusObjectGenerator;
+import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.bootstrap.PkiBootstrap;
+import zeroecho.pki.spi.crypto.PublicKeyInfoSource;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
+import zeroecho.pki.spi.publish.Publisher;
 import zeroecho.pki.spi.store.PkiStore;
 
 /** Default synchronous session composition. */
@@ -53,37 +89,76 @@ final class DefaultPkiSession implements PkiSession {
     private final AuditSink audit;
     private final ProfileService profiles;
     private final RevocationService revocations;
+    private final Optional<CaService> authorities;
+    private final Optional<CertificationRequestService> requests;
+    private final Optional<IssuanceService> issuance;
+    private final Optional<StatusObjectService> statusObjects;
+    private final Optional<PublicationService> publications;
+    private final Optional<PkiSigningBus> signingBus;
+    private final Optional<SignatureWorkflow> signatureWorkflow;
     private final PkiOperationExecutor operations;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private DefaultPkiSession(PkiSessionConfiguration configuration, PkiStore store, AuditSink audit, Clock clock) {
+    private DefaultPkiSession(PkiSessionConfiguration configuration, PkiStore store, AuditSink audit,
+            ProfileService profiles, RevocationService revocations, ServiceGraph graph) {
         this.store = store;
         this.audit = audit;
-        this.profiles = new DefaultProfileService(store, clock, audit);
-        this.revocations = new DefaultRevocationService(store, clock, audit);
-        this.operations = new DefaultPkiOperationExecutor(configuration, store, revocations,
-                this::requireOpen);
+        this.profiles = Objects.requireNonNull(profiles, "profiles");
+        this.revocations = Objects.requireNonNull(revocations, "revocations");
+        this.authorities = graph.authorities();
+        this.requests = graph.requests();
+        this.issuance = graph.issuance();
+        this.statusObjects = graph.statusObjects();
+        this.publications = graph.publications();
+        this.signingBus = graph.signingBus();
+        this.signatureWorkflow = graph.signatureWorkflow();
+        this.operations = new DefaultPkiOperationExecutor(configuration, store, profiles, revocations, authorities,
+                requests, issuance, statusObjects, publications, this::requireOpen);
     }
 
     /* default */ static PkiSession open(PkiSessionConfiguration configuration) {
-        return open(configuration, Clock.systemUTC(), ProductionBootstrap.INSTANCE);
+        return open(configuration, runtimeDependencies(configuration), Clock.systemUTC(), ProductionBootstrap.INSTANCE);
+    }
+
+    /* default */ static PkiSession open(PkiSessionConfiguration configuration,
+            PkiSessionRuntimeDependencies dependencies) {
+        return open(configuration, dependencies, Clock.systemUTC(), ProductionBootstrap.INSTANCE);
+    }
+
+    /* default */ static PkiSession open(PkiSessionConfiguration configuration, Clock clock, Bootstrap bootstrap) {
+        return open(configuration, PkiSessionRuntimeDependencies.none(), clock, bootstrap);
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    /* default */ static PkiSession open(PkiSessionConfiguration configuration, Clock clock, Bootstrap bootstrap) {
+    /* default */ static PkiSession open(PkiSessionConfiguration configuration,
+            PkiSessionRuntimeDependencies dependencies, Clock clock, Bootstrap bootstrap) {
         PkiSessionConfiguration exact = Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(bootstrap, "bootstrap");
+        Objects.requireNonNull(dependencies, "dependencies");
         bootstrap.validateStore(exact.store());
         bootstrap.validateAudit(exact.audit());
+        exact.signing().ifPresent(signing -> {
+            bootstrap.validateSignatureWorkflow(signing.workflow());
+            bootstrap.validateCredentialFramework(signing.framework());
+            if (!"x509-bc".equals(signing.framework().backendId())) {
+                throw new IllegalArgumentException("Configured framework cannot compose the X.509 service graph");
+            }
+        });
+        exact.publishers().forEach(bootstrap::validatePublisher);
 
         PkiStore store = null;
         AuditSink audit = null;
+        ServiceGraph graph = ServiceGraph.empty();
         try {
             store = Objects.requireNonNull(bootstrap.openStore(exact.store()), "opened store");
             audit = Objects.requireNonNull(bootstrap.openAudit(exact.audit()), "opened audit sink");
-            return new DefaultPkiSession(exact, store, audit, clock);
+            ProfileService profiles = new DefaultProfileService(store, clock, audit);
+            RevocationService revocations = new DefaultRevocationService(store, clock, audit);
+            graph = composeGraph(exact, dependencies, store, audit, profiles, clock, bootstrap);
+            return new DefaultPkiSession(exact, store, audit, profiles, revocations, graph);
         } catch (RuntimeException | Error primary) {
+            closeGraphAfterConstructionFailure(graph, primary);
             closeAfterConstructionFailure(audit, store, primary);
             throw primary;
         }
@@ -102,6 +177,36 @@ final class DefaultPkiSession implements PkiSession {
     }
 
     @Override
+    public Optional<CaService> authorities() {
+        requireOpen();
+        return authorities;
+    }
+
+    @Override
+    public Optional<CertificationRequestService> requests() {
+        requireOpen();
+        return requests;
+    }
+
+    @Override
+    public Optional<IssuanceService> issuance() {
+        requireOpen();
+        return issuance;
+    }
+
+    @Override
+    public Optional<StatusObjectService> statusObjects() {
+        requireOpen();
+        return statusObjects;
+    }
+
+    @Override
+    public Optional<PublicationService> publications() {
+        requireOpen();
+        return publications;
+    }
+
+    @Override
     public PkiOperationExecutor operations() {
         requireOpen();
         return operations;
@@ -113,6 +218,9 @@ final class DefaultPkiSession implements PkiSession {
             return;
         }
         Throwable primary = null;
+        primary = closeResource(publications.orElse(null), primary);
+        primary = closeResource(signingBus.orElse(null), primary);
+        primary = closeResource(signatureWorkflow.orElse(null), primary);
         try {
             audit.close();
         } catch (Throwable failure) { // NOPMD - preserve Error and checked close failures.
@@ -134,6 +242,154 @@ final class DefaultPkiSession implements PkiSession {
         if (closed.get()) {
             throw new IllegalStateException("PKI session is closed");
         }
+    }
+
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.CloseResource", "PMD.ExceptionAsFlowControl" })
+    private static ServiceGraph composeGraph(PkiSessionConfiguration configuration,
+            PkiSessionRuntimeDependencies dependencies, PkiStore store, AuditSink audit, ProfileService profiles,
+            Clock clock, Bootstrap bootstrap) {
+        Optional<SignatureWorkflow> workflow = Optional.empty();
+        Optional<PkiSigningBus> bus = Optional.empty();
+        Optional<CaService> authorities = Optional.empty();
+        Optional<CertificationRequestService> requests = Optional.empty();
+        Optional<IssuanceService> issuance = Optional.empty();
+        Optional<StatusObjectService> statuses = Optional.empty();
+        Optional<PublicationService> publications = Optional.empty();
+        try {
+            if (configuration.signing().isPresent()) {
+                PkiSessionConfiguration.SigningConfiguration signing = configuration.signing().orElseThrow();
+                KeyringUnlockProvider unlock = dependencies.keyringUnlockProvider().orElseThrow(
+                        () -> new IllegalStateException("Configured signing requires key-unlock capability"));
+                SignatureWorkflow openedWorkflow = bootstrap.openSignatureWorkflow(signing.workflow(),
+                        SignatureWorkflowRuntimeDependencies.withKeyringUnlockProvider(unlock));
+                workflow = Optional.of(openedWorkflow);
+                if (!(openedWorkflow instanceof PublicKeyInfoSource publicKeys)) {
+                    throw new IllegalStateException("Signature workflow lacks managed public-key capability");
+                }
+                BcX509VerificationExecutor verification = new BcX509VerificationExecutor();
+                X509AuthoritySnapshot authority = authority(openedWorkflow, verification);
+                PkiSigningBus openedBus = new PkiSigningBus(store, openedWorkflow, Path.of(signing.busPath()),
+                        authority);
+                bus = Optional.of(openedBus);
+                BcX509CredentialIssuerBackend issuerBackend = new BcX509CredentialIssuerBackend(openedBus,
+                        signing.signatureAlgorithm(), signing.signingTtl());
+                BcX509StatusObjectGenerator statusGenerator = new BcX509StatusObjectGenerator(openedBus,
+                        signing.signatureAlgorithm(), signing.signingTtl());
+                BcX509CredentialFramework framework = new BcX509CredentialFramework(authority, verification)
+                        .wired(statusGenerator, new BcX509ProofOfPossessionVerifier(authority, verification));
+                EffectiveCredentialStatusResolver statusResolver = new StoreBackedEffectiveCredentialStatusResolver(
+                        store, clock);
+                requests = Optional.of(new DefaultCertificationRequestService(store, framework));
+                issuance = Optional.of(new DefaultIssuanceService(store, framework, issuerBackend, audit,
+                        statusResolver, profiles, clock));
+                statuses = Optional.of(new DefaultStatusObjectService(store, framework, audit, statusResolver,
+                        authority));
+                authorities = Optional.of(new DefaultCaService(store, framework, issuerBackend,
+                        publicKeys::resolvePublicKeyInfo, openedBus, audit, statusResolver, profiles, clock,
+                        signing.signatureAlgorithm(), signing.signingTtl()));
+            }
+            List<Publisher> configuredPublishers = new ArrayList<>();
+            for (ProviderConfig publisher : configuration.publishers()) {
+                configuredPublishers.add(bootstrap.openPublisher(publisher));
+            }
+            publications = configuredPublishers.isEmpty() ? Optional.empty()
+                    : Optional.of(new DefaultPublicationService(store, clock, configuredPublishers));
+            return new ServiceGraph(authorities, requests, issuance, statuses, publications, bus, workflow);
+        } catch (RuntimeException | Error primary) {
+            Throwable cleanup = closeResource(publications.orElse(null), primary);
+            cleanup = closeResource(bus.orElse(null), cleanup);
+            closeResource(workflow.orElse(null), cleanup);
+            throw primary;
+        }
+    }
+
+    private static X509AuthoritySnapshot authority(SignatureWorkflow workflow,
+            BcX509VerificationExecutor verification) {
+        Set<String> supported = Set.copyOf(workflow.supportedAlgorithms());
+        Set<AlgorithmIdentity> identities = BootstrapAlgorithmIdentities.catalog().identities().stream()
+                .filter(identity -> identity.kind() == AlgorithmIdentity.Kind.SIGNATURE)
+                .filter(identity -> supported.contains(identity.canonicalForm())
+                        || BootstrapAlgorithmIdentities.compatibilityAliases().entrySet().stream()
+                                .anyMatch(entry -> entry.getValue().equals(identity) && supported.contains(entry.getKey())))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        String implementationId = "workflow." + workflow.id();
+        AlgorithmExecutionCapability signing = new AlgorithmExecutionCapability() {
+            @Override
+            public String implementationId() {
+                return implementationId;
+            }
+
+            @Override
+            public String domainFingerprint() {
+                return "session-signing-v1:" + workflow.id() + ":" + identities.stream()
+                        .map(AlgorithmIdentity::canonicalForm).sorted().reduce("", String::concat);
+            }
+
+            @Override
+            public boolean supports(AlgorithmIdentity identity, AlgorithmSuite suite, Direction direction) {
+                return direction == Direction.SIGN && identities.contains(identity) && identity.equals(suite.signature());
+            }
+        };
+        AlgorithmExecutionCapabilityProvider signingProvider = () -> List.of(signing);
+        X509AlgorithmResolver.Policy policy = new X509AlgorithmResolver.Policy() {
+            @Override
+            public boolean permits(AlgorithmSuite suite, AlgorithmExecutionCapability.Direction direction) {
+                return true;
+            }
+
+            @Override
+            public String semanticFingerprint() {
+                return "pki-session-bootstrap-policy-v1:configured-capabilities-only";
+            }
+        };
+        return X509AuthoritySnapshot.compose(List.of(), List.of(signingProvider, verification),
+                List.of(X509AuthoritySnapshot.bindExecutor(implementationId,
+                                AlgorithmExecutionCapability.Direction.SIGN, workflow),
+                        X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                                AlgorithmExecutionCapability.Direction.VERIFY, verification)), policy);
+    }
+
+    private static PkiSessionRuntimeDependencies runtimeDependencies(PkiSessionConfiguration configuration) {
+        Optional<String> environment = configuration.signing()
+                .flatMap(PkiSessionConfiguration.SigningConfiguration::unlockEnvironmentVariable);
+        if (environment.isEmpty()) {
+            return PkiSessionRuntimeDependencies.none();
+        }
+        KeyringUnlockProvider provider = () -> {
+            String value = System.getenv(environment.orElseThrow());
+            if (value == null || value.isEmpty()) {
+                throw new java.io.IOException("Configured key-unlock source is unavailable");
+            }
+            char[] password = value.toCharArray();
+            try {
+                return new KeyringPassword(password);
+            } finally {
+                java.util.Arrays.fill(password, '\0');
+            }
+        };
+        return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(provider);
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private static Throwable closeResource(AutoCloseable resource, Throwable primary) {
+        if (resource == null) {
+            return primary;
+        }
+        try {
+            resource.close();
+        } catch (Throwable failure) {
+            if (primary == null) {
+                return failure;
+            }
+            primary.addSuppressed(failure);
+        }
+        return primary;
+    }
+
+    private static void closeGraphAfterConstructionFailure(ServiceGraph graph, Throwable primary) {
+        Throwable ignored = closeResource(graph.publications().orElse(null), primary);
+        ignored = closeResource(graph.signingBus().orElse(null), ignored);
+        closeResource(graph.signatureWorkflow().orElse(null), ignored);
     }
 
     private static void closeAfterConstructionFailure(AuditSink audit, PkiStore store, Throwable primary) {
@@ -180,6 +436,42 @@ final class DefaultPkiSession implements PkiSession {
 
         /** Opens the configured audit sink. */
         AuditSink openAudit(ProviderConfig configuration);
+
+        /** Validates signing-workflow configuration. */
+        default void validateSignatureWorkflow(ProviderConfig configuration) {
+            PkiBootstrap.validateSignatureWorkflowConfiguration(configuration);
+        }
+
+        /** Validates credential-framework configuration. */
+        default void validateCredentialFramework(ProviderConfig configuration) {
+            PkiBootstrap.validateCredentialFrameworkConfiguration(configuration);
+        }
+
+        /** Validates publisher configuration. */
+        default void validatePublisher(ProviderConfig configuration) {
+            PkiBootstrap.validatePublisherConfiguration(configuration);
+        }
+
+        /** Opens the configured signature workflow. */
+        default SignatureWorkflow openSignatureWorkflow(ProviderConfig configuration,
+                SignatureWorkflowRuntimeDependencies dependencies) {
+            return PkiBootstrap.openConfiguredSignatureWorkflow(configuration, dependencies);
+        }
+
+        /** Opens one configured publisher. */
+        default Publisher openPublisher(ProviderConfig configuration) {
+            return PkiBootstrap.openPublisher(configuration);
+        }
+    }
+
+    private record ServiceGraph(Optional<CaService> authorities, Optional<CertificationRequestService> requests,
+            Optional<IssuanceService> issuance, Optional<StatusObjectService> statusObjects,
+            Optional<PublicationService> publications, Optional<PkiSigningBus> signingBus,
+            Optional<SignatureWorkflow> signatureWorkflow) {
+        private static ServiceGraph empty() {
+            return new ServiceGraph(Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+                    Optional.empty(), Optional.empty(), Optional.empty());
+        }
     }
 
     /** Production provider bootstrap implementation. */

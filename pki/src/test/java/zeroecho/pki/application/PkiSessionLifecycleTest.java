@@ -36,23 +36,38 @@ package zeroecho.pki.application;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.storage.KeyringPassword;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.SubjectRef;
+import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
+import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
+import zeroecho.pki.spi.bootstrap.PkiBootstrap;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.testkit.InMemorySignatureWorkflow;
 
 class PkiSessionLifecycleTest {
 
@@ -116,6 +131,99 @@ class PkiSessionLifecycleTest {
         System.out.println("...ok");
     }
 
+    @Test
+    void configuredSigningRequiresExplicitUnlockAndCleansAllocatedResources() {
+        System.out.println("configuredSigningRequiresExplicitUnlockAndCleansAllocatedResources");
+        AtomicInteger storesOpened = new AtomicInteger();
+        AtomicInteger storesClosed = new AtomicInteger();
+        DefaultPkiSession.Bootstrap bootstrap = bootstrap(storesOpened, storesClosed, false, false, false, false);
+        ProviderConfig placeholder = new ProviderConfig("test", Map.of());
+        PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
+                placeholder, new ProviderConfig("x509-bc", Map.of()),
+                temporaryDirectory.resolve("signing-bus").toString(), "RSA-2048-PSS-SHA256", Duration.ofSeconds(5),
+                Optional.empty());
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(2,
+                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("store-signing").toString())),
+                new ProviderConfig("memory", Map.of("size", "16")), Optional.of(signing), java.util.List.of());
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> DefaultPkiSession.open(configuration, PkiSessionRuntimeDependencies.none(), CLOCK, bootstrap));
+        System.out.println("...storesOpened=" + storesOpened.get() + ", storesClosed=" + storesClosed.get());
+        assertEquals("Configured signing requires key-unlock capability", failure.getMessage());
+        assertEquals(1, storesOpened.get());
+        assertEquals(1, storesClosed.get());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void opensExplicitPublisherCapabilityWithoutSigning() throws Exception {
+        System.out.println("opensExplicitPublisherCapabilityWithoutSigning");
+        ProviderConfig publisher = new ProviderConfig("filesystem",
+                Map.of("root", temporaryDirectory.resolve("published").toString(), "targetId", "local-crls"));
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(2,
+                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("store-publisher").toString())),
+                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), java.util.List.of(publisher));
+        try (PkiSession session = PkiSession.open(configuration)) {
+            System.out.println("...publicationConfigured=" + session.publications().isPresent());
+            assertTrue(session.publications().isPresent());
+            assertTrue(session.authorities().isEmpty());
+        }
+        System.out.println("...ok");
+    }
+
+    @Test
+    void rejectsUnknownPublisherBeforeStoreAllocation() {
+        System.out.println("rejectsUnknownPublisherBeforeStoreAllocation");
+        Path storeRoot = temporaryDirectory.resolve("must-not-open");
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(2,
+                new ProviderConfig("fs", Map.of("root", storeRoot.toString())),
+                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(),
+                java.util.List.of(new ProviderConfig("unknown-publisher", Map.of())));
+        assertThrows(IllegalStateException.class, () -> PkiSession.open(configuration));
+        System.out.println("...storeAllocated=" + java.nio.file.Files.exists(storeRoot));
+        assertTrue(java.nio.file.Files.notExists(storeRoot));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void composesOneSharedSigningAndX509ServiceGraph() throws Exception {
+        System.out.println("composesOneSharedSigningAndX509ServiceGraph");
+        KeyRef keyRef = new KeyRef("managed:test-root");
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair keyPair = generator.generateKeyPair();
+        InMemorySignatureWorkflow workflow = new InMemorySignatureWorkflow(Map.of(keyRef.value(), keyPair));
+        ProviderConfig placeholder = new ProviderConfig("test", Map.of());
+        PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
+                placeholder, new ProviderConfig("x509-bc", Map.of()),
+                temporaryDirectory.resolve("composed-signing-bus").toString(), "SHA256withRSA",
+                Duration.ofSeconds(5), Optional.empty());
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(2,
+                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("composed-store").toString())),
+                new ProviderConfig("memory", Map.of("size", "16")), Optional.of(signing), java.util.List.of());
+        DefaultPkiSession.Bootstrap bootstrap = signingBootstrap(workflow);
+        PkiSessionRuntimeDependencies dependencies = PkiSessionRuntimeDependencies.withKeyringUnlockProvider(
+                () -> new KeyringPassword("unused-test-unlock".toCharArray()));
+        try (PkiSession session = DefaultPkiSession.open(configuration, dependencies, CLOCK, bootstrap)) {
+            System.out.println("...services=ca,request,issuance,status");
+            assertTrue(session.authorities().isPresent());
+            assertTrue(session.requests().isPresent());
+            assertTrue(session.issuance().isPresent());
+            assertTrue(session.statusObjects().isPresent());
+            assertTrue(session.publications().isEmpty());
+            BuiltInCertificateProfileTemplate root = BuiltInCertificateProfileCatalog
+                    .load(getClass().getClassLoader()).stream()
+                    .filter(candidate -> "root-ca".equals(candidate.definition().profileId())).findFirst()
+                    .orElseThrow();
+            session.profiles().importProfile(root.canonicalJson());
+            session.profiles().activateProfile("root-ca", root.definition().profileVersion());
+            PkiOperationOutcome outcome = session.operations().execute(new PkiOperation.CreateAuthority(
+                    new FormatId("x509"), new SubjectRef("CN=Composed Root"), "root-ca", keyRef),
+                    CancellationSignal.NONE);
+            assertInstanceOf(PkiOperationOutcome.Success.class, outcome);
+        }
+        System.out.println("...ok");
+    }
+
     private static PkiSessionConfiguration configuration(Path storeRoot) {
         return new PkiSessionConfiguration(1, new ProviderConfig("fs", Map.of("root", storeRoot.toString())),
                 new ProviderConfig("memory", Map.of("size", "16")));
@@ -134,6 +242,16 @@ class PkiSessionLifecycleTest {
                 if (invalidAudit) {
                     throw new IllegalArgumentException("invalid");
                 }
+            }
+
+            @Override
+            public void validateSignatureWorkflow(ProviderConfig configuration) {
+                // valid test provider
+            }
+
+            @Override
+            public void validateCredentialFramework(ProviderConfig configuration) {
+                // valid test framework
             }
 
             @Override
@@ -165,6 +283,46 @@ class PkiSessionLifecycleTest {
                         }
                     }
                 };
+            }
+        };
+    }
+
+    private static DefaultPkiSession.Bootstrap signingBootstrap(SignatureWorkflow workflow) {
+        return new DefaultPkiSession.Bootstrap() {
+            @Override
+            public void validateStore(ProviderConfig configuration) {
+                PkiBootstrap.validateStoreConfiguration(configuration);
+            }
+
+            @Override
+            public void validateAudit(ProviderConfig configuration) {
+                PkiBootstrap.validateAuditConfiguration(configuration);
+            }
+
+            @Override
+            public PkiStore openStore(ProviderConfig configuration) {
+                return PkiBootstrap.openStore(configuration);
+            }
+
+            @Override
+            public AuditSink openAudit(ProviderConfig configuration) {
+                return PkiBootstrap.openAudit(configuration);
+            }
+
+            @Override
+            public void validateSignatureWorkflow(ProviderConfig configuration) {
+                // Explicit deterministic test provider.
+            }
+
+            @Override
+            public void validateCredentialFramework(ProviderConfig configuration) {
+                PkiBootstrap.validateCredentialFrameworkConfiguration(configuration);
+            }
+
+            @Override
+            public SignatureWorkflow openSignatureWorkflow(ProviderConfig configuration,
+                    SignatureWorkflowRuntimeDependencies dependencies) {
+                return workflow;
             }
         };
     }

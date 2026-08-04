@@ -56,6 +56,18 @@ public final class PkiCli {
     private static final String CONFIG = "--config";
     private static final String OUTPUT = "--output";
     private static final String RUN = "run";
+    private static final Map<String, String> OPERATION_ARGUMENT_NAMES = Map.ofEntries(
+            Map.entry("--profile-file", "profileFile"), Map.entry("--profile-id", "profileId"),
+            Map.entry("--profile-version", "profileVersion"), Map.entry("--ca-id", "caId"),
+            Map.entry("--issuer-ca-id", "issuerCaId"), Map.entry("--format-id", "formatId"),
+            Map.entry("--subject-ref", "subjectRef"), Map.entry("--key-ref", "keyRef"),
+            Map.entry("--state", "state"), Map.entry("--request-id", "requestId"),
+            Map.entry("--request-file", "requestFile"), Map.entry("--encoding", "encoding"),
+            Map.entry("--credential-id", "credentialId"), Map.entry("--status-object-id", "statusObjectId"),
+            Map.entry("--type", "type"), Map.entry("--publication-id", "publicationId"),
+            Map.entry("--source-type", "sourceType"), Map.entry("--source-id", "sourceId"),
+            Map.entry("--target-type", "targetType"), Map.entry("--target-id", "targetId"),
+            Map.entry("--reason", "reason"), Map.entry("--limit", "limit"));
     private static final int RUN_TOKEN_COUNT = 2;
 
     private PkiCli() {
@@ -195,8 +207,8 @@ public final class PkiCli {
         for (int index = 0; index < tokens.size(); index += 2) {
             String name = argumentName(tokens.get(index));
             String raw = tokens.get(index + 1);
-            PkiOperationValue value = "limit".equals(name) ? new PkiOperationValue.IntegerValue(parseLong(raw))
-                    : new PkiOperationValue.Text(raw);
+            PkiOperationValue value = "limit".equals(name) || "profileVersion".equals(name)
+                    ? new PkiOperationValue.IntegerValue(parseLong(raw)) : new PkiOperationValue.Text(raw);
             if (arguments.putIfAbsent(name, value) != null) {
                 throw new IllegalArgumentException("Operation argument is duplicated");
             }
@@ -205,14 +217,11 @@ public final class PkiCli {
     }
 
     private static String argumentName(String option) {
-        return switch (option) {
-            case "--profile-file" -> "profileFile";
-            case "--credential-id" -> "credentialId";
-            case "--publication-id" -> "publicationId";
-            case "--reason" -> "reason";
-            case "--limit" -> "limit";
-            default -> throw new IllegalArgumentException("Unknown PKI operation argument");
-        };
+        String name = OPERATION_ARGUMENT_NAMES.get(option);
+        if (name == null) {
+            throw new IllegalArgumentException("Unknown PKI operation argument");
+        }
+        return name;
     }
 
     private static PkiPlan singlePlan(Invocation invocation, PkiOperationRegistry registry) throws IOException {
@@ -256,10 +265,33 @@ public final class PkiCli {
         writer.println("Operations:");
         writer.println("  configuration.validate");
         writer.println("  profile.validate --profile-file <file>");
+        writer.println("  profile.register --profile-file <file>");
+        writer.println("  profile.inspect --profile-id <id> --profile-version <version>");
+        writer.println("  profile.list --profile-id <id>");
+        writer.println("  profile.activate --profile-id <id> --profile-version <version>");
+        writer.println("  ca.inspect --ca-id <id>");
+        writer.println("  ca.list --limit <1..1000>");
+        writer.println("  ca.create --format-id <id> --subject-ref <subject> --profile-id <id> --key-ref <ref>");
+        writer.println("  ca.transition --ca-id <id> --state <state> --reason <reason>");
+        writer.println("  request.inspect --request-id <id>");
+        writer.println("  request.import --format-id <id> --encoding DER --request-file <file>");
+        writer.println("  request.verify --request-id <id>");
         writer.println("  credential.inspect --credential-id <id>");
+        writer.println("  credential.issue --issuer-ca-id <id> --request-id <id> --profile-id <id>");
         writer.println("  credential.revoke --credential-id <id> --reason <permanent-reason>");
+        writer.println("  revocation.inspect --credential-id <id>");
         writer.println("  revocation.history --credential-id <id> --limit <1..1000>");
+        writer.println("  revocation.snapshot --limit <1..1000>");
+        writer.println("  status.inspect --status-object-id <id>");
+        writer.println("  status.generate --issuer-ca-id <id> --type <type> --format-id <id>");
+        writer.println("  inventory.status --issuer-ca-id <id> --limit <1..1000>");
         writer.println("  publication.inspect --publication-id <id>");
+        writer.println("  publication.list --limit <1..1000>");
+        writer.println("  publication.register --publication-id <id> --source-type <type> --source-id <id>");
+        writer.println("                       --target-type <type> --target-id <id>");
+        writer.println("  publication.process --publication-id <id>");
+        writer.println("  publication.retry --publication-id <id>");
+        writer.println("  publication.reconcile --publication-id <id>");
         writer.flush();
     }
 

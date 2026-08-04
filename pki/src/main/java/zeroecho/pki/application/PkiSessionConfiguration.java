@@ -33,7 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import zeroecho.pki.spi.ProviderConfig;
 
@@ -47,22 +50,75 @@ import zeroecho.pki.spi.ProviderConfig;
  * @param version configuration schema version
  * @param store store-provider configuration
  * @param audit audit-provider configuration
+ * @param signing optional signing and X.509 service composition
+ * @param publishers explicitly enabled publication destinations
  */
-public record PkiSessionConfiguration(int version, ProviderConfig store, ProviderConfig audit) {
+public record PkiSessionConfiguration(int version, ProviderConfig store, ProviderConfig audit,
+        Optional<SigningConfiguration> signing, List<ProviderConfig> publishers) {
 
     /** Current configuration schema version. */
-    public static final int CURRENT_VERSION = 1;
+    public static final int CURRENT_VERSION = 2;
+
+    /** Creates a read-only-compatible version-one configuration. */
+    public PkiSessionConfiguration(int version, ProviderConfig store, ProviderConfig audit) {
+        this(version, store, audit, Optional.empty(), List.of());
+    }
 
     /** Validates and snapshots the configuration. */
     public PkiSessionConfiguration {
-        if (version != CURRENT_VERSION) {
+        if (version < 1 || version > CURRENT_VERSION) {
             throw new IllegalArgumentException("Unsupported PKI session configuration version");
         }
         store = snapshot(Objects.requireNonNull(store, "store"));
         audit = snapshot(Objects.requireNonNull(audit, "audit"));
+        signing = Objects.requireNonNull(signing, "signing").map(SigningConfiguration::snapshot);
+        publishers = Objects.requireNonNull(publishers, "publishers").stream()
+                .map(PkiSessionConfiguration::snapshot).toList();
+        if (version == 1 && (signing.isPresent() || !publishers.isEmpty())) {
+            throw new IllegalArgumentException("Version-one configuration cannot enable optional capabilities");
+        }
     }
 
     private static ProviderConfig snapshot(ProviderConfig config) {
         return new ProviderConfig(config.backendId(), config.properties());
+    }
+
+    /**
+     * Explicit signing and X.509 service-graph configuration.
+     *
+     * @param workflow signature-workflow provider configuration
+     * @param framework credential-framework provider configuration
+     * @param busPath durable signing-bus path
+     * @param signatureAlgorithm canonical configured signing algorithm
+     * @param signingTtl positive synchronous signing deadline
+     * @param unlockEnvironmentVariable optional environment-variable reference used
+     *        only by the default process composition
+     */
+    public record SigningConfiguration(ProviderConfig workflow, ProviderConfig framework, String busPath,
+            String signatureAlgorithm, Duration signingTtl, Optional<String> unlockEnvironmentVariable) {
+
+        /** Validates and snapshots the signing configuration. */
+        public SigningConfiguration {
+            workflow = PkiSessionConfiguration.snapshot(Objects.requireNonNull(workflow, "workflow"));
+            framework = PkiSessionConfiguration.snapshot(Objects.requireNonNull(framework, "framework"));
+            if (busPath == null || busPath.isBlank() || signatureAlgorithm == null || signatureAlgorithm.isBlank()) {
+                throw new IllegalArgumentException("Signing paths and algorithm must not be blank");
+            }
+            if (signingTtl == null || signingTtl.isZero() || signingTtl.isNegative()) {
+                throw new IllegalArgumentException("signingTtl must be positive");
+            }
+            unlockEnvironmentVariable = Objects.requireNonNull(unlockEnvironmentVariable,
+                    "unlockEnvironmentVariable");
+            unlockEnvironmentVariable.ifPresent(value -> {
+                if (!value.matches("[A-Z][A-Z0-9_]{0,127}")) {
+                    throw new IllegalArgumentException("Unlock environment-variable reference is invalid");
+                }
+            });
+        }
+
+        private static SigningConfiguration snapshot(SigningConfiguration source) {
+            return new SigningConfiguration(source.workflow, source.framework, source.busPath,
+                    source.signatureAlgorithm, source.signingTtl, source.unlockEnvironmentVariable);
+        }
     }
 }

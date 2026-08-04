@@ -41,6 +41,53 @@ Whether you're working on secure file storage, encrypted communication, or priva
 
 - CLI Tools & Keystore Management
 
+## PKI administration CLI
+
+The application distribution provides one synchronous PKI administration entry
+point. Direct commands and JSON plans use the same typed backend operation
+executor and one lifecycle-owned `PkiSession`:
+
+```text
+zeroecho pki --help
+zeroecho pki configuration.validate --config pki-config.json
+zeroecho pki run administration-plan.json --config pki-config.json --output json
+```
+
+The administration surface covers every administratively meaningful capability
+implemented by the current backend: configuration validation; persisted profile
+validation/import/inspection/activation; CA creation, inspection, listing, and
+lifecycle transitions; strict CSR import and proof verification; credential
+issuance and inspection; revocation inspection and bounded history/snapshot
+presentation; signed status/CRL generation and inspection; and explicit
+publication registration, processing, retry, reconciliation, inspection, and
+listing. Presentation limits bound terminal output only; backend revocation and
+publication cursors remain streaming and do not acquire an aggregate population
+limit.
+
+Plans are versioned JSON documents with ordered, uniquely named operations.
+References use exact whole values from earlier successful steps. Plans support
+only `FAIL_FAST` and `CONTINUE_INDEPENDENT`; they have no scripts, expressions,
+loops, implicit retries, or rollback across already committed operations. Binary
+artifacts and secrets are never emitted in terminal JSON.
+
+Version-two session configuration enables capabilities explicitly. A signing
+section selects one signature-workflow provider, one X.509 framework, a durable
+signing-bus location, an algorithm, a finite signing deadline, and the name of an
+environment variable supplying the process-local keyring unlock capability.
+Publisher entries select configured destinations independently, so publication
+can be administered without enabling signing. Values of unlock variables,
+private keys, and publisher credentials are never operation arguments or output.
+Read-only version-one configurations remain valid and allocate neither signing
+nor publisher capabilities.
+
+The CLI and a future server share the same transport-neutral `PkiSession` and
+typed operations; batch execution opens that service graph once. Backup and
+import/export commands remain unavailable because the current backend has no
+production service implementation for them. Final backend release readiness is
+intentionally deferred until the planned extensible X.509 algorithm/OID binding
+work and its CLI integration are complete; this CLI does not anticipate or add
+placeholders for that future work.
+
 
 ## Development Status
 
