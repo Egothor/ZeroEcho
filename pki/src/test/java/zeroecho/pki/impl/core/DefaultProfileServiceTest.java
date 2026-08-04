@@ -46,6 +46,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
@@ -60,13 +61,22 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
+import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
 import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.CertificateProfileDefinition;
+import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
+import zeroecho.pki.api.profile.X509AlgorithmBindingPolicy;
+import zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings;
+import zeroecho.pki.impl.framework.x509.ImmutableX509AlgorithmBindingRegistry;
+import zeroecho.pki.impl.framework.x509.StandardX509Bindings;
 import zeroecho.pki.impl.audit.InMemoryAuditSink;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.testkit.TestX509AlgorithmBindingProvider;
 
 /**
  * Focused persisted profile lifecycle tests.
@@ -218,6 +228,68 @@ final class DefaultProfileServiceTest {
     }
 
     @Test
+    void explicitPrivateBindingIsPinnedAndChangedCommitmentFailsClosed(@TempDir Path directory) throws Exception {
+        System.out.println("explicitPrivateBindingIsPinnedAndChangedCommitmentFailsClosed");
+        CertificateProfileDefinition base = builtIn("server-tls").definition();
+        zeroecho.pki.api.algorithm.X509AlgorithmBinding binding = ZeroEchoPrivateX509Bindings.descriptors().stream()
+                .filter(candidate -> candidate.role()
+                        == zeroecho.pki.api.algorithm.X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE)
+                .findFirst().orElseThrow();
+        X509AlgorithmBindingPolicy.BindingReference reference = new X509AlgorithmBindingPolicy.BindingReference(
+                binding.bindingId(), binding.semanticCommitment());
+        X509AlgorithmBindingPolicy policy = new X509AlgorithmBindingPolicy(X509AlgorithmBindingPolicy.Mode.EXPLICIT,
+                Optional.empty(), Optional.empty(), Optional.of(reference), Optional.empty());
+        CertificateProfileDefinition explicit = new CertificateProfileDefinition(base.certificateType(),
+                "server-tls-private", base.profileVersion(), base.formatId(), "Private server TLS",
+                base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), policy);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(),
+                CLOCK)) {
+            DefaultProfileService service = service(store);
+            service.importProfile(CertificateProfileDocumentCodec.writeCanonical(explicit));
+            X509AlgorithmBindingPolicy changed = new X509AlgorithmBindingPolicy(X509AlgorithmBindingPolicy.Mode.EXPLICIT,
+                    Optional.empty(), Optional.empty(), Optional.of(new X509AlgorithmBindingPolicy.BindingReference(
+                            binding.bindingId(), binding.semanticCommitment() + "-changed")), Optional.empty());
+            CertificateProfileDefinition invalid = new CertificateProfileDefinition(base.certificateType(),
+                    "server-tls-changed", base.profileVersion(), base.formatId(), "Changed server TLS",
+                    base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), changed);
+            assertThrows(PkiException.class,
+                    () -> service.importProfile(CertificateProfileDocumentCodec.writeCanonical(invalid)));
+        }
+        System.out.println("...binding=" + binding.bindingId());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void persistedDeployerBindingRequiresIdenticalRegistryAfterReopen(@TempDir Path directory) throws Exception {
+        System.out.println("persistedDeployerBindingRequiresIdenticalRegistryAfterReopen");
+        List<X509AlgorithmBinding> descriptors = new java.util.ArrayList<>(StandardX509Bindings.descriptors());
+        descriptors.addAll(ZeroEchoPrivateX509Bindings.descriptors());
+        descriptors.addAll(new TestX509AlgorithmBindingProvider().bindings());
+        X509AlgorithmBindingRegistry deployerRegistry = ImmutableX509AlgorithmBindingRegistry.create(descriptors);
+        X509AlgorithmBinding binding = deployerRegistry.find("test.ed25519.certificate.v1").orElseThrow();
+        CertificateProfileDefinition base = builtIn("server-tls").definition();
+        X509AlgorithmBindingPolicy policy = new X509AlgorithmBindingPolicy(X509AlgorithmBindingPolicy.Mode.EXPLICIT,
+                Optional.empty(), Optional.empty(), Optional.of(new X509AlgorithmBindingPolicy.BindingReference(
+                        binding.bindingId(), binding.semanticCommitment())), Optional.empty());
+        CertificateProfileDefinition explicit = new CertificateProfileDefinition(base.certificateType(),
+                "server-tls-deployer", base.profileVersion(), base.formatId(), "Deployer server TLS",
+                base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), policy);
+        Path root = directory.resolve("store");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK)) {
+            DefaultProfileService service = service(store, deployerRegistry);
+            service.importProfile(CertificateProfileDocumentCodec.writeCanonical(explicit));
+            service.activateProfile(explicit.profileId(), explicit.profileVersion());
+        }
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK)) {
+            assertEquals(explicit.profileId(), service(store, deployerRegistry)
+                    .requireActiveProfile(explicit.profileId()).reference().profileId());
+            assertThrows(PkiException.class, () -> service(store).requireActiveProfile(explicit.profileId()));
+        }
+        System.out.println("...binding=" + binding.bindingId());
+        System.out.println("...ok");
+    }
+
+    @Test
     void lifecycleOperationsSanitizeStoreDiagnosticsAndAuditCodes() {
         String sentinel = "unsafe-profile-store-sentinel";
         InMemoryAuditSink audit = new InMemoryAuditSink();
@@ -246,6 +318,11 @@ final class DefaultProfileServiceTest {
 
     private static DefaultProfileService service(FilesystemPkiStore store) {
         return new DefaultProfileService(store, CLOCK, new InMemoryAuditSink());
+    }
+
+    private static DefaultProfileService service(FilesystemPkiStore store,
+            X509AlgorithmBindingRegistry algorithmBindings) {
+        return new DefaultProfileService(store, CLOCK, new InMemoryAuditSink(), algorithmBindings);
     }
 
     private static BuiltInCertificateProfileTemplate builtIn(String profileId) {

@@ -42,6 +42,7 @@ import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.RevocationService;
 import zeroecho.pki.api.StatusObjectService;
+import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 
 /**
  * Lifecycle-owned synchronous PKI backend session.
@@ -106,6 +107,13 @@ public interface PkiSession extends AutoCloseable {
     default Optional<PublicationService> publications() {
         return Optional.empty();
     }
+
+    /**
+     * Returns the immutable active X.509 algorithm-binding registry.
+     *
+     * @return session-owned immutable registry, available to read-only sessions
+     */
+    X509AlgorithmBindingRegistry algorithmBindings();
 
     /** @return shared typed operation executor owned by this session */
     PkiOperationExecutor operations();

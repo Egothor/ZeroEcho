@@ -68,12 +68,16 @@ final class PkiOperationRegistry {
     private static final String PROFILE_ID = "profileId";
     private static final String PROFILE_VERSION = "profileVersion";
     private static final String REQUEST_ID = "requestId";
+    private static final String BINDING_ID = "bindingId";
     private static final int MAXIMUM_REQUEST_BYTES = 1024 * 1024;
 
     private final Map<String, Binding> bindings;
 
     /* default */ PkiOperationRegistry() {
         Map<String, Binding> configured = new LinkedHashMap<>();
+        add(configured, PkiOperation.ListAlgorithmBindings.NAME, this::listAlgorithmBindings);
+        add(configured, PkiOperation.InspectAlgorithmBinding.NAME, this::inspectAlgorithmBinding);
+        add(configured, PkiOperation.ValidateAlgorithmBindings.NAME, this::validateAlgorithmBindings);
         add(configured, PkiOperation.ValidateConfiguration.NAME, this::configuration);
         add(configured, PkiOperation.ValidateProfile.NAME, this::profile);
         add(configured, PkiOperation.RegisterProfile.NAME, this::registerProfile);
@@ -121,6 +125,29 @@ final class PkiOperationRegistry {
     private PkiOperation configuration(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         requireFields(arguments, Set.of());
         return new PkiOperation.ValidateConfiguration();
+    }
+
+    private PkiOperation listAlgorithmBindings(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        Set<String> supplied = arguments.fields().keySet();
+        if (!supplied.contains(LIMIT) || !Set.of(LIMIT, "origin", "role").containsAll(supplied)) {
+            throw new IllegalArgumentException("PKI operation arguments are invalid");
+        }
+        return new PkiOperation.ListAlgorithmBindings(optionalText(arguments, "origin"),
+                optionalText(arguments, "role"), limit(arguments));
+    }
+
+    private PkiOperation inspectAlgorithmBinding(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(BINDING_ID));
+        return new PkiOperation.InspectAlgorithmBinding(text(arguments, BINDING_ID));
+    }
+
+    private PkiOperation validateAlgorithmBindings(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        Set<String> supplied = arguments.fields().keySet();
+        if (!(supplied.isEmpty() || supplied.equals(Set.of(BINDING_ID, "bindingCommitment")))) {
+            throw new IllegalArgumentException("PKI operation arguments are invalid");
+        }
+        return new PkiOperation.ValidateAlgorithmBindings(optionalText(arguments, BINDING_ID),
+                optionalText(arguments, "bindingCommitment"));
     }
 
     private PkiOperation profile(PkiOperationValue.ObjectValue arguments, Path baseDirectory) throws IOException {
@@ -294,6 +321,11 @@ final class PkiOperationRegistry {
 
     private static String text(PkiOperationValue.ObjectValue arguments, String name) {
         return PkiCliConfiguration.text(PkiCliConfiguration.required(arguments, name));
+    }
+
+    private static java.util.Optional<String> optionalText(PkiOperationValue.ObjectValue arguments, String name) {
+        PkiOperationValue value = arguments.fields().get(name);
+        return value == null ? java.util.Optional.empty() : java.util.Optional.of(PkiCliConfiguration.text(value));
     }
 
     private static long integer(PkiOperationValue.ObjectValue arguments, String name) {

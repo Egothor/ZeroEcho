@@ -41,8 +41,9 @@ import zeroecho.pki.api.FormatId;
  * Immutable, versioned certificate-profile configuration.
  *
  * <p>
- * Schema version 2 replaces the pre-release version 1 shape. The certificate
- * kind and its closed policy variant are immutable across the definition.
+ * Schema version 3 adds explicit immutable X.509 algorithm-binding selection to
+ * the closed pre-release profile shape. The certificate kind and its closed
+ * policy variant are immutable across the definition.
  * Runtime activation state is deliberately excluded.
  * </p>
  *
@@ -54,13 +55,23 @@ import zeroecho.pki.api.FormatId;
  * @param maximumValidity   positive maximum validity
  * @param subjectPolicy     complete subject policy
  * @param certificatePolicy closed certificate-specific policy variant
+ * @param algorithmBindingPolicy explicit X.509 representation policy
  */
 public record CertificateProfileDefinition(CertificateProfileKind certificateType, String profileId,
         long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
-        SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy) {
+        SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy,
+        X509AlgorithmBindingPolicy algorithmBindingPolicy) {
 
     /** Current certificate-profile document schema version. */
-    public static final int SCHEMA_VERSION = 2;
+    public static final int SCHEMA_VERSION = 3;
+
+    /** Creates a standard-only profile definition. */
+    public CertificateProfileDefinition(CertificateProfileKind certificateType, String profileId,
+            long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
+            SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy) {
+        this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity, subjectPolicy,
+                certificatePolicy, X509AlgorithmBindingPolicy.standardOnly());
+    }
 
     /**
      * Creates a certificate-profile definition.
@@ -87,7 +98,7 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
         if (maximumValidity == null || maximumValidity.isZero() || maximumValidity.isNegative()) {
             throw new IllegalArgumentException("maximumValidity must be positive");
         }
-        if (subjectPolicy == null || certificatePolicy == null) {
+        if (subjectPolicy == null || certificatePolicy == null || algorithmBindingPolicy == null) {
             throw new IllegalArgumentException("profile policies must not be null");
         }
         boolean leaf = certificatePolicy instanceof LeafCertificatePolicy;

@@ -48,10 +48,17 @@ import zeroecho.pki.spi.ProviderConfig;
 final class PkiCliConfiguration {
 
     private static final int VERSION_ONE = 1;
+    private static final int VERSION_TWO = 2;
+    private static final int VERSION_THREE = 3;
     private static final Set<String> ROOT_FIELDS_V1 = Set.of("version", "store", "audit");
     private static final Set<String> ROOT_FIELDS_V2 = Set.of("version", "store", "audit", "signing", "publishers");
+    private static final Set<String> ROOT_FIELDS_V3 = Set.of("version", "store", "audit", "signing", "publishers",
+            "bindingProviders");
     private static final Set<String> PROVIDER_FIELDS = Set.of("provider", "properties");
     private static final Set<String> SIGNING_FIELDS = Set.of("workflow", "framework", "busPath",
+            "signatureAlgorithm", "signingTtlSeconds", "unlockEnvironmentVariable",
+            "certificateSignatureBinding", "crlSignatureBinding", "subjectPublicKeyBinding");
+    private static final Set<String> SIGNING_REQUIRED_FIELDS = Set.of("workflow", "framework", "busPath",
             "signatureAlgorithm", "signingTtlSeconds", "unlockEnvironmentVariable");
     private static final String STDOUT_PROVIDER = "stdout";
 
@@ -64,8 +71,12 @@ final class PkiCliConfiguration {
         int version = Math.toIntExact(integer(required(root, "version")));
         if (version == VERSION_ONE) {
             requireExactFields(root.fields(), ROOT_FIELDS_V1);
+        } else if (version == VERSION_TWO) {
+            requireFields(root.fields(), ROOT_FIELDS_V2);
+        } else if (version == VERSION_THREE) {
+            requireFields(root.fields(), ROOT_FIELDS_V3);
         } else {
-            requireVersionTwoFields(root.fields());
+            throw new IllegalArgumentException("Unsupported CLI configuration version");
         }
         ProviderConfig store = provider(required(root, "store"));
         ProviderConfig audit = provider(required(root, "audit"));
@@ -80,23 +91,46 @@ final class PkiCliConfiguration {
         PkiOperationValue publisherValue = root.fields().get("publishers");
         List<ProviderConfig> publishers = publisherValue == null ? List.of()
                 : list(publisherValue).values().stream().map(PkiCliConfiguration::provider).toList();
-        return new PkiSessionConfiguration(version, store, audit, signing, publishers);
+        PkiOperationValue bindingProviderValue = root.fields().get("bindingProviders");
+        List<PkiSessionConfiguration.BindingProviderConfiguration> bindingProviders = bindingProviderValue == null
+                ? List.of() : list(bindingProviderValue).values().stream()
+                        .map(PkiCliConfiguration::bindingProvider).toList();
+        return new PkiSessionConfiguration(version, store, audit, signing, publishers, bindingProviders);
     }
 
-    private static void requireVersionTwoFields(Map<String, PkiOperationValue> actual) {
-        if (!actual.keySet().containsAll(ROOT_FIELDS_V1) || !ROOT_FIELDS_V2.containsAll(actual.keySet())) {
+    private static void requireFields(Map<String, PkiOperationValue> actual, Set<String> allowed) {
+        if (!actual.keySet().containsAll(ROOT_FIELDS_V1) || !allowed.containsAll(actual.keySet())) {
             throw new IllegalArgumentException("CLI document fields are invalid");
         }
     }
 
+    private static PkiSessionConfiguration.BindingProviderConfiguration bindingProvider(PkiOperationValue value) {
+        PkiOperationValue.ObjectValue object = object(value);
+        Set<String> fields = object.fields().keySet();
+        if (!fields.containsAll(Set.of("providerId", "authorizedOidRoots"))
+                || !Set.of("providerId", "authorizedOidRoots", "expectedBindingSetVersion").containsAll(fields)) {
+            throw new IllegalArgumentException("Binding-provider configuration fields are invalid");
+        }
+        List<String> roots = list(required(object, "authorizedOidRoots")).values().stream()
+                .map(PkiCliConfiguration::text).toList();
+        PkiOperationValue expected = object.fields().get("expectedBindingSetVersion");
+        return new PkiSessionConfiguration.BindingProviderConfiguration(text(required(object, "providerId")), roots,
+                expected == null ? java.util.Optional.empty() : java.util.Optional.of(text(expected)));
+    }
+
     private static PkiSessionConfiguration.SigningConfiguration signing(PkiOperationValue value) {
         PkiOperationValue.ObjectValue object = object(value);
-        requireExactFields(object.fields(), SIGNING_FIELDS);
+        if (!object.fields().keySet().containsAll(SIGNING_REQUIRED_FIELDS)
+                || !SIGNING_FIELDS.containsAll(object.fields().keySet())) {
+            throw new IllegalArgumentException("Signing configuration fields are invalid");
+        }
         return new PkiSessionConfiguration.SigningConfiguration(provider(required(object, "workflow")),
                 provider(required(object, "framework")), text(required(object, "busPath")),
                 text(required(object, "signatureAlgorithm")),
                 Duration.ofSeconds(integer(required(object, "signingTtlSeconds"))),
-                java.util.Optional.of(text(required(object, "unlockEnvironmentVariable"))));
+                java.util.Optional.of(text(required(object, "unlockEnvironmentVariable"))),
+                optionalText(object, "certificateSignatureBinding"), optionalText(object, "crlSignatureBinding"),
+                optionalText(object, "subjectPublicKeyBinding"));
     }
 
     private static ProviderConfig provider(PkiOperationValue value) {
@@ -138,6 +172,11 @@ final class PkiCliConfiguration {
             return text.value();
         }
         throw new IllegalArgumentException("CLI field has the wrong type");
+    }
+
+    private static java.util.Optional<String> optionalText(PkiOperationValue.ObjectValue object, String field) {
+        PkiOperationValue value = object.fields().get(field);
+        return value == null ? java.util.Optional.empty() : java.util.Optional.of(text(value));
     }
 
     /* default */ static long integer(PkiOperationValue value) {

@@ -165,6 +165,12 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
      */
     public BcX509CredentialIssuerBackend(PkiSigningBus signingBus, AlgorithmIdentity signatureIdentity,
             Duration signingTtl) {
+        this(signingBus, signatureIdentity, Optional.empty(), signingTtl);
+    }
+
+    /** Creates an issuance backend with an optional explicit certificate binding. */
+    public BcX509CredentialIssuerBackend(PkiSigningBus signingBus, AlgorithmIdentity signatureIdentity,
+            Optional<String> signatureBindingId, Duration signingTtl) {
         if (signingBus == null) {
             throw new IllegalArgumentException("signingBus must not be null");
         }
@@ -176,6 +182,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         }
         this.signingBus = signingBus;
         this.signatureIdentity = signatureIdentity;
+        java.util.Objects.requireNonNull(signatureBindingId, "signatureBindingId");
         this.signingTtl = signingTtl;
     }
 
@@ -222,7 +229,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
                 Date.from(request.validity().notBefore()), Date.from(request.validity().notAfter()), subjectDn, spki);
         addLeafExtensions(builder, request);
 
-        PkiBusContentSigner signer = new PkiBusContentSigner(signingBus, issuerKeyRef, signatureIdentity, signingTtl);
+        PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy());
         X509CertificateHolder leaf;
         try {
             leaf = builder.build(signer);
@@ -277,6 +284,16 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         } catch (Exception exception) {
             throw new PkiException("X.509 extension construction failed: code=EXTENSION_BUILD_FAILED");
         }
+    }
+
+    private PkiBusContentSigner signer(KeyRef keyRef,
+            zeroecho.pki.api.profile.X509AlgorithmBindingPolicy bindingPolicy) {
+        Optional<String> bindingId = bindingPolicy.certificateSignature()
+                .map(zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.BindingReference::bindingId);
+        return bindingId.isPresent()
+                ? new PkiBusContentSigner(signingBus, keyRef, signatureIdentity,
+                        bindingId.orElseThrow(), signingTtl)
+                : new PkiBusContentSigner(signingBus, keyRef, signatureIdentity, signingTtl);
     }
 
     private static int toKeyUsageBits(java.util.Set<LeafKeyUsage> usages) {
@@ -372,7 +389,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
             throw new PkiException("X.509 extension construction failed: code=EXTENSION_BUILD_FAILED");
         }
 
-        PkiBusContentSigner signer = new PkiBusContentSigner(signingBus, issuerKeyRef, signatureIdentity, signingTtl);
+        PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy());
         X509CertificateHolder certificate;
         try {
             certificate = builder.build(signer);

@@ -53,6 +53,8 @@ import zeroecho.pki.api.status.StatusObjectType;
  * explicit type and never by reflection or Java class name.</p>
  */
 public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration, PkiOperation.ValidateProfile,
+        PkiOperation.ListAlgorithmBindings, PkiOperation.InspectAlgorithmBinding,
+        PkiOperation.ValidateAlgorithmBindings,
         PkiOperation.RegisterProfile, PkiOperation.InspectProfile, PkiOperation.ListProfileVersions,
         PkiOperation.ActivateProfile, PkiOperation.InspectAuthority, PkiOperation.ListAuthorities,
         PkiOperation.CreateAuthority, PkiOperation.TransitionAuthority, PkiOperation.InspectRequest,
@@ -68,6 +70,81 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
 
     /** @return stable semantic operation name */
     String name();
+
+    /** Lists active X.509 algorithm bindings with optional finite filters. */
+    record ListAlgorithmBindings(java.util.Optional<String> origin, java.util.Optional<String> role, int limit)
+            implements PkiOperation {
+        /** Stable operation name. */
+        public static final String NAME = "algorithm.binding.list";
+
+        /** Validates immutable filters and the presentation limit. */
+        public ListAlgorithmBindings {
+            origin = Objects.requireNonNull(origin, "origin").map(ListAlgorithmBindings::requireText);
+            role = Objects.requireNonNull(role, "role").map(ListAlgorithmBindings::requireText);
+            requireLimit(limit);
+        }
+
+        @Override
+        public String name() {
+            return NAME;
+        }
+
+        private static String requireText(String value) {
+            if (value == null || value.isBlank()) {
+                throw new IllegalArgumentException("Binding filter must not be blank");
+            }
+            return value;
+        }
+    }
+
+    /** Inspects one active X.509 algorithm binding by stable identifier. */
+    record InspectAlgorithmBinding(String bindingId) implements PkiOperation {
+        /** Stable operation name. */
+        public static final String NAME = "algorithm.binding.inspect";
+
+        /** Validates the stable identifier. */
+        public InspectAlgorithmBinding {
+            if (bindingId == null || bindingId.isBlank()) {
+                throw new IllegalArgumentException("bindingId must not be blank");
+            }
+        }
+
+        @Override
+        public String name() {
+            return NAME;
+        }
+    }
+
+    /** Validates the immutable active registry and optionally one exact binding. */
+    record ValidateAlgorithmBindings(java.util.Optional<String> bindingId,
+            java.util.Optional<String> expectedCommitment) implements PkiOperation {
+        /** Stable operation name. */
+        public static final String NAME = "algorithm.binding.validate";
+
+        /** Validates paired optional fields. */
+        public ValidateAlgorithmBindings {
+            bindingId = Objects.requireNonNull(bindingId, "bindingId");
+            expectedCommitment = Objects.requireNonNull(expectedCommitment, "expectedCommitment");
+            if (bindingId.isPresent() != expectedCommitment.isPresent()) {
+                throw new IllegalArgumentException("Binding validation fields must be supplied together");
+            }
+            bindingId.ifPresent(value -> {
+                if (value.isBlank()) {
+                    throw new IllegalArgumentException("bindingId must not be blank");
+                }
+            });
+            expectedCommitment.ifPresent(value -> {
+                if (!value.matches("[0-9a-f]{64}|[^\\s]{1,512}")) {
+                    throw new IllegalArgumentException("Binding commitment is invalid");
+                }
+            });
+        }
+
+        @Override
+        public String name() {
+            return NAME;
+        }
+    }
 
     /** Validates the already-open session configuration. */
     record ValidateConfiguration() implements PkiOperation {

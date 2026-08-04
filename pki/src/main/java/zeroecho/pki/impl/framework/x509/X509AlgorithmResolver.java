@@ -194,6 +194,14 @@ public final class X509AlgorithmResolver {
     public Selection resolve(AlgorithmIdentity requested, AlgorithmIdentity key,
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
             String authorityFingerprint) {
+        return resolve(requested, key, direction, implementation, provenance, authorityFingerprint,
+                Optional.empty());
+    }
+
+    /** Resolves an operation with an optional explicit X.509 binding identity. */
+    public Selection resolve(AlgorithmIdentity requested, AlgorithmIdentity key,
+            AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
+            String authorityFingerprint, Optional<String> bindingId) {
         Objects.requireNonNull(requested, "requested");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(direction, "direction");
@@ -213,7 +221,9 @@ public final class X509AlgorithmResolver {
         }
         X509AlgorithmIdentifier binding;
         try {
-            binding = bindings.resolve(requested, X509AlgorithmRole.SIGNATURE_ALGORITHM);
+            binding = bindingId.isPresent()
+                    ? bindings.resolve(bindingId.orElseThrow(), requested, X509AlgorithmRole.SIGNATURE_ALGORITHM)
+                    : bindings.resolve(requested, X509AlgorithmRole.SIGNATURE_ALGORITHM);
         } catch (IllegalArgumentException missing) {
             throw new ResolutionException(Failure.NO_BINDING, missing);
         }

@@ -44,6 +44,7 @@ import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ExtendedKeyUsageId;
 import zeroecho.pki.api.profile.LeafKeyUsage;
+import zeroecho.pki.api.profile.X509AlgorithmBindingPolicy;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.api.request.SubjectRdn;
 
@@ -71,12 +72,25 @@ public final class ValidatedCertificateRequest {
     private final boolean keyUsageCritical;
     private final boolean extendedKeyUsageCritical;
     private final boolean basicConstraintsCritical;
+    private final X509AlgorithmBindingPolicy algorithmBindingPolicy;
 
     /* default */ ValidatedCertificateRequest(PkiId issuerCaId, CertificateProfileRef profileReference,
             SubjectRef subjectRef, List<SubjectRdn> subjectRdns, List<SubjectAlternativeName> subjectAlternativeNames,
             boolean subjectAlternativeNameCritical, EncodedObject exactPublicKey, Validity validity,
             Set<LeafKeyUsage> keyUsages, Set<ExtendedKeyUsageId> extendedKeyUsages, boolean keyUsageCritical,
             boolean extendedKeyUsageCritical, boolean basicConstraintsCritical) {
+        this(issuerCaId, profileReference, subjectRef, subjectRdns, subjectAlternativeNames,
+                subjectAlternativeNameCritical, exactPublicKey, validity, keyUsages, extendedKeyUsages,
+                keyUsageCritical, extendedKeyUsageCritical, basicConstraintsCritical,
+                X509AlgorithmBindingPolicy.standardOnly());
+    }
+
+    /* default */ ValidatedCertificateRequest(PkiId issuerCaId, CertificateProfileRef profileReference,
+            SubjectRef subjectRef, List<SubjectRdn> subjectRdns, List<SubjectAlternativeName> subjectAlternativeNames,
+            boolean subjectAlternativeNameCritical, EncodedObject exactPublicKey, Validity validity,
+            Set<LeafKeyUsage> keyUsages, Set<ExtendedKeyUsageId> extendedKeyUsages, boolean keyUsageCritical,
+            boolean extendedKeyUsageCritical, boolean basicConstraintsCritical,
+            X509AlgorithmBindingPolicy algorithmBindingPolicy) {
         this.issuerCaId = Objects.requireNonNull(issuerCaId, "issuerCaId");
         this.profileReference = Objects.requireNonNull(profileReference, "profileReference");
         this.subjectRef = Objects.requireNonNull(subjectRef, "subjectRef");
@@ -90,6 +104,7 @@ public final class ValidatedCertificateRequest {
         this.keyUsageCritical = keyUsageCritical;
         this.extendedKeyUsageCritical = extendedKeyUsageCritical;
         this.basicConstraintsCritical = basicConstraintsCritical;
+        this.algorithmBindingPolicy = Objects.requireNonNull(algorithmBindingPolicy, "algorithmBindingPolicy");
     }
 
     /** @return authoritative issuer CA identifier */
@@ -160,5 +175,10 @@ public final class ValidatedCertificateRequest {
     /** @return leaf BasicConstraints criticality */
     public boolean basicConstraintsCritical() {
         return basicConstraintsCritical;
+    }
+
+    /** @return exact immutable X.509 representation selection */
+    public X509AlgorithmBindingPolicy algorithmBindingPolicy() {
+        return algorithmBindingPolicy;
     }
 }

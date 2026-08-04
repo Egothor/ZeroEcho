@@ -169,6 +169,33 @@ class PkiCliTest {
     }
 
     @Test
+    void bindingAdministrationUsesDirectAndBatchTypedExecution() throws IOException {
+        System.out.println("bindingAdministrationUsesDirectAndBatchTypedExecution");
+        Path configuration = configuration("bindings");
+        ByteArrayOutputStream listed = new ByteArrayOutputStream();
+        int listCode = PkiCli.execute(new String[] { "algorithm.binding.list", "--limit", "64", "--config",
+                configuration.toString(), "--output", "json" }, listed);
+        String bindingId = "zeroecho.private.sphincs-plus-default.certificate-signature.v1";
+        Path workflow = plan("binding-workflow.json", """
+                {"version":1,"failurePolicy":"FAIL_FAST","operations":[
+                  {"id":"binding","operation":"algorithm.binding.inspect","arguments":{"bindingId":"%s"}},
+                  {"id":"validate","operation":"algorithm.binding.validate","arguments":{"bindingId":"${binding.bindingId}","bindingCommitment":"${binding.bindingCommitment}"}}
+                ]}
+                """.formatted(bindingId));
+        ByteArrayOutputStream batch = new ByteArrayOutputStream();
+        int batchCode = PkiCli.execute(new String[] { "run", workflow.toString(), "--config",
+                configuration.toString(), "--output", "json" }, batch);
+        String output = listed.toString(StandardCharsets.UTF_8) + batch.toString(StandardCharsets.UTF_8);
+        System.out.println("...outputBytes=" + output.length());
+        assertEquals(PkiExitCodes.SUCCESS, listCode);
+        assertEquals(PkiExitCodes.SUCCESS, batchCode);
+        assertTrue(output.contains("1.3.6.1.4.1.31424.1.1.3"));
+        assertTrue(output.contains("ZEROECHO_PRIVATE"));
+        assertFalse(output.contains("codecClass"));
+        System.out.println("...ok");
+    }
+
+    @Test
     void versionTwoConfigurationKeepsCapabilitiesExplicit() throws IOException {
         System.out.println("versionTwoConfigurationKeepsCapabilitiesExplicit");
         Path configuration = temporaryDirectory.resolve("capabilities.json");
@@ -391,6 +418,40 @@ class PkiCliTest {
                 @Override
                 public RevocationService revocations() {
                     throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry algorithmBindings() {
+                    return new zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry() {
+                        @Override
+                        public java.util.List<zeroecho.pki.api.algorithm.X509AlgorithmBinding> bindings() {
+                            return java.util.List.of();
+                        }
+
+                        @Override
+                        public java.util.Optional<zeroecho.pki.api.algorithm.X509AlgorithmBinding> find(
+                                String bindingId) {
+                            return java.util.Optional.empty();
+                        }
+
+                        @Override
+                        public java.util.Optional<zeroecho.pki.api.algorithm.X509AlgorithmBinding> standard(
+                                zeroecho.core.spec.AlgorithmIdentity identity,
+                                zeroecho.pki.api.algorithm.X509AlgorithmBinding.Role role) {
+                            return java.util.Optional.empty();
+                        }
+
+                        @Override
+                        public String commitment() {
+                            return "test-registry";
+                        }
+
+                        @Override
+                        public zeroecho.pki.api.algorithm.X509AlgorithmBinding require(String bindingId,
+                                String expectedCommitment) {
+                            throw new IllegalArgumentException("inactive test binding");
+                        }
+                    };
                 }
 
                 @Override

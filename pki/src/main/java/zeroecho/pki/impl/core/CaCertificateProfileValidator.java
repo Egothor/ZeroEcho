@@ -109,7 +109,7 @@ final class CaCertificateProfileValidator {
         SubjectRef canonicalSubject = new SubjectRef(BcX509ProfileSupport.subject(subjectSnapshot).toString());
         return new ValidatedCaCertificateRequest(operation, formatId, issuerCaId, subjectCaId,
                 activeProfile.reference(), expectedKind, canonicalSubject, subjectSnapshot, exactPublicKey, validity,
-                serial, definition.caPolicy());
+                serial, definition.caPolicy(), definition.algorithmBindingPolicy());
     }
 
     /* package */ static void requireProfileShape(ActiveCertificateProfile activeProfile,

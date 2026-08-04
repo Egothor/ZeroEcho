@@ -37,12 +37,17 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.GeneralSecurityException;
+import java.security.KeyFactory;
+import java.security.PublicKey;
+import java.security.Signature;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.List;
 import java.util.Set;
 
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 import org.bouncycastle.operator.ContentVerifier;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
@@ -78,7 +83,8 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
             BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512, BootstrapAlgorithmIdentities.RSA_PSS_SHA256,
             BootstrapAlgorithmIdentities.ECDSA_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA384,
             BootstrapAlgorithmIdentities.ECDSA_SHA512, BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
-            BootstrapAlgorithmIdentities.ED448_SIGNATURE);
+            BootstrapAlgorithmIdentities.ED448_SIGNATURE, BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE);
+    private static final BouncyCastlePQCProvider BC_PQC_PROVIDER = new BouncyCastlePQCProvider();
 
     @Override
     public List<AlgorithmExecutionCapability> capabilities() {
@@ -134,8 +140,16 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
         if (!plan.selection().suite().publicKey().equals(publicKeyIdentity)) {
             throw new IllegalArgumentException("SubjectPublicKeyInfo does not match execution plan");
         }
+        SubjectPublicKeyInfo nativePublicKey = new BcX509PublicKeyAdapter(authority.bindings()).unwrap(publicKeyInfo);
+        if (BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE.equals(signatureIdentity)) {
+            return verifySphincs(nativePublicKey, signedContent, signature);
+        }
+        if (!authority.bindings().resolve(signatureIdentity, X509AlgorithmRole.SIGNATURE_ALGORITHM)
+                .equals(BcX509AlgorithmAdapter.fromBc(algorithmIdentifier))) {
+            return verifyCustomClassic(signatureIdentity, nativePublicKey, signedContent, signature);
+        }
         ContentVerifier verifier = new JcaContentVerifierProviderBuilder().setProvider(BC_PROVIDER)
-                .build(publicKeyInfo).get(algorithmIdentifier);
+                .build(nativePublicKey).get(algorithmIdentifier);
         try (InputStream input = signedContent.openStream(); OutputStream output = verifier.getOutputStream()) {
             byte[] buffer = new byte[16 * 1024];
             int read;
@@ -147,5 +161,51 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
             }
         }
         return verifier.verify(signature);
+    }
+
+    private static boolean verifySphincs(SubjectPublicKeyInfo publicKeyInfo, RepeatableContent signedContent,
+            byte[] signatureBytes) throws GeneralSecurityException, IOException {
+        PublicKey publicKey = KeyFactory.getInstance("SPHINCS+", BC_PQC_PROVIDER)
+                .generatePublic(new X509EncodedKeySpec(publicKeyInfo.getEncoded()));
+        Signature verifier = Signature.getInstance("SPHINCS+", BC_PQC_PROVIDER);
+        verifier.initVerify(publicKey);
+        try (InputStream input = signedContent.openStream()) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                CancellationSignal.NONE.throwIfCancelled();
+                if (read != 0) {
+                    verifier.update(buffer, 0, read);
+                }
+            }
+        }
+        return verifier.verify(signatureBytes);
+    }
+
+    private static boolean verifyCustomClassic(AlgorithmIdentity identity, SubjectPublicKeyInfo publicKeyInfo,
+            RepeatableContent signedContent, byte[] signatureBytes) throws GeneralSecurityException, IOException {
+        String algorithm;
+        if (BootstrapAlgorithmIdentities.ED25519_SIGNATURE.equals(identity)) {
+            algorithm = "Ed25519";
+        } else if (BootstrapAlgorithmIdentities.ED448_SIGNATURE.equals(identity)) {
+            algorithm = "Ed448";
+        } else {
+            throw new GeneralSecurityException("Custom classic binding lacks an exact JCA verification contract");
+        }
+        PublicKey publicKey = KeyFactory.getInstance(algorithm, BC_PROVIDER)
+                .generatePublic(new X509EncodedKeySpec(publicKeyInfo.getEncoded()));
+        Signature verifier = Signature.getInstance(algorithm, BC_PROVIDER);
+        verifier.initVerify(publicKey);
+        try (InputStream input = signedContent.openStream()) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                CancellationSignal.NONE.throwIfCancelled();
+                if (read != 0) {
+                    verifier.update(buffer, 0, read);
+                }
+            }
+        }
+        return verifier.verify(signatureBytes);
     }
 }

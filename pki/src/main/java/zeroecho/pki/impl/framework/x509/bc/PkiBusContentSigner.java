@@ -54,7 +54,6 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.async.PkiSigningBus.SignContinuation;
-import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.store.ContentSink;
@@ -156,6 +155,25 @@ public final class PkiBusContentSigner implements ContentSigner {
      *                                  authoritative signature binding exists
      */
     public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity, Duration ttl) {
+        this(bus, keyRef, algorithmIdentity, Optional.empty(), ttl);
+    }
+
+    /**
+     * Creates a signer using one explicitly selected X.509 binding.
+     *
+     * @param bus signing bus
+     * @param keyRef managed signing-key reference
+     * @param algorithmIdentity exact cryptographic identity
+     * @param bindingId stable active binding identity
+     * @param ttl positive workflow time-to-live
+     */
+    public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
+            String bindingId, Duration ttl) {
+        this(bus, keyRef, algorithmIdentity, Optional.of(bindingId), ttl);
+    }
+
+    private PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
+            Optional<String> bindingId, Duration ttl) {
         if (bus == null) {
             throw new IllegalArgumentException("bus must not be null");
         }
@@ -170,8 +188,10 @@ public final class PkiBusContentSigner implements ContentSigner {
         }
         this.bus = bus;
         this.keyRef = keyRef;
-        X509ExecutionPlan<SignatureWorkflow> plan = bus.authority()
-                .planSigning(algorithmIdentity.canonicalForm(), SignatureWorkflow.class);
+        X509ExecutionPlan<SignatureWorkflow> plan = bindingId.isPresent()
+                ? bus.authority().planSigningWithBinding(algorithmIdentity.canonicalForm(), bindingId.orElseThrow(),
+                        SignatureWorkflow.class)
+                : bus.authority().planSigning(algorithmIdentity.canonicalForm(), SignatureWorkflow.class);
         bus.authority().authorize(plan, plan.executor(),
                 zeroecho.core.spi.AlgorithmExecutionCapability.Direction.SIGN);
         this.executionPlan = plan;
@@ -205,8 +225,7 @@ public final class PkiBusContentSigner implements ContentSigner {
      */
     @Override
     public AlgorithmIdentifier getAlgorithmIdentifier() {
-        return new BcX509AlgorithmAdapter(bus.authority().bindings()).encode(algorithmIdentity,
-                X509AlgorithmRole.SIGNATURE_ALGORITHM);
+        return BcX509AlgorithmAdapter.toBc(executionPlan.selection().binding());
     }
 
     /**

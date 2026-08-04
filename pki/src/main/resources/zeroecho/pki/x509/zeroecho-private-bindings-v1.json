@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "bindings": [
+    {
+      "bindingId": "zeroecho.private.sphincs-plus-default.spki.v1",
+      "algorithmIdentity": "SPHINCS_PLUS_PUBLIC_KEY",
+      "role": "SUBJECT_PUBLIC_KEY",
+      "oid": "1.3.6.1.4.1.31424.1.1.1",
+      "encodingVersion": 1,
+      "parameterRule": "ABSENT",
+      "publicKeyEncoding": "NESTED_SPKI_DER",
+      "signatureEncoding": "NOT_APPLICABLE",
+      "interoperability": "ZEROECHO_ECOSYSTEM"
+    },
+    {
+      "bindingId": "zeroecho.private.sphincs-plus-default.csr-signature.v1",
+      "algorithmIdentity": "SPHINCS_PLUS_SIGNATURE",
+      "role": "CSR_SIGNATURE",
+      "oid": "1.3.6.1.4.1.31424.1.1.2",
+      "encodingVersion": 1,
+      "parameterRule": "ABSENT",
+      "publicKeyEncoding": "NOT_APPLICABLE",
+      "signatureEncoding": "OPAQUE",
+      "interoperability": "ZEROECHO_ECOSYSTEM"
+    },
+    {
+      "bindingId": "zeroecho.private.sphincs-plus-default.certificate-signature.v1",
+      "algorithmIdentity": "SPHINCS_PLUS_SIGNATURE",
+      "role": "CERTIFICATE_SIGNATURE",
+      "oid": "1.3.6.1.4.1.31424.1.1.3",
+      "encodingVersion": 1,
+      "parameterRule": "ABSENT",
+      "publicKeyEncoding": "NOT_APPLICABLE",
+      "signatureEncoding": "OPAQUE",
+      "interoperability": "ZEROECHO_ECOSYSTEM"
+    },
+    {
+      "bindingId": "zeroecho.private.sphincs-plus-default.crl-signature.v1",
+      "algorithmIdentity": "SPHINCS_PLUS_SIGNATURE",
+      "role": "CRL_SIGNATURE",
+      "oid": "1.3.6.1.4.1.31424.1.1.4",
+      "encodingVersion": 1,
+      "parameterRule": "ABSENT",
+      "publicKeyEncoding": "NOT_APPLICABLE",
+      "signatureEncoding": "OPAQUE",
+      "interoperability": "ZEROECHO_ECOSYSTEM"
+    }
+  ]
+}

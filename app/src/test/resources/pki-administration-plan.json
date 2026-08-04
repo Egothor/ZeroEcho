@@ -8,6 +8,21 @@
       "arguments": {}
     },
     {
+      "id": "inspect-binding",
+      "operation": "algorithm.binding.inspect",
+      "arguments": {
+        "bindingId": "zeroecho.private.sphincs-plus-default.certificate-signature.v1"
+      }
+    },
+    {
+      "id": "validate-binding",
+      "operation": "algorithm.binding.validate",
+      "arguments": {
+        "bindingId": "${inspect-binding.bindingId}",
+        "bindingCommitment": "${inspect-binding.bindingCommitment}"
+      }
+    },
+    {
       "id": "list-publications",
       "operation": "publication.list",
       "arguments": {

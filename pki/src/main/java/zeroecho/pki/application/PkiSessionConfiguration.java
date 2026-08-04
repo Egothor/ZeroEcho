@@ -54,14 +54,21 @@ import zeroecho.pki.spi.ProviderConfig;
  * @param publishers explicitly enabled publication destinations
  */
 public record PkiSessionConfiguration(int version, ProviderConfig store, ProviderConfig audit,
-        Optional<SigningConfiguration> signing, List<ProviderConfig> publishers) {
+        Optional<SigningConfiguration> signing, List<ProviderConfig> publishers,
+        List<BindingProviderConfiguration> bindingProviders) {
 
     /** Current configuration schema version. */
-    public static final int CURRENT_VERSION = 2;
+    public static final int CURRENT_VERSION = 3;
 
     /** Creates a read-only-compatible version-one configuration. */
     public PkiSessionConfiguration(int version, ProviderConfig store, ProviderConfig audit) {
-        this(version, store, audit, Optional.empty(), List.of());
+        this(version, store, audit, Optional.empty(), List.of(), List.of());
+    }
+
+    /** Creates a version-one or version-two configuration without custom bindings. */
+    public PkiSessionConfiguration(int version, ProviderConfig store, ProviderConfig audit,
+            Optional<SigningConfiguration> signing, List<ProviderConfig> publishers) {
+        this(version, store, audit, signing, publishers, List.of());
     }
 
     /** Validates and snapshots the configuration. */
@@ -74,8 +81,16 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         signing = Objects.requireNonNull(signing, "signing").map(SigningConfiguration::snapshot);
         publishers = Objects.requireNonNull(publishers, "publishers").stream()
                 .map(PkiSessionConfiguration::snapshot).toList();
+        bindingProviders = List.copyOf(Objects.requireNonNull(bindingProviders, "bindingProviders"));
         if (version == 1 && (signing.isPresent() || !publishers.isEmpty())) {
             throw new IllegalArgumentException("Version-one configuration cannot enable optional capabilities");
+        }
+        if (version < 3 && !bindingProviders.isEmpty()) {
+            throw new IllegalArgumentException("Custom X.509 bindings require configuration version three");
+        }
+        if (bindingProviders.stream().map(BindingProviderConfiguration::providerId).distinct().count()
+                != bindingProviders.size()) {
+            throw new IllegalArgumentException("Duplicate X.509 binding-provider identity");
         }
     }
 
@@ -93,9 +108,21 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
      * @param signingTtl positive synchronous signing deadline
      * @param unlockEnvironmentVariable optional environment-variable reference used
      *        only by the default process composition
+     * @param certificateSignatureBinding optional explicit certificate signature binding
+     * @param crlSignatureBinding optional explicit CRL signature binding
+     * @param subjectPublicKeyBinding optional explicit SPKI binding
      */
     public record SigningConfiguration(ProviderConfig workflow, ProviderConfig framework, String busPath,
-            String signatureAlgorithm, Duration signingTtl, Optional<String> unlockEnvironmentVariable) {
+            String signatureAlgorithm, Duration signingTtl, Optional<String> unlockEnvironmentVariable,
+            Optional<String> certificateSignatureBinding, Optional<String> crlSignatureBinding,
+            Optional<String> subjectPublicKeyBinding) {
+
+        /** Creates standard-mode signing configuration. */
+        public SigningConfiguration(ProviderConfig workflow, ProviderConfig framework, String busPath,
+                String signatureAlgorithm, Duration signingTtl, Optional<String> unlockEnvironmentVariable) {
+            this(workflow, framework, busPath, signatureAlgorithm, signingTtl, unlockEnvironmentVariable,
+                    Optional.empty(), Optional.empty(), Optional.empty());
+        }
 
         /** Validates and snapshots the signing configuration. */
         public SigningConfiguration {
@@ -109,6 +136,9 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
             }
             unlockEnvironmentVariable = Objects.requireNonNull(unlockEnvironmentVariable,
                     "unlockEnvironmentVariable");
+            certificateSignatureBinding = binding(certificateSignatureBinding, "certificateSignatureBinding");
+            crlSignatureBinding = binding(crlSignatureBinding, "crlSignatureBinding");
+            subjectPublicKeyBinding = binding(subjectPublicKeyBinding, "subjectPublicKeyBinding");
             unlockEnvironmentVariable.ifPresent(value -> {
                 if (!value.matches("[A-Z][A-Z0-9_]{0,127}")) {
                     throw new IllegalArgumentException("Unlock environment-variable reference is invalid");
@@ -118,7 +148,51 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
 
         private static SigningConfiguration snapshot(SigningConfiguration source) {
             return new SigningConfiguration(source.workflow, source.framework, source.busPath,
-                    source.signatureAlgorithm, source.signingTtl, source.unlockEnvironmentVariable);
+                    source.signatureAlgorithm, source.signingTtl, source.unlockEnvironmentVariable,
+                    source.certificateSignatureBinding, source.crlSignatureBinding, source.subjectPublicKeyBinding);
+        }
+
+        private static Optional<String> binding(Optional<String> source, String name) {
+            return Objects.requireNonNull(source, name).map(value -> {
+                if (value.isBlank() || value.length() > 512) {
+                    throw new IllegalArgumentException(name + " is invalid");
+                }
+                return value;
+            });
+        }
+    }
+
+    /**
+     * Explicit activation and namespace authorization for one installed binding
+     * provider.
+     *
+     * @param providerId stable installed provider identity
+     * @param authorizedOidRoots finite roots owned by the deployment
+     * @param expectedBindingSetVersion optional pinned provider binding-set version
+     */
+    public record BindingProviderConfiguration(String providerId, List<String> authorizedOidRoots,
+            Optional<String> expectedBindingSetVersion) {
+
+        /** Validates and snapshots the activation. */
+        public BindingProviderConfiguration {
+            if (providerId == null || providerId.isBlank()) {
+                throw new IllegalArgumentException("binding providerId must not be blank");
+            }
+            authorizedOidRoots = List.copyOf(Objects.requireNonNull(authorizedOidRoots, "authorizedOidRoots"));
+            if (authorizedOidRoots.isEmpty() || authorizedOidRoots.stream().anyMatch(root -> root == null
+                    || !root.matches("[0-2](?:\\.[0-9]+)+"))) {
+                throw new IllegalArgumentException("Authorized OID roots are invalid");
+            }
+            if (authorizedOidRoots.stream().distinct().count() != authorizedOidRoots.size()) {
+                throw new IllegalArgumentException("Authorized OID roots are duplicated");
+            }
+            expectedBindingSetVersion = Objects.requireNonNull(expectedBindingSetVersion,
+                    "expectedBindingSetVersion").map(value -> {
+                        if (value.isBlank() || value.length() > 512) {
+                            throw new IllegalArgumentException("Expected binding-set version is invalid");
+                        }
+                        return value;
+                    });
         }
     }
 }

@@ -245,10 +245,10 @@ final class BuiltInCertificateProfileCatalogTest {
     @Test
     void profileDocumentsFailClosedForInvalidSchemaFieldsEncodingAndClassMetadata() {
         List<byte[]> invalidDocuments = List.of(
-                replace(mainResource(SERVER), "\"schemaVersion\":2", "\"schemaVersion\":1"),
-                replace(mainResource(SERVER), "\"schemaVersion\":2,", "\"schemaVersion\":2,\"active\":true,"),
-                replace(mainResource(SERVER), "\"schemaVersion\":2,",
-                        "\"schemaVersion\":2,\"@class\":\"" + InitializationSentinel.CLASS_NAME + "\","),
+                replace(mainResource(SERVER), "\"schemaVersion\":3", "\"schemaVersion\":1"),
+                replace(mainResource(SERVER), "\"schemaVersion\":3,", "\"schemaVersion\":3,\"active\":true,"),
+                replace(mainResource(SERVER), "\"schemaVersion\":3,",
+                        "\"schemaVersion\":3,\"@class\":\"" + InitializationSentinel.CLASS_NAME + "\","),
                 malformedUtf8(mainResource(SERVER)));
         for (byte[] invalid : invalidDocuments) {
             Map<String, List<byte[]>> resources = baseResources();

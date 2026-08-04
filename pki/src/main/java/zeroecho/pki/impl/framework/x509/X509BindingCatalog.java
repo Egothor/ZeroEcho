@@ -130,6 +130,11 @@ public final class X509BindingCatalog {
             if (rule.role() != role) {
                 continue;
             }
+            if (!rule.bindings().isEmpty() && rule.bindings().stream()
+                    .noneMatch(binding -> binding.origin()
+                            == zeroecho.pki.api.algorithm.X509AlgorithmBinding.Origin.STANDARD)) {
+                continue;
+            }
             Optional<X509AlgorithmIdentifier> candidate = rule.encode(identity);
             if (candidate.isPresent()) {
                 if (resolved != null) {
@@ -142,6 +147,30 @@ public final class X509BindingCatalog {
             throw new IllegalArgumentException("No authoritative X.509 binding");
         }
         return resolved;
+    }
+
+    /**
+     * Resolves one exact identity through an explicitly selected binding.
+     *
+     * @param bindingId stable binding identifier
+     * @param identity exact cryptographic identity
+     * @param role internal structural role
+     * @return canonical identifier
+     * @throws IllegalArgumentException if the binding is absent, has the wrong
+     *         role, or cannot encode the identity
+     */
+    public X509AlgorithmIdentifier resolve(String bindingId, AlgorithmIdentity identity, X509AlgorithmRole role) {
+        Objects.requireNonNull(bindingId, "bindingId");
+        Objects.requireNonNull(identity, "identity");
+        Objects.requireNonNull(role, "role");
+        X509BindingRule rule = rules.stream()
+                .filter(candidate -> candidate.id().equals(bindingId)
+                        || candidate.bindings().stream().anyMatch(binding -> binding.bindingId().equals(bindingId)))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown X.509 binding identifier"));
+        if (rule.role() != role) {
+            throw new IllegalArgumentException("X.509 binding role mismatch");
+        }
+        return rule.encode(identity).orElseThrow(() -> new IllegalArgumentException("X.509 binding identity mismatch"));
     }
 
     /**
@@ -165,6 +194,23 @@ public final class X509BindingCatalog {
             X509SecurityFloor.requirePermitted(identity);
         }
         return identity;
+    }
+
+    /**
+     * Returns the stable binding identifier owning an exact representation.
+     *
+     * @param identifier canonical representation
+     * @param role structural role
+     * @return stable binding identifier
+     */
+    public String bindingId(X509AlgorithmIdentifier identifier, X509AlgorithmRole role) {
+        Objects.requireNonNull(identifier, "identifier");
+        Objects.requireNonNull(role, "role");
+        X509BindingRule rule = byRoleAndOid.get(key(role, identifier.oid()));
+        if (rule == null || rule.decode(identifier).isEmpty()) {
+            throw new IllegalArgumentException("Unknown X.509 algorithm identifier");
+        }
+        return rule.id();
     }
 
     /**

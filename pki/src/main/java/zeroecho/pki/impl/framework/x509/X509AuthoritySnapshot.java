@@ -188,7 +188,8 @@ public final class X509AuthoritySnapshot {
             mergeDefaults(defaults, provider.defaults());
         }
         X509ComponentCatalog components = X509ComponentCatalog.builtIn().merge(componentExtensions);
-        X509BindingCatalog builtInBindings = StandardX509Bindings.catalog(components);
+        X509BindingCatalog builtInBindings = StandardX509Bindings.catalog(components)
+                .merge(List.of(ZeroEchoPrivateX509Bindings.catalog()));
         for (X509BindingRuleProvider provider : ordered) {
             List<X509BindingRule> rules = List.copyOf(provider.rules());
             if (!rules.isEmpty()) {
@@ -248,6 +249,14 @@ public final class X509AuthoritySnapshot {
         return resolver.resolve(signature, key, direction, implementation, provenance, semanticFingerprint);
     }
 
+    /** Resolves one operation through an explicitly selected role-specific binding. */
+    public X509AlgorithmResolver.Selection resolve(AlgorithmIdentity signature, AlgorithmIdentity key,
+            AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
+            String bindingId) {
+        return resolver.resolve(signature, key, direction, implementation, provenance, semanticFingerprint,
+                Optional.of(Objects.requireNonNull(bindingId, "bindingId")));
+    }
+
     /**
      * Resolves and authorizes one process-local execution plan.
      *
@@ -264,6 +273,20 @@ public final class X509AuthoritySnapshot {
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
             Class<E> executorType) {
         X509AlgorithmResolver.Selection selection = resolve(signature, key, direction, implementation, provenance);
+        ExecutorKey executorKey = new ExecutorKey(selection.implementation().implementationId(), direction);
+        Object executor = executors.get(executorKey);
+        if (executor == null || !executorType.isInstance(executor)) {
+            throw new X509AlgorithmResolver.ResolutionException(X509AlgorithmResolver.Failure.NO_EXECUTOR);
+        }
+        return new X509ExecutionPlan<>(selection, executorType.cast(executor), provenanceToken);
+    }
+
+    /** Resolves and authorizes one plan through an explicit binding identity. */
+    public <E> X509ExecutionPlan<E> plan(AlgorithmIdentity signature, AlgorithmIdentity key,
+            AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
+            String bindingId, Class<E> executorType) {
+        X509AlgorithmResolver.Selection selection = resolve(signature, key, direction, implementation, provenance,
+                bindingId);
         ExecutorKey executorKey = new ExecutorKey(selection.implementation().implementationId(), direction);
         Object executor = executors.get(executorKey);
         if (executor == null || !executorType.isInstance(executor)) {
@@ -302,6 +325,14 @@ public final class X509AuthoritySnapshot {
         AlgorithmIdentity key = bootstrapKeyFor(signature);
         return plan(signature, key, AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit",
                 executorType);
+    }
+
+    /** Resolves a signing plan through one explicit binding. */
+    public <E> X509ExecutionPlan<E> planSigningWithBinding(String value, String bindingId, Class<E> executorType) {
+        AlgorithmIdentity signature = resolveIdentity(value);
+        AlgorithmIdentity key = bootstrapKeyFor(signature);
+        return plan(signature, key, AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit",
+                bindingId, executorType);
     }
 
     /**
@@ -561,6 +592,9 @@ public final class X509AuthoritySnapshot {
         }
         if (signature.equals(BootstrapAlgorithmIdentities.ED448_SIGNATURE)) {
             return BootstrapAlgorithmIdentities.ED448_PUBLIC_KEY;
+        }
+        if (signature.equals(BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE)) {
+            return BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY;
         }
         if ("rsa-pkcs1-v1_5".equals(signature.family().name())
                 || "rsa-pss".equals(signature.family().name())) {

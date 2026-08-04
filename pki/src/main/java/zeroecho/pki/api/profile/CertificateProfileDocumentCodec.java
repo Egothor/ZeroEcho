@@ -237,7 +237,7 @@ public final class CertificateProfileDocumentCodec {
             requireValue(parser, "$." + field);
             readDocumentField(parser, field, document);
         }
-        requireAll(document.seen, 8, "$");
+        requireAll(document.seen, 9, "$");
         if (document.schemaVersion != CertificateProfileDefinition.SCHEMA_VERSION) {
             throw failure("SCHEMA_VERSION_UNSUPPORTED", "$.schemaVersion");
         }
@@ -286,6 +286,10 @@ public final class CertificateProfileDocumentCodec {
                 document.seen = mark(document.seen, 7, "$.subject");
                 document.subject = readSubject(parser, "$.subject");
             }
+            case "algorithmBindings" -> {
+                document.seen = mark(document.seen, 8, "$.algorithmBindings");
+                document.algorithmBindings = readAlgorithmBindings(parser, "$.algorithmBindings");
+            }
             case "subjectAlternativeNames" -> readDocumentSan(parser, document);
             case "leafCertificate" -> readDocumentLeaf(parser, document);
             case "caCertificate" -> readDocumentCa(parser, document);
@@ -297,7 +301,7 @@ public final class CertificateProfileDocumentCodec {
         if (document.certificateType != null && document.certificateType != CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.subjectAlternativeNames");
         }
-        document.seen = mark(document.seen, 8, "$.subjectAlternativeNames");
+        document.seen = mark(document.seen, 9, "$.subjectAlternativeNames");
         document.san = readSan(parser, "$.subjectAlternativeNames");
     }
 
@@ -305,7 +309,7 @@ public final class CertificateProfileDocumentCodec {
         if (document.certificateType != null && document.certificateType != CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.leafCertificate");
         }
-        document.seen = mark(document.seen, 9, "$.leafCertificate");
+        document.seen = mark(document.seen, 10, "$.leafCertificate");
         document.leaf = readLeaf(parser, "$.leafCertificate");
     }
 
@@ -313,14 +317,14 @@ public final class CertificateProfileDocumentCodec {
         if (document.certificateType == CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.caCertificate");
         }
-        document.seen = mark(document.seen, 10, "$.caCertificate");
+        document.seen = mark(document.seen, 11, "$.caCertificate");
         document.ca = readCa(parser, "$.caCertificate");
     }
 
     private static void requirePolicyFields(CertificateProfileKind certificateType, long seen) {
-        boolean hasSan = isSeen(seen, 8);
-        boolean hasLeaf = isSeen(seen, 9);
-        boolean hasCa = isSeen(seen, 10);
+        boolean hasSan = isSeen(seen, 9);
+        boolean hasLeaf = isSeen(seen, 10);
+        boolean hasCa = isSeen(seen, 11);
         if (certificateType == CertificateProfileKind.END_ENTITY) {
             if (hasCa) {
                 throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.caCertificate");
@@ -366,7 +370,7 @@ public final class CertificateProfileDocumentCodec {
             }
             return new CertificateProfileDefinition(document.certificateType, document.profileId,
                     document.profileVersion, new FormatId(document.formatId), document.displayName,
-                    document.maximumValidity, subjectPolicy, policy);
+                    document.maximumValidity, subjectPolicy, policy, document.algorithmBindings);
         } catch (IllegalArgumentException | ArithmeticException ex) {
             throw failure("SEMANTIC_INVALID", "$");
         }
@@ -395,6 +399,89 @@ public final class CertificateProfileDocumentCodec {
         }
         requireAll(seen, 2, path);
         return new SubjectSection(allowEmpty, rules);
+    }
+
+    private static X509AlgorithmBindingPolicy readAlgorithmBindings(JsonParser parser, String path)
+            throws JacksonException {
+        requireToken(parser.currentToken(), JsonToken.START_OBJECT, path);
+        long seen = 0;
+        X509AlgorithmBindingPolicy.Mode mode = null;
+        Optional<X509AlgorithmBindingPolicy.BindingReference> subject = Optional.empty();
+        Optional<X509AlgorithmBindingPolicy.BindingReference> csr = Optional.empty();
+        Optional<X509AlgorithmBindingPolicy.BindingReference> certificate = Optional.empty();
+        Optional<X509AlgorithmBindingPolicy.BindingReference> crl = Optional.empty();
+        while (parser.nextToken() != JsonToken.END_OBJECT) {
+            requireToken(parser.currentToken(), JsonToken.PROPERTY_NAME, path);
+            String field = parser.currentName();
+            requireValue(parser, path + "." + field);
+            switch (field) {
+                case "mode" -> {
+                    seen = mark(seen, 0, path + ".mode");
+                    mode = readEnum(parser, X509AlgorithmBindingPolicy.Mode.class, path + ".mode");
+                }
+                case "subjectPublicKey" -> {
+                    seen = mark(seen, 1, path + ".subjectPublicKey");
+                    subject = Optional.of(readBindingReference(parser, path + ".subjectPublicKey"));
+                }
+                case "csrSignature" -> {
+                    seen = mark(seen, 2, path + ".csrSignature");
+                    csr = Optional.of(readBindingReference(parser, path + ".csrSignature"));
+                }
+                case "certificateSignature" -> {
+                    seen = mark(seen, 3, path + ".certificateSignature");
+                    certificate = Optional.of(readBindingReference(parser, path + ".certificateSignature"));
+                }
+                case "crlSignature" -> {
+                    seen = mark(seen, 4, path + ".crlSignature");
+                    crl = Optional.of(readBindingReference(parser, path + ".crlSignature"));
+                }
+                default -> throw failure("UNKNOWN_FIELD", path + ".?");
+            }
+        }
+        if (!isSeen(seen, 0)) {
+            throw failure("MISSING_FIELD", path + ".mode");
+        }
+        try {
+            return new X509AlgorithmBindingPolicy(mode, subject, csr, certificate, crl);
+        } catch (IllegalArgumentException exception) {
+            throw failure("SEMANTIC_INVALID", path);
+        }
+    }
+
+    private static X509AlgorithmBindingPolicy.BindingReference readBindingReference(JsonParser parser, String path)
+            throws JacksonException {
+        requireToken(parser.currentToken(), JsonToken.START_OBJECT, path);
+        long seen = 0;
+        String bindingId = null;
+        String commitment = null;
+        while (parser.nextToken() != JsonToken.END_OBJECT) {
+            requireToken(parser.currentToken(), JsonToken.PROPERTY_NAME, path);
+            String field = parser.currentName();
+            requireValue(parser, path + "." + field);
+            switch (field) {
+                case "bindingId" -> {
+                    seen = mark(seen, 0, path + ".bindingId");
+                    bindingId = readBoundedString(parser, path + ".bindingId", 512);
+                }
+                case "semanticCommitment" -> {
+                    seen = mark(seen, 1, path + ".semanticCommitment");
+                    commitment = readBoundedString(parser, path + ".semanticCommitment", 1024);
+                }
+                default -> throw failure("UNKNOWN_FIELD", path + ".?");
+            }
+        }
+        requireAll(seen, 2, path);
+        return new X509AlgorithmBindingPolicy.BindingReference(bindingId, commitment);
+    }
+
+    private static <E extends Enum<E>> E readEnum(JsonParser parser, Class<E> type, String path)
+            throws JacksonException {
+        String value = readString(parser, path);
+        try {
+            return Enum.valueOf(type, value);
+        } catch (IllegalArgumentException exception) {
+            throw failure("TOKEN_INVALID", path);
+        }
     }
 
     private static List<SubjectRdnRule> readSubjectRules(JsonParser parser, String path) throws JacksonException {
@@ -785,6 +872,7 @@ public final class CertificateProfileDocumentCodec {
         generator.writeStringProperty("formatId", definition.formatId().value());
         generator.writeStringProperty("displayName", definition.displayName());
         generator.writeStringProperty("maxValidity", definition.maximumValidity().toString());
+        writeAlgorithmBindings(generator, definition.algorithmBindingPolicy());
         writeSubject(generator, definition.subjectPolicy());
         if (definition.certificateType() == CertificateProfileKind.END_ENTITY) {
             LeafCertificatePolicy leaf = definition.leafPolicy();
@@ -813,6 +901,29 @@ public final class CertificateProfileDocumentCodec {
             generator.writeEndObject();
         }
         generator.writeEndArray();
+        generator.writeEndObject();
+    }
+
+    private static void writeAlgorithmBindings(JsonGenerator generator, X509AlgorithmBindingPolicy policy)
+            throws JacksonException {
+        generator.writeObjectPropertyStart("algorithmBindings");
+        generator.writeStringProperty("mode", policy.mode().name());
+        writeBindingReference(generator, "subjectPublicKey", policy.subjectPublicKey());
+        writeBindingReference(generator, "csrSignature", policy.csrSignature());
+        writeBindingReference(generator, "certificateSignature", policy.certificateSignature());
+        writeBindingReference(generator, "crlSignature", policy.crlSignature());
+        generator.writeEndObject();
+    }
+
+    private static void writeBindingReference(JsonGenerator generator, String field,
+            Optional<X509AlgorithmBindingPolicy.BindingReference> reference) throws JacksonException {
+        if (reference.isEmpty()) {
+            return;
+        }
+        X509AlgorithmBindingPolicy.BindingReference value = reference.orElseThrow();
+        generator.writeObjectPropertyStart(field);
+        generator.writeStringProperty("bindingId", value.bindingId());
+        generator.writeStringProperty("semanticCommitment", value.semanticCommitment());
         generator.writeEndObject();
     }
 
@@ -1098,7 +1209,8 @@ public final class CertificateProfileDocumentCodec {
     }
 
     private static boolean isAllowedAlgorithm(String value) {
-        return "RSA".equals(value) || "ECDSA".equals(value) || "Ed25519".equals(value) || "Ed448".equals(value);
+        return "RSA".equals(value) || "ECDSA".equals(value) || "Ed25519".equals(value) || "Ed448".equals(value)
+                || "SPHINCS+".equals(value);
     }
 
     private static boolean hasUtf8Bom(byte[] value) {
@@ -1124,6 +1236,7 @@ public final class CertificateProfileDocumentCodec {
         private String formatId;
         private String displayName;
         private Duration maximumValidity;
+        private X509AlgorithmBindingPolicy algorithmBindings;
         private SubjectSection subject;
         private SanSection san;
         private LeafSection leaf;

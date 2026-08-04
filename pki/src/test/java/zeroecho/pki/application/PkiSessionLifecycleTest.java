@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -48,6 +49,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -68,6 +70,7 @@ import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.testkit.InMemorySignatureWorkflow;
+import zeroecho.pki.testkit.TestX509AlgorithmBindingProvider;
 
 class PkiSessionLifecycleTest {
 
@@ -93,6 +96,60 @@ class PkiSessionLifecycleTest {
         assertThrows(IllegalStateException.class, session::operations);
         assertThrows(UnsupportedOperationException.class,
                 () -> ((PkiOperationOutcome.Success) first).result().fields().put("x", new PkiOperationValue.Text("y")));
+        System.out.println("...ok");
+    }
+
+    @Test
+    void explicitlyActivatesAuthorizedDeployerBindingProvider() throws Exception {
+        System.out.println("explicitlyActivatesAuthorizedDeployerBindingProvider");
+        PkiSessionConfiguration.BindingProviderConfiguration bindings =
+                new PkiSessionConfiguration.BindingProviderConfiguration(TestX509AlgorithmBindingProvider.ID,
+                        List.of(TestX509AlgorithmBindingProvider.PEN_ROOT,
+                                TestX509AlgorithmBindingProvider.EGOTHOR_ROOT),
+                        Optional.of("test-bindings-v1"));
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
+                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("binding-store").toString())),
+                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), List.of(), List.of(bindings));
+        try (PkiSession session = PkiSession.open(configuration)) {
+            assertTrue(session.algorithmBindings().find("test.ed25519.certificate.v1").isPresent());
+            assertTrue(session.algorithmBindings().find("test.ed25519.crl.v1").isPresent());
+            System.out.println("...bindings=" + session.algorithmBindings().bindings().size());
+        }
+        System.out.println("...ok");
+    }
+
+    @Test
+    void profileValidationRejectsBindingOutsideActiveRegistry() throws Exception {
+        System.out.println("profileValidationRejectsBindingOutsideActiveRegistry");
+        PkiSessionConfiguration configuration = configuration(temporaryDirectory.resolve("profile-binding-store"));
+        BuiltInCertificateProfileTemplate template = BuiltInCertificateProfileCatalog
+                .load(getClass().getClassLoader()).stream().findFirst().orElseThrow();
+        String document = new String(template.canonicalJson(), StandardCharsets.UTF_8).replace(
+                "\"algorithmBindings\":{\"mode\":\"STANDARD_ONLY\"}",
+                "\"algorithmBindings\":{\"mode\":\"EXPLICIT\",\"certificateSignature\":"
+                        + "{\"bindingId\":\"deployer.inactive.certificate.v1\","
+                        + "\"commitment\":\"inactive-binding-commitment\"}}");
+        try (PkiSession session = PkiSession.open(configuration)) {
+            PkiOperationOutcome outcome = session.operations().execute(
+                    new PkiOperation.ValidateProfile(document.getBytes(StandardCharsets.UTF_8)),
+                    CancellationSignal.NONE);
+            PkiOperationOutcome.Failure failure = assertInstanceOf(PkiOperationOutcome.Failure.class, outcome);
+            System.out.println("...classification=" + failure.classification());
+            assertEquals(PkiOperationFailure.POLICY_REJECTION, failure.classification());
+        }
+        System.out.println("...ok");
+    }
+
+    @Test
+    void rejectsUnauthorizedDeployerBindingRootBeforeStoreAllocation() {
+        System.out.println("rejectsUnauthorizedDeployerBindingRootBeforeStoreAllocation");
+        PkiSessionConfiguration.BindingProviderConfiguration bindings =
+                new PkiSessionConfiguration.BindingProviderConfiguration(TestX509AlgorithmBindingProvider.ID,
+                        List.of(TestX509AlgorithmBindingProvider.PEN_ROOT), Optional.of("test-bindings-v1"));
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
+                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("unused-binding").toString())),
+                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), List.of(), List.of(bindings));
+        assertThrows(IllegalArgumentException.class, () -> PkiSession.open(configuration));
         System.out.println("...ok");
     }
 
@@ -142,7 +199,7 @@ class PkiSessionLifecycleTest {
                 placeholder, new ProviderConfig("x509-bc", Map.of()),
                 temporaryDirectory.resolve("signing-bus").toString(), "RSA-2048-PSS-SHA256", Duration.ofSeconds(5),
                 Optional.empty());
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(2,
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
                 new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("store-signing").toString())),
                 new ProviderConfig("memory", Map.of("size", "16")), Optional.of(signing), java.util.List.of());
         IllegalStateException failure = assertThrows(IllegalStateException.class,
@@ -159,7 +216,7 @@ class PkiSessionLifecycleTest {
         System.out.println("opensExplicitPublisherCapabilityWithoutSigning");
         ProviderConfig publisher = new ProviderConfig("filesystem",
                 Map.of("root", temporaryDirectory.resolve("published").toString(), "targetId", "local-crls"));
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(2,
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
                 new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("store-publisher").toString())),
                 new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), java.util.List.of(publisher));
         try (PkiSession session = PkiSession.open(configuration)) {
@@ -174,7 +231,7 @@ class PkiSessionLifecycleTest {
     void rejectsUnknownPublisherBeforeStoreAllocation() {
         System.out.println("rejectsUnknownPublisherBeforeStoreAllocation");
         Path storeRoot = temporaryDirectory.resolve("must-not-open");
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(2,
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
                 new ProviderConfig("fs", Map.of("root", storeRoot.toString())),
                 new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(),
                 java.util.List.of(new ProviderConfig("unknown-publisher", Map.of())));
@@ -197,7 +254,7 @@ class PkiSessionLifecycleTest {
                 placeholder, new ProviderConfig("x509-bc", Map.of()),
                 temporaryDirectory.resolve("composed-signing-bus").toString(), "SHA256withRSA",
                 Duration.ofSeconds(5), Optional.empty());
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(2,
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
                 new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("composed-store").toString())),
                 new ProviderConfig("memory", Map.of("size", "16")), Optional.of(signing), java.util.List.of());
         DefaultPkiSession.Bootstrap bootstrap = signingBootstrap(workflow);

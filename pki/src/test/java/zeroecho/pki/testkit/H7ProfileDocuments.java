@@ -229,8 +229,9 @@ public final class H7ProfileDocuments {
             List<String> sanRules, boolean noKeyEncipherment, List<String> eku) {
         String keyUsage = noKeyEncipherment ? "[\"DIGITAL_SIGNATURE\"]"
                 : "[\"DIGITAL_SIGNATURE\",\"KEY_ENCIPHERMENT\"]";
-        String json = "{\"schemaVersion\":2,\"certificateType\":\"END_ENTITY\",\"profileId\":\"" + id
+        String json = "{\"schemaVersion\":3,\"certificateType\":\"END_ENTITY\",\"profileId\":\"" + id
                 + "\",\"profileVersion\":1,\"formatId\":\"" + formatId + "\",\"displayName\":\"H7 Test Profile\","
+                + "\"algorithmBindings\":{\"mode\":\"STANDARD_ONLY\"},"
                 + "\"maxValidity\":\"PT8760H\",\"subject\":{\"allowEmpty\":" + allowEmpty + ",\"rules\":["
                 + String.join(",", subjectRules) + "]}," + "\"subjectAlternativeNames\":{\"minimumTotal\":"
                 + minimumTotal + ",\"maximumTotal\":" + maximumTotal + ",\"serviceIdentityRequired\":" + serviceIdentity

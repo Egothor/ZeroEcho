@@ -52,7 +52,8 @@ public record LeafCertificatePolicy(SubjectAlternativeNamePolicy subjectAlternat
         boolean extendedKeyUsageCritical, boolean basicConstraintsCritical, Set<String> allowedSubjectKeyAlgorithmIds)
         implements CertificatePolicy {
 
-    private static final Set<String> SUPPORTED_SUBJECT_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448");
+    private static final Set<String> SUPPORTED_SUBJECT_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448",
+            "SPHINCS+");
 
     /**
      * Validates and constructs the policy.

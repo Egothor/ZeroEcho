@@ -118,7 +118,9 @@ public final class SignatureInteropProfiles {
                     new SignatureInteropProfile("Ed25519", "Ed25519", "Ed25519", VoidSpec.INSTANCE,
                             SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
             Map.entry("Ed448", new SignatureInteropProfile("Ed448", "Ed448", "Ed448", VoidSpec.INSTANCE,
-                    SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)));
+                    SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)),
+            Map.entry("SPHINCS+", new SignatureInteropProfile("SPHINCS+", "SPHINCS+", "SPHINCS+",
+                    VoidSpec.INSTANCE, SignatureInteropProfile.SignatureRepresentation.IDENTITY, 0)));
 
     private static final Map<String, SignatureInteropProfile> CANONICAL_PROFILES = Map.ofEntries(
             canonical(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, "SHA256withRSA"),
@@ -129,7 +131,8 @@ public final class SignatureInteropProfiles {
             canonical(BootstrapAlgorithmIdentities.ECDSA_SHA384, "SHA384withECDSA"),
             canonical(BootstrapAlgorithmIdentities.ECDSA_SHA512, "SHA512withECDSA"),
             canonical(BootstrapAlgorithmIdentities.ED25519_SIGNATURE, "Ed25519"),
-            canonical(BootstrapAlgorithmIdentities.ED448_SIGNATURE, "Ed448"));
+            canonical(BootstrapAlgorithmIdentities.ED448_SIGNATURE, "Ed448"),
+            canonical(BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE, "SPHINCS+"));
 
     private SignatureInteropProfiles() {
     }

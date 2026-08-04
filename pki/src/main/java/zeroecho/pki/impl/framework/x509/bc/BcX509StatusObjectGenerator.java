@@ -169,6 +169,7 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
     private final PkiSigningBus signingBus;
     private final AlgorithmIdentity signatureIdentity;
     private final Duration signingTtl;
+    private final Optional<String> signatureBindingId;
 
     /**
      * Creates the X.509 status object generator.
@@ -196,6 +197,12 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
      */
     public BcX509StatusObjectGenerator(PkiSigningBus signingBus, AlgorithmIdentity signatureIdentity,
             Duration signingTtl) {
+        this(signingBus, signatureIdentity, Optional.empty(), signingTtl);
+    }
+
+    /** Creates a generator with an optional explicit CRL-signature binding. */
+    public BcX509StatusObjectGenerator(PkiSigningBus signingBus, AlgorithmIdentity signatureIdentity,
+            Optional<String> signatureBindingId, Duration signingTtl) {
         if (signingBus == null) {
             throw new IllegalArgumentException("signingBus must not be null");
         }
@@ -207,6 +214,7 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         }
         this.signingBus = signingBus;
         this.signatureIdentity = signatureIdentity;
+        this.signatureBindingId = java.util.Objects.requireNonNull(signatureBindingId, "signatureBindingId");
         this.signingTtl = signingTtl;
     }
 
@@ -262,8 +270,10 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         boolean accepted = false;
         try {
             entries = encodeEntries(crlEntries);
-            PkiBusContentSigner signer = new PkiBusContentSigner(signingBus, issuerMaterial.keyRef(),
-                    signatureIdentity, signingTtl);
+            PkiBusContentSigner signer = signatureBindingId.isPresent()
+                    ? new PkiBusContentSigner(signingBus, issuerMaterial.keyRef(), signatureIdentity,
+                            signatureBindingId.orElseThrow(), signingTtl)
+                    : new PkiBusContentSigner(signingBus, issuerMaterial.keyRef(), signatureIdentity, signingTtl);
             byte[] algorithm = signer.getAlgorithmIdentifier().getEncoded();
             tbs = encodeTbs(issuerMaterial.issuerHolder(), thisUpdate, nextUpdate, entries, algorithm);
             copyToSigner(tbs, signer);
@@ -321,6 +331,8 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
             X509ExecutionPlan<BcX509VerificationExecutor> plan = signingBus.authority().plan(actualSignature,
                     issuerKey, AlgorithmExecutionCapability.Direction.VERIFY,
                     Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "crl-postcondition",
+                    signingBus.authority().bindings().bindingId(BcX509AlgorithmAdapter.fromBc(algorithm),
+                            X509AlgorithmRole.SIGNATURE_ALGORITHM),
                     BcX509VerificationExecutor.class);
             try (RepeatableContent signedContent = new ContentSlice(complete, layout.tbsOffset(),
                     layout.tbsLength())) {

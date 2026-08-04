@@ -38,22 +38,59 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.Signature;
+import java.security.Security;
+import java.security.PrivateKey;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.math.BigInteger;
+import java.time.Instant;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.DERNull;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.cert.X509CRLHolder;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.X509v2CRLBuilder;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
+import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.io.ImmutableByteContent;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.core.alg.sphincsplus.SphincsPlusKeyGenSpec;
+import zeroecho.sdk.ZeroEchoSession;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.issuance.VerificationPolicy;
+import zeroecho.pki.api.request.CertificationRequest;
+import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.request.ProofOfPossessionStatus;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CertificationRequestParser;
+import zeroecho.pki.impl.framework.x509.bc.BcX509ProofOfPossessionVerifier;
+import zeroecho.pki.impl.framework.x509.bc.BcX509SignedObjectValidator;
+import zeroecho.pki.impl.framework.x509.bc.BcX509PublicKeyAdapter;
+import zeroecho.pki.testkit.TestX509AlgorithmBindingProvider;
 import zeroecho.core.spec.AlgorithmSuite;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
@@ -64,6 +101,136 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
  * Phase A regression tests for immutable role-specific X.509 authority.
  */
 public final class X509BindingPhaseATest {
+
+    @Test
+    void zeroEchoPrivateAssignmentsAreExactAndLocked() {
+        System.out.println("zeroEchoPrivateAssignmentsAreExactAndLocked");
+        List<X509AlgorithmBinding> bindings = ZeroEchoPrivateX509Bindings.descriptors();
+        assertEquals(List.of("1.3.6.1.4.1.31424.1.1.1", "1.3.6.1.4.1.31424.1.1.2",
+                "1.3.6.1.4.1.31424.1.1.3", "1.3.6.1.4.1.31424.1.1.4"),
+                bindings.stream().map(X509AlgorithmBinding::oid).toList());
+        assertEquals(4, bindings.stream().map(X509AlgorithmBinding::bindingId).distinct().count());
+        assertThrows(UnsupportedOperationException.class, () -> bindings.add(bindings.get(0)));
+        assertThrows(IllegalArgumentException.class,
+                () -> ImmutableX509AlgorithmBindingRegistry.create(List.of(bindings.get(0), bindings.get(0))));
+        System.out.println("...assignment-count=" + bindings.size());
+        System.out.println("...ok");
+    }
+
+    @Test
+    void productionSphincsPrivateBindingSignsAndVerifies() throws Exception {
+        System.out.println("productionSphincsPrivateBindingSignsAndVerifies");
+        Security.addProvider(new BouncyCastlePQCProvider());
+        KeyPair keyPair = new ZeroEchoSession().keyBuilders().asymmetric().generateKeyPair("SPHINCS+",
+                SphincsPlusKeyGenSpec.defaultSpec());
+        BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
+        X509AuthoritySnapshot authority = X509AuthoritySnapshot.compose(List.of(), List.of(verifier),
+                List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                        AlgorithmExecutionCapability.Direction.VERIFY, verifier)), policy(true, "private-test-v1"));
+        String signatureBinding = "zeroecho.private.sphincs-plus-default.certificate-signature.v1";
+        String publicKeyBinding = "zeroecho.private.sphincs-plus-default.spki.v1";
+        X509ExecutionPlan<BcX509VerificationExecutor> plan = authority.plan(
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE,
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY,
+                AlgorithmExecutionCapability.Direction.VERIFY, Optional.empty(), "explicit", signatureBinding,
+                BcX509VerificationExecutor.class);
+        SubjectPublicKeyInfo wrapped = new BcX509PublicKeyAdapter(authority.bindings()).wrap(
+                keyPair.getPublic().getEncoded(), BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY,
+                publicKeyBinding);
+        AlgorithmIdentifier identifier = BcX509AlgorithmAdapter.toBc(authority.bindings().resolve(signatureBinding,
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
+        byte[] payload = "ZeroEcho private X.509 binding".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Signature signer = Signature.getInstance("SPHINCS+", new BouncyCastlePQCProvider());
+        signer.initSign(keyPair.getPrivate());
+        signer.update(payload);
+        byte[] signature = signer.sign();
+        try (RepeatableContent content = content(payload)) {
+            assertTrue(verifier.verify(authority, plan, wrapped, identifier, content, signature));
+        }
+
+        AlgorithmIdentifier csrIdentifier = privateIdentifier(authority,
+                "zeroecho.private.sphincs-plus-default.csr-signature.v1");
+        PKCS10CertificationRequest csr = new PKCS10CertificationRequestBuilder(new X500Name("CN=Private Request"),
+                wrapped).build(contentSigner(keyPair.getPrivate(), csrIdentifier));
+        ParsedCertificationRequest parsed = new BcX509CertificationRequestParser().parse(new CertificationRequest(
+                new FormatId("x509"), new EncodedObject(Encoding.DER, csr.getEncoded())));
+        assertEquals(ProofOfPossessionStatus.VERIFIED,
+                new BcX509ProofOfPossessionVerifier(authority, verifier)
+                        .verify(parsed, new VerificationPolicy(true, Optional.empty())).status());
+
+        Instant notBefore = Instant.parse("2026-08-04T00:00:00Z");
+        X500Name issuer = new X500Name("CN=Private Root");
+        X509CertificateHolder certificate = new X509v3CertificateBuilder(issuer, BigInteger.ONE,
+                Date.from(notBefore), Date.from(notBefore.plusSeconds(3600)), issuer, wrapped)
+                .build(contentSigner(keyPair.getPrivate(), identifier));
+        try (RepeatableContent certificateContent = content(certificate.getEncoded())) {
+            BcX509SignedObjectValidator.CertificateBindings validated = new BcX509SignedObjectValidator(authority)
+                    .validateCertificate(certificateContent,
+                            Optional.of(BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE),
+                            zeroecho.core.io.CancellationSignal.NONE);
+            assertEquals(BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY, validated.subjectPublicKey());
+        }
+        try (RepeatableContent tbs = content(certificate.toASN1Structure().getTBSCertificate().getEncoded())) {
+            assertTrue(verifier.verify(authority, plan, wrapped, identifier, tbs, certificate.getSignature()));
+        }
+
+        AlgorithmIdentifier crlIdentifier = privateIdentifier(authority,
+                "zeroecho.private.sphincs-plus-default.crl-signature.v1");
+        X509CRLHolder crl = new X509v2CRLBuilder(issuer, Date.from(notBefore))
+                .setNextUpdate(Date.from(notBefore.plusSeconds(1800)))
+                .build(contentSigner(keyPair.getPrivate(), crlIdentifier));
+        X509ExecutionPlan<BcX509VerificationExecutor> crlPlan = authority.plan(
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE,
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY,
+                AlgorithmExecutionCapability.Direction.VERIFY, Optional.empty(), "explicit",
+                "zeroecho.private.sphincs-plus-default.crl-signature.v1", BcX509VerificationExecutor.class);
+        try (RepeatableContent tbs = content(crl.toASN1Structure().getTBSCertList().getEncoded())) {
+            assertTrue(verifier.verify(authority, crlPlan, wrapped, crlIdentifier, tbs,
+                    crl.toASN1Structure().getSignature().getOctets()));
+        }
+        assertThrows(IllegalArgumentException.class,
+                () -> new BcX509AlgorithmAdapter(authority.bindings()).decode(
+                        new AlgorithmIdentifier(identifier.getAlgorithm(), DERNull.INSTANCE),
+                        X509AlgorithmRole.SIGNATURE_ALGORITHM));
+        System.out.println("...oid=" + identifier.getAlgorithm().getId() + ", signature-bytes=" + signature.length);
+        System.out.println("...ok");
+    }
+
+    @Test
+    void deployerProviderBindingSignsAndVerifiesEndToEnd() throws Exception {
+        System.out.println("deployerProviderBindingSignsAndVerifiesEndToEnd");
+        TestX509AlgorithmBindingProvider deployer = new TestX509AlgorithmBindingProvider();
+        X509BindingRuleProvider provider = new X509BindingRuleProvider() {
+            @Override
+            public List<X509BindingRule> rules() {
+                return deployer.rules();
+            }
+        };
+        BcX509VerificationExecutor verifier = new BcX509VerificationExecutor();
+        X509AuthoritySnapshot authority = X509AuthoritySnapshot.compose(List.of(provider), List.of(verifier),
+                List.of(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                        AlgorithmExecutionCapability.Direction.VERIFY, verifier)), policy(true, "deployer-test-v1"));
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519");
+        KeyPair pair = generator.generateKeyPair();
+        SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(pair.getPublic().getEncoded());
+        String bindingId = "test.ed25519.certificate.v1";
+        AlgorithmIdentifier identifier = BcX509AlgorithmAdapter.toBc(authority.bindings().resolve(bindingId,
+                BootstrapAlgorithmIdentities.ED25519_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
+        X500Name name = new X500Name("CN=Deployer Binding");
+        Instant start = Instant.parse("2026-08-04T00:00:00Z");
+        X509CertificateHolder certificate = new X509v3CertificateBuilder(name, BigInteger.TWO, Date.from(start),
+                Date.from(start.plusSeconds(3600)), name, spki)
+                .build(contentSigner(pair.getPrivate(), identifier, "Ed25519"));
+        X509ExecutionPlan<BcX509VerificationExecutor> plan = authority.plan(
+                BootstrapAlgorithmIdentities.ED25519_SIGNATURE, BootstrapAlgorithmIdentities.ED25519_PUBLIC_KEY,
+                AlgorithmExecutionCapability.Direction.VERIFY, Optional.empty(), "explicit", bindingId,
+                BcX509VerificationExecutor.class);
+        try (RepeatableContent tbs = content(certificate.toASN1Structure().getTBSCertificate().getEncoded())) {
+            assertTrue(verifier.verify(authority, plan, spki, identifier, tbs, certificate.getSignature()));
+        }
+        System.out.println("...oid=" + identifier.getAlgorithm().getId());
+        System.out.println("...ok");
+    }
 
     @Test
     void bootstrapMatrixIsExactAndSymmetric() {
@@ -370,6 +537,71 @@ public final class X509BindingPhaseATest {
             @Override
             public String semanticFingerprint() {
                 return fingerprint;
+            }
+        };
+    }
+
+    private static RepeatableContent content(byte[] bytes) {
+        byte[] snapshot = bytes.clone();
+        return new RepeatableContent() {
+            @Override
+            public ByteArrayInputStream openStream() {
+                return new ByteArrayInputStream(snapshot);
+            }
+
+            @Override
+            public OptionalLong length() {
+                return OptionalLong.of(snapshot.length);
+            }
+
+            @Override
+            public String contentId() {
+                return "private-binding-test-content";
+            }
+
+            @Override
+            public void close() throws IOException {
+                // immutable in-memory test content owns no external resource
+            }
+        };
+    }
+
+    private static AlgorithmIdentifier privateIdentifier(X509AuthoritySnapshot authority, String bindingId) {
+        return BcX509AlgorithmAdapter.toBc(authority.bindings().resolve(bindingId,
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
+    }
+
+    private static ContentSigner contentSigner(PrivateKey privateKey, AlgorithmIdentifier identifier) {
+        return contentSigner(privateKey, identifier, "SPHINCS+");
+    }
+
+    private static ContentSigner contentSigner(PrivateKey privateKey, AlgorithmIdentifier identifier,
+            String jcaAlgorithm) {
+        return new ContentSigner() {
+            private final ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+            @Override
+            public AlgorithmIdentifier getAlgorithmIdentifier() {
+                return identifier;
+            }
+
+            @Override
+            public OutputStream getOutputStream() {
+                return output;
+            }
+
+            @Override
+            public byte[] getSignature() {
+                try {
+                    Signature signature = "SPHINCS+".equals(jcaAlgorithm)
+                            ? Signature.getInstance(jcaAlgorithm, new BouncyCastlePQCProvider())
+                            : Signature.getInstance(jcaAlgorithm);
+                    signature.initSign(privateKey);
+                    signature.update(output.toByteArray());
+                    return signature.sign();
+                } catch (java.security.GeneralSecurityException failure) {
+                    throw new IllegalStateException("Test signing failed", failure);
+                }
             }
         };
     }

@@ -53,6 +53,8 @@ import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.RevocationService;
 import zeroecho.pki.api.StatusObjectService;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
+import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
@@ -62,6 +64,7 @@ import zeroecho.pki.api.profile.CertificateProfileDefinition;
 import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
+import zeroecho.pki.api.profile.X509AlgorithmBindingPolicy;
 import zeroecho.pki.api.issuance.IssueEndEntityCommand;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.publication.PublicationRequest;
@@ -101,18 +104,29 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
     private final Optional<IssuanceService> issuance;
     private final Optional<StatusObjectService> statusObjects;
     private final Optional<PublicationService> publications;
+    private final X509AlgorithmBindingRegistry algorithmBindings;
     private final Runnable openCheck;
 
     /* default */ DefaultPkiOperationExecutor(PkiSessionConfiguration configuration, PkiStore store,
             ProfileService profiles, RevocationService revocations, Runnable openCheck) {
         this(configuration, store, profiles, revocations, Optional.empty(), Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), openCheck);
+                Optional.empty(), Optional.empty(), defaultBindings(), openCheck);
     }
 
     /* default */ DefaultPkiOperationExecutor(PkiSessionConfiguration configuration, PkiStore store,
             ProfileService profiles, RevocationService revocations, Optional<CaService> authorities,
             Optional<CertificationRequestService> requests, Optional<IssuanceService> issuance,
             Optional<StatusObjectService> statusObjects, Optional<PublicationService> publications,
+            Runnable openCheck) {
+        this(configuration, store, profiles, revocations, authorities, requests, issuance, statusObjects,
+                publications, defaultBindings(), openCheck);
+    }
+
+    /* default */ DefaultPkiOperationExecutor(PkiSessionConfiguration configuration, PkiStore store,
+            ProfileService profiles, RevocationService revocations, Optional<CaService> authorities,
+            Optional<CertificationRequestService> requests, Optional<IssuanceService> issuance,
+            Optional<StatusObjectService> statusObjects, Optional<PublicationService> publications,
+            X509AlgorithmBindingRegistry algorithmBindings,
             Runnable openCheck) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
         this.store = Objects.requireNonNull(store, "store");
@@ -123,6 +137,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         this.issuance = Objects.requireNonNull(issuance, "issuance");
         this.statusObjects = Objects.requireNonNull(statusObjects, "statusObjects");
         this.publications = Objects.requireNonNull(publications, "publications");
+        this.algorithmBindings = Objects.requireNonNull(algorithmBindings, "algorithmBindings");
         this.openCheck = Objects.requireNonNull(openCheck, "openCheck");
     }
 
@@ -134,6 +149,9 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         try {
             signal.throwIfCancelled();
             PkiOperationResult result = switch (exact) {
+                case PkiOperation.ListAlgorithmBindings request -> listAlgorithmBindings(request);
+                case PkiOperation.InspectAlgorithmBinding request -> inspectAlgorithmBinding(request);
+                case PkiOperation.ValidateAlgorithmBindings request -> validateAlgorithmBindings(request);
                 case PkiOperation.ValidateConfiguration ignored -> validateConfiguration();
                 case PkiOperation.ValidateProfile request -> validateProfile(request);
                 case PkiOperation.RegisterProfile request -> registerProfile(request);
@@ -162,7 +180,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
                 case PkiOperation.ProcessPublication request -> processPublication(request);
                 case PkiOperation.RetryPublication request -> retryPublication(request);
                 case PkiOperation.ReconcilePublication request -> reconcilePublication(request);
-            };
+        };
             return new PkiOperationOutcome.Success(result);
         } catch (InterruptedIOException failure) {
             return failure(exact.name(), PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
@@ -173,6 +191,61 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         }
     }
 
+    private PkiOperationResult listAlgorithmBindings(PkiOperation.ListAlgorithmBindings request) {
+        List<PkiOperationValue> values = algorithmBindings.bindings().stream()
+                .filter(binding -> request.origin().isEmpty() || binding.origin().name().equals(request.origin().get()))
+                .filter(binding -> request.role().isEmpty() || binding.role().name().equals(request.role().get()))
+                .limit(request.limit()).map(binding -> (PkiOperationValue) bindingValue(binding)).toList();
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(COUNT, integer(values.size()));
+        fields.put("registryCommitment", text(algorithmBindings.commitment()));
+        fields.put("bindings", new PkiOperationValue.ListValue(values));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult inspectAlgorithmBinding(PkiOperation.InspectAlgorithmBinding request) {
+        X509AlgorithmBinding binding = algorithmBindings.find(request.bindingId())
+                .orElseThrow(MissingObjectException::new);
+        Map<String, PkiOperationValue> fields = fields();
+        fields.putAll(bindingValue(binding).fields());
+        fields.put("registryCommitment", text(algorithmBindings.commitment()));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult validateAlgorithmBindings(PkiOperation.ValidateAlgorithmBindings request) {
+        request.bindingId().ifPresent(bindingId -> algorithmBindings.require(bindingId,
+                request.expectedCommitment().orElseThrow()));
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put("valid", bool(true));
+        fields.put(COUNT, integer(algorithmBindings.bindings().size()));
+        fields.put("registryCommitment", text(algorithmBindings.commitment()));
+        return result(request.name(), fields);
+    }
+
+    private static PkiOperationValue.ObjectValue bindingValue(X509AlgorithmBinding binding) {
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put("bindingId", text(binding.bindingId()));
+        fields.put("algorithmId", text(binding.algorithmIdentity().canonicalForm()));
+        fields.put("role", text(binding.role().name()));
+        fields.put("oid", text(binding.oid()));
+        fields.put("origin", text(binding.origin().name()));
+        fields.put("encodingVersion", integer(binding.encodingVersion()));
+        fields.put("parameterRule", text(binding.parameterRule().name()));
+        fields.put("publicKeyEncoding", text(binding.publicKeyEncoding().name()));
+        fields.put("signatureEncoding", text(binding.signatureEncoding().name()));
+        fields.put("interoperability", text(binding.interoperability().name()));
+        fields.put("bindingCommitment", text(binding.semanticCommitment()));
+        binding.providerId().ifPresent(value -> fields.put("providerId", text(value)));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
+    private static X509AlgorithmBindingRegistry defaultBindings() {
+        List<X509AlgorithmBinding> descriptors = new ArrayList<>(
+                zeroecho.pki.impl.framework.x509.StandardX509Bindings.descriptors());
+        descriptors.addAll(zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings.descriptors());
+        return zeroecho.pki.impl.framework.x509.ImmutableX509AlgorithmBindingRegistry.create(descriptors);
+    }
+
     private PkiOperationResult validateConfiguration() {
         Map<String, PkiOperationValue> fields = fields();
         fields.put("version", integer(configuration.version()));
@@ -181,14 +254,35 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         return result(PkiOperation.ValidateConfiguration.NAME, fields);
     }
 
-    private static PkiOperationResult validateProfile(PkiOperation.ValidateProfile request) {
+    private PkiOperationResult validateProfile(PkiOperation.ValidateProfile request) {
         CertificateProfileDefinition definition = CertificateProfileDocumentCodec.parse(request.document());
+        validateProfileBindings(definition.algorithmBindingPolicy());
         Map<String, PkiOperationValue> fields = fields();
         fields.put("profileId", text(definition.profileId()));
         fields.put("profileVersion", integer(definition.profileVersion()));
         fields.put("certificateType", text(definition.certificateType().name()));
         fields.put(FORMAT_ID, text(definition.formatId().value()));
         return result(request.name(), fields);
+    }
+
+    private void validateProfileBindings(X509AlgorithmBindingPolicy policy) {
+        if (policy.mode() == X509AlgorithmBindingPolicy.Mode.STANDARD_ONLY) {
+            return;
+        }
+        validateProfileBinding(policy.subjectPublicKey(), X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY);
+        validateProfileBinding(policy.csrSignature(), X509AlgorithmBinding.Role.CSR_SIGNATURE);
+        validateProfileBinding(policy.certificateSignature(), X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE);
+        validateProfileBinding(policy.crlSignature(), X509AlgorithmBinding.Role.CRL_SIGNATURE);
+    }
+
+    private void validateProfileBinding(Optional<X509AlgorithmBindingPolicy.BindingReference> reference,
+            X509AlgorithmBinding.Role role) {
+        reference.ifPresent(value -> {
+            X509AlgorithmBinding binding = algorithmBindings.require(value.bindingId(), value.semanticCommitment());
+            if (binding.role() != role || binding.origin() == X509AlgorithmBinding.Origin.STANDARD) {
+                throw new IllegalArgumentException("Explicit profile binding is invalid for its role");
+            }
+        });
     }
 
     private PkiOperationResult registerProfile(PkiOperation.RegisterProfile request) {

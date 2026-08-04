@@ -150,7 +150,8 @@ public final class ZeroEchoLibSignatureWorkflowProvider
                 BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512,
                 BootstrapAlgorithmIdentities.RSA_PSS_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA256,
                 BootstrapAlgorithmIdentities.ECDSA_SHA384, BootstrapAlgorithmIdentities.ECDSA_SHA512,
-                BootstrapAlgorithmIdentities.ED25519_SIGNATURE, BootstrapAlgorithmIdentities.ED448_SIGNATURE);
+                BootstrapAlgorithmIdentities.ED25519_SIGNATURE, BootstrapAlgorithmIdentities.ED448_SIGNATURE,
+                BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE);
         return java.util.List.of(new AlgorithmExecutionCapability() {
             @Override
             public String implementationId() {

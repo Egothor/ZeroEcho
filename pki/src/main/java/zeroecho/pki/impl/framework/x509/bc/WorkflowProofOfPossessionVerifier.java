@@ -225,7 +225,10 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
                     X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
             executionPlan = authority.plan(signatureIdentity, keyIdentity,
                     zeroecho.core.spi.AlgorithmExecutionCapability.Direction.VERIFY,
-                    Optional.empty(), "csr-proof", SignatureWorkflow.class);
+                    Optional.empty(), "csr-proof",
+                    authority.bindings().bindingId(BcX509AlgorithmAdapter.fromBc(
+                            csrAsn1.getSignatureAlgorithm()), X509AlgorithmRole.SIGNATURE_ALGORITHM),
+                    SignatureWorkflow.class);
         } catch (IllegalArgumentException unsupported) {
             return new ProofOfPossessionResult(ProofOfPossessionStatus.NOT_SUPPORTED,
                     Optional.of("Unsupported CSR algorithm"));

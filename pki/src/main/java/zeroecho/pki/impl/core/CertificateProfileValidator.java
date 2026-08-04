@@ -108,7 +108,7 @@ final class CertificateProfileValidator {
         return new ValidatedCertificateRequest(candidate.issuerCaId(), profileReference, approvedSubjectRef,
                 approvedSubject, approvedSans, sanCritical, candidate.exactPublicKey(), validity, policy.keyUsages(),
                 policy.extendedKeyUsages(), policy.keyUsageCritical(), policy.extendedKeyUsageCritical(),
-                policy.basicConstraintsCritical());
+                policy.basicConstraintsCritical(), profile.algorithmBindingPolicy());
     }
 
     private static void requireCanonicalRequestAttributes(ParsedCertificationRequest request) {
@@ -252,14 +252,21 @@ final class CertificateProfileValidator {
             if (!allowedAlgorithms.contains(algorithm.profileId())) {
                 throw reject("SUBJECT_KEY_ALGORITHM_FORBIDDEN");
             }
-            PublicKey reconstructed = KeyFactory.getInstance(algorithm.jcaName())
-                    .generatePublic(new X509EncodedKeySpec(encoded));
+            SubjectPublicKeyInfo nativeSpki = new zeroecho.pki.impl.framework.x509.bc.BcX509PublicKeyAdapter(
+                    authority.bindings()).unwrap(spki);
+            byte[] nativeEncoded = nativeSpki.getEncoded();
+            KeyFactory keyFactory = BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY.equals(identity)
+                    ? KeyFactory.getInstance(algorithm.jcaName(),
+                            new org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider())
+                    : KeyFactory.getInstance(algorithm.jcaName());
+            PublicKey reconstructed = keyFactory.generatePublic(new X509EncodedKeySpec(nativeEncoded));
             byte[] canonical = reconstructed.getEncoded();
             try {
-                if (canonical == null || !MessageDigest.isEqual(encoded, canonical)) {
+                if (canonical == null || !MessageDigest.isEqual(nativeEncoded, canonical)) {
                     throw reject("SUBJECT_KEY_NOT_CANONICAL");
                 }
             } finally {
+                java.util.Arrays.fill(nativeEncoded, (byte) 0);
                 if (canonical != null) {
                     java.util.Arrays.fill(canonical, (byte) 0);
                 }
@@ -285,6 +292,9 @@ final class CertificateProfileValidator {
         }
         if (identity.equals(BootstrapAlgorithmIdentities.ED448_PUBLIC_KEY)) {
             return new SubjectKeyAlgorithm("Ed448", "Ed448");
+        }
+        if (identity.equals(BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY)) {
+            return new SubjectKeyAlgorithm("SPHINCS+", "SPHINCS+");
         }
         throw reject("SUBJECT_KEY_ALGORITHM_UNKNOWN");
     }

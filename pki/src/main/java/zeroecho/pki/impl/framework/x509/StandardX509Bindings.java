@@ -42,6 +42,7 @@ import java.util.Optional;
 
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 
 /**
  * Immutable authoritative standard X.509 bootstrap bindings.
@@ -150,6 +151,16 @@ public final class StandardX509Bindings {
         return createCatalog(components);
     }
 
+    /**
+     * Returns deterministic safe descriptors for every sealed standard binding.
+     *
+     * @return immutable standard binding descriptors
+     */
+    public static List<X509AlgorithmBinding> descriptors() {
+        return CATALOG.rules().stream().flatMap(rule -> rule.bindings().stream())
+                .sorted(java.util.Comparator.comparing(X509AlgorithmBinding::bindingId)).toList();
+    }
+
     private static X509BindingRule fixed(String id, X509AlgorithmRole role, AlgorithmIdentity identity,
             X509AlgorithmIdentifier identifier, X509BindingRule.SignatureEncoding signatureEncoding,
             X509BindingRule.PublicKeyEncoding publicKeyEncoding) {
@@ -178,6 +189,12 @@ public final class StandardX509Bindings {
         public String semanticFingerprint() {
             return id + "|" + role + "|" + identity.canonicalForm() + "|" + identifier.canonicalForm() + "|"
                     + signatureEncoding + "|" + publicKeyEncoding;
+        }
+
+        @Override
+        public List<X509AlgorithmBinding> bindings() {
+            return descriptors(id, role, identity, identifier, signatureEncoding, publicKeyEncoding,
+                    semanticFingerprint());
         }
 
         @Override
@@ -234,6 +251,13 @@ public final class StandardX509Bindings {
         @Override
         public PublicKeyEncoding publicKeyEncoding() {
             return PublicKeyEncoding.NOT_APPLICABLE;
+        }
+
+        @Override
+        public List<X509AlgorithmBinding> bindings() {
+            X509AlgorithmIdentifier identifier = encode(BootstrapAlgorithmIdentities.RSA_PSS_SHA256).orElseThrow();
+            return descriptors(id(), role(), BootstrapAlgorithmIdentities.RSA_PSS_SHA256, identifier,
+                    signatureEncoding(), publicKeyEncoding(), semanticFingerprint());
         }
 
         @Override
@@ -303,6 +327,16 @@ public final class StandardX509Bindings {
         }
 
         @Override
+        public List<X509AlgorithmBinding> bindings() {
+            return List.of(BootstrapAlgorithmIdentities.EC_P256_PUBLIC_KEY,
+                    BootstrapAlgorithmIdentities.EC_P384_PUBLIC_KEY,
+                    BootstrapAlgorithmIdentities.EC_P521_PUBLIC_KEY).stream()
+                    .flatMap(identity -> descriptors(id() + "." + identity.parameters().canonicalForm(), role(),
+                            identity, encode(identity).orElseThrow(), signatureEncoding(), publicKeyEncoding(),
+                            semanticFingerprint()).stream()).toList();
+        }
+
+        @Override
         public Optional<X509AlgorithmIdentifier> encode(AlgorithmIdentity identity) {
             if (identity.kind() != AlgorithmIdentity.Kind.PUBLIC_KEY
                     || !"zeroecho/ec".equals(identity.family().canonicalForm())) {
@@ -339,6 +373,42 @@ public final class StandardX509Bindings {
                 maskHashAlgorithm);
         return StrictDer.sequence(StrictDer.explicit(0, hashAlgorithm), StrictDer.explicit(1, maskAlgorithm),
                 StrictDer.explicit(2, StrictDer.integer(parameters.saltLength())));
+    }
+
+    private static List<X509AlgorithmBinding> descriptors(String id, X509AlgorithmRole role,
+            AlgorithmIdentity identity, X509AlgorithmIdentifier identifier, X509BindingRule.SignatureEncoding signature,
+            X509BindingRule.PublicKeyEncoding publicKey, String commitment) {
+        X509AlgorithmBinding.ParameterRule parameters = switch (identifier.parameterForm()) {
+            case ABSENT -> X509AlgorithmBinding.ParameterRule.ABSENT;
+            case DER_NULL -> X509AlgorithmBinding.ParameterRule.DER_NULL;
+            case EXACT_DER -> X509AlgorithmBinding.ParameterRule.STRUCTURED_DER;
+        };
+        X509AlgorithmBinding.PublicKeyEncoding keyEncoding = switch (publicKey) {
+            case RSA_PKCS1_DER -> X509AlgorithmBinding.PublicKeyEncoding.RSA_PKCS1_DER;
+            case EC_POINT -> X509AlgorithmBinding.PublicKeyEncoding.EC_POINT;
+            case RAW -> X509AlgorithmBinding.PublicKeyEncoding.RAW;
+            case NESTED_SPKI_DER -> X509AlgorithmBinding.PublicKeyEncoding.NESTED_SPKI_DER;
+            case NOT_APPLICABLE -> X509AlgorithmBinding.PublicKeyEncoding.NOT_APPLICABLE;
+        };
+        X509AlgorithmBinding.SignatureEncoding signatureEncoding = switch (signature) {
+            case OPAQUE -> X509AlgorithmBinding.SignatureEncoding.OPAQUE;
+            case ECDSA_DER -> X509AlgorithmBinding.SignatureEncoding.ECDSA_DER;
+            case NOT_APPLICABLE -> X509AlgorithmBinding.SignatureEncoding.NOT_APPLICABLE;
+        };
+        if (role == X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM) {
+            return List.of(new X509AlgorithmBinding(id, identity, X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY,
+                    identifier.oid(), X509AlgorithmBinding.Origin.STANDARD, 1, parameters, keyEncoding,
+                    signatureEncoding, X509AlgorithmBinding.Interoperability.STANDARD_INTEROPERABLE,
+                    Optional.empty(), commitment));
+        }
+        return List.of(X509AlgorithmBinding.Role.CSR_SIGNATURE, X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE,
+                X509AlgorithmBinding.Role.CRL_SIGNATURE).stream()
+                .map(bindingRole -> new X509AlgorithmBinding(id + "."
+                        + bindingRole.name().toLowerCase(java.util.Locale.ROOT), identity,
+                        bindingRole, identifier.oid(), X509AlgorithmBinding.Origin.STANDARD, 1, parameters, keyEncoding,
+                        signatureEncoding, X509AlgorithmBinding.Interoperability.STANDARD_INTEROPERABLE,
+                        Optional.empty(), commitment))
+                .toList();
     }
 
     private static AlgorithmIdentity.RsaPssParameters decodePss(byte[] encoded, X509ComponentCatalog components) {

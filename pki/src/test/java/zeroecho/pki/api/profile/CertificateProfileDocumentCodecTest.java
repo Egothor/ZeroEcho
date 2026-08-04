@@ -63,13 +63,14 @@ final class CertificateProfileDocumentCodecTest {
 
     private static final String VALID_DOCUMENT = """
             {
-              "schemaVersion": 2,
+              "schemaVersion": 3,
               "certificateType": "END_ENTITY",
               "profileId": "tls-service",
               "profileVersion": 7,
               "formatId": "x509",
               "displayName": "TLS service",
               "maxValidity": "PT24H",
+              "algorithmBindings": {"mode":"STANDARD_ONLY"},
               "subject": {
                 "allowEmpty": false,
                 "rules": [
@@ -138,7 +139,7 @@ final class CertificateProfileDocumentCodecTest {
     void parsesEverySupportedRuleShapeIntoAuthoritativeTypedPolicies() {
         CertificateProfileDefinition definition = parse(VALID_DOCUMENT);
 
-        assertEquals(2, CertificateProfileDefinition.SCHEMA_VERSION);
+        assertEquals(3, CertificateProfileDefinition.SCHEMA_VERSION);
         assertEquals(CertificateProfileKind.END_ENTITY, definition.certificateType());
         assertEquals("tls-service", definition.profileId());
         assertEquals(7, definition.profileVersion());
@@ -311,10 +312,10 @@ final class CertificateProfileDocumentCodecTest {
 
     @Test
     void rejectsDuplicateUnknownMissingNullWrongAndNonintegralFields() {
-        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 2,", "\"schemaVersion\": 2,\"schemaVersion\": 2,"),
+        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 3,", "\"schemaVersion\": 3,\"schemaVersion\": 3,"),
                 "DUPLICATE_FIELD");
         for (String document : List.of(
-                VALID_DOCUMENT.replace("\"schemaVersion\": 2,", "\"secret-field\": true,\"schemaVersion\": 2,"),
+                VALID_DOCUMENT.replace("\"schemaVersion\": 3,", "\"secret-field\": true,\"schemaVersion\": 3,"),
                 VALID_DOCUMENT.replace("\"allowEmpty\": false,", "\"unknown\": true,\"allowEmpty\": false,"),
                 VALID_DOCUMENT.replace("\"oid\": \"2.5.4.3\",", "\"unknown\": true,\"oid\": \"2.5.4.3\","),
                 VALID_DOCUMENT.replace("\"minimumTotal\": 1,", "\"unknown\": true,\"minimumTotal\": 1,"),
@@ -330,7 +331,7 @@ final class CertificateProfileDocumentCodecTest {
                         "\"keyUsageCritical\": true,\"keyUsageCritical\": true,"))) {
             assertCode(document, "DUPLICATE_FIELD");
         }
-        for (String document : List.of(VALID_DOCUMENT.replace("\"schemaVersion\": 2,\n", ""),
+        for (String document : List.of(VALID_DOCUMENT.replace("\"schemaVersion\": 3,\n", ""),
                 VALID_DOCUMENT.replace("\"allowEmpty\": false,\n", ""),
                 VALID_DOCUMENT.replace("\"oid\": \"2.5.4.3\",\n", ""),
                 VALID_DOCUMENT.replace("\"minimumTotal\": 1,\n", ""),
@@ -355,7 +356,7 @@ final class CertificateProfileDocumentCodecTest {
 
     @Test
     void rejectsUnsupportedVersionsTokensCaseWhitespaceAndNoncanonicalDuration() {
-        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 2", "\"schemaVersion\": 1"),
+        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 3", "\"schemaVersion\": 1"),
                 "SCHEMA_VERSION_UNSUPPORTED");
         assertCode(VALID_DOCUMENT.replace("\"certificateType\": \"END_ENTITY\"", "\"certificateType\": \"end_entity\""),
                 "CERTIFICATE_TYPE_UNSUPPORTED");
@@ -473,8 +474,8 @@ final class CertificateProfileDocumentCodecTest {
     @Test
     void redactsHostileInputAndParserDetailsFromFailures() {
         String secret = "do-not-disclose-credential";
-        String hostile = VALID_DOCUMENT.replace("\"schemaVersion\": 2,",
-                "\"" + secret + "\": true,\"schemaVersion\": 2,");
+        String hostile = VALID_DOCUMENT.replace("\"schemaVersion\": 3,",
+                "\"" + secret + "\": true,\"schemaVersion\": 3,");
 
         PkiException exception = assertThrows(PkiException.class, () -> parse(hostile));
 
@@ -508,8 +509,8 @@ final class CertificateProfileDocumentCodecTest {
         logger.addHandler(handler);
         try {
             for (String field : hostileFields) {
-                String document = VALID_DOCUMENT.replace("\"schemaVersion\": 2,",
-                        "\"" + field + "\":\"" + probeName + "\",\"schemaVersion\": 2,");
+                String document = VALID_DOCUMENT.replace("\"schemaVersion\": 3,",
+                        "\"" + field + "\":\"" + probeName + "\",\"schemaVersion\": 3,");
                 PkiException exception = assertThrows(PkiException.class, () -> parse(document));
                 assertTrue(exception.getMessage().contains("code=UNKNOWN_FIELD "));
                 assertFalse(exception.getMessage().contains(field));

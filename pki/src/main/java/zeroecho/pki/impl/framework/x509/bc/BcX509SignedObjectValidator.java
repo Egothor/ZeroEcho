@@ -209,6 +209,8 @@ public final class BcX509SignedObjectValidator {
         X509ExecutionPlan<BcX509VerificationExecutor> verification = authority.plan(signatureIdentity, issuerKey,
                 AlgorithmExecutionCapability.Direction.VERIFY,
                 Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "status-postcondition",
+                authority.bindings().bindingId(BcX509AlgorithmAdapter.fromBc(identifier),
+                        X509AlgorithmRole.SIGNATURE_ALGORITHM),
                 BcX509VerificationExecutor.class);
         try (RepeatableContent tbs = new ContentSlice(content, layout.tbsOffset(), layout.tbsLength())) {
             if (!verification.executor().verify(authority, verification, issuerPublicKey, identifier, tbs,

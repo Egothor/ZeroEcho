@@ -69,6 +69,7 @@ import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+import zeroecho.pki.impl.framework.x509.bc.PkiBusContentSigner;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.util.async.AsyncState;
 import zeroecho.pki.util.async.AsyncStatus;
@@ -93,26 +94,46 @@ final class CaProofGate {
     private final PkiSigningBus signingBus;
     private final AuditSink auditSink;
     private final AlgorithmIdentity signatureIdentity;
+    private final Optional<String> signatureBindingId;
     private final Duration signingTtl;
 
     /* default */ CaProofGate(PublicKeyInfoResolver publicKeyResolver, PkiSigningBus signingBus, AuditSink auditSink,
             String signatureAlgorithmId, Duration signingTtl) {
         this(publicKeyResolver, signingBus, auditSink,
                 signingBus.authority().resolveIdentity(Objects.requireNonNull(signatureAlgorithmId,
-                        "signatureAlgorithmId")), signingTtl);
+                        "signatureAlgorithmId")), Optional.empty(), signingTtl);
     }
 
     /* default */ CaProofGate(PublicKeyInfoResolver publicKeyResolver, PkiSigningBus signingBus, AuditSink auditSink,
             AlgorithmIdentity signatureIdentity, Duration signingTtl) {
+        this(publicKeyResolver, signingBus, auditSink, signatureIdentity, Optional.empty(), signingTtl);
+    }
+
+    /* default */ CaProofGate(PublicKeyInfoResolver publicKeyResolver, PkiSigningBus signingBus, AuditSink auditSink,
+            AlgorithmIdentity signatureIdentity, Optional<String> signatureBindingId, Duration signingTtl) {
         this.publicKeyResolver = Objects.requireNonNull(publicKeyResolver, "publicKeyResolver");
         this.signingBus = Objects.requireNonNull(signingBus, "signingBus");
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
         this.signatureIdentity = Objects.requireNonNull(signatureIdentity, "signatureIdentity");
+        this.signatureBindingId = Objects.requireNonNull(signatureBindingId, "signatureBindingId");
         this.signingTtl = Objects.requireNonNull(signingTtl, "signingTtl");
     }
 
     /* default */ ContentSigner signer(ManagedKeyProof proof) {
-        return new BusBackedContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
+        return signatureBindingId.isPresent()
+                ? new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity,
+                        signatureBindingId.orElseThrow(), signingTtl)
+                : new BusBackedContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
+    }
+
+    /* default */ ContentSigner signer(ManagedKeyProof proof,
+            zeroecho.pki.api.profile.X509AlgorithmBindingPolicy bindingPolicy) {
+        Optional<String> bindingId = bindingPolicy.certificateSignature()
+                .map(zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.BindingReference::bindingId);
+        return bindingId.isPresent()
+                ? new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, bindingId.orElseThrow(),
+                        signingTtl)
+                : new BusBackedContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
     }
 
     /* default */ SubjectPublicKeyInfo parseRootSpki(EncodedObject spki, FormatId formatId) {

@@ -34,8 +34,10 @@
 package zeroecho.pki.impl.framework.x509;
 
 import java.util.Optional;
+import java.util.List;
 
 import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 
 /**
  * Immutable trusted-code rule between exact ZeroEcho identities and X.509
@@ -48,6 +50,19 @@ import zeroecho.core.spec.AlgorithmIdentity;
  * </p>
  */
 public interface X509BindingRule {
+
+    /**
+     * Returns the finite safe descriptors owned by this encoding rule.
+     *
+     * <p>A parameterized rule may expose one descriptor for every currently
+     * registered exact identity. Descriptors do not expose implementation
+     * classes or mutable codec state.</p>
+     *
+     * @return immutable descriptors
+     */
+    default List<X509AlgorithmBinding> bindings() {
+        return List.of();
+    }
 
     /**
      * Signature byte representation owned by a signature rule.
@@ -71,6 +86,8 @@ public interface X509BindingRule {
         EC_POINT,
         /** Algorithm-defined raw public-key bytes. */
         RAW,
+        /** Canonical native SubjectPublicKeyInfo DER nested in the BIT STRING. */
+        NESTED_SPKI_DER,
         /** Not applicable to a signature-only rule. */
         NOT_APPLICABLE
     }

@@ -63,6 +63,7 @@ public final class BootstrapAlgorithmIdentities {
     private static final AlgorithmIdentity.Family ECDSA = family("ecdsa");
     private static final AlgorithmIdentity.Family ED25519_FAMILY = family("ed25519");
     private static final AlgorithmIdentity.Family ED448_FAMILY = family("ed448");
+    private static final AlgorithmIdentity.Family SPHINCS_PLUS_FAMILY = family("sphincs-plus");
     private static final AlgorithmIdentity.Family RSA_KEY = family("rsa");
     private static final AlgorithmIdentity.Family EC_KEY = family("ec");
 
@@ -99,6 +100,9 @@ public final class BootstrapAlgorithmIdentities {
     /** Ed448 signature identity. */
     public static final AlgorithmIdentity ED448_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE, ED448_FAMILY,
             AlgorithmIdentity.NoParameters.INSTANCE);
+    /** ZeroEcho SPHINCS+ default signature identity. */
+    public static final AlgorithmIdentity SPHINCS_PLUS_SIGNATURE = identity(AlgorithmIdentity.Kind.SIGNATURE,
+            SPHINCS_PLUS_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
 
     /** RSA public-key identity. */
     public static final AlgorithmIdentity RSA_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, RSA_KEY,
@@ -115,6 +119,9 @@ public final class BootstrapAlgorithmIdentities {
     /** Ed448 public-key identity. */
     public static final AlgorithmIdentity ED448_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY, ED448_FAMILY,
             AlgorithmIdentity.NoParameters.INSTANCE);
+    /** ZeroEcho SPHINCS+ default public-key identity. */
+    public static final AlgorithmIdentity SPHINCS_PLUS_PUBLIC_KEY = identity(AlgorithmIdentity.Kind.PUBLIC_KEY,
+            SPHINCS_PLUS_FAMILY, AlgorithmIdentity.NoParameters.INSTANCE);
 
     /** Current ECDSA P-256 signing suite. */
     public static final AlgorithmSuite ECDSA_SHA256_P256 = new AlgorithmSuite(ECDSA_SHA256, EC_P256_PUBLIC_KEY);
@@ -127,8 +134,9 @@ public final class BootstrapAlgorithmIdentities {
 
     private static final List<AlgorithmIdentity> IDENTITIES = List.of(SHA256, SHA384, SHA512, MGF1, RSA_PKCS1_SHA256,
             RSA_PKCS1_SHA384, RSA_PKCS1_SHA512, RSA_PSS_SHA256, ECDSA_SHA256, ECDSA_SHA384, ECDSA_SHA512,
-            ED25519_SIGNATURE, ED448_SIGNATURE, RSA_PUBLIC_KEY, EC_P256_PUBLIC_KEY, EC_P384_PUBLIC_KEY,
-            EC_P521_PUBLIC_KEY, ED25519_PUBLIC_KEY, ED448_PUBLIC_KEY);
+            ED25519_SIGNATURE, ED448_SIGNATURE, SPHINCS_PLUS_SIGNATURE, RSA_PUBLIC_KEY, EC_P256_PUBLIC_KEY,
+            EC_P384_PUBLIC_KEY, EC_P521_PUBLIC_KEY, ED25519_PUBLIC_KEY, ED448_PUBLIC_KEY,
+            SPHINCS_PLUS_PUBLIC_KEY);
 
     private static final AlgorithmIdentityCatalog CATALOG = AlgorithmIdentityCatalog.builtIn(IDENTITIES);
 
@@ -141,7 +149,8 @@ public final class BootstrapAlgorithmIdentities {
             Map.entry("SHA384withECDSA", ECDSA_SHA384),
             Map.entry("SHA512withECDSA", ECDSA_SHA512),
             Map.entry("Ed25519", ED25519_SIGNATURE),
-            Map.entry("Ed448", ED448_SIGNATURE));
+            Map.entry("Ed448", ED448_SIGNATURE),
+            Map.entry("SPHINCS+", SPHINCS_PLUS_SIGNATURE));
 
     private BootstrapAlgorithmIdentities() {
     }

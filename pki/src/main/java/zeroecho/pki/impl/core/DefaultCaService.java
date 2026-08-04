@@ -232,6 +232,30 @@ public final class DefaultCaService implements CaService {
             PublicKeyInfoResolver publicKeyResolver, PkiSigningBus signingBus, AuditSink auditSink,
             EffectiveCredentialStatusResolver statusResolver, ProfileService profileService, Clock clock,
             String signatureAlgorithmId, Duration signingTtl) {
+        this(store, framework, issuerBackend, publicKeyResolver, signingBus, auditSink, statusResolver, profileService,
+                clock, signatureAlgorithmId, Optional.empty(), signingTtl);
+    }
+
+    /**
+     * Creates a CA service with an optional explicit X.509 signature binding.
+     *
+     * @param store persistent PKI store
+     * @param framework credential framework
+     * @param issuerBackend issuer backend
+     * @param publicKeyResolver managed public-key resolver
+     * @param signingBus signing bus
+     * @param auditSink audit sink
+     * @param statusResolver effective status resolver
+     * @param profileService profile service
+     * @param clock injected clock
+     * @param signatureAlgorithmId cryptographic signature identity
+     * @param signatureBindingId explicit binding identity, when private mode is selected
+     * @param signingTtl signing operation time-to-live
+     */
+    public DefaultCaService(PkiStore store, CredentialFramework framework, CredentialIssuerBackend issuerBackend,
+            PublicKeyInfoResolver publicKeyResolver, PkiSigningBus signingBus, AuditSink auditSink,
+            EffectiveCredentialStatusResolver statusResolver, ProfileService profileService, Clock clock,
+            String signatureAlgorithmId, Optional<String> signatureBindingId, Duration signingTtl) {
 
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
@@ -250,11 +274,14 @@ public final class DefaultCaService implements CaService {
             throw new IllegalArgumentException("signingTtl must be positive");
         }
         AlgorithmIdentity signatureIdentity = signingBus.authority().resolveIdentity(signatureAlgorithmId);
-        X509ExecutionPlan<SignatureWorkflow> plan = signingBus.authority()
-                .planSigning(signatureIdentity.canonicalForm(), SignatureWorkflow.class);
+        X509ExecutionPlan<SignatureWorkflow> plan = signatureBindingId.isPresent()
+                ? signingBus.authority().planSigningWithBinding(signatureIdentity.canonicalForm(),
+                        signatureBindingId.orElseThrow(), SignatureWorkflow.class)
+                : signingBus.authority().planSigning(signatureIdentity.canonicalForm(), SignatureWorkflow.class);
         signingBus.authority().authorize(plan, plan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
         this.signatureIdentity = signatureIdentity;
-        this.proofGate = new CaProofGate(publicKeyResolver, signingBus, auditSink, signatureIdentity, signingTtl);
+        this.proofGate = new CaProofGate(publicKeyResolver, signingBus, auditSink, signatureIdentity,
+                signatureBindingId, signingTtl);
     }
 
     /**
@@ -326,7 +353,7 @@ public final class DefaultCaService implements CaService {
             throw new PkiException("Root extension construction failed: code=ROOT_EXTENSION_BUILD_FAILED");
         }
 
-        ContentSigner signer = proofGate.signer(proof);
+        ContentSigner signer = proofGate.signer(proof, request.algorithmBindingPolicy());
         X509CertificateHolder cert;
         try {
             cert = b.build(signer);

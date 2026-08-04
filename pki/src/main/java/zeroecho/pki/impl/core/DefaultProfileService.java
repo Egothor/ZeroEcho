@@ -55,6 +55,9 @@ import zeroecho.pki.api.profile.CertificateProfileDefinition;
 import zeroecho.pki.api.profile.CertificateProfileDocumentCodec;
 import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
+import zeroecho.pki.api.profile.X509AlgorithmBindingPolicy;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
+import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 import zeroecho.pki.impl.ProfileLifecycleFailure;
 import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
 import zeroecho.pki.spi.audit.AuditSink;
@@ -70,12 +73,42 @@ public final class DefaultProfileService implements ProfileService {
     private final PkiStore store;
     private final Clock clock;
     private final AuditSink auditSink;
+    private final X509AlgorithmBindingRegistry algorithmBindings;
+    private final boolean signingConfigured;
+    private final Optional<String> certificateBinding;
+    private final Optional<String> crlBinding;
+    private final Optional<String> publicKeyBinding;
 
     /** Creates a profile service using one authoritative clock. */
     public DefaultProfileService(PkiStore store, Clock clock, AuditSink auditSink) {
+        this(store, clock, auditSink, defaultBindings());
+    }
+
+    /**
+     * Creates a profile service bound to one immutable algorithm registry.
+     *
+     * @param store authoritative PKI store
+     * @param clock authoritative clock
+     * @param auditSink audit sink
+     * @param algorithmBindings active immutable binding registry
+     */
+    public DefaultProfileService(PkiStore store, Clock clock, AuditSink auditSink,
+            X509AlgorithmBindingRegistry algorithmBindings) {
+        this(store, clock, auditSink, algorithmBindings, false, Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
+    /** Creates a profile service with the session's explicit signing bindings. */
+    public DefaultProfileService(PkiStore store, Clock clock, AuditSink auditSink,
+            X509AlgorithmBindingRegistry algorithmBindings, boolean signingConfigured,
+            Optional<String> certificateBinding, Optional<String> crlBinding, Optional<String> publicKeyBinding) {
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.auditSink = Objects.requireNonNull(auditSink, "auditSink");
+        this.algorithmBindings = Objects.requireNonNull(algorithmBindings, "algorithmBindings");
+        this.signingConfigured = signingConfigured;
+        this.certificateBinding = Objects.requireNonNull(certificateBinding, "certificateBinding");
+        this.crlBinding = Objects.requireNonNull(crlBinding, "crlBinding");
+        this.publicKeyBinding = Objects.requireNonNull(publicKeyBinding, "publicKeyBinding");
     }
 
     @Override
@@ -83,6 +116,7 @@ public final class DefaultProfileService implements ProfileService {
         Objects.requireNonNull(jsonDocument, "jsonDocument");
         return executeSanitized(() -> {
             CertificateProfileDefinition definition = CertificateProfileDocumentCodec.parse(jsonDocument);
+            validateBindings(definition);
             byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
             return importCanonical(definition, canonical, clock.instant());
         }, Code.PROFILE_IMPORT_VALIDATION_FAILED);
@@ -93,6 +127,7 @@ public final class DefaultProfileService implements ProfileService {
         Objects.requireNonNull(jsonDocument, "jsonDocument");
         return executeSanitized(() -> {
             CertificateProfileDefinition definition = CertificateProfileDocumentCodec.parse(jsonDocument);
+            validateBindings(definition);
             byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
             return importCanonical(definition, canonical, clock.instant());
         }, Code.PROFILE_IMPORT_VALIDATION_FAILED);
@@ -122,6 +157,10 @@ public final class DefaultProfileService implements ProfileService {
             throw new IllegalArgumentException("profileVersion must be positive");
         }
         return executeAudited("PROFILE_ACTIVATE", profileId, profileVersion, Code.PROFILE_ACTIVATION_FAILED, () -> {
+            ImportedCertificateProfileVersion version = store.getProfileVersion(profileId, profileVersion)
+                    .orElseThrow(() -> new ProfileLifecycleFailure(Code.PROFILE_VERSION_NOT_FOUND));
+            validateBindings(version.definition());
+            validateRuntimeBindings(version.definition());
             CertificateProfileRef result = store.activateProfile(profileId, profileVersion);
             audit("PROFILE_ACTIVATE", result, "SUCCESS");
             return result;
@@ -131,8 +170,12 @@ public final class DefaultProfileService implements ProfileService {
     @Override
     public ActiveCertificateProfile requireActiveProfile(String profileId) {
         requireProfileId(profileId);
-        return executeAudited("PROFILE_RESOLVE", profileId, 0L, Code.PROFILE_STORE_FAILURE,
-                () -> store.requireActiveProfile(profileId));
+        return executeAudited("PROFILE_RESOLVE", profileId, 0L, Code.PROFILE_STORE_FAILURE, () -> {
+            ActiveCertificateProfile active = store.requireActiveProfile(profileId);
+            validateBindings(active.definition());
+            validateRuntimeBindings(active.definition());
+            return active;
+        });
     }
 
     @Override
@@ -215,6 +258,60 @@ public final class DefaultProfileService implements ProfileService {
             return new ProfileLifecycleFailure(classified.code());
         }
         return new ProfileLifecycleFailure(fallback);
+    }
+
+    private void validateBindings(CertificateProfileDefinition definition) {
+        X509AlgorithmBindingPolicy policy = definition.algorithmBindingPolicy();
+        if (policy.mode() == X509AlgorithmBindingPolicy.Mode.STANDARD_ONLY) {
+            return;
+        }
+        validateBinding(policy.subjectPublicKey(), X509AlgorithmBinding.Role.SUBJECT_PUBLIC_KEY);
+        validateBinding(policy.csrSignature(), X509AlgorithmBinding.Role.CSR_SIGNATURE);
+        validateBinding(policy.certificateSignature(), X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE);
+        validateBinding(policy.crlSignature(), X509AlgorithmBinding.Role.CRL_SIGNATURE);
+    }
+
+    private void validateBinding(Optional<X509AlgorithmBindingPolicy.BindingReference> reference,
+            X509AlgorithmBinding.Role role) {
+        reference.ifPresent(value -> {
+            X509AlgorithmBinding binding = algorithmBindings.require(value.bindingId(), value.semanticCommitment());
+            if (binding.role() != role || binding.origin() == X509AlgorithmBinding.Origin.STANDARD) {
+                throw new IllegalArgumentException("Explicit profile binding is invalid for its role");
+            }
+        });
+    }
+
+    private void validateRuntimeBindings(CertificateProfileDefinition definition) {
+        if (!signingConfigured) {
+            return;
+        }
+        X509AlgorithmBindingPolicy policy = definition.algorithmBindingPolicy();
+        if (policy.mode() == X509AlgorithmBindingPolicy.Mode.STANDARD_ONLY) {
+            if (certificateBinding.isPresent() || crlBinding.isPresent() || publicKeyBinding.isPresent()) {
+                throw new IllegalArgumentException("Standard profile cannot use private runtime bindings");
+            }
+            return;
+        }
+        requireRuntimeBinding(policy.certificateSignature(), certificateBinding);
+        requireRuntimeBinding(policy.subjectPublicKey(), publicKeyBinding);
+        if (policy.crlSignature().isPresent()) {
+            requireRuntimeBinding(policy.crlSignature(), crlBinding);
+        }
+    }
+
+    private static void requireRuntimeBinding(Optional<X509AlgorithmBindingPolicy.BindingReference> selected,
+            Optional<String> configured) {
+        if (selected.isEmpty() || configured.isEmpty()
+                || !selected.orElseThrow().bindingId().equals(configured.orElseThrow())) {
+            throw new IllegalArgumentException("Profile binding does not match the signing runtime");
+        }
+    }
+
+    private static X509AlgorithmBindingRegistry defaultBindings() {
+        List<X509AlgorithmBinding> descriptors = new java.util.ArrayList<>(
+                zeroecho.pki.impl.framework.x509.StandardX509Bindings.descriptors());
+        descriptors.addAll(zeroecho.pki.impl.framework.x509.ZeroEchoPrivateX509Bindings.descriptors());
+        return zeroecho.pki.impl.framework.x509.ImmutableX509AlgorithmBindingRegistry.create(descriptors);
     }
 
     /*

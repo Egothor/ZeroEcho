@@ -67,7 +67,10 @@ public final class PkiCli {
             Map.entry("--type", "type"), Map.entry("--publication-id", "publicationId"),
             Map.entry("--source-type", "sourceType"), Map.entry("--source-id", "sourceId"),
             Map.entry("--target-type", "targetType"), Map.entry("--target-id", "targetId"),
-            Map.entry("--reason", "reason"), Map.entry("--limit", "limit"));
+            Map.entry("--reason", "reason"), Map.entry("--limit", "limit"),
+            Map.entry("--binding-id", "bindingId"),
+            Map.entry("--binding-commitment", "bindingCommitment"),
+            Map.entry("--origin", "origin"), Map.entry("--role", "role"));
     private static final int RUN_TOKEN_COUNT = 2;
 
     private PkiCli() {
@@ -263,6 +266,9 @@ public final class PkiCli {
         writer.println("Usage: zeroecho pki <operation> --config <file> [--output human|json] [arguments]");
         writer.println("       zeroecho pki run <plan-file> --config <file> [--output human|json]");
         writer.println("Operations:");
+        writer.println("  algorithm.binding.list --limit <1..1000> [--origin <origin>] [--role <role>]");
+        writer.println("  algorithm.binding.inspect --binding-id <id>");
+        writer.println("  algorithm.binding.validate [--binding-id <id> --binding-commitment <commitment>]");
         writer.println("  configuration.validate");
         writer.println("  profile.validate --profile-file <file>");
         writer.println("  profile.register --profile-file <file>");

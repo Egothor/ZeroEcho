@@ -60,7 +60,8 @@ lifecycle transitions; strict CSR import and proof verification; credential
 issuance and inspection; revocation inspection and bounded history/snapshot
 presentation; signed status/CRL generation and inspection; and explicit
 publication registration, processing, retry, reconciliation, inspection, and
-listing. Presentation limits bound terminal output only; backend revocation and
+listing. It also exposes immutable X.509 algorithm-binding listing, inspection,
+and commitment validation. Presentation limits bound terminal output only; backend revocation and
 publication cursors remain streaming and do not acquire an aggregate population
 limit.
 
@@ -70,7 +71,7 @@ only `FAIL_FAST` and `CONTINUE_INDEPENDENT`; they have no scripts, expressions,
 loops, implicit retries, or rollback across already committed operations. Binary
 artifacts and secrets are never emitted in terminal JSON.
 
-Version-two session configuration enables capabilities explicitly. A signing
+Version-three session configuration enables capabilities explicitly. A signing
 section selects one signature-workflow provider, one X.509 framework, a durable
 signing-bus location, an algorithm, a finite signing deadline, and the name of an
 environment variable supplying the process-local keyring unlock capability.
@@ -80,13 +81,26 @@ private keys, and publisher credentials are never operation arguments or output.
 Read-only version-one configurations remain valid and allocate neither signing
 nor publisher capabilities.
 
+X.509 algorithm identity is independent of its role-specific OID representation.
+Published standard bindings remain sealed. ZeroEcho private assignments are
+frozen below the Egothor PEN branch `1.3.6.1.4.1.31424.1.1`; explicitly enabled
+deployer providers may contribute immutable bindings only below configuration-
+authorized roots, including deployment-local arcs below
+`1.3.6.1.4.1.31424.1.2`. Profiles default to standard-only mode and pin both a
+binding ID and its semantic commitment when private mode is deliberately chosen.
+Private-OID certificates and CRLs require matching binding and cryptographic
+support at every relying party; generic PKI software may reject them.
+
+```text
+zeroecho pki algorithm.binding.list --limit 100 --config pki-config.json
+zeroecho pki algorithm.binding.inspect --binding-id zeroecho.private.sphincs-plus-default.certificate-signature.v1 --config pki-config.json
+zeroecho pki algorithm.binding.validate --config pki-config.json
+```
+
 The CLI and a future server share the same transport-neutral `PkiSession` and
 typed operations; batch execution opens that service graph once. Backup and
 import/export commands remain unavailable because the current backend has no
-production service implementation for them. Final backend release readiness is
-intentionally deferred until the planned extensible X.509 algorithm/OID binding
-work and its CLI integration are complete; this CLI does not anticipate or add
-placeholders for that future work.
+production service implementation for them.
 
 
 ## Development Status

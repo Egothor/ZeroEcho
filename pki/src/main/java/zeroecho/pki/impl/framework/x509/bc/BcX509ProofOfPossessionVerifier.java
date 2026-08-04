@@ -215,6 +215,8 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
                 X509ExecutionPlan<BcX509VerificationExecutor> plan = authority.plan(signatureIdentity, keyIdentity,
                         AlgorithmExecutionCapability.Direction.VERIFY,
                         Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "csr-proof",
+                        authority.bindings().bindingId(BcX509AlgorithmAdapter.fromBc(csr.getSignatureAlgorithm()),
+                                X509AlgorithmRole.SIGNATURE_ALGORITHM),
                         BcX509VerificationExecutor.class);
                 byte[] signedBytes = csr.toASN1Structure().getCertificationRequestInfo().getEncoded();
                 boolean valid = executor.verify(authority, plan, csr.getSubjectPublicKeyInfo(),

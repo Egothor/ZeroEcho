@@ -45,6 +45,7 @@ import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.profile.CaCertificatePolicy;
 import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.X509AlgorithmBindingPolicy;
 import zeroecho.pki.api.request.SubjectRdn;
 
 /**
@@ -83,6 +84,7 @@ public final class ValidatedCaCertificateRequest {
     private final Validity validity;
     private final BigInteger serial;
     private final CaCertificatePolicy policy;
+    private final X509AlgorithmBindingPolicy algorithmBindingPolicy;
 
     // The constructor is the single cohesive gate output boundary.
     @SuppressWarnings("PMD.ExcessiveParameterList")
@@ -90,6 +92,15 @@ public final class ValidatedCaCertificateRequest {
             PkiId subjectCaId, CertificateProfileRef profileReference, CertificateProfileKind certificateType,
             SubjectRef subjectRef, List<SubjectRdn> subjectRdns, EncodedObject exactPublicKey, Validity validity,
             BigInteger serial, CaCertificatePolicy policy) {
+        this(operation, formatId, issuerCaId, subjectCaId, profileReference, certificateType, subjectRef, subjectRdns,
+                exactPublicKey, validity, serial, policy, X509AlgorithmBindingPolicy.standardOnly());
+    }
+
+    @SuppressWarnings("PMD.ExcessiveParameterList")
+    /* package */ ValidatedCaCertificateRequest(Operation operation, FormatId formatId, PkiId issuerCaId,
+            PkiId subjectCaId, CertificateProfileRef profileReference, CertificateProfileKind certificateType,
+            SubjectRef subjectRef, List<SubjectRdn> subjectRdns, EncodedObject exactPublicKey, Validity validity,
+            BigInteger serial, CaCertificatePolicy policy, X509AlgorithmBindingPolicy algorithmBindingPolicy) {
         this.operation = Objects.requireNonNull(operation, "operation");
         this.formatId = Objects.requireNonNull(formatId, "formatId");
         this.issuerCaId = Objects.requireNonNull(issuerCaId, "issuerCaId");
@@ -103,6 +114,7 @@ public final class ValidatedCaCertificateRequest {
         this.validity = Objects.requireNonNull(validity, "validity");
         this.serial = Objects.requireNonNull(serial, "serial");
         this.policy = Objects.requireNonNull(policy, "policy");
+        this.algorithmBindingPolicy = Objects.requireNonNull(algorithmBindingPolicy, "algorithmBindingPolicy");
         if (serial.signum() <= 0 || serial.toByteArray().length > 20) {
             throw new IllegalArgumentException("serial must be positive and at most 20 bytes");
         }
@@ -166,5 +178,10 @@ public final class ValidatedCaCertificateRequest {
     /** Returns the exact profile-derived CA policy. */
     public CaCertificatePolicy policy() {
         return policy;
+    }
+
+    /** @return exact immutable X.509 representation selection */
+    public X509AlgorithmBindingPolicy algorithmBindingPolicy() {
+        return algorithmBindingPolicy;
     }
 }

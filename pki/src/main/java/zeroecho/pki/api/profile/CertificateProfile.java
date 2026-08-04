@@ -56,9 +56,18 @@ import zeroecho.pki.api.FormatId;
  * @param maximumValidity positive maximum validity
  * @param subjectPolicy   complete end-entity subject policy
  * @param leafPolicy      complete end-entity extension policy
+ * @param algorithmBindingPolicy explicit role-specific X.509 representation policy
  */
 public record CertificateProfile(String profileId, FormatId formatId, String displayName, Duration maximumValidity,
-        SubjectPolicy subjectPolicy, LeafCertificatePolicy leafPolicy) {
+        SubjectPolicy subjectPolicy, LeafCertificatePolicy leafPolicy,
+        X509AlgorithmBindingPolicy algorithmBindingPolicy) {
+
+    /** Creates a standard-only runtime profile. */
+    public CertificateProfile(String profileId, FormatId formatId, String displayName, Duration maximumValidity,
+            SubjectPolicy subjectPolicy, LeafCertificatePolicy leafPolicy) {
+        this(profileId, formatId, displayName, maximumValidity, subjectPolicy, leafPolicy,
+                X509AlgorithmBindingPolicy.standardOnly());
+    }
 
     /**
      * Creates a certificate profile.
@@ -77,7 +86,7 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
             throw new IllegalArgumentException("displayName must not be null/blank");
         }
         if (maximumValidity == null || maximumValidity.isZero() || maximumValidity.isNegative() || subjectPolicy == null
-                || leafPolicy == null) {
+                || leafPolicy == null || algorithmBindingPolicy == null) {
             throw new IllegalArgumentException("profile policies and maximum validity must be valid");
         }
     }
@@ -96,6 +105,7 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
             throw new IllegalArgumentException("Only end-entity definitions have a runtime issuance projection");
         }
         return new CertificateProfile(definition.profileId(), definition.formatId(), definition.displayName(),
-                definition.maximumValidity(), definition.subjectPolicy(), definition.leafPolicy());
+                definition.maximumValidity(), definition.subjectPolicy(), definition.leafPolicy(),
+                definition.algorithmBindingPolicy());
     }
 }
