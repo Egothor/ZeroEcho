@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "serverName": "zeroecho-admin",
   "realm": {
     "realmId": "production",
@@ -56,7 +56,8 @@
     "maximumBodyBytes": 1048576
   },
   "authentication": {
-    "mappings": [{
+    "mode": "DIRECT_MTLS",
+    "directClientMappings": [{
       "mappingId": "bootstrap-administrator",
       "principalId": "bootstrap-admin",
       "certificateSha256": "0000000000000000000000000000000000000000000000000000000000000000"

@@ -104,6 +104,18 @@ final class AdminHttpHandler implements HttpHandler {
         try {
             requireHeadersBounded(exchange.getRequestHeaders());
             requestId = requestIds.resolve(exchange.getRequestHeaders().get(RequestIds.HEADER));
+            if (configuration.authentication().mode()
+                    == zeroecho.pki.server.AdministrativeAuthenticationMode.DIRECT_MTLS
+                    && ForwardedClientCertificateParser.containsForwardedIdentity(
+                            authenticationHeaders(exchange.getRequestHeaders()))) {
+                realm.auditTransport("ADMIN_AUTHENTICATION_REJECTED", "system",
+                        authenticationDetails(requestId, configuration.authentication().mode(),
+                                Optional.empty(), Optional.empty(), "FORWARDED_IDENTITY_FORBIDDEN"));
+                response = HttpResponses.failure(400, requestId, "authentication", "VALIDATION_FAILURE",
+                        "FORWARDED_IDENTITY_FORBIDDEN", "FORWARDED_IDENTITY_FORBIDDEN", false, false);
+                send(exchange, requestId, response);
+                return;
+            }
             URI uri = exchange.getRequestURI();
             if (uri.getRawQuery() != null || uri.getRawFragment() != null) throw malformed(requestId, "route");
             String path = uri.getPath();
@@ -146,12 +158,19 @@ final class AdminHttpHandler implements HttpHandler {
     private HttpResponses.Response admin(HttpsExchange exchange, String path, String requestId) throws IOException {
         PkiServerAuthenticationResult authentication = authenticate(exchange, requestId);
         if (!(authentication instanceof PkiServerAuthenticationResult.Authenticated authenticated)) {
-            realm.auditTransport("TLS_AUTHENTICATION_FAILURE", "system", Map.of("request", requestId));
+            PkiServerAuthenticationResult.Rejected rejected =
+                    (PkiServerAuthenticationResult.Rejected) authentication;
+            String actor = rejected.transportPrincipalId().orElse("system");
+            realm.auditTransport("ADMIN_AUTHENTICATION_REJECTED", actor,
+                    authenticationDetails(requestId, rejected.mode(), rejected.transportPrincipalId(),
+                            rejected.endClientPrincipalId(), rejected.code().name()));
             return HttpResponses.failure(401, requestId, "authentication", "AUTHENTICATION_FAILURE",
                     "CLIENT_AUTHENTICATION_FAILED", "CLIENT_AUTHENTICATION_FAILED", false, false);
         }
-        String principalId = authenticated.principalId();
-        realm.auditTransport("TLS_AUTHENTICATION_SUCCESS", principalId, Map.of("request", requestId));
+        String principalId = authenticated.endClientPrincipalId();
+        realm.auditTransport("ADMIN_AUTHENTICATION_ACCEPTED", principalId,
+                authenticationDetails(requestId, authenticated.mode(), authenticated.transportPrincipalId(),
+                        Optional.of(principalId), "ACCEPTED"));
         if ("/admin/v1/realm".equals(path)) return realm(exchange, requestId, principalId);
         if ("/admin/v1/operations".equals(path)) return operations(exchange, requestId, principalId);
         String prefix = "/admin/v1/operations/";
@@ -164,7 +183,7 @@ final class AdminHttpHandler implements HttpHandler {
         if (descriptor.isEmpty()) return notFound(requestId);
         if (requireMethod(exchange, "GET")) return descriptor(requestId, descriptor.orElseThrow());
         if (!requireMethod(exchange, "POST")) return method(requestId, operationId);
-        return execute(exchange, requestId, principalId, operationId);
+        return execute(exchange, requestId, authenticated, operationId);
     }
 
     private HttpResponses.Response realm(HttpsExchange exchange, String requestId, String principalId) {
@@ -200,7 +219,8 @@ final class AdminHttpHandler implements HttpHandler {
     }
 
     private HttpResponses.Response execute(HttpsExchange exchange, String requestId,
-            String principalId, String operationId) throws IOException {
+            PkiServerAuthenticationResult.Authenticated authenticated, String operationId) throws IOException {
+        String principalId = authenticated.endClientPrincipalId();
         String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
         if (contentType == null || !(contentType.equalsIgnoreCase("application/json")
                 || contentType.equalsIgnoreCase(JSON))) {
@@ -241,7 +261,8 @@ final class AdminHttpHandler implements HttpHandler {
             submitted = runtime.submit(cancellation -> {
                 if (!clock.instant().isBefore(deadline)) throw new DeadlineExceeded();
                 ServerOperationGateway.Request gateway = new ServerOperationGateway.Request(
-                        configuration.realm().realmId(), principalId, decoded.operation(), decoded.resource(),
+                        configuration.realm().realmId(), principalId, authenticated.mode(),
+                        authenticated.transportPrincipalId(), decoded.operation(), decoded.resource(),
                         Permission.Relationship.ANY, decoded.context(), decoded.approvalId(), requestId);
                 return realm.gateway().execute(gateway, cancellation);
             });
@@ -290,11 +311,42 @@ final class AdminHttpHandler implements HttpHandler {
             }
             return authenticator.authenticate(new PkiServerAuthenticationContext(chain,
                     exchange.getSSLSession().getProtocol(), exchange.getSSLSession().getCipherSuite(),
-                    requestId, configuration.realm().realmId()));
+                    requestId, configuration.realm().realmId(), authenticationHeaders(exchange.getRequestHeaders())));
         } catch (SSLPeerUnverifiedException failure) {
             return new PkiServerAuthenticationResult.Rejected(
+                    configuration.authentication().mode(), Optional.empty(), Optional.empty(),
                     PkiServerAuthenticationResult.Code.CERTIFICATE_INVALID);
+        } catch (RuntimeException failure) {
+            return new PkiServerAuthenticationResult.Rejected(
+                    configuration.authentication().mode(), Optional.empty(), Optional.empty(),
+                    PkiServerAuthenticationResult.Code.INTERNAL_FAILURE);
         }
+    }
+
+    private Map<String, List<String>> authenticationHeaders(Headers headers) {
+        java.util.Set<String> accepted = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        accepted.add(ForwardedClientCertificateParser.RFC_CERTIFICATE_HEADER);
+        accepted.add(ForwardedClientCertificateParser.RFC_CHAIN_HEADER);
+        accepted.add(ForwardedClientCertificateParser.DIRECT_REJECTED_NGINX_HEADER);
+        configuration.authentication().forwardedCertificateHeaderName().ifPresent(accepted::add);
+        configuration.authentication().forwardedCertificateChainHeaderName().ifPresent(accepted::add);
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+            if (accepted.contains(entry.getKey())) result.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        return Map.copyOf(result);
+    }
+
+    private static Map<String, String> authenticationDetails(String requestId,
+            zeroecho.pki.server.AdministrativeAuthenticationMode mode, Optional<String> transport,
+            Optional<String> endClient, String classification) {
+        Map<String, String> details = new LinkedHashMap<>();
+        details.put("request", requestId);
+        details.put("mode", mode.name());
+        transport.ifPresent(value -> details.put("transportPrincipal", value));
+        endClient.ifPresent(value -> details.put("endClientPrincipal", value));
+        details.put("classification", classification);
+        return Map.copyOf(details);
     }
 
     private byte[] body(InputStream input, String contentLength) throws IOException {

@@ -36,13 +36,33 @@ package zeroecho.pki.server.spi;
 import java.util.Objects;
 import java.util.Optional;
 
+import zeroecho.pki.server.AdministrativeAuthenticationMode;
+
 /** Safe closed mutual-TLS authentication result. */
 public sealed interface PkiServerAuthenticationResult permits PkiServerAuthenticationResult.Authenticated,
         PkiServerAuthenticationResult.Rejected {
     /** Successfully resolved persisted principal identity. */
-    record Authenticated(String principalId) implements PkiServerAuthenticationResult {
+    record Authenticated(AdministrativeAuthenticationMode mode, Optional<String> transportPrincipalId,
+            String endClientPrincipalId) implements PkiServerAuthenticationResult {
         /** Validates the finite principal identity. */
         public Authenticated {
+            Objects.requireNonNull(mode, "mode");
+            transportPrincipalId = Objects.requireNonNull(transportPrincipalId, "transportPrincipalId");
+            transportPrincipalId.ifPresent(Authenticated::requirePrincipal);
+            requirePrincipal(endClientPrincipalId);
+            if (mode == AdministrativeAuthenticationMode.DIRECT_MTLS && transportPrincipalId.isPresent()
+                    || mode == AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY
+                    && transportPrincipalId.isEmpty()) {
+                throw new IllegalArgumentException("Authentication principal separation is invalid");
+            }
+        }
+
+        /** Creates a direct-mTLS result for an existing certificate mapper. */
+        public Authenticated(String principalId) {
+            this(AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), principalId);
+        }
+
+        private static void requirePrincipal(String principalId) {
             if (principalId == null || !principalId.matches("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}")) {
                 throw new IllegalArgumentException("Principal identity is invalid");
             }
@@ -50,18 +70,35 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
     }
 
     /** Authentication rejection containing only a stable safe code. */
-    record Rejected(Code code) implements PkiServerAuthenticationResult {
-        /** Validates the rejection. */ public Rejected { Objects.requireNonNull(code, "code"); }
+    record Rejected(AdministrativeAuthenticationMode mode, Optional<String> transportPrincipalId,
+            Optional<String> endClientPrincipalId, Code code) implements PkiServerAuthenticationResult {
+        /** Validates the rejection. */
+        public Rejected {
+            Objects.requireNonNull(mode, "mode");
+            transportPrincipalId = Objects.requireNonNull(transportPrincipalId, "transportPrincipalId");
+            endClientPrincipalId = Objects.requireNonNull(endClientPrincipalId, "endClientPrincipalId");
+            transportPrincipalId.ifPresent(Authenticated::requirePrincipal);
+            endClientPrincipalId.ifPresent(Authenticated::requirePrincipal);
+            Objects.requireNonNull(code, "code");
+        }
+
+        /** Creates a direct-mode rejection without resolved identity metadata. */
+        public Rejected(Code code) {
+            this(AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), Optional.empty(), code);
+        }
     }
 
     /** Safe non-disclosing rejection codes. */
     enum Code {
-        CERTIFICATE_INVALID, MAPPING_UNAVAILABLE, MAPPING_AMBIGUOUS, PRINCIPAL_DISABLED, INTERNAL_FAILURE
+        CERTIFICATE_INVALID, MAPPING_UNAVAILABLE, MAPPING_AMBIGUOUS, PRINCIPAL_DISABLED,
+        FORWARDED_IDENTITY_FORBIDDEN, PROXY_NOT_TRUSTED, FORWARDING_NOT_AUTHORIZED,
+        FORWARDED_IDENTITY_MISSING, FORWARDED_IDENTITY_INVALID, CLIENT_TRUST_REJECTED,
+        CLIENT_USAGE_REJECTED, IDENTITY_COLLISION, INTERNAL_FAILURE
     }
 
     /** @return principal identity when authentication succeeded */
     default Optional<String> resolvedPrincipalId() {
         return this instanceof Authenticated authenticated
-                ? Optional.of(authenticated.principalId()) : Optional.empty();
+                ? Optional.of(authenticated.endClientPrincipalId()) : Optional.empty();
     }
 }

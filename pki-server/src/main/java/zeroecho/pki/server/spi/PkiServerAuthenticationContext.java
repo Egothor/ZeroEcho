@@ -35,6 +35,8 @@ package zeroecho.pki.server.spi;
 
 import java.security.cert.X509Certificate;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 import zeroecho.pki.server.RealmId;
@@ -48,9 +50,10 @@ import zeroecho.pki.server.RealmId;
  * @param cipherSuite negotiated cipher suite
  * @param requestId safe request correlation identity
  * @param realmId exact server realm
+ * @param requestHeaders bounded immutable request headers used only by an explicitly configured proxy mode
  */
 public record PkiServerAuthenticationContext(List<X509Certificate> peerCertificates, String protocol,
-        String cipherSuite, String requestId, RealmId realmId) {
+        String cipherSuite, String requestId, RealmId realmId, Map<String, List<String>> requestHeaders) {
     /** Validates and snapshots the finite authentication context. */
     public PkiServerAuthenticationContext {
         peerCertificates = List.copyOf(Objects.requireNonNull(peerCertificates, "peerCertificates"));
@@ -65,5 +68,28 @@ public record PkiServerAuthenticationContext(List<X509Certificate> peerCertifica
             throw new IllegalArgumentException("Request correlation identity is invalid");
         }
         Objects.requireNonNull(realmId, "realmId");
+        Map<String, List<String>> copied = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : Objects.requireNonNull(requestHeaders,
+                "requestHeaders").entrySet()) {
+            if (entry.getKey() == null || entry.getKey().length() > 256 || copied.size() >= 256) {
+                throw new IllegalArgumentException("Authentication header context is invalid");
+            }
+            copied.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        requestHeaders = Map.copyOf(copied);
+    }
+
+    /** Creates a direct-mTLS context without forwarded identity headers. */
+    public PkiServerAuthenticationContext(List<X509Certificate> peerCertificates, String protocol,
+            String cipherSuite, String requestId, RealmId realmId) {
+        this(peerCertificates, protocol, cipherSuite, requestId, realmId, Map.of());
+    }
+
+    /** Returns safe metadata only; certificate and header values are never rendered. */
+    @Override
+    public String toString() {
+        return "PkiServerAuthenticationContext[peerCertificates=" + peerCertificates.size()
+                + ", protocol=redacted, cipherSuite=redacted, requestId=" + requestId
+                + ", realmId=" + realmId + ", forwardedHeaderCount=" + requestHeaders.size() + "]";
     }
 }

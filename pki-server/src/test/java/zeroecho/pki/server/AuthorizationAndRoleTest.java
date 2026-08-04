@@ -111,6 +111,8 @@ class AuthorizationAndRoleTest {
         assertEquals(15, catalog.templates().size());
         assertTrue(catalog.templates().stream().anyMatch(item -> item.templateId().equals("platform-operator")));
         assertFalse(catalog.templates().stream().anyMatch(item -> item.templateId().contains("owner")));
+        assertFalse(catalog.templates().stream().anyMatch(item -> item.actions()
+                .contains(Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY)));
         RoleTemplateCatalog.Assignment requester = new RoleTemplateCatalog.Assignment("requester-role",
                 "requester", "requester", 1, ServerTestSupport.scope(), true);
         assertTrue(catalog.instantiate(requester).stream()

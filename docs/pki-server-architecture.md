@@ -882,6 +882,141 @@ Each server remains authoritative for its own realm.
 
 Cross-realm UI aggregation is presentation and orchestration, not shared PKI authority.
 
+
+## Trusted reverse-proxy TLS termination
+
+The ZeroEcho PKI server MUST support exactly these two explicit administrative authentication deployment modes:
+
+```text
+DIRECT_MTLS
+TRUSTED_REVERSE_PROXY
+```
+
+### Direct mutual TLS
+
+In `DIRECT_MTLS` mode, ZeroEcho terminates TLS, validates the client certificate, verifies possession through the TLS handshake, and maps the validated certificate to one persisted `SecurityPrincipal`.
+
+Forwarded client-identity headers MUST be rejected in this mode.
+
+### Trusted reverse proxy
+
+In `TRUSTED_REVERSE_PROXY` mode, a configured TLS-terminating reverse proxy such as NGINX validates the external client certificate and forwards the authenticated client identity to ZeroEcho.
+
+The proxy-to-ZeroEcho connection MUST itself be authenticated.
+
+The preferred deployment is:
+
+```text
+administrative client
+    -- mutual TLS -->
+trusted reverse proxy
+    -- separate mutual TLS -->
+ZeroEcho
+```
+
+The proxy MUST authenticate using a dedicated infrastructure identity that is distinct from every end-user principal.
+
+The server MUST distinguish:
+
+```text
+transport principal
+end-client principal
+```
+
+The transport principal identifies the trusted proxy. The end-client principal is used for administrative authorization.
+
+The proxy principal MUST NOT inherit the permissions of the end-client principal. It MAY only receive the narrowly scoped infrastructure authority required to forward an authenticated client identity.
+
+That infrastructure authority MUST be an explicit realm-scoped permission equivalent to `FORWARD_AUTHENTICATED_CLIENT_IDENTITY`. It grants no PKI, identity-administration, PII, approval, or end-client authority, and break-glass access MUST NOT create implicit forwarding authority.
+
+### Forwarded certificate formats
+
+The preferred forwarding format is the RFC 9440 `Client-Cert` header and optional `Client-Cert-Chain` header.
+
+ZeroEcho MAY additionally support one explicitly configured NGINX compatibility format based on URL-escaped PEM, but it MUST NOT auto-detect arbitrary proxy-specific identity headers.
+
+Every accepted format MUST have:
+
+* one stable configuration identifier;
+* strict bounded decoding;
+* duplicate-header rejection;
+* exact certificate consumption;
+* canonical certificate validation;
+* no subject-string-only identity mapping.
+
+### Header sanitization
+
+The trusted reverse proxy MUST remove or overwrite every incoming forwarded client-certificate header.
+
+A request for which external mutual TLS authentication did not succeed MUST NOT contain a forwarded client identity.
+
+ZeroEcho MUST reject:
+
+* forwarded identity received from an untrusted transport principal;
+* duplicate client-certificate headers;
+* malformed certificate or chain data;
+* absent client identity for an administrative operation;
+* zero or multiple principal mappings;
+* conflicting identity representations.
+
+### Independent backend validation
+
+ZeroEcho MUST independently validate the forwarded certificate and, when provided, its chain using the configured administrative-client trust policy.
+
+ZeroEcho MUST validate:
+
+* strict canonical certificate DER;
+* certificate validity;
+* configured trust;
+* allowed certificate usage;
+* exact certificate or SPKI commitment mapping;
+* persisted principal enabled state.
+
+The proof of possession for the external client certificate is attested by the trusted reverse proxy. Therefore, proxy authentication and transport integrity are part of the authentication authority in this mode.
+
+### Backend transport policy
+
+Plain unauthenticated HTTP over TCP MUST NOT be an enterprise-grade trusted-proxy mode, including over loopback.
+
+A production trusted-proxy deployment MUST use either:
+
+* mutually authenticated TLS from proxy to ZeroEcho; or
+* a future explicitly supported operating-system-authenticated local transport such as a permission-protected Unix domain socket.
+
+Client source-address headers, `X-Forwarded-For`, `Forwarded`, or PROXY protocol information MUST NOT establish authentication or authorization.
+
+### Audit
+
+Safe authentication audit MUST record:
+
+* authentication mode;
+* transport-principal identity;
+* end-client principal identity when resolved;
+* request correlation ID;
+* safe result classification.
+
+It MUST NOT record:
+
+* raw certificates;
+* subjects or SAN values;
+* forwarded certificate headers;
+* private material;
+* proxy credentials;
+* unrestricted parser or provider errors.
+
+### Security invariant
+
+Possession of a forwarded identity header is never authentication authority by itself.
+
+Forwarded client identity is trusted only when all of the following hold:
+
+```text
+configured trusted-proxy mode
++ authenticated authorized transport principal
++ valid forwarded-certificate format
++ successful certificate and principal validation
+```
+
 ## 18. Server implementation constraints
 
 The future server implementation MUST:

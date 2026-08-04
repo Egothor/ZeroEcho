@@ -46,8 +46,10 @@ import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 
+import zeroecho.pki.server.AdministrativeAuthenticationMode;
 import zeroecho.pki.server.PkiServerConfiguration.ClientCertificateMapping;
 import zeroecho.pki.server.SecurityPrincipal;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
@@ -108,6 +110,8 @@ public final class MutualTlsAuthenticator implements PkiServerAuthenticator {
             SecurityPrincipal principal = principalResolver.apply(matches.getFirst().principalId());
             if (!principal.enabled()) {
                 return new PkiServerAuthenticationResult.Rejected(
+                        AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(),
+                        Optional.of(principal.principalId()),
                         PkiServerAuthenticationResult.Code.PRINCIPAL_DISABLED);
             }
             return new PkiServerAuthenticationResult.Authenticated(principal.principalId());

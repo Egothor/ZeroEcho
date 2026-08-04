@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "serverName": "zeroecho-admin-nginx",
+  "realm": {
+    "realmId": "production",
+    "displayName": "ZeroEcho Production",
+    "authorityExposure": {"mode":"ALL_REALM_AUTHORITIES","authorityIds":[],"creationPermitted":false},
+    "authorizationCommitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "approvalCommitment": "96f85d99cb556b16af9b963833a832f905010681f437a757d94aab4a22e4c29c",
+    "disclosureCommitment": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "disclosureDefaults": {"rootCa":"PUBLIC","intermediateCa":"PUBLIC","caChain":"PUBLIC","crl":"PUBLIC","leaf":"OWNER_ONLY","sensitiveLeaf":"RESTRICTED"},
+    "controlLog": "state/server-control.log",
+    "controlStoreId": "0123456789abcdef0123456789abcdef",
+    "approvalPolicy": {"policyId":"high-risk","threshold":1,"eligibleApprovers":["bootstrap-approver"],"requiredRoleTemplateIds":[],"requesterSeparation":true,"lifetimeMillis":3600000,"justificationRequired":true},
+    "pkiSession": {
+      "version": 1,
+      "store": {"id":"fs","properties":{"root":"state/pki"}},
+      "audit": {"id":"file","properties":{"root":"state/audit"}},
+      "publishers": [],
+      "bindingProviders": []
+    }
+  },
+  "listener": {
+    "address": "127.0.0.1",
+    "port": 8443,
+    "tlsProvider": {"id":"jsse-pkcs12","properties":{"keyStore":"tls/server-identity.p12","keyStorePasswordEnvironment":"ZEROECHO_TLS_KEYSTORE_PASSWORD","trustStore":"tls/proxy-transport-trust.p12","trustStorePasswordEnvironment":"ZEROECHO_PROXY_TRUSTSTORE_PASSWORD"}},
+    "clientCertificateRequired": true,
+    "maximumHeaderBytes": 65536,
+    "maximumBodyBytes": 1048576
+  },
+  "authentication": {
+    "mode": "TRUSTED_REVERSE_PROXY",
+    "proxyTransportMappings": [{"mappingId":"proxy-transport","principalId":"trusted-proxy","certificateSha256":"1111111111111111111111111111111111111111111111111111111111111111"}],
+    "forwardedClientMappings": [{"mappingId":"forwarded-admin","principalId":"bootstrap-admin","subjectPublicKeyInfoSha256":"2222222222222222222222222222222222222222222222222222222222222222"}],
+    "trustedProxyPrincipalIds": ["trusted-proxy"],
+    "forwardedCertificateFormat": "NGINX_ESCAPED_PEM_V1",
+    "forwardedCertificateHeaderName": "X-ZeroEcho-Client-Cert",
+    "administrativeClientTrust": {"id":"jsse-pkcs12-client-trust","properties":{"trustStore":"tls/administrators-trust.p12","trustStorePasswordEnvironment":"ZEROECHO_ADMIN_TRUSTSTORE_PASSWORD"}},
+    "maximumForwardedCertificateBytes": 65536,
+    "maximumForwardedChainBytes": 524288
+  },
+  "execution": {"transportWorkers":8,"transportQueueCapacity":64,"operationWorkers":4,"operationQueueCapacity":32,"maximumAdmittedRequests":96,"defaultDeadlineMillis":30000,"maximumDeadlineMillis":120000,"gracefulShutdownMillis":30000,"forcedShutdownMillis":10000},
+  "runtime": {}
+}

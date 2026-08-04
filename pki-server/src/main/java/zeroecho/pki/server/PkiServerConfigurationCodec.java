@@ -55,7 +55,7 @@ import zeroecho.pki.server.http.StrictJson;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Strict version-one server configuration decoder with closed field sets. */
+/** Strict current-version server configuration decoder with closed field sets. */
 @SuppressWarnings("PMD")
 public final class PkiServerConfigurationCodec {
     /** Maximum server configuration document size. */
@@ -213,9 +213,37 @@ public final class PkiServerConfigurationCodec {
     }
 
     private static PkiServerConfiguration.Authentication authentication(Fields value) {
-        value.exact("mappings");
+        AdministrativeAuthenticationMode mode = AdministrativeAuthenticationMode.valueOf(value.text("mode"));
+        if (mode == AdministrativeAuthenticationMode.DIRECT_MTLS) {
+            value.exact("mode", "directClientMappings");
+            List<PkiServerConfiguration.ClientCertificateMapping> direct = mappings(
+                    value.list("directClientMappings"));
+            value.complete();
+            return new PkiServerConfiguration.Authentication(mode, direct, List.of(), List.of(), Set.of(),
+                    Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), 0, 0);
+        }
+        value.allowed(Set.of("mode", "proxyTransportMappings", "forwardedClientMappings",
+                "trustedProxyPrincipalIds", "forwardedCertificateFormat", "forwardedCertificateHeaderName",
+                "forwardedCertificateChainHeaderName", "administrativeClientTrust",
+                "maximumForwardedCertificateBytes", "maximumForwardedChainBytes"));
+        List<PkiServerConfiguration.ClientCertificateMapping> proxy = mappings(value.list("proxyTransportMappings"));
+        List<PkiServerConfiguration.ClientCertificateMapping> forwarded = mappings(
+                value.list("forwardedClientMappings"));
+        PkiServerConfiguration.Authentication result = new PkiServerConfiguration.Authentication(mode,
+                List.of(), proxy, forwarded, Set.copyOf(strings(value.list("trustedProxyPrincipalIds"))),
+                Optional.of(ForwardedCertificateFormat.valueOf(value.text("forwardedCertificateFormat"))),
+                Optional.of(value.text("forwardedCertificateHeaderName")),
+                value.optionalText("forwardedCertificateChainHeaderName"),
+                Optional.of(provider(value.object("administrativeClientTrust"))),
+                value.integer("maximumForwardedCertificateBytes"), value.integer("maximumForwardedChainBytes"));
+        value.complete();
+        return result;
+    }
+
+    private static List<PkiServerConfiguration.ClientCertificateMapping> mappings(
+            List<PkiOperationValue> source) {
         List<PkiServerConfiguration.ClientCertificateMapping> mappings = new ArrayList<>();
-        for (PkiOperationValue item : value.list("mappings")) {
+        for (PkiOperationValue item : source) {
             Fields mapping = Fields.of(item);
             mapping.allowed(Set.of("mappingId", "principalId", "certificateSha256",
                     "subjectPublicKeyInfoSha256", "issuerSerialSha256"));
@@ -225,8 +253,7 @@ public final class PkiServerConfigurationCodec {
                     mapping.optionalText("issuerSerialSha256")));
             mapping.complete();
         }
-        value.complete();
-        return new PkiServerConfiguration.Authentication(mappings);
+        return mappings;
     }
 
     private static PkiServerConfiguration.Execution execution(Fields value) {

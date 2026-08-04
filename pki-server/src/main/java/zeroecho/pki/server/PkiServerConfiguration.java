@@ -39,6 +39,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import zeroecho.pki.spi.ProviderConfig;
 
@@ -63,7 +64,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
 
     /** Current server configuration schema. */
-    public static final int CURRENT_VERSION = 1;
+    public static final int CURRENT_VERSION = 2;
 
     /** Validates all security-sensitive fields before resource allocation. */
     public PkiServerConfiguration {
@@ -76,9 +77,6 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Objects.requireNonNull(runtime, "runtime");
         if (!listener.clientCertificateRequired()) {
             throw new IllegalArgumentException("Administrative HTTPS requires client certificates");
-        }
-        if (authentication.mappings().isEmpty()) {
-            throw new IllegalArgumentException("Administrative HTTPS requires principal mappings");
         }
     }
 
@@ -114,17 +112,152 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     }
 
     /**
-     * Client-certificate authentication mappings.
+     * Strict mode-separated administrative client-certificate authentication.
      *
-     * @param mappings finite explicit immutable mappings
+     * @param mode exact deployment mode
+     * @param directClientMappings direct TLS end-client mappings
+     * @param proxyTransportMappings backend TLS proxy mappings
+     * @param forwardedClientMappings externally authenticated end-client mappings
+     * @param trustedProxyPrincipalIds explicitly admitted infrastructure principals
+     * @param forwardedCertificateFormat selected forwarding representation
+     * @param forwardedCertificateHeaderName exact leaf header name
+     * @param forwardedCertificateChainHeaderName optional exact chain header name
+     * @param administrativeClientTrust independent forwarded-client trust provider
+     * @param maximumForwardedCertificateBytes maximum decoded leaf size
+     * @param maximumForwardedChainBytes maximum aggregate decoded chain size
      */
-    public record Authentication(List<ClientCertificateMapping> mappings) {
-        /** Validates mapping uniqueness and snapshots input order. */
+    public record Authentication(AdministrativeAuthenticationMode mode,
+            List<ClientCertificateMapping> directClientMappings,
+            List<ClientCertificateMapping> proxyTransportMappings,
+            List<ClientCertificateMapping> forwardedClientMappings,
+            Set<String> trustedProxyPrincipalIds,
+            Optional<ForwardedCertificateFormat> forwardedCertificateFormat,
+            Optional<String> forwardedCertificateHeaderName,
+            Optional<String> forwardedCertificateChainHeaderName,
+            Optional<ProviderConfig> administrativeClientTrust,
+            int maximumForwardedCertificateBytes, int maximumForwardedChainBytes) {
+        /** Validates strict mode separation, mappings, headers, and technical bounds. */
         public Authentication {
-            mappings = List.copyOf(Objects.requireNonNull(mappings, "mappings"));
-            if (mappings.size() > 10_000) throw new IllegalArgumentException("Too many principal mappings");
-            if (mappings.stream().map(ClientCertificateMapping::mappingId).distinct().count() != mappings.size()) {
-                throw new IllegalArgumentException("Duplicate principal mapping identity");
+            Objects.requireNonNull(mode, "mode");
+            directClientMappings = mappings(directClientMappings, "direct client");
+            proxyTransportMappings = mappings(proxyTransportMappings, "proxy transport");
+            forwardedClientMappings = mappings(forwardedClientMappings, "forwarded client");
+            trustedProxyPrincipalIds = Set.copyOf(Objects.requireNonNull(trustedProxyPrincipalIds,
+                    "trustedProxyPrincipalIds"));
+            trustedProxyPrincipalIds.forEach(Permission::requirePrincipal);
+            forwardedCertificateFormat = Objects.requireNonNull(forwardedCertificateFormat,
+                    "forwardedCertificateFormat");
+            forwardedCertificateHeaderName = header(forwardedCertificateHeaderName,
+                    "forwardedCertificateHeaderName");
+            forwardedCertificateChainHeaderName = header(forwardedCertificateChainHeaderName,
+                    "forwardedCertificateChainHeaderName");
+            administrativeClientTrust = Objects.requireNonNull(administrativeClientTrust,
+                    "administrativeClientTrust");
+            if (mode == AdministrativeAuthenticationMode.DIRECT_MTLS) {
+                requireDirect(directClientMappings, proxyTransportMappings, forwardedClientMappings,
+                        trustedProxyPrincipalIds, forwardedCertificateFormat, forwardedCertificateHeaderName,
+                        forwardedCertificateChainHeaderName, administrativeClientTrust,
+                        maximumForwardedCertificateBytes, maximumForwardedChainBytes);
+            } else {
+                requireProxy(directClientMappings, proxyTransportMappings, forwardedClientMappings,
+                        trustedProxyPrincipalIds, forwardedCertificateFormat, forwardedCertificateHeaderName,
+                        forwardedCertificateChainHeaderName, administrativeClientTrust,
+                        maximumForwardedCertificateBytes, maximumForwardedChainBytes);
+            }
+        }
+
+        private static List<ClientCertificateMapping> mappings(List<ClientCertificateMapping> source,
+                String name) {
+            List<ClientCertificateMapping> result = List.copyOf(Objects.requireNonNull(source, name));
+            if (result.size() > 10_000) throw new IllegalArgumentException("Too many " + name + " mappings");
+            if (result.stream().map(ClientCertificateMapping::mappingId).distinct().count() != result.size()) {
+                throw new IllegalArgumentException("Duplicate " + name + " mapping identity");
+            }
+            return result;
+        }
+
+        private static Optional<String> header(Optional<String> source, String name) {
+            return Objects.requireNonNull(source, name).map(value -> {
+                if (!value.matches("[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}")) {
+                    throw new IllegalArgumentException("Forwarded certificate header name is invalid");
+                }
+                String lower = value.toLowerCase(java.util.Locale.ROOT);
+                if (Set.of("authorization", "connection", "content-length", "host", "transfer-encoding",
+                        "x-forwarded-for", "forwarded", "x-real-ip").contains(lower)) {
+                    throw new IllegalArgumentException("Forwarded certificate header name is prohibited");
+                }
+                return value;
+            });
+        }
+
+        private static void requireDirect(List<ClientCertificateMapping> direct,
+                List<ClientCertificateMapping> proxy, List<ClientCertificateMapping> forwarded,
+                Set<String> trusted, Optional<ForwardedCertificateFormat> format, Optional<String> header,
+                Optional<String> chainHeader, Optional<ProviderConfig> trust, int maximumCertificate,
+                int maximumChain) {
+            if (direct.isEmpty() || !proxy.isEmpty() || !forwarded.isEmpty() || !trusted.isEmpty()
+                    || format.isPresent() || header.isPresent() || chainHeader.isPresent() || trust.isPresent()
+                    || maximumCertificate != 0 || maximumChain != 0) {
+                throw new IllegalArgumentException("Direct authentication configuration is contradictory");
+            }
+        }
+
+        private static void requireProxy(List<ClientCertificateMapping> direct,
+                List<ClientCertificateMapping> proxy, List<ClientCertificateMapping> forwarded,
+                Set<String> trusted, Optional<ForwardedCertificateFormat> format, Optional<String> header,
+                Optional<String> chainHeader, Optional<ProviderConfig> trust, int maximumCertificate,
+                int maximumChain) {
+            if (!direct.isEmpty() || proxy.isEmpty() || forwarded.isEmpty() || trusted.isEmpty()
+                    || format.isEmpty() || header.isEmpty() || trust.isEmpty()) {
+                throw new IllegalArgumentException("Trusted-proxy authentication configuration is incomplete");
+            }
+            if (maximumCertificate < 512 || maximumCertificate > 1_048_576
+                    || maximumChain < 512 || maximumChain > 4_194_304) {
+                throw new IllegalArgumentException("Forwarded certificate bound is invalid");
+            }
+            if (proxy.stream().anyMatch(mapping -> !trusted.contains(mapping.principalId()))) {
+                throw new IllegalArgumentException("Proxy mapping is outside the trusted principal set");
+            }
+            if (proxy.stream().anyMatch(mapping -> mapping.certificateSha256().isEmpty()
+                    && mapping.subjectPublicKeyInfoSha256().isEmpty())) {
+                throw new IllegalArgumentException("Proxy mapping requires certificate or SPKI commitment");
+            }
+            if (forwarded.stream().anyMatch(mapping -> mapping.certificateSha256().isEmpty()
+                    && mapping.subjectPublicKeyInfoSha256().isEmpty())) {
+                throw new IllegalArgumentException("Forwarded client mapping requires certificate or SPKI commitment");
+            }
+            Set<String> proxyPrincipals = proxy.stream().map(ClientCertificateMapping::principalId)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            if (!trusted.equals(proxyPrincipals)) {
+                throw new IllegalArgumentException("Trusted proxy principals and mappings differ");
+            }
+            if (forwarded.stream().map(ClientCertificateMapping::principalId).anyMatch(proxyPrincipals::contains)) {
+                throw new IllegalArgumentException("Proxy and end-client principal mappings overlap");
+            }
+            Set<String> mappingIds = new java.util.HashSet<>();
+            if (java.util.stream.Stream.concat(proxy.stream(), forwarded.stream())
+                    .anyMatch(mapping -> !mappingIds.add(mapping.mappingId()))) {
+                throw new IllegalArgumentException("Proxy authentication mapping identity is duplicated");
+            }
+            Set<String> proxyCertificates = proxy.stream().flatMap(mapping -> mapping.certificateSha256().stream())
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            Set<String> proxyKeys = proxy.stream().flatMap(mapping -> mapping.subjectPublicKeyInfoSha256().stream())
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            if (forwarded.stream().anyMatch(mapping -> mapping.certificateSha256()
+                    .filter(proxyCertificates::contains).isPresent()
+                    || mapping.subjectPublicKeyInfoSha256().filter(proxyKeys::contains).isPresent())) {
+                throw new IllegalArgumentException("Proxy and end-client mapping commitments overlap");
+            }
+            if (format.orElseThrow() == ForwardedCertificateFormat.RFC9440) {
+                if (!"Client-Cert".equalsIgnoreCase(header.orElseThrow())
+                        || chainHeader.isEmpty()
+                        || !"Client-Cert-Chain".equalsIgnoreCase(chainHeader.orElseThrow())) {
+                    throw new IllegalArgumentException("RFC 9440 header names are fixed");
+                }
+            } else if (chainHeader.isPresent()
+                    || "Client-Cert".equalsIgnoreCase(header.orElseThrow())
+                    || "Client-Cert-Chain".equalsIgnoreCase(header.orElseThrow())) {
+                throw new IllegalArgumentException("NGINX compatibility header configuration is invalid");
             }
         }
     }

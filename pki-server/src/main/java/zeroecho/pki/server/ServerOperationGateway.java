@@ -65,7 +65,9 @@ public final class ServerOperationGateway {
      * Complete transport-neutral request admission input.
      *
      * @param realmId exact realm identity
-     * @param principalId authenticated or public principal identity
+     * @param principalId authenticated end-client principal identity
+     * @param authenticationMode explicit administrative authentication mode
+     * @param transportPrincipalId trusted proxy identity, present only in proxy mode
      * @param operation existing typed operation
      * @param resource exact non-bearer resource reference
      * @param relationship established object relationship
@@ -73,13 +75,24 @@ public final class ServerOperationGateway {
      * @param approvalId optional durable approval reference
      * @param correlationId safe finite request correlation identity
      */
-    public record Request(RealmId realmId, String principalId, AdministrativeOperation operation,
+    public record Request(RealmId realmId, String principalId,
+            AdministrativeAuthenticationMode authenticationMode, Optional<String> transportPrincipalId,
+            AdministrativeOperation operation,
             Permission.Resource resource, Permission.Relationship relationship, Permission.Context context,
             Optional<String> approvalId, String correlationId) {
         /** Validates the immutable request. */
         public Request {
             Objects.requireNonNull(realmId, "realmId");
             Permission.requirePrincipal(principalId);
+            Objects.requireNonNull(authenticationMode, "authenticationMode");
+            transportPrincipalId = Objects.requireNonNull(transportPrincipalId, "transportPrincipalId");
+            transportPrincipalId.ifPresent(Permission::requirePrincipal);
+            if (authenticationMode == AdministrativeAuthenticationMode.DIRECT_MTLS
+                    && transportPrincipalId.isPresent()
+                    || authenticationMode == AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY
+                    && transportPrincipalId.isEmpty()) {
+                throw new IllegalArgumentException("Gateway authentication identity context is invalid");
+            }
             Objects.requireNonNull(operation, "operation");
             Objects.requireNonNull(resource, "resource");
             Objects.requireNonNull(relationship, "relationship");
@@ -92,8 +105,17 @@ public final class ServerOperationGateway {
         public Request(RealmId realmId, String principalId, PkiOperation operation,
                 Permission.Resource resource, Permission.Relationship relationship, Permission.Context context,
                 Optional<String> approvalId, String correlationId) {
-            this(realmId, principalId, new AdministrativeOperation.Pki(operation), resource, relationship,
-                    context, approvalId, correlationId);
+            this(realmId, principalId, AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(),
+                    new AdministrativeOperation.Pki(operation), resource, relationship, context, approvalId,
+                    correlationId);
+        }
+
+        /** Creates a direct-mTLS request for existing embedded control callers. */
+        public Request(RealmId realmId, String principalId, AdministrativeOperation operation,
+                Permission.Resource resource, Permission.Relationship relationship, Permission.Context context,
+                Optional<String> approvalId, String correlationId) {
+            this(realmId, principalId, AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), operation,
+                    resource, relationship, context, approvalId, correlationId);
         }
     }
 
@@ -272,8 +294,7 @@ public final class ServerOperationGateway {
             }
             if (claimedApproval.isPresent()) approvals.complete(claimedApproval.orElseThrow(), classification(backend));
             audit.record("GATEWAY_RESULT", principal.principalId(), exact.resource().objectId(),
-                    Map.of("operation", exact.operation().name(), "result", classification(backend),
-                            "correlation", exact.correlationId()));
+                    gatewayDetails(exact, "result", classification(backend)));
             return new Outcome.Executed(backend);
         }
         ServerControlOperation controlOperation = ((AdministrativeOperation.Control) exact.operation()).operation();
@@ -282,7 +303,7 @@ public final class ServerOperationGateway {
         String result = classification(controlResult);
         if (claimedApproval.isPresent()) approvals.complete(claimedApproval.orElseThrow(), result);
         audit.record("GATEWAY_RESULT", principal.principalId(), exact.resource().objectId(),
-                Map.of("operation", exact.operation().name(), "result", result, "correlation", exact.correlationId()));
+                gatewayDetails(exact, "result", result));
         return new Outcome.ControlExecuted(controlResult);
     }
 
@@ -314,6 +335,60 @@ public final class ServerOperationGateway {
                         "correlation", correlationId));
         if (decision.usedBreakGlass()) breakGlass.auditUse(principalId);
         return decision;
+    }
+
+    /**
+     * Authorizes a dedicated service principal to attest one forwarded client
+     * identity. Break-glass grants are deliberately excluded from this transport
+     * trust decision.
+     *
+     * @param principalId authenticated backend TLS peer identity
+     * @param correlationId bounded request correlation identity
+     * @return default-deny decision with explicit-deny precedence
+     */
+    public AuthorizationEngine.Decision authorizeForwardedIdentity(String principalId, String correlationId) {
+        openCheck.run();
+        Permission.requirePrincipal(principalId);
+        Permission.requireBounded(correlationId, 256, "correlation ID");
+        SecurityPrincipal principal = control.requirePrincipal(principalId);
+        if (principal.type() != SecurityPrincipal.Type.SERVICE) {
+            return new AuthorizationEngine.Decision(AuthorizationEngine.Code.NO_MATCHING_GRANT, false);
+        }
+        List<Permission.Grant> principalGrants = grants(principal);
+        if (principalGrants.stream().anyMatch(grant -> grant.enabled()
+                && grant.effect() == Permission.Effect.ALLOW
+                && grant.action() != Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY)
+                || !breakGlass.activeFor(principalId).grants().isEmpty()) {
+            return new AuthorizationEngine.Decision(AuthorizationEngine.Code.NO_MATCHING_GRANT, false);
+        }
+        Permission.Resource resource = new Permission.Resource(Permission.ResourceType.REALM,
+                new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty()),
+                Optional.empty(), Optional.empty());
+        AuthorizationEngine.Decision decision = authorization.authorize(new AuthorizationEngine.Request(realmId,
+                exposure, principal, Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY, resource,
+                Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED, Permission.Context.empty(),
+                principalGrants, java.util.Set.of()));
+        audit.record(decision.allowed() ? "PROXY_FORWARD_ALLOW" : "PROXY_FORWARD_DENY", principalId,
+                Optional.empty(), Map.of("action", Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY.name(),
+                        "code", decision.code().name(), "correlation", correlationId));
+        return decision;
+    }
+
+    /**
+     * Fails startup when a configured proxy service principal has any enabled
+     * allowing authority beyond forwarded-identity attestation.
+     *
+     * @param principalId configured trusted proxy principal
+     */
+    public void validateForwardingPrincipal(String principalId) {
+        openCheck.run();
+        SecurityPrincipal principal = control.requirePrincipal(principalId);
+        if (!principal.enabled() || principal.type() != SecurityPrincipal.Type.SERVICE
+                || grants(principal).stream().anyMatch(grant -> grant.enabled()
+                        && grant.effect() == Permission.Effect.ALLOW
+                        && grant.action() != Permission.Action.FORWARD_AUTHENTICATED_CLIENT_IDENTITY)) {
+            throw new IllegalArgumentException("Trusted proxy principal authority is not narrowly scoped");
+        }
     }
 
     /**
@@ -463,9 +538,19 @@ public final class ServerOperationGateway {
 
     private Outcome denied(Request request, AuthorizationEngine.Code code) {
         audit.record("AUTHORIZATION_DENY", request.principalId(), Optional.empty(),
-                Map.of("operation", request.operation().name(), "code", code.name(),
-                        "correlation", request.correlationId()));
+                gatewayDetails(request, "code", code.name()));
         return new Outcome.Denied(code);
+    }
+
+    private static Map<String, String> gatewayDetails(Request request, String resultName, String result) {
+        Map<String, String> details = new LinkedHashMap<>();
+        details.put("operation", request.operation().name());
+        details.put(resultName, result);
+        details.put("correlation", request.correlationId());
+        details.put("authenticationMode", request.authenticationMode().name());
+        details.put("endClientPrincipal", request.principalId());
+        request.transportPrincipalId().ifPresent(value -> details.put("transportPrincipal", value));
+        return Map.copyOf(details);
     }
 
     private static Permission.Action action(PkiOperation operation, Permission.Action defaultAction) {

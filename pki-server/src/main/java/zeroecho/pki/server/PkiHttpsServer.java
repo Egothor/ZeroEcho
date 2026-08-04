@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLContext;
 
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
-import zeroecho.pki.server.http.MutualTlsAuthenticator;
+import zeroecho.pki.server.http.AdministrativeAuthenticator;
 import zeroecho.pki.server.http.PkiHttpsTransport;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
 
@@ -105,7 +105,17 @@ public final class PkiHttpsServer implements AutoCloseable {
             SSLContext tls = PkiHttpsTransport.resolveTls(exact, loader);
             realm = ServerRealmContext.open(exact.realm(), runtimeDependencies, clock, random);
             realm.auditTransport("SERVER_STARTUP", "system", Map.of("state", "STARTING"));
-            authenticator = new MutualTlsAuthenticator(exact.authentication().mappings(), realm::principal, clock);
+            if (exact.authentication().mode() == AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY) {
+                for (String principalId : exact.authentication().trustedProxyPrincipalIds()) {
+                    SecurityPrincipal principal = realm.principal(principalId);
+                    if (!principal.enabled() || principal.type() != SecurityPrincipal.Type.SERVICE) {
+                        throw new IllegalArgumentException("Trusted proxy principal is unavailable");
+                    }
+                    realm.gateway().validateForwardingPrincipal(principalId);
+                }
+            }
+            authenticator = AdministrativeAuthenticator.create(exact.authentication(), realm::principal,
+                    realm.gateway()::authorizeForwardedIdentity, clock, loader);
             ServerRealmContext sharedRealm = realm;
             transport = PkiHttpsTransport.startResolved(exact, sharedRealm, authenticator, clock, random, tls,
                     () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
@@ -169,8 +179,8 @@ public final class PkiHttpsServer implements AutoCloseable {
         } catch (Throwable failure) {
             primary = suppress(primary, failure);
         }
-        primary = close(realm, primary);
         primary = close(authenticator, primary);
+        primary = close(realm, primary);
         state.set(State.TERMINATED);
         rethrow(primary);
     }
@@ -178,8 +188,8 @@ public final class PkiHttpsServer implements AutoCloseable {
     private static void closePartial(PkiHttpsTransport transport, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, AtomicReference<State> state, Throwable primary) {
         primary = close(transport, primary);
-        primary = close(realm, primary);
-        close(authenticator, primary);
+        primary = close(authenticator, primary);
+        close(realm, primary);
         state.set(State.TERMINATED);
     }
 

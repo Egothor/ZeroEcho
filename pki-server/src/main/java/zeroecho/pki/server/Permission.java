@@ -43,7 +43,7 @@ import zeroecho.pki.api.PkiId;
 
 /** Closed permission vocabulary and immutable scoped grant model. */
 @SuppressWarnings({ "PMD.ExcessivePublicCount", "PMD.ControlStatementBraces",
-        "PMD.AvoidLiteralsInIfCondition", "PMD.CommentDefaultAccessModifier" })
+        "PMD.AvoidLiteralsInIfCondition", "PMD.CommentDefaultAccessModifier", "PMD.LongVariable" })
 public final class Permission {
     private Permission() {
     }
@@ -52,7 +52,8 @@ public final class Permission {
     public enum Action {
         REALM_READ(1), SERVER_HEALTH_READ(2), SERVER_CONFIGURATION_READ(3),
         SERVER_CONFIGURATION_UPDATE(4), IDENTITY_PROVIDER_MANAGE(5), PRINCIPAL_MANAGE(6),
-        ROLE_MANAGE(7), PERMISSION_GRANT(8), AUTHORITY_LIST(20), AUTHORITY_READ(21),
+        ROLE_MANAGE(7), PERMISSION_GRANT(8), FORWARD_AUTHENTICATED_CLIENT_IDENTITY(9),
+        AUTHORITY_LIST(20), AUTHORITY_READ(21),
         AUTHORITY_CREATE(22), AUTHORITY_IMPORT(23), AUTHORITY_ACTIVATE(24), AUTHORITY_SUSPEND(25),
         AUTHORITY_RETIRE(26), ISSUER_CREATE(27), ISSUER_ROTATE(28), ISSUER_RETIRE(29),
         CA_CHAIN_DOWNLOAD(30), PROFILE_READ(40), PROFILE_REGISTER(41), PROFILE_VALIDATE(42),

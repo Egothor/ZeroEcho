@@ -53,6 +53,8 @@ import java.util.Set;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.BasicConstraints;
@@ -67,34 +69,75 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
 import zeroecho.pki.application.PkiSessionConfiguration;
 import zeroecho.pki.server.http.TestTlsProvider;
+import zeroecho.pki.server.http.TestClientTrustProvider;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
 /** Shared deterministic TLS, realm and server configuration fixtures. */
-final class HttpServerTestSupport {
+public final class HttpServerTestSupport {
     static final char[] PASSWORD = "test-password".toCharArray();
 
     private HttpServerTestSupport() { }
 
-    static Fixture tls() throws Exception {
-        KeyPair rootKey = keyPair();
+    public static Fixture tls() throws Exception {
+        KeyPair rootKey = keyPair((byte) 1);
         X509Certificate root = certificate(rootKey, rootKey, "CN=ZeroEcho Test Root", "CN=ZeroEcho Test Root",
                 BigInteger.ONE, true, false);
-        KeyPair serverKey = keyPair();
+        KeyPair serverKey = keyPair((byte) 2);
         X509Certificate server = certificate(serverKey, rootKey, "CN=localhost", "CN=ZeroEcho Test Root",
                 BigInteger.TWO, false, true);
-        KeyPair clientKey = keyPair();
+        KeyPair clientKey = keyPair((byte) 3);
         X509Certificate client = certificate(clientKey, rootKey, "CN=client", "CN=ZeroEcho Test Root",
                 BigInteger.valueOf(3), false, false);
         SSLContext serverContext = context(serverKey, server, root, true);
         SSLContext clientContext = context(clientKey, client, root, true);
         SSLContext anonymousContext = context(clientKey, client, root, false);
+        KeyPair proxyKey = keyPair((byte) 4);
+        X509Certificate proxy = certificate(proxyKey, rootKey, "CN=proxy", "CN=ZeroEcho Test Root",
+                BigInteger.valueOf(4), false, false);
+        SSLContext proxyContext = context(proxyKey, proxy, root, true);
+        KeyPair forwardedKey = keyPair((byte) 5);
+        X509Certificate forwarded = certificate(forwardedKey, rootKey, "CN=forwarded-client",
+                "CN=ZeroEcho Test Root", BigInteger.valueOf(5), false, false);
         TestTlsProvider.install(serverContext);
-        return new Fixture(client, clientContext, anonymousContext);
+        TestClientTrustProvider.install(trustManager(root));
+        return new Fixture(client, clientContext, anonymousContext, proxy, proxyContext, forwarded, root);
     }
 
-    static PkiServerConfiguration configuration(java.nio.file.Path directory, X509Certificate client)
+    public static PkiServerConfiguration configuration(java.nio.file.Path directory, X509Certificate client)
             throws Exception {
+        return configuration(directory, directAuthentication(client));
+    }
+
+    public static PkiServerConfiguration proxyConfiguration(java.nio.file.Path directory, Fixture fixture,
+            ForwardedCertificateFormat format) throws Exception {
+        PkiServerConfiguration.ClientCertificateMapping proxy = mapping("proxy-map", "trusted-proxy",
+                fixture.proxyCertificate());
+        PkiServerConfiguration.ClientCertificateMapping forwarded = mapping("forwarded-map", "administrator",
+                fixture.forwardedCertificate());
+        String header = format == ForwardedCertificateFormat.RFC9440
+                ? "Client-Cert" : "X-ZeroEcho-Client-Cert";
+        Optional<String> chainHeader = format == ForwardedCertificateFormat.RFC9440
+                ? Optional.of("Client-Cert-Chain") : Optional.empty();
+        PkiServerConfiguration.Authentication authentication = new PkiServerConfiguration.Authentication(
+                AdministrativeAuthenticationMode.TRUSTED_REVERSE_PROXY, List.of(), List.of(proxy),
+                List.of(forwarded), Set.of("trusted-proxy"), Optional.of(format), Optional.of(header), chainHeader,
+                Optional.of(new ProviderConfig(TestClientTrustProvider.ID, Map.of())), 16_384, 65_536);
+        return configuration(directory, authentication);
+    }
+
+    private static PkiServerConfiguration.Authentication directAuthentication(X509Certificate client)
+            throws Exception {
+        PkiServerConfiguration.ClientCertificateMapping mapping = mapping("administrator-map", "administrator",
+                client);
+        return new PkiServerConfiguration.Authentication(AdministrativeAuthenticationMode.DIRECT_MTLS,
+                List.of(mapping), List.of(), List.of(), Set.of(), Optional.empty(), Optional.empty(),
+                Optional.empty(), Optional.empty(), 0, 0);
+    }
+
+    private static PkiServerConfiguration configuration(java.nio.file.Path directory,
+            PkiServerConfiguration.Authentication authentication) throws Exception {
+        java.nio.file.Files.createDirectories(directory);
         ApprovalService.Policy approval = new ApprovalService.Policy("high-risk", 1, Set.of("approver"),
                 Set.of(), true, Duration.ofHours(1), true);
         PkiSessionConfiguration session = new PkiSessionConfiguration(1,
@@ -106,29 +149,34 @@ final class HttpServerTestSupport {
                 DisclosureService.Defaults.recommended(), directory.resolve("control.log"),
                 new MetadataStoreId("fedcba9876543210fedcba9876543210"),
                 Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval));
-        String certificateDigest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                .digest(client.getEncoded()));
-        PkiServerConfiguration.ClientCertificateMapping mapping =
-                new PkiServerConfiguration.ClientCertificateMapping("administrator-map", "administrator",
-                        Optional.of(certificateDigest), Optional.empty(), Optional.empty());
-        return new PkiServerConfiguration(1, "test-server", realm,
+        return new PkiServerConfiguration(PkiServerConfiguration.CURRENT_VERSION, "test-server", realm,
                 new PkiServerConfiguration.Listener(InetAddress.getByName("127.0.0.1"), 0,
                         new ProviderConfig("test-tls", Map.of()), true, 16_384, 65_536),
-                new PkiServerConfiguration.Authentication(List.of(mapping)),
+                authentication,
                 new PkiServerConfiguration.Execution(2, 4, 2, 4, 8, Duration.ofSeconds(5),
                         Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofSeconds(1)),
                 new PkiServerConfiguration.RuntimeCapabilities(Optional.empty()));
     }
 
-    static SecureRandom random() throws Exception {
+    private static PkiServerConfiguration.ClientCertificateMapping mapping(String mappingId,
+            String principalId, X509Certificate certificate) throws Exception {
+        String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(certificate.getEncoded()));
+        return new PkiServerConfiguration.ClientCertificateMapping(mappingId, principalId, Optional.of(digest),
+                Optional.empty(), Optional.empty());
+    }
+
+    public static SecureRandom random() throws Exception {
         SecureRandom random = SecureRandom.getInstance("SHA1PRNG");
         random.setSeed(new byte[] { 1, 3, 5, 7, 9 });
         return random;
     }
 
-    private static KeyPair keyPair() throws Exception {
+    private static KeyPair keyPair(byte identity) throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-        generator.initialize(2048, random());
+        SecureRandom deterministic = SecureRandom.getInstance("SHA1PRNG");
+        deterministic.setSeed(new byte[] { 1, 3, 5, 7, 9, identity });
+        generator.initialize(2048, deterministic);
         return generator.generateKeyPair();
     }
 
@@ -172,5 +220,19 @@ final class HttpServerTestSupport {
         return context;
     }
 
-    record Fixture(X509Certificate clientCertificate, SSLContext clientContext, SSLContext anonymousContext) { }
+    private static X509TrustManager trustManager(X509Certificate root) throws Exception {
+        KeyStore trust = KeyStore.getInstance("PKCS12");
+        trust.load(null, PASSWORD);
+        trust.setCertificateEntry("root", root);
+        TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        factory.init(trust);
+        for (TrustManager manager : factory.getTrustManagers()) {
+            if (manager instanceof X509TrustManager result) return result;
+        }
+        throw new IllegalStateException("Test trust manager unavailable");
+    }
+
+    public record Fixture(X509Certificate clientCertificate, SSLContext clientContext, SSLContext anonymousContext,
+            X509Certificate proxyCertificate, SSLContext proxyContext, X509Certificate forwardedCertificate,
+            X509Certificate rootCertificate) { }
 }
