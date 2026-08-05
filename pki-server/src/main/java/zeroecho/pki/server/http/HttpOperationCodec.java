@@ -33,8 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
-import java.time.Duration;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -60,6 +60,8 @@ import zeroecho.pki.server.RepositoryAliasService;
 import zeroecho.pki.server.RoleTemplateCatalog;
 import zeroecho.pki.server.SecurityPrincipal;
 import zeroecho.pki.server.ServerControlOperation;
+import zeroecho.pki.server.acme.AcmeService;
+import zeroecho.pki.server.acme.AcmeState;
 
 /** Closed strict HTTP decoding for operations exposed by the existing gateway. */
 @SuppressWarnings("PMD")
@@ -391,6 +393,42 @@ final class HttpOperationCodec {
                         RepositoryAliasService.Type.valueOf(fields.text("type")),
                         fields.text("expectedCurrentCommitment"));
             }
+            case ServerControlOperation.RegisterAcmeDirectory.NAME -> {
+                fields.allowed(Set.of("alias", "authorityId", "profileId", "dnsNamespaces",
+                        "maximumValidityMillis", "publicKeyAlgorithms", "x509BindingPolicies",
+                        "challengeTypes", "challengeProviderIds", "eabProviderId", "eabRequired",
+                        "disclosurePolicy"));
+                yield new ServerControlOperation.RegisterAcmeDirectory(new AcmeService.DirectoryRegistration(
+                        fields.text("alias"), fields.pkiId("authorityId"), fields.text("profileId"),
+                        fields.stringSet("dnsNamespaces"), Duration.ofMillis(fields.longValue("maximumValidityMillis")),
+                        fields.stringSet("publicKeyAlgorithms"), fields.stringSet("x509BindingPolicies"),
+                        fields.enumSet("challengeTypes", AcmeState.ChallengeType.class),
+                        fields.stringSet("challengeProviderIds"), fields.optionalText("eabProviderId"),
+                        fields.bool("eabRequired"), DisclosureService.Policy.valueOf(fields.text("disclosurePolicy"))));
+            }
+            case ServerControlOperation.InspectAcmeDirectory.NAME -> {
+                fields.exact("directoryId"); yield new ServerControlOperation.InspectAcmeDirectory(
+                        fields.text("directoryId"));
+            }
+            case ServerControlOperation.ListAcmeDirectories.NAME -> {
+                fields.exact("offset", "limit"); yield new ServerControlOperation.ListAcmeDirectories(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.SetAcmeDirectoryActive.ACTIVATE,
+                    ServerControlOperation.SetAcmeDirectoryActive.DEACTIVATE -> {
+                fields.exact("directoryId"); yield new ServerControlOperation.SetAcmeDirectoryActive(
+                        fields.text("directoryId"), id.equals(ServerControlOperation.SetAcmeDirectoryActive.ACTIVATE));
+            }
+            case ServerControlOperation.InspectAcmeAccount.NAME -> {
+                fields.exact("accountId"); yield new ServerControlOperation.InspectAcmeAccount(fields.text("accountId"));
+            }
+            case ServerControlOperation.ListAcmeAccounts.NAME -> {
+                fields.exact("offset", "limit"); yield new ServerControlOperation.ListAcmeAccounts(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.DeactivateAcmeAccount.NAME -> {
+                fields.exact("accountId"); yield new ServerControlOperation.DeactivateAcmeAccount(fields.text("accountId"));
+            }
             default -> throw new SecurityException("Control operation is not exposed");
         };
     }
@@ -409,6 +447,8 @@ final class HttpOperationCodec {
                     value.authorityId());
             case ServerControlOperation.RemoveRepositoryAlias value -> authorityScope(realmId, authority,
                     value.authorityId());
+            case ServerControlOperation.RegisterAcmeDirectory value -> authorityScope(realmId, authority,
+                    value.registration().authorityId());
             default -> new Permission.Scope(realmId, authority, Optional.empty(), Optional.empty());
         };
     }
@@ -527,6 +567,15 @@ final class HttpOperationCodec {
                 if (!(item instanceof PkiOperationValue.Text text) || !result.add(Enum.valueOf(type, text.value()))) {
                     throw type();
                 }
+            }
+            return Set.copyOf(result);
+        }
+        Set<String> stringSet(String name) {
+            consumed.add(name); PkiOperationValue value = require(name);
+            if (!(value instanceof PkiOperationValue.ListValue list)) throw type();
+            Set<String> result = new LinkedHashSet<>();
+            for (PkiOperationValue item : list.values()) {
+                if (!(item instanceof PkiOperationValue.Text text) || !result.add(text.value())) throw type();
             }
             return Set.copyOf(result);
         }

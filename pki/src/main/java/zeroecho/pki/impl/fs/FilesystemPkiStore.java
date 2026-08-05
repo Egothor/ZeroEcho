@@ -84,6 +84,8 @@ import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.IssuerChainPath;
 import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.issuance.IssuanceIntent;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.api.policy.PolicyTrace;
@@ -173,7 +175,7 @@ import zeroecho.pki.spi.store.RevocationHistory;
  */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods",
         "PMD.ExcessivePublicCount", "PMD.UseTryWithResources", "PMD.ExceptionAsFlowControl",
-        "PMD.PreserveStackTrace", "PMD.NcssCount" })
+        "PMD.PreserveStackTrace", "PMD.NcssCount", "PMD.AvoidDuplicateLiterals" })
 public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
@@ -701,6 +703,43 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             return Optional.of(credentialContentTransactions.validateLoaded(credentialId, credential));
         } catch (IOException failure) {
             throw new IllegalStateException("Credential read failed", failure);
+        }
+    }
+
+    @Override
+    public Optional<Credential> getCredentialByIssuanceIntent(IssuanceIntent intent) {
+        requireStoreUsable();
+        Objects.requireNonNull(intent, "intent");
+        Path root = paths.root().resolve("credentials").resolve("by-id");
+        if (!Files.isDirectory(root)) {
+            return Optional.empty();
+        }
+        Credential match = null;
+        try (Stream<Path> records = Files.list(root)) {
+            java.util.Iterator<Path> iterator = records
+                    .filter(path -> path.getFileName().toString().endsWith(".bin"))
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString())).iterator();
+            while (iterator.hasNext()) {
+                Credential credential = FsCodec.decode(FsCodec.CREDENTIAL,
+                        FsOperations.readAll(iterator.next()), stagedContent);
+                Optional<AttributeValue> issuance = credential.attributes().get(IssuanceIntent.ID_ATTRIBUTE);
+                if (issuance.orElse(null) instanceof AttributeValue.StringValue value
+                        && intent.issuanceId().equals(value.value())) {
+                    Optional<AttributeValue> commitment = credential.attributes()
+                            .get(IssuanceIntent.COMMITMENT_ATTRIBUTE);
+                    if (!(commitment.orElse(null) instanceof AttributeValue.StringValue command)
+                            || !intent.commandCommitment().equals(command.value())) {
+                        throw new IllegalStateException("Issuance identity was reused with different input");
+                    }
+                    if (match != null) {
+                        throw new IllegalStateException("Duplicate issuance identity");
+                    }
+                    match = credentialContentTransactions.validateLoaded(credential.credentialId(), credential);
+                }
+            }
+            return Optional.ofNullable(match);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Issuance correlation read failed", failure);
         }
     }
 

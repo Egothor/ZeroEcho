@@ -47,6 +47,7 @@ import zeroecho.pki.application.PkiOperationExecutor;
 import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.server.acme.AcmeService;
 import zeroecho.pki.application.PkiResourceScopeResolver;
 
 /**
@@ -59,7 +60,8 @@ import zeroecho.pki.application.PkiResourceScopeResolver;
  */
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
         "PMD.ExcessiveParameterList", "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops",
-        "PMD.NcssCount", "PMD.ConfusingTernary", "PMD.ExceptionAsFlowControl" })
+        "PMD.NcssCount", "PMD.ConfusingTernary", "PMD.ExceptionAsFlowControl",
+        "PMD.CouplingBetweenObjects" })
 public final class ServerOperationGateway {
     /**
      * Complete transport-neutral request admission input.
@@ -185,6 +187,9 @@ public final class ServerOperationGateway {
         this.audit = new SafeAudit(clock, auditSink);
         this.openCheck = Objects.requireNonNull(openCheck, "openCheck");
     }
+
+    /** Installs the optional configured ACME control capability once before listener readiness. */
+    public void installAcme(AcmeService service) { controlExecutor.installAcme(service); }
 
     /** Creates the pre-control-plane gateway surface for embedded source compatibility. */
     public ServerOperationGateway(RealmId realmId, AuthorityExposurePolicy exposure, ServerControlStore control,
@@ -526,6 +531,13 @@ public final class ServerOperationGateway {
             case ServerControlOperation.ActivateBreakGlass value -> breakGlass.requireCurrent(value.breakGlassId()).grant().scope();
             case ServerControlOperation.InspectBreakGlass value -> breakGlass.requireCurrent(value.breakGlassId()).grant().scope();
             case ServerControlOperation.RevokeBreakGlass value -> breakGlass.requireCurrent(value.breakGlassId()).grant().scope();
+            case ServerControlOperation.RegisterAcmeDirectory value -> new Permission.Scope(realmId,
+                    Optional.of(value.registration().authorityId()), Optional.empty(),
+                    Optional.of(value.registration().profileId()));
+            case ServerControlOperation.InspectAcmeDirectory value -> controlExecutor.acmeScope(value);
+            case ServerControlOperation.SetAcmeDirectoryActive value -> controlExecutor.acmeScope(value);
+            case ServerControlOperation.InspectAcmeAccount value -> controlExecutor.acmeScope(value);
+            case ServerControlOperation.DeactivateAcmeAccount value -> controlExecutor.acmeScope(value);
             default -> resource.scope();
         };
         if (!actual.equals(resource.scope())) throw new SecurityException("Control scope differs");

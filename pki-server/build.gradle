@@ -19,6 +19,10 @@ application {
     applicationName = 'zeroecho-pki-server'
 }
 
+tasks.named('test') {
+    dependsOn tasks.named('installDist')
+}
+
 jar {
     manifest {
         attributes(

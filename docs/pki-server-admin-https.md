@@ -76,7 +76,7 @@ GET  /admin/v1/operations/{operationId}
 POST /admin/v1/operations/{operationId}
 ```
 
-No ACME or public certificate repository routes are part of this server. Administrative POST bodies are strict UTF-8 JSON containing version, optional authority and approval identities, an optional shortening deadline, and the closed argument object for one typed operation. Batch execution, file paths, raw DER, polymorphic class metadata, unknown keys, duplicate keys, and trailing JSON are rejected.
+No ACME or public certificate repository routes are registered on the administrative listener. Optional ACME and public repository listeners are independently configured and bounded; see [pki-server-acme.md](pki-server-acme.md) and [pki-server-public-repository.md](pki-server-public-repository.md). Administrative POST bodies are strict UTF-8 JSON containing version, optional authority and approval identities, an optional shortening deadline, and the closed argument object for one typed operation. Batch execution, file paths, raw DER, polymorphic class metadata, unknown keys, duplicate keys, and trailing JSON are rejected.
 
 Responses are deterministic version-one JSON. They carry only safe typed results or stable failure codes. `RECOVERY_REQUIRED` and `EXTERNAL_OUTCOME_UNKNOWN` remain distinct; deadlines never claim rollback and never trigger automatic retry.
 

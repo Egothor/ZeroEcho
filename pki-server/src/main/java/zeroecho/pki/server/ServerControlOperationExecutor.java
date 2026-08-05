@@ -46,6 +46,8 @@ import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.server.acme.AcmeService;
+import zeroecho.pki.server.acme.AcmeState;
 
 /** Sole closed dispatcher for transport-neutral server-control operations. */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.ExcessiveParameterList",
@@ -63,6 +65,7 @@ public final class ServerControlOperationExecutor {
     private final Optional<RepositoryAliasService> repositoryAliases;
     private final OperationSecurityDescriptors descriptors;
     private final Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies;
+    private final java.util.concurrent.atomic.AtomicReference<AcmeService> acme = new java.util.concurrent.atomic.AtomicReference<>();
 
     /** Creates the one control dispatcher over existing durable authorities. */
     public ServerControlOperationExecutor(RealmId realmId, AuthorityExposurePolicy exposure,
@@ -105,6 +108,32 @@ public final class ServerControlOperationExecutor {
         } catch (IllegalStateException conflict) {
             return failure(operation, PkiOperationFailure.CONFLICT, "CONTROL_STATE_CONFLICT");
         }
+    }
+
+    /** Installs the explicitly configured ACME capability exactly once before listener readiness. */
+    public void installAcme(AcmeService service) {
+        if (!acme.compareAndSet(null, Objects.requireNonNull(service, "service"))) {
+            throw new IllegalStateException("ACME administration capability is already installed");
+        }
+    }
+
+    /** Resolves exact ACME authority/profile scope from durable records. */
+    /* default */ Permission.Scope acmeScope(ServerControlOperation operation) {
+        AcmeState.Directory directory = switch (operation) {
+            case ServerControlOperation.RegisterAcmeDirectory ignored -> null;
+            case ServerControlOperation.InspectAcmeDirectory value -> acme().directory(value.directoryId());
+            case ServerControlOperation.SetAcmeDirectoryActive value -> acme().directory(value.directoryId());
+            case ServerControlOperation.InspectAcmeAccount value -> acme().directory(acme().account(value.accountId()).directoryId());
+            case ServerControlOperation.DeactivateAcmeAccount value -> acme().directory(acme().account(value.accountId()).directoryId());
+            default -> null;
+        };
+        if (operation instanceof ServerControlOperation.RegisterAcmeDirectory registration) {
+            return new Permission.Scope(realmId, Optional.of(registration.registration().authorityId()),
+                    Optional.empty(), Optional.of(registration.registration().profileId()));
+        }
+        if (directory == null) return new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty());
+        return new Permission.Scope(realmId, Optional.of(directory.authorityId()), Optional.empty(),
+                Optional.of(directory.profile().profileId()));
     }
 
     private ServerControlOperationOutcome dispatch(ServerControlOperation operation, String actor,
@@ -176,7 +205,26 @@ public final class ServerControlOperationExecutor {
                     alias(publishAlias(value, actor)));
             case ServerControlOperation.RemoveRepositoryAlias value -> ordinary(operation,
                     alias(aliases().remove(value.authorityId(), value.type(), value.expectedCurrentCommitment(), actor)));
+            case ServerControlOperation.RegisterAcmeDirectory value -> ordinary(operation,
+                    directory(acme().registerDirectory(value.registration())));
+            case ServerControlOperation.InspectAcmeDirectory value -> ordinary(operation,
+                    directory(acme().directory(value.directoryId())));
+            case ServerControlOperation.ListAcmeDirectories value -> ordinary(operation,
+                    page(acme().directories(value.offset(), value.limit()), ServerControlOperationExecutor::directory));
+            case ServerControlOperation.SetAcmeDirectoryActive value -> ordinary(operation,
+                    directory(value.active() ? acme().activateDirectory(value.directoryId())
+                            : acme().deactivateDirectory(value.directoryId())));
+            case ServerControlOperation.InspectAcmeAccount value -> ordinary(operation,
+                    account(acme().account(value.accountId())));
+            case ServerControlOperation.ListAcmeAccounts value -> ordinary(operation,
+                    page(acme().accounts(value.offset(), value.limit()), ServerControlOperationExecutor::account));
+            case ServerControlOperation.DeactivateAcmeAccount value -> ordinary(operation,
+                    account(acme().deactivateAccount(value.accountId())));
         };
+    }
+
+    private AcmeService acme() {
+        return Optional.ofNullable(acme.get()).orElseThrow(() -> new IllegalStateException("ACME capability unavailable"));
     }
 
     private RepositoryAliasService aliases() {
@@ -329,6 +377,18 @@ public final class ServerControlOperationExecutor {
         fields.put("state", text(value.state().name()));
         fields.put("recordCommitment", text(value.recordCommitment()));
         return new PkiOperationValue.ObjectValue(fields);
+    }
+    private static PkiOperationValue directory(AcmeState.Directory value) {
+        return object("directoryId", text(value.directoryId()), "alias", text(value.alias()),
+                "revision", integer(value.revision()), "authorityId", text(value.authorityId().value()),
+                "profileId", text(value.profile().profileId()), "issuerId", text(value.issuerId().value()),
+                "pathId", text(value.issuancePathId().value()), "status", text(value.status().name()),
+                "policyCommitment", text(value.policyCommitment()));
+    }
+    private static PkiOperationValue account(AcmeState.Account value) {
+        return object("accountId", text(value.accountId()), "directoryId", text(value.directoryId()),
+                "directoryRevision", integer(value.directoryRevision()), "status", text(value.status().name()),
+                "createdAt", text(value.createdAt().toString()), "updatedAt", text(value.updatedAt().toString()));
     }
     private static PkiOperationValue template(RoleTemplateCatalog.Template value) {
         List<PkiOperationValue> actions = value.actions().stream().sorted(Comparator.comparingInt(Permission.Action::code))

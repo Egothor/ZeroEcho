@@ -50,6 +50,7 @@ import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.impl.fs.PosixTransactionalMetadataStore;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.bootstrap.PkiBootstrap;
+import zeroecho.pki.server.acme.AcmeControlStore;
 
 /**
  * Lifecycle owner for one server realm, one long-lived PKI session, and one
@@ -77,6 +78,7 @@ public final class ServerRealmContext implements AutoCloseable {
     private final BreakGlassService breakGlass;
     private final DisclosureService disclosure;
     private final RepositoryAliasService repositoryAliases;
+    private final AcmeControlStore acmeControl;
     private final PublicRepositoryGateway publicRepository;
     private final AuditorViews auditorViews;
     private final ServerOperationGateway gateway;
@@ -97,6 +99,8 @@ public final class ServerRealmContext implements AutoCloseable {
         this.breakGlass = breakGlass;
         this.disclosure = disclosure;
         this.repositoryAliases = repositoryAliases;
+        this.acmeControl = new AcmeControlStore(control);
+        this.acmeControl.validateAndRecover(clock);
         this.publicRepository = new PublicRepositoryGateway(configuration.realmId(), configuration.authorityExposure(),
                 session.repository(), control, roles, authorization, breakGlass, disclosure, repositoryAliases,
                 this::requireOpen);
@@ -180,6 +184,8 @@ public final class ServerRealmContext implements AutoCloseable {
     public DisclosureService disclosure() { requireOpen(); return disclosure; }
     /** @return durable non-authoritative public repository alias service */
     public RepositoryAliasService repositoryAliases() { requireOpen(); return repositoryAliases; }
+    /** @return typed ACME records in the realm's sole durable control authority */
+    public AcmeControlStore acmeControl() { requireOpen(); return acmeControl; }
     /** @return read-only disclosed public repository gateway */
     public PublicRepositoryGateway publicRepository() { requireOpen(); return publicRepository; }
     /** @return explicit auditor projection service */

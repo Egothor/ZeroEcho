@@ -91,6 +91,25 @@ class HttpServerControlOperationCodecTest {
         System.out.println("...ok");
     }
 
+    @Test
+    void decodesDirectoryRegistrationWithClosedPolicy() {
+        System.out.println("decodesDirectoryRegistrationWithClosedPolicy");
+        String json = "{\"version\":1,\"authorityId\":\"ca:internal\",\"arguments\":{"
+                + "\"alias\":\"internal\",\"authorityId\":\"ca:internal\",\"profileId\":\"tls\","
+                + "\"dnsNamespaces\":[\"example.test\"],\"maximumValidityMillis\":86400000,"
+                + "\"publicKeyAlgorithms\":[\"ECDSA\"],\"x509BindingPolicies\":[\"STANDARD_ONLY\"],"
+                + "\"challengeTypes\":[\"DNS_01\"],\"challengeProviderIds\":[\"zeroecho.dns-01.jndi.v1\"],"
+                + "\"eabRequired\":false,\"disclosurePolicy\":\"OWNER_ONLY\"}}";
+        HttpOperationCodec.Decoded decoded = decode(ServerControlOperation.RegisterAcmeDirectory.NAME, json);
+        ServerControlOperation.RegisterAcmeDirectory operation = assertInstanceOf(
+                ServerControlOperation.RegisterAcmeDirectory.class,
+                ((AdministrativeOperation.Control) decoded.operation()).operation());
+        assertEquals("internal", operation.registration().alias());
+        assertEquals("tls", operation.registration().profileId());
+        System.out.println("...directory-policy=closed");
+        System.out.println("...ok");
+    }
+
     private static HttpOperationCodec.Decoded decode(String operation, String json) {
         return HttpOperationCodec.decode(operation, json.getBytes(StandardCharsets.UTF_8), 16_384,
                 REALM, DESCRIPTORS::require);

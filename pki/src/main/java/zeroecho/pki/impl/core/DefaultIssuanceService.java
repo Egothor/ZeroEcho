@@ -54,6 +54,7 @@ import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
@@ -67,6 +68,7 @@ import zeroecho.pki.api.credential.EffectiveCredentialStatus;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.api.issuance.BundleCommand;
 import zeroecho.pki.api.issuance.IssueEndEntityCommand;
+import zeroecho.pki.api.issuance.IssuanceIntent;
 import zeroecho.pki.api.issuance.ReissueCommand;
 import zeroecho.pki.api.issuance.RenewCommand;
 import zeroecho.pki.api.issuance.ReplaceCommand;
@@ -86,6 +88,7 @@ import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialIssuerBackend;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
 /**
  * Default implementation of {@link IssuanceService}.
@@ -142,7 +145,7 @@ import zeroecho.pki.spi.store.PkiStore;
  * </p>
  */
 // PMD cannot infer that retaining boundary causes would violate the redaction contract.
-@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace" })
+@SuppressWarnings({ "PMD.AvoidSynchronizedAtMethodLevel", "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace" })
 public final class DefaultIssuanceService implements IssuanceService {
 
     /**
@@ -227,8 +230,13 @@ public final class DefaultIssuanceService implements IssuanceService {
      *                              persistence of the validated leaf fails
      */
     @Override
-    public CredentialBundle issueEndEntity(IssueEndEntityCommand command) {
+    public synchronized CredentialBundle issueEndEntity(IssueEndEntityCommand command) {
         Objects.requireNonNull(command, "command");
+        Optional<Credential> committed = command.issuanceIntent()
+                .flatMap(store::getCredentialByIssuanceIntent);
+        if (committed.isPresent()) {
+            return committedBundle(command, committed.orElseThrow());
+        }
         CaRecord issuer = store.getCa(command.issuerCaId()).orElseThrow(() -> new PkiException("Issuer CA not found"));
 
         if (issuer.state() != CaState.ACTIVE) {
@@ -242,6 +250,11 @@ public final class DefaultIssuanceService implements IssuanceService {
             throw rejection(candidate.request(), "PROFILE_NOT_ACTIVE");
         }
         CertificateProfile profile = active.profile();
+        command.issuanceIntent().ifPresent(intent -> {
+            if (!intent.expectedProfile().equals(active.reference())) {
+                throw new PkiException("Frozen issuance profile is unavailable");
+            }
+        });
         if (!command.profileId().equals(active.reference().profileId())) {
             throw rejection(candidate.request(), "PROFILE_ID_MISMATCH");
         }
@@ -255,6 +268,7 @@ public final class DefaultIssuanceService implements IssuanceService {
                 CredentialUse.END_ENTITY_ISSUER, statusEvaluation));
         zeroecho.pki.api.ca.IssuerGeneration generation = IssuerAuthorities.current(store, issuer);
         zeroecho.pki.api.ca.IssuerChainPath issuancePath = IssuerAuthorities.issuancePath(store, issuer);
+        command.issuanceIntent().ifPresent(intent -> requireFrozenSelection(intent, generation, issuancePath));
         ValidatedCertificateRequest validated;
         try {
             validated = CertificateProfileValidator.validate(candidate, profile, active.reference(), issuerCred,
@@ -274,8 +288,44 @@ public final class DefaultIssuanceService implements IssuanceService {
         requireIssuedCredentialMatches(validated, issuerCred, serial, bundle, candidate.request());
         Credential exactCredential = IssuerAuthorities.withIssuer(bundle.credential(),
                 new zeroecho.pki.api.IssuerRef(issuer.caId(), generation.issuerId(), issuancePath.pathId()));
+        if (command.issuanceIntent().isPresent()) {
+            IssuanceIntent intent = command.issuanceIntent().orElseThrow();
+            AttributeSet attributes = SimpleAttributeSet.builder().putAll(exactCredential.attributes())
+                    .put(IssuanceIntent.ID_ATTRIBUTE, new AttributeValue.StringValue(intent.issuanceId()))
+                    .put(IssuanceIntent.COMMITMENT_ATTRIBUTE,
+                            new AttributeValue.StringValue(intent.commandCommitment())).build();
+            exactCredential = new Credential(exactCredential.credentialId(), exactCredential.formatId(),
+                    exactCredential.issuerRef(), exactCredential.subjectRef(), exactCredential.validity(),
+                    exactCredential.serialOrUniqueId(), exactCredential.publicKeyId(),
+                    exactCredential.profileBinding(), exactCredential.status(), exactCredential.content(), attributes);
+        }
         store.putCredential(exactCredential);
         return new CredentialBundle(exactCredential, pathContent(issuancePath));
+    }
+
+    private CredentialBundle committedBundle(IssueEndEntityCommand command, Credential credential) {
+        IssuanceIntent intent = command.issuanceIntent().orElseThrow();
+        if (!credential.issuerRef().caId().equals(command.issuerCaId())
+                || !credential.issuerRef().issuerId().equals(intent.expectedIssuerId())
+                || !credential.issuerRef().chainPathId().equals(intent.expectedChainPathId())) {
+            throw new PkiException("Committed issuance selection mismatch");
+        }
+        zeroecho.pki.api.ca.IssuerChainPath path = store.getIssuerChainPath(intent.expectedChainPathId())
+                .orElseThrow(() -> new PkiException("Committed issuance chain path is unavailable"));
+        if (!path.pathCommitment().equals(intent.expectedChainPathCommitment())) {
+            throw new PkiException("Committed issuance chain commitment mismatch");
+        }
+        return new CredentialBundle(CredentialSnapshots.copy(credential), pathContent(path));
+    }
+
+    private static void requireFrozenSelection(IssuanceIntent intent,
+            zeroecho.pki.api.ca.IssuerGeneration generation,
+            zeroecho.pki.api.ca.IssuerChainPath path) {
+        if (!generation.issuerId().equals(intent.expectedIssuerId())
+                || !path.pathId().equals(intent.expectedChainPathId())
+                || !path.pathCommitment().equals(intent.expectedChainPathCommitment())) {
+            throw new PkiException("Frozen issuance selection is no longer active");
+        }
     }
 
     /**

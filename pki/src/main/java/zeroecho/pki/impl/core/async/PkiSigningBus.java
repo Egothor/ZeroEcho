@@ -62,6 +62,7 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
@@ -332,10 +333,25 @@ public final class PkiSigningBus implements AutoCloseable {
         if (supportedAlgorithms.isEmpty()) {
             throw new IllegalArgumentException("Signature workflow must declare a signing identity");
         }
-        for (String algorithm : supportedAlgorithms) {
-            X509ExecutionPlan<SignatureWorkflow> plan = authority.planSigning(algorithm,
-                    workflowImplementationId(workflow), SignatureWorkflow.class);
-            authority.authorize(plan, workflow, AlgorithmExecutionCapability.Direction.SIGN);
+        int x509Capable = 0;
+        for (String algorithm : supportedAlgorithms.stream().sorted().toList()) {
+            try {
+                X509ExecutionPlan<SignatureWorkflow> plan = authority.planSigning(algorithm,
+                        workflowImplementationId(workflow), SignatureWorkflow.class);
+                authority.authorize(plan, workflow, AlgorithmExecutionCapability.Direction.SIGN);
+                x509Capable++;
+            } catch (X509AlgorithmResolver.ResolutionException unavailable) {
+                if (unavailable.failure() != X509AlgorithmResolver.Failure.NO_BINDING) {
+                    throw unavailable;
+                }
+            } catch (IllegalArgumentException unavailable) {
+                if (!"Unknown algorithm identity".equals(unavailable.getMessage())) {
+                    throw unavailable;
+                }
+            }
+        }
+        if (x509Capable == 0) {
+            throw new IllegalArgumentException("Signature workflow has no X.509-capable signing identity");
         }
     }
 

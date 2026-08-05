@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "serverName": "zeroecho-admin-nginx",
   "realm": {
     "realmId": "production",
@@ -41,5 +41,6 @@
   },
   "execution": {"transportWorkers":8,"transportQueueCapacity":64,"operationWorkers":4,"operationQueueCapacity":32,"maximumAdmittedRequests":96,"defaultDeadlineMillis":30000,"maximumDeadlineMillis":120000,"gracefulShutdownMillis":30000,"forcedShutdownMillis":10000},
   "publicListener": {"enabled":false},
+  "acmeListener": {"enabled":false},
   "runtime": {}
 }

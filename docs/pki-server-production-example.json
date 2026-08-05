@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "serverName": "zeroecho-admin",
   "realm": {
     "realmId": "production",
@@ -75,5 +75,6 @@
     "forcedShutdownMillis": 10000
   },
   "publicListener": {"enabled": false},
+  "acmeListener": {"enabled": false},
   "runtime": {}
 }

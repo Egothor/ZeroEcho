@@ -90,6 +90,23 @@ public final class DisclosureService {
         }
     }
 
+    /** Typed disclosure owner, keeping ACME accounts outside administrative principals. */
+    public record Owner(OwnerType type, String ownerId) {
+        /** Closed owner categories. */
+        public enum OwnerType { SECURITY_PRINCIPAL, ACME_ACCOUNT }
+        /** Validates the canonical owner identity. */
+        public Owner {
+            Objects.requireNonNull(type, "type");
+            if (ownerId == null || !ownerId.matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
+                throw new IllegalArgumentException("Disclosure owner identity is invalid");
+            }
+        }
+        /** Creates an administrative-principal owner. */
+        public static Owner principal(String id) { Permission.requirePrincipal(id); return new Owner(OwnerType.SECURITY_PRINCIPAL, id); }
+        /** Creates a protocol-scoped ACME-account owner. */
+        public static Owner acmeAccount(String id) { return new Owner(OwnerType.ACME_ACCOUNT, id); }
+    }
+
     /**
      * Configuration-driven safe defaults.
      *
@@ -125,7 +142,7 @@ public final class DisclosureService {
 
     /** Durable policy bound to exact object and profile/policy commitment. */
     public record Record(PkiId objectId, ObjectType objectType, Policy policy, Optional<String> ownerPrincipalId,
-            String policyCommitment, Instant updatedAt) {
+            Optional<String> ownerAcmeAccountId, String policyCommitment, Instant updatedAt) {
         /** Validates the durable disclosure record. */
         public Record {
             Objects.requireNonNull(objectId, "objectId");
@@ -133,14 +150,25 @@ public final class DisclosureService {
             Objects.requireNonNull(policy, "policy");
             ownerPrincipalId = Objects.requireNonNull(ownerPrincipalId, "ownerPrincipalId")
                     .map(Permission::requirePrincipal);
+            ownerAcmeAccountId = Objects.requireNonNull(ownerAcmeAccountId, "ownerAcmeAccountId");
+            ownerAcmeAccountId.ifPresent(value -> new Owner(Owner.OwnerType.ACME_ACCOUNT, value));
+            if (ownerPrincipalId.isPresent() && ownerAcmeAccountId.isPresent()) {
+                throw new IllegalArgumentException("Disclosure owner categories are mutually exclusive");
+            }
             if (policyCommitment == null || !policyCommitment.matches("[0-9a-f]{64}")) {
                 throw new IllegalArgumentException("Disclosure policy commitment is invalid");
             }
             Objects.requireNonNull(updatedAt, "updatedAt");
             if (objectType == ObjectType.LEAF_CERTIFICATE && policy == Policy.OWNER_ONLY
-                    && ownerPrincipalId.isEmpty()) {
+                    && ownerPrincipalId.isEmpty() && ownerAcmeAccountId.isEmpty()) {
                 throw new IllegalArgumentException("Owner-only leaf disclosure requires an owner");
             }
+        }
+
+        /** Legacy constructor for administrative-principal ownership. */
+        public Record(PkiId objectId, ObjectType objectType, Policy policy, Optional<String> ownerPrincipalId,
+                String policyCommitment, Instant updatedAt) {
+            this(objectId, objectType, policy, ownerPrincipalId, Optional.empty(), policyCommitment, updatedAt);
         }
     }
 
@@ -254,10 +282,30 @@ public final class DisclosureService {
             throw new IllegalStateException("Increased disclosure requires approval");
         }
         Record updated = new Record(current.objectId(), current.objectType(), policy, current.ownerPrincipalId(),
-                current.policyCommitment(), clock.instant());
+                current.ownerAcmeAccountId(), current.policyCommitment(), clock.instant());
         store.replaceDisclosure(current, updated);
         audit.record("DISCLOSURE_CHANGE", actorPrincipalId, Optional.of(objectId), Map.of("policy", policy.name()));
         return updated;
+    }
+
+    /** Registers a leaf owned by a protocol-scoped ACME account. */
+    public synchronized Record registerAcme(PkiId objectId, Policy policy, String accountId,
+            String profileOrPolicyCommitment) {
+        Optional<Record> existing = store.findDisclosure(objectId);
+        if (existing.isPresent()) {
+            Record exact = existing.orElseThrow();
+            if (exact.objectType() != ObjectType.LEAF_CERTIFICATE || exact.policy() != policy
+                    || !exact.ownerAcmeAccountId().equals(Optional.of(accountId))
+                    || !exact.policyCommitment().equals(profileOrPolicyCommitment)) {
+                throw new IllegalStateException("ACME disclosure correlation conflict");
+            }
+            return exact;
+        }
+        Record record = new Record(objectId, ObjectType.LEAF_CERTIFICATE, policy,
+                Optional.empty(), Optional.of(accountId), requireDigest(profileOrPolicyCommitment), clock.instant());
+        store.createDisclosure(record);
+        audit.record("DISCLOSURE_REGISTER", "system", Optional.of(objectId), Map.of("policy", policy.name()));
+        return record;
     }
 
     /** Evaluates direct retrieval separately from search authorization. */

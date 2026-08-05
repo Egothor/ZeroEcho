@@ -42,6 +42,7 @@ import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.IssuerChainPath;
 import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.issuance.IssuanceIntent;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
 import zeroecho.pki.api.policy.PolicyTrace;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
@@ -192,6 +193,16 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
      * @throws IllegalStateException if retrieval fails
      */
     Optional<Credential> getCredential(PkiId credentialId);
+
+    /**
+     * Resolves the exact credential atomically persisted with one issuance intent.
+     * Implementations must reject duplicate matches and mismatched command
+     * commitments rather than selecting by list order.
+     *
+     * @param intent exact trusted issuance identity and commitment
+     * @return the previously committed credential, when present
+     */
+    Optional<Credential> getCredentialByIssuanceIntent(IssuanceIntent intent);
 
     /**
      * Persists a parsed certification request.

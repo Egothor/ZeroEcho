@@ -345,7 +345,7 @@ final class H7ProfileEnforcementTest {
                     .issueEndEntity(new IssueEndEntityCommand(caId, request, "requested", Optional.empty())));
             assertEquals(signs, runtime.submittedSignCount());
 
-            assertEquals(List.of("issuerCaId", "request", "profileId", "validityOverride"),
+            assertEquals(List.of("issuerCaId", "request", "profileId", "validityOverride", "issuanceIntent"),
                     java.util.Arrays.stream(IssueEndEntityCommand.class.getRecordComponents())
                             .map(component -> component.getName()).toList());
         }

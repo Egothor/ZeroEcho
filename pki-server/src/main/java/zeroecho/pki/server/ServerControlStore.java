@@ -79,7 +79,7 @@ import zeroecho.pki.spi.store.TransactionalMetadataStore;
         "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.AvoidSynchronizedAtMethodLevel",
         "PMD.ControlStatementBraces", "PMD.PreserveStackTrace", "PMD.CloseResource",
         "PMD.UseEnumCollections", "PMD.CommentRequired", "PMD.UncommentedEmptyMethodBody",
-        "PMD.TooManyMethods", "PMD.ExcessivePublicCount" })
+        "PMD.TooManyMethods", "PMD.ExcessivePublicCount", "PMD.AvoidInstantiatingObjectsInLoops" })
 public final class ServerControlStore implements AutoCloseable {
     /** Stable namespace for the realm record. */ public static final String REALM = "io.zeroecho.server.realm";
     /** Stable namespace for principals. */ public static final String PRINCIPAL = "io.zeroecho.server.principal";
@@ -91,9 +91,21 @@ public final class ServerControlStore implements AutoCloseable {
     /** Stable namespace for capability commitments. */ public static final String CAPABILITY = "io.zeroecho.server.capability";
     /** Stable namespace for non-authoritative public repository aliases. */
     public static final String REPOSITORY_ALIAS = "io.zeroecho.server.repository-alias";
+    /** Stable namespace for ACME directory records. */
+    public static final String ACME_DIRECTORY = "io.zeroecho.server.acme-directory";
+    /** Stable namespace for ACME account records. */
+    public static final String ACME_ACCOUNT = "io.zeroecho.server.acme-account";
+    /** Stable namespace for ACME order records. */
+    public static final String ACME_ORDER = "io.zeroecho.server.acme-order";
+    /** Stable namespace for ACME authorization records. */
+    public static final String ACME_AUTHORIZATION = "io.zeroecho.server.acme-authorization";
+    /** Stable namespace for ACME challenge records. */
+    public static final String ACME_CHALLENGE = "io.zeroecho.server.acme-challenge";
+    /** Stable namespace for ACME validation-evidence records. */
+    public static final String ACME_EVIDENCE = "io.zeroecho.server.acme-evidence";
 
     private static final int MAGIC = 0x5a455331;
-    private static final int SCHEMA = 3;
+    private static final int SCHEMA = 4;
     private static final int MAXIMUM_RECORD_BYTES = 1_048_576;
     private static final int MAXIMUM_STRING_BYTES = 16_384;
     private static final int MAXIMUM_COLLECTION = 4_096;
@@ -106,6 +118,39 @@ public final class ServerControlStore implements AutoCloseable {
     private static final int KIND_DISCLOSURE = 7;
     private static final int KIND_CAPABILITY = 8;
     private static final int KIND_REPOSITORY_ALIAS = 9;
+    private static final int KIND_ACME = 10;
+
+    /**
+     * Strict opaque ACME payload framed by the server-control authority.
+     *
+     * <p>The ACME domain codec owns the payload schema. This record keeps the
+     * transactional metadata layer independent of protocol classes while still
+     * enforcing canonical key identity and bounded content.</p>
+     *
+     * @param namespace one closed ACME namespace
+     * @param recordId canonical domain identity
+     * @param commitment SHA-256 commitment of the complete domain payload
+     * @param payload strict versioned ACME domain encoding
+     */
+    public record AcmeRecord(String namespace, String recordId, String commitment, byte[] payload) {
+        /** Validates namespace, identity, commitment, and defensive payload bounds. */
+        public AcmeRecord {
+            if (!ACME_NAMESPACES.contains(namespace)) {
+                throw new IllegalArgumentException("Unknown ACME control namespace");
+            }
+            Permission.requireId(recordId, "ACME record");
+            requireDigest(commitment);
+            payload = Objects.requireNonNull(payload, "payload").clone();
+            if (payload.length == 0 || payload.length > MAXIMUM_RECORD_BYTES / 2) {
+                throw new IllegalArgumentException("ACME control payload bound is invalid");
+            }
+        }
+
+        @Override public byte[] payload() { return payload.clone(); }
+    }
+
+    private static final Set<String> ACME_NAMESPACES = Set.of(ACME_DIRECTORY, ACME_ACCOUNT, ACME_ORDER,
+            ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE);
 
     /**
      * Durable realm-control identity and commitments.
@@ -348,6 +393,75 @@ public final class ServerControlStore implements AutoCloseable {
         }
     }
 
+    /** One compare-and-set mutation participating in an atomic ACME state change. */
+    public record AcmeMutation(AcmeRecord record, Optional<String> expectedCommitment) {
+        /** Validates the immutable mutation request. */
+        public AcmeMutation {
+            Objects.requireNonNull(record, "record");
+            expectedCommitment = Objects.requireNonNull(expectedCommitment, "expectedCommitment");
+            expectedCommitment.ifPresent(ServerControlStore::requireDigest);
+        }
+    }
+
+    /** Reads one exact ACME record from its closed namespace. */
+    public synchronized Optional<AcmeRecord> acmeRecord(String namespace, String recordId) {
+        requireAcmeNamespace(namespace);
+        return read(namespace, recordId, KIND_ACME, input -> readAcme(input, namespace));
+    }
+
+    /** Returns one bounded deterministic page of ACME records. */
+    public synchronized Page<AcmeRecord> acmeRecords(String namespace, int offset, int limit) {
+        requireAcmeNamespace(namespace);
+        return scanPage(namespace, KIND_ACME, input -> readAcme(input, namespace), offset, limit);
+    }
+
+    /**
+     * Atomically creates or compare-and-replaces a finite set of ACME records.
+     * Empty expected commitments mean create-only; present commitments mean exact
+     * compare-and-replace. Provider I/O and PKI operations must occur outside this
+     * method.
+     */
+    public synchronized void mutateAcme(List<AcmeMutation> requested) {
+        requireOpen();
+        List<AcmeMutation> mutations = List.copyOf(Objects.requireNonNull(requested, "requested"));
+        if (mutations.isEmpty() || mutations.size() > 256) {
+            throw new IllegalArgumentException("ACME transaction size is invalid");
+        }
+        Set<String> keys = new HashSet<>();
+        if (mutations.stream().anyMatch(item -> !keys.add(item.record().namespace() + '\n'
+                + item.record().recordId()))) {
+            throw new IllegalArgumentException("Duplicate ACME transaction identity");
+        }
+        try (MetadataSnapshot snapshot = metadata.snapshot();
+                MetadataTransaction transaction = metadata.beginTransaction()) {
+            for (AcmeMutation mutation : mutations) {
+                AcmeRecord value = mutation.record();
+                MetadataKey metadataKey = key(value.namespace(), value.recordId());
+                Optional<MetadataSnapshot.Record> existing = snapshot.get(metadataKey);
+                byte[] encoded = encode(output -> writeAcme(output, value));
+                RepeatableContent content = new ByteContent(encoded);
+                if (mutation.expectedCommitment().isEmpty()) {
+                    if (existing.isPresent()) throw new IllegalStateException("ACME record already exists");
+                    transaction.create(metadataKey, content, CancellationSignal.NONE);
+                } else {
+                    MetadataSnapshot.Record current = existing
+                            .orElseThrow(() -> new IllegalStateException("ACME record is unavailable"));
+                    AcmeRecord decoded = decode(current, KIND_ACME, input -> readAcme(input, value.namespace()));
+                    if (!mutation.expectedCommitment().orElseThrow().equals(decoded.commitment())) {
+                        throw new IllegalStateException("ACME record commitment conflict");
+                    }
+                    transaction.replace(metadataKey, current.recordRevision(), content, CancellationSignal.NONE);
+                }
+            }
+            MetadataCommitResult result = transaction.commit();
+            if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) {
+                throw new IllegalStateException("ACME metadata commit requires reconciliation");
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException("ACME metadata mutation failed");
+        }
+    }
+
     /** Lists capability commitments bound to one object. */
     public synchronized List<DisclosureService.Capability> capabilitiesFor(PkiId objectId) {
         return scan(CAPABILITY, KIND_CAPABILITY, ServerControlStore::readCapability).stream()
@@ -405,6 +519,9 @@ public final class ServerControlStore implements AutoCloseable {
         scan(DISCLOSURE, KIND_DISCLOSURE, ServerControlStore::readDisclosure);
         scan(CAPABILITY, KIND_CAPABILITY, ServerControlStore::readCapability);
         scan(REPOSITORY_ALIAS, KIND_REPOSITORY_ALIAS, ServerControlStore::readRepositoryAlias);
+        for (String namespace : ACME_NAMESPACES) {
+            scan(namespace, KIND_ACME, input -> readAcme(input, namespace));
+        }
     }
 
     /** Validates durable relationships against the active strict role catalog. */
@@ -606,8 +723,15 @@ public final class ServerControlStore implements AutoCloseable {
             case DisclosureService.Record item -> item.objectId().value();
             case DisclosureService.Capability item -> item.capabilityId();
             case RepositoryAliasService.Record item -> item.aliasId();
+            case AcmeRecord item -> item.recordId();
             default -> throw new IllegalArgumentException("Unsupported control record type");
         };
+    }
+
+    private static void requireAcmeNamespace(String namespace) {
+        if (!ACME_NAMESPACES.contains(namespace)) {
+            throw new IllegalArgumentException("Unknown ACME control namespace");
+        }
     }
 
     private static void requireSame(String first, String second) {
@@ -638,6 +762,18 @@ public final class ServerControlStore implements AutoCloseable {
         boolean creation = in.readBoolean(); Set<PkiId> ids = readPkiSet(in);
         return new RealmRecord(realm, displayName, new AuthorityExposurePolicy(mode, ids, creation),
                 readString(in), readString(in), readString(in), new MetadataStoreId(readString(in)));
+    }
+
+    private static void writeAcme(DataOutputStream out, AcmeRecord value) throws IOException {
+        out.writeInt(KIND_ACME); writeString(out, value.namespace()); writeString(out, value.recordId());
+        writeString(out, value.commitment()); writeBytes(out, value.payload());
+    }
+
+    private static AcmeRecord readAcme(DataInputStream in, String expectedNamespace) throws IOException {
+        String namespace = readString(in);
+        if (!expectedNamespace.equals(namespace)) throw new IllegalArgumentException("ACME namespace mismatch");
+        return new AcmeRecord(namespace, readString(in), readString(in),
+                readBoundedBytes(in, MAXIMUM_RECORD_BYTES / 2));
     }
 
     private static void writePrincipal(DataOutputStream out, SecurityPrincipal value) throws IOException {
@@ -734,12 +870,14 @@ public final class ServerControlStore implements AutoCloseable {
     private static void writeDisclosure(DataOutputStream out, DisclosureService.Record value) throws IOException {
         out.writeInt(KIND_DISCLOSURE); writeString(out, value.objectId().value()); out.writeInt(value.objectType().code());
         out.writeInt(value.policy().code()); writeOptionalString(out, value.ownerPrincipalId());
+        writeOptionalString(out, value.ownerAcmeAccountId());
         writeString(out, value.policyCommitment()); writeInstant(out, value.updatedAt());
     }
 
     private static DisclosureService.Record readDisclosure(DataInputStream in) throws IOException {
         return new DisclosureService.Record(new PkiId(readString(in)), DisclosureService.ObjectType.fromCode(in.readInt()),
-                DisclosureService.Policy.fromCode(in.readInt()), readOptionalString(in), readString(in), readInstant(in));
+                DisclosureService.Policy.fromCode(in.readInt()), readOptionalString(in), readOptionalString(in),
+                readString(in), readInstant(in));
     }
 
     private static void writeCapability(DataOutputStream out, DisclosureService.Capability value) throws IOException {
@@ -823,6 +961,7 @@ public final class ServerControlStore implements AutoCloseable {
     private static int readCount(DataInputStream in) throws IOException { int count = in.readInt(); if (count < 0 || count > MAXIMUM_COLLECTION) throw new IllegalArgumentException("Control collection size invalid"); return count; }
     private static void writeBytes(DataOutputStream out, byte[] value) throws IOException { out.writeInt(value.length); out.write(value); }
     private static byte[] readBytes(DataInputStream in, int expected) throws IOException { int length = in.readInt(); if (length != expected) throw new IllegalArgumentException("Control byte value length invalid"); byte[] value = in.readNBytes(length); if (value.length != length) throw new IllegalArgumentException("Truncated control byte value"); return value; }
+    private static byte[] readBoundedBytes(DataInputStream in, int maximum) throws IOException { int length = in.readInt(); if (length <= 0 || length > maximum) throw new IllegalArgumentException("Control byte value bound invalid"); byte[] value = in.readNBytes(length); if (value.length != length) throw new IllegalArgumentException("Truncated control byte value"); return value; }
     private static void requireDigest(String value) { if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Control commitment invalid"); }
 
     @FunctionalInterface private interface Encoder { void write(DataOutputStream output) throws IOException; }

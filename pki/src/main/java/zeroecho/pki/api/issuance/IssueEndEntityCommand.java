@@ -48,9 +48,16 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
  * @param profileId        profile id governing issuance
  * @param validityOverride optional requested validity override
  *                         (policy-validated)
+ * @param issuanceIntent optional durable correlation and frozen selection
  */
 public record IssueEndEntityCommand(PkiId issuerCaId, ParsedCertificationRequest request, String profileId,
-        Optional<Validity> validityOverride) {
+        Optional<Validity> validityOverride, Optional<IssuanceIntent> issuanceIntent) {
+
+    /** Creates an ordinary non-correlated administrative issuance command. */
+    public IssueEndEntityCommand(PkiId issuerCaId, ParsedCertificationRequest request, String profileId,
+            Optional<Validity> validityOverride) {
+        this(issuerCaId, request, profileId, validityOverride, Optional.empty());
+    }
 
     /**
      * Creates an issuance command.
@@ -70,6 +77,9 @@ public record IssueEndEntityCommand(PkiId issuerCaId, ParsedCertificationRequest
         }
         if (validityOverride == null) {
             throw new IllegalArgumentException("validityOverride must not be null");
+        }
+        if (issuanceIntent == null) {
+            throw new IllegalArgumentException("issuanceIntent must not be null");
         }
     }
 }

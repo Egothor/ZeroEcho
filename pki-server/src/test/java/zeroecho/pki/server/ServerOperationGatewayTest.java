@@ -184,7 +184,7 @@ class ServerOperationGatewayTest {
     void descriptorRegistryRejectsUnknownAndDuplicateOperations() {
         System.out.println("descriptorRegistryRejectsUnknownAndDuplicateOperations");
         OperationSecurityDescriptors descriptors = new OperationSecurityDescriptors();
-        assertEquals(54, descriptors.descriptors().size());
+        assertEquals(62, descriptors.descriptors().size());
         assertEquals(16, descriptors.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
         assertThrows(SecurityException.class, () -> descriptors.require(new PkiOperation.ValidateConfiguration()));

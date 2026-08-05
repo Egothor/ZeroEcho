@@ -38,6 +38,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.server.acme.AcmeService;
 
 /** Closed transport-neutral server-control administration operation hierarchy. */
 @SuppressWarnings("PMD.ControlStatementBraces")
@@ -58,7 +59,11 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.SetDisclosure, ServerControlOperation.IssueCapability,
         ServerControlOperation.RevokeCapability, ServerControlOperation.InspectAuditView,
         ServerControlOperation.InspectRepositoryAlias, ServerControlOperation.ListRepositoryAliases,
-        ServerControlOperation.SetRepositoryAlias, ServerControlOperation.RemoveRepositoryAlias {
+        ServerControlOperation.SetRepositoryAlias, ServerControlOperation.RemoveRepositoryAlias,
+        ServerControlOperation.RegisterAcmeDirectory, ServerControlOperation.InspectAcmeDirectory,
+        ServerControlOperation.ListAcmeDirectories, ServerControlOperation.SetAcmeDirectoryActive,
+        ServerControlOperation.InspectAcmeAccount, ServerControlOperation.ListAcmeAccounts,
+        ServerControlOperation.DeactivateAcmeAccount {
 
     /** @return stable operation identity */
     String name();
@@ -305,6 +310,50 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         public static final String NAME = "repository.alias.remove";
         public RemoveRepositoryAlias { Objects.requireNonNull(authorityId); Objects.requireNonNull(type);
             if (expectedCurrentCommitment == null || !expectedCurrentCommitment.matches("[0-9a-f]{64}")) throw invalid(); }
+        @Override public String name() { return NAME; }
+    }
+
+    /** Registers one immutable inactive ACME directory revision. */
+    record RegisterAcmeDirectory(AcmeService.DirectoryRegistration registration) implements ServerControlOperation {
+        public static final String NAME = "acme.directory.register";
+        public RegisterAcmeDirectory { Objects.requireNonNull(registration, "registration"); }
+        @Override public String name() { return NAME; }
+    }
+    /** Inspects one exact ACME directory revision. */
+    record InspectAcmeDirectory(String directoryId) implements ServerControlOperation {
+        public static final String NAME = "acme.directory.inspect";
+        public InspectAcmeDirectory { Permission.requireId(directoryId, "ACME directory"); }
+        @Override public String name() { return NAME; }
+    }
+    /** Lists a bounded page of ACME directory revisions. */
+    record ListAcmeDirectories(int offset, int limit) implements ServerControlOperation {
+        public static final String NAME = "acme.directory.list";
+        public ListAcmeDirectories { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+    /** Activates or deactivates one exact ACME directory revision. */
+    record SetAcmeDirectoryActive(String directoryId, boolean active) implements ServerControlOperation {
+        public static final String ACTIVATE = "acme.directory.activate";
+        public static final String DEACTIVATE = "acme.directory.deactivate";
+        public SetAcmeDirectoryActive { Permission.requireId(directoryId, "ACME directory"); }
+        @Override public String name() { return active ? ACTIVATE : DEACTIVATE; }
+    }
+    /** Inspects one protocol-scoped ACME account. */
+    record InspectAcmeAccount(String accountId) implements ServerControlOperation {
+        public static final String NAME = "acme.account.inspect";
+        public InspectAcmeAccount { Permission.requireId(accountId, "ACME account"); }
+        @Override public String name() { return NAME; }
+    }
+    /** Lists a bounded account page without contact PII. */
+    record ListAcmeAccounts(int offset, int limit) implements ServerControlOperation {
+        public static final String NAME = "acme.account.list";
+        public ListAcmeAccounts { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+    /** Durably deactivates one ACME account without deleting history. */
+    record DeactivateAcmeAccount(String accountId) implements ServerControlOperation {
+        public static final String NAME = "acme.account.deactivate";
+        public DeactivateAcmeAccount { Permission.requireId(accountId, "ACME account"); }
         @Override public String name() { return NAME; }
     }
 

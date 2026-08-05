@@ -45,6 +45,7 @@ import javax.net.ssl.SSLContext;
 
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 import zeroecho.pki.server.http.AdministrativeAuthenticator;
+import zeroecho.pki.server.http.AcmeTransport;
 import zeroecho.pki.server.http.PkiHttpsTransport;
 import zeroecho.pki.server.http.PublicRepositoryTransport;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
@@ -68,12 +69,14 @@ public final class PkiHttpsServer implements AutoCloseable {
     private final PkiHttpsTransport transport;
     private final Optional<PkiServerAuthenticator> publicAuthenticator;
     private final Optional<PublicRepositoryTransport> publicTransport;
+    private final Optional<AcmeTransport> acmeTransport;
     private final AtomicReference<State> state;
 
     private PkiHttpsServer(PkiServerConfiguration configuration, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, PkiHttpsTransport transport,
             Optional<PkiServerAuthenticator> publicAuthenticator,
             Optional<PublicRepositoryTransport> publicTransport,
+            Optional<AcmeTransport> acmeTransport,
             AtomicReference<State> state) {
         this.configuration = configuration;
         this.realm = realm;
@@ -81,6 +84,7 @@ public final class PkiHttpsServer implements AutoCloseable {
         this.transport = transport;
         this.publicAuthenticator = publicAuthenticator;
         this.publicTransport = publicTransport;
+        this.acmeTransport = acmeTransport;
         this.state = state;
     }
 
@@ -111,6 +115,7 @@ public final class PkiHttpsServer implements AutoCloseable {
         PkiHttpsTransport transport = null;
         PkiServerAuthenticator publicAuthenticator = null;
         PublicRepositoryTransport publicTransport = null;
+        AcmeTransport acmeTransport = null;
         try {
             SSLContext tls = PkiHttpsTransport.resolveTls(exact, loader);
             realm = ServerRealmContext.open(exact.realm(), runtimeDependencies, clock, random);
@@ -140,12 +145,29 @@ public final class PkiHttpsServer implements AutoCloseable {
                         resolvedPublicAuthenticator, clock, random, loader,
                         () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
             }
+            if (exact.acmeListener().isPresent()) {
+                PkiServerConfiguration.AcmeListener acmeConfiguration = exact.acmeListener().orElseThrow();
+                if (acmeConfiguration.transportMode()
+                        == PkiServerConfiguration.AcmeTransportMode.TRUSTED_REVERSE_PROXY) {
+                    for (String principalId : acmeConfiguration.trustedProxyPrincipalIds()) {
+                        SecurityPrincipal principal = realm.principal(principalId);
+                        if (!principal.enabled() || principal.type() != SecurityPrincipal.Type.SERVICE) {
+                            throw new IllegalArgumentException("ACME trusted proxy principal is unavailable");
+                        }
+                        realm.gateway().validateForwardingPrincipal(principalId);
+                    }
+                }
+                acmeTransport = AcmeTransport.start(acmeConfiguration, sharedRealm, clock, random, loader,
+                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
+            }
             state.set(State.READY);
             realm.auditTransport("SERVER_READY", "system", Map.of("state", "READY"));
             return new PkiHttpsServer(exact, realm, authenticator, transport,
-                    Optional.ofNullable(publicAuthenticator), Optional.ofNullable(publicTransport), state);
+                    Optional.ofNullable(publicAuthenticator), Optional.ofNullable(publicTransport),
+                    Optional.ofNullable(acmeTransport), state);
         } catch (RuntimeException | Error primary) {
-            closePartial(publicTransport, publicAuthenticator, transport, realm, authenticator, state, primary);
+            closePartial(acmeTransport, publicTransport, publicAuthenticator, transport, realm, authenticator,
+                    state, primary);
             throw primary;
         }
     }
@@ -165,6 +187,12 @@ public final class PkiHttpsServer implements AutoCloseable {
     public Optional<InetSocketAddress> publicAddress() {
         if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
         return publicTransport.map(PublicRepositoryTransport::address);
+    }
+
+    /** @return actual ACME listener address when enabled */
+    public Optional<InetSocketAddress> acmeAddress() {
+        if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
+        return acmeTransport.map(AcmeTransport::address);
     }
 
     /** @return the one lifecycle-owned realm context */
@@ -203,6 +231,15 @@ public final class PkiHttpsServer implements AutoCloseable {
         }
         transport.quiesce();
         publicTransport.ifPresent(PublicRepositoryTransport::quiesce);
+        acmeTransport.ifPresent(AcmeTransport::quiesce);
+        try {
+            if (acmeTransport.isPresent()) {
+                acmeTransport.orElseThrow().shutdown(configuration.acmeListener().orElseThrow()
+                        .execution().gracefulShutdown());
+            }
+        } catch (Throwable failure) {
+            primary = suppress(primary, failure);
+        }
         try {
             if (publicTransport.isPresent()) {
                 publicTransport.orElseThrow().shutdown(configuration.publicListener().orElseThrow()
@@ -223,9 +260,10 @@ public final class PkiHttpsServer implements AutoCloseable {
         rethrow(primary);
     }
 
-    private static void closePartial(PublicRepositoryTransport publicTransport,
+    private static void closePartial(AcmeTransport acmeTransport, PublicRepositoryTransport publicTransport,
             PkiServerAuthenticator publicAuthenticator, PkiHttpsTransport transport, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, AtomicReference<State> state, Throwable primary) {
+        primary = close(acmeTransport, primary);
         primary = close(publicTransport, primary);
         primary = close(publicAuthenticator, primary);
         primary = close(transport, primary);

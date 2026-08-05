@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "serverName": "zeroecho-admin",
   "realm": {
     "realmId": "production",
@@ -114,5 +114,6 @@
     "publicAliasCacheMillis": 300000,
     "authorityListExposed": true
   },
+  "acmeListener": {"enabled": false},
   "runtime": {}
 }

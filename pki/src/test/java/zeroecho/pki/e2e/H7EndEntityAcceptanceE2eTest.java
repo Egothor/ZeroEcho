@@ -278,7 +278,7 @@ final class H7EndEntityAcceptanceE2eTest {
             assertTrue(serial.signum() > 0);
             assertTrue(serial.toByteArray().length <= 20);
         }
-        assertEquals(List.of("issuerCaId", "request", "profileId", "validityOverride"),
+        assertEquals(List.of("issuerCaId", "request", "profileId", "validityOverride", "issuanceIntent"),
                 Arrays.stream(IssueEndEntityCommand.class.getRecordComponents()).map(component -> component.getName())
                         .toList());
 

@@ -87,6 +87,7 @@ import zeroecho.pki.api.credential.EffectiveCredentialStatus;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.api.issuance.BundleCommand;
 import zeroecho.pki.api.issuance.IssueEndEntityCommand;
+import zeroecho.pki.api.issuance.IssuanceIntent;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
@@ -157,7 +158,17 @@ public final class PkiCoreE2eTest {
 
             runtime.caService().selectIssuancePath(rootCaId, root.currentIssuanceIssuerId(),
                     root.issuanceChainPathId(), "restore explicit test selection");
-            issuance.issueEndEntity(new IssueEndEntityCommand(rootCaId, leafRequest, "default", Optional.empty()));
+            CaRecord selected = runtime.caService().getCa(rootCaId);
+            zeroecho.pki.api.ca.IssuerChainPath path = runtime.store()
+                    .getIssuerChainPath(selected.issuanceChainPathId()).orElseThrow();
+            IssuanceIntent intent = new IssuanceIntent("issuance:matrix-leaf", "a".repeat(64),
+                    runtime.profileService().requireActiveProfile("default").reference(),
+                    selected.currentIssuanceIssuerId(), selected.issuanceChainPathId(), path.pathCommitment());
+            IssueEndEntityCommand command = new IssueEndEntityCommand(rootCaId, leafRequest, "default",
+                    Optional.empty(), Optional.of(intent));
+            CredentialBundle first = issuance.issueEndEntity(command);
+            CredentialBundle repeated = issuance.issueEndEntity(command);
+            assertEquals(first.credential().credentialId(), repeated.credential().credentialId());
             assertEquals(List.of(usable.credentialId()), List.copyOf(resolved));
             assertEquals(1, backend.endEntityCalls.get());
         }

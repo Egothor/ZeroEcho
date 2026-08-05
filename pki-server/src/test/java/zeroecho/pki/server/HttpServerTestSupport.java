@@ -104,6 +104,35 @@ public final class HttpServerTestSupport {
         return new Fixture(client, clientContext, anonymousContext, proxy, proxyContext, forwarded, root);
     }
 
+    static PackagedTls packagedTls(java.nio.file.Path directory) throws Exception {
+        java.nio.file.Files.createDirectories(directory);
+        KeyPair rootKey = keyPair((byte) 31);
+        X509Certificate root = certificate(rootKey, rootKey, "CN=Packaged Test Root", "CN=Packaged Test Root",
+                BigInteger.valueOf(31), true, false);
+        KeyPair serverKey = keyPair((byte) 32);
+        X509Certificate server = certificate(serverKey, rootKey, "CN=localhost", "CN=Packaged Test Root",
+                BigInteger.valueOf(32), false, true);
+        KeyPair clientKey = keyPair((byte) 33);
+        X509Certificate client = certificate(clientKey, rootKey, "CN=packaged-admin", "CN=Packaged Test Root",
+                BigInteger.valueOf(33), false, false);
+        java.nio.file.Path keys = directory.resolve("server.p12");
+        java.nio.file.Path trust = directory.resolve("trust.p12");
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        keyStore.load(null, PASSWORD);
+        keyStore.setKeyEntry("server", serverKey.getPrivate(), PASSWORD,
+                new java.security.cert.Certificate[] { server, root });
+        try (java.io.OutputStream output = java.nio.file.Files.newOutputStream(keys)) {
+            keyStore.store(output, PASSWORD);
+        }
+        KeyStore trustStore = KeyStore.getInstance("PKCS12");
+        trustStore.load(null, PASSWORD);
+        trustStore.setCertificateEntry("root", root);
+        try (java.io.OutputStream output = java.nio.file.Files.newOutputStream(trust)) {
+            trustStore.store(output, PASSWORD);
+        }
+        return new PackagedTls(keys, trust, context(clientKey, client, root, false), client);
+    }
+
     public static PkiServerConfiguration configuration(java.nio.file.Path directory, X509Certificate client)
             throws Exception {
         return configuration(directory, directAuthentication(client));
@@ -247,4 +276,7 @@ public final class HttpServerTestSupport {
     public record Fixture(X509Certificate clientCertificate, SSLContext clientContext, SSLContext anonymousContext,
             X509Certificate proxyCertificate, SSLContext proxyContext, X509Certificate forwardedCertificate,
             X509Certificate rootCertificate) { }
+
+    record PackagedTls(java.nio.file.Path keyStore, java.nio.file.Path trustStore, SSLContext anonymousContext,
+            X509Certificate clientCertificate) { }
 }

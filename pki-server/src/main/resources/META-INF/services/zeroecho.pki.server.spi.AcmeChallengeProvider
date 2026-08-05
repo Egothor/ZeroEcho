@@ -1,0 +1,2 @@
+zeroecho.pki.server.acme.Http01ChallengeProvider
+zeroecho.pki.server.acme.JndiDns01ChallengeProvider

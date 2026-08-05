@@ -35,6 +35,7 @@ package zeroecho.pki.server;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -59,14 +60,15 @@ import zeroecho.pki.spi.ProviderConfig;
  * @param execution bounded execution and shutdown policy
  * @param runtime process-local capability references
  * @param publicListener optional separately bounded public repository listener
+ * @param acmeListener optional separately bounded ACME protocol listener
  */
 @SuppressWarnings("PMD")
 public record PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
         Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
-        Optional<PublicListener> publicListener) {
+        Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener) {
 
     /** Current server configuration schema. */
-    public static final int CURRENT_VERSION = 3;
+    public static final int CURRENT_VERSION = 4;
 
     /** Validates all security-sensitive fields before resource allocation. */
     public PkiServerConfiguration {
@@ -78,6 +80,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Objects.requireNonNull(execution, "execution");
         Objects.requireNonNull(runtime, "runtime");
         publicListener = Objects.requireNonNull(publicListener, "publicListener");
+        acmeListener = Objects.requireNonNull(acmeListener, "acmeListener");
         if (!listener.clientCertificateRequired()) {
             throw new IllegalArgumentException("Administrative HTTPS requires client certificates");
         }
@@ -92,12 +95,29 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
                 }
             }
         });
+        Optional<PublicListener> exactPublicListener = publicListener;
+        acmeListener.ifPresent(acme -> {
+            requireDistinct(listener.address(), listener.port(), acme.address(), acme.port(),
+                    "Administrative and ACME listeners conflict");
+            exactPublicListener.ifPresent(publicConfiguration -> requireDistinct(publicConfiguration.address(),
+                    publicConfiguration.port(), acme.address(), acme.port(),
+                    "Public and ACME listeners conflict"));
+        });
+    }
+
+    /** Creates a configuration with ACME disabled. */
+    public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
+            Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
+            Optional<PublicListener> publicListener) {
+        this(version, serverName, realm, listener, authentication, execution, runtime, publicListener,
+                Optional.empty());
     }
 
     /** Creates a configuration with the public repository listener disabled. */
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
-        this(version, serverName, realm, listener, authentication, execution, runtime, Optional.empty());
+        this(version, serverName, realm, listener, authentication, execution, runtime, Optional.empty(),
+                Optional.empty());
     }
 
     /**
@@ -395,6 +415,109 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         }
     }
 
+    /** Closed ACME listener transport topologies. */
+    public enum AcmeTransportMode { DIRECT_TLS, TRUSTED_REVERSE_PROXY }
+
+    /**
+     * Separately bounded ACME listener and protocol-security configuration.
+     *
+     * @param listenerId stable process-local listener identity used for nonce binding
+     * @param address canonical bind address
+     * @param port TCP port, including zero for deterministic tests
+     * @param tlsProvider explicit server TLS identity and proxy trust provider
+     * @param transportMode direct server-auth TLS or authenticated trusted proxy
+     * @param proxyTransportMappings exact proxy certificate commitments
+     * @param trustedProxyPrincipalIds explicitly admitted infrastructure principals
+     * @param externalBaseUri configured public ACME URL authority for JWS binding
+     * @param maximumHeaderBytes bounded request-header bytes
+     * @param maximumBodyBytes bounded JWS/CSR request body bytes
+     * @param execution isolated protocol workers, queue, admission, and deadlines
+     * @param validationExecution isolated challenge-validation workers and queue
+     * @param nonceLifetime finite replay-nonce lifetime
+     * @param maximumOutstandingNonces bounded process-local nonce population
+     * @param maximumAccountsPresented bounded administrative account page size
+     * @param maximumOrdersPresented bounded account order page size
+     * @param admissionWindow finite in-memory rate window
+     * @param maximumNewAccountsPerWindow bounded directory-wide account admission
+     * @param maximumNewOrdersPerAccountWindow bounded per-account order admission
+     * @param maximumPendingOrdersPerAccount bounded durable pending-order population
+     * @param maximumChallengeValidationsPerAccountWindow bounded validation admission
+     * @param maximumConcurrentFinalizations bounded listener-wide finalization concurrency
+     * @param challengeProviders explicitly enabled provider configurations
+     * @param eabProviders explicitly enabled secret-confining EAB provider configurations
+     */
+    public record AcmeListener(String listenerId, InetAddress address, int port, ProviderConfig tlsProvider,
+            AcmeTransportMode transportMode, List<ClientCertificateMapping> proxyTransportMappings,
+            Set<String> trustedProxyPrincipalIds, URI externalBaseUri,
+            int maximumHeaderBytes, int maximumBodyBytes, Execution execution, Execution validationExecution,
+            Duration nonceLifetime, int maximumOutstandingNonces,
+            int maximumAccountsPresented, int maximumOrdersPresented,
+            Duration admissionWindow, int maximumNewAccountsPerWindow,
+            int maximumNewOrdersPerAccountWindow, int maximumPendingOrdersPerAccount,
+            int maximumChallengeValidationsPerAccountWindow, int maximumConcurrentFinalizations,
+            List<ProviderConfig> challengeProviders, List<ProviderConfig> eabProviders) {
+        /** Validates listener isolation, URL authority, proxy policy, and finite bounds. */
+        public AcmeListener {
+            Permission.requireId(listenerId, "ACME listener"); Objects.requireNonNull(address, "address");
+            if (port < 0 || port > 65_535) throw new IllegalArgumentException("ACME listener port is invalid");
+            Objects.requireNonNull(tlsProvider, "tlsProvider"); Objects.requireNonNull(transportMode, "transportMode");
+            proxyTransportMappings = List.copyOf(Objects.requireNonNull(proxyTransportMappings,
+                    "proxyTransportMappings"));
+            trustedProxyPrincipalIds = Set.copyOf(Objects.requireNonNull(trustedProxyPrincipalIds,
+                    "trustedProxyPrincipalIds"));
+            trustedProxyPrincipalIds.forEach(Permission::requirePrincipal);
+            externalBaseUri = Objects.requireNonNull(externalBaseUri, "externalBaseUri");
+            if (!"https".equalsIgnoreCase(externalBaseUri.getScheme()) || externalBaseUri.getHost() == null
+                    || externalBaseUri.getUserInfo() != null || externalBaseUri.getQuery() != null
+                    || externalBaseUri.getFragment() != null || !externalBaseUri.getPath().isEmpty()) {
+                throw new IllegalArgumentException("ACME external base URI is invalid");
+            }
+            bounded(maximumHeaderBytes, 1_024, 1_048_576, "ACME header bound");
+            bounded(maximumBodyBytes, 1_024, StrictBounds.MAXIMUM_ACME_BODY, "ACME body bound");
+            Objects.requireNonNull(execution, "execution"); Objects.requireNonNull(validationExecution, "validationExecution");
+            positive(nonceLifetime, Duration.ofHours(1), "ACME nonce lifetime");
+            bounded(maximumOutstandingNonces, 16, 1_000_000, "ACME nonce capacity");
+            bounded(maximumAccountsPresented, 1, 256, "ACME account presentation limit");
+            bounded(maximumOrdersPresented, 1, 256, "ACME order presentation limit");
+            positive(admissionWindow, Duration.ofDays(1), "ACME admission window");
+            bounded(maximumNewAccountsPerWindow, 1, 1_000_000, "ACME account rate");
+            bounded(maximumNewOrdersPerAccountWindow, 1, 1_000_000, "ACME order rate");
+            bounded(maximumPendingOrdersPerAccount, 1, 100_000, "ACME pending order bound");
+            bounded(maximumChallengeValidationsPerAccountWindow, 1, 1_000_000, "ACME validation rate");
+            bounded(maximumConcurrentFinalizations, 1, 10_000, "ACME finalization bound");
+            challengeProviders = providers(challengeProviders, "challenge");
+            eabProviders = providers(eabProviders, "EAB");
+            if (transportMode == AcmeTransportMode.DIRECT_TLS
+                    && (!proxyTransportMappings.isEmpty() || !trustedProxyPrincipalIds.isEmpty())) {
+                throw new IllegalArgumentException("Direct ACME transport cannot configure proxy identity");
+            }
+            if (transportMode == AcmeTransportMode.TRUSTED_REVERSE_PROXY) {
+                boolean mappingOutsideTrusted = false;
+                for (ClientCertificateMapping mapping : proxyTransportMappings) {
+                    if (!trustedProxyPrincipalIds.contains(mapping.principalId())) mappingOutsideTrusted = true;
+                }
+                if (proxyTransportMappings.isEmpty() || trustedProxyPrincipalIds.isEmpty()
+                        || mappingOutsideTrusted
+                        || !proxyTransportMappings.stream().map(ClientCertificateMapping::principalId)
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet())
+                                .equals(trustedProxyPrincipalIds)) {
+                    throw new IllegalArgumentException("ACME trusted-proxy transport is incomplete");
+                }
+            }
+        }
+
+        /** @return exact listener socket address */
+        public InetSocketAddress socketAddress() { return new InetSocketAddress(address, port); }
+
+        private static List<ProviderConfig> providers(List<ProviderConfig> source, String name) {
+            List<ProviderConfig> values = List.copyOf(Objects.requireNonNull(source, name));
+            if (values.size() > 64 || values.stream().map(ProviderConfig::backendId).distinct().count() != values.size()) {
+                throw new IllegalArgumentException("ACME " + name + " provider identities are invalid");
+            }
+            return values;
+        }
+    }
+
     /**
      * Process-local capability references.
      *
@@ -429,5 +552,18 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         if (value.isNegative() || value.compareTo(maximum) > 0) {
             throw new IllegalArgumentException(name + " is invalid");
         }
+    }
+
+    private static void requireDistinct(InetAddress firstAddress, int firstPort,
+            InetAddress secondAddress, int secondPort, String message) {
+        if (firstPort != 0 && firstPort == secondPort && (firstAddress.equals(secondAddress)
+                || firstAddress.isAnyLocalAddress() || secondAddress.isAnyLocalAddress())) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    private static final class StrictBounds {
+        private static final int MAXIMUM_ACME_BODY = 16_777_216;
+        private StrictBounds() { }
     }
 }

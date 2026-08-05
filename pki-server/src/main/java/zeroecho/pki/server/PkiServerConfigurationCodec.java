@@ -86,11 +86,12 @@ public final class PkiServerConfigurationCodec {
     public static PkiServerConfiguration decode(byte[] document) {
         Fields root = Fields.of(StrictJson.parse(document, MAXIMUM_CONFIGURATION_BYTES));
         root.allowed(Set.of("version", "serverName", "realm", "listener", "authentication", "execution",
-                "runtime", "publicListener"));
+                "runtime", "publicListener", "acmeListener"));
         PkiServerConfiguration configuration = new PkiServerConfiguration(root.integer("version"),
                 root.text("serverName"), realm(root.object("realm")), listener(root.object("listener")),
                 authentication(root.object("authentication")), execution(root.object("execution")),
-                runtime(root.object("runtime")), publicListener(root.object("publicListener")));
+                runtime(root.object("runtime")), publicListener(root.object("publicListener")),
+                acmeListener(root.object("acmeListener")));
         root.complete();
         return configuration;
     }
@@ -295,6 +296,48 @@ public final class PkiServerConfigurationCodec {
                 value.bool("authorityListExposed"));
         value.complete();
         return Optional.of(result);
+    }
+
+    private static Optional<PkiServerConfiguration.AcmeListener> acmeListener(Fields value) {
+        value.allowed(Set.of("enabled", "listenerId", "address", "port", "tlsProvider", "transportMode",
+                "proxyTransportMappings", "trustedProxyPrincipalIds", "externalBaseUri",
+                "maximumHeaderBytes", "maximumBodyBytes", "execution", "validationExecution",
+                "nonceLifetimeMillis", "maximumOutstandingNonces", "maximumAccountsPresented",
+                "maximumOrdersPresented", "admissionWindowMillis", "maximumNewAccountsPerWindow",
+                "maximumNewOrdersPerAccountWindow", "maximumPendingOrdersPerAccount",
+                "maximumChallengeValidationsPerAccountWindow", "maximumConcurrentFinalizations",
+                "challengeProviders", "eabProviders"));
+        if (!value.bool("enabled")) {
+            value.exact("enabled"); value.complete(); return Optional.empty();
+        }
+        PkiServerConfiguration.AcmeTransportMode mode = PkiServerConfiguration.AcmeTransportMode
+                .valueOf(value.text("transportMode"));
+        List<PkiServerConfiguration.ClientCertificateMapping> proxy = mode
+                == PkiServerConfiguration.AcmeTransportMode.TRUSTED_REVERSE_PROXY
+                        ? mappings(value.list("proxyTransportMappings")) : List.of();
+        Set<String> trusted = mode == PkiServerConfiguration.AcmeTransportMode.TRUSTED_REVERSE_PROXY
+                ? strings(value.list("trustedProxyPrincipalIds")) : Set.of();
+        PkiServerConfiguration.AcmeListener result = new PkiServerConfiguration.AcmeListener(
+                value.text("listenerId"), address(value.text("address")), value.integer("port"),
+                provider(value.object("tlsProvider")), mode, proxy, trusted,
+                java.net.URI.create(value.text("externalBaseUri")), value.integer("maximumHeaderBytes"),
+                value.integer("maximumBodyBytes"), execution(value.object("execution")),
+                execution(value.object("validationExecution")),
+                Duration.ofMillis(value.longValue("nonceLifetimeMillis")),
+                value.integer("maximumOutstandingNonces"), value.integer("maximumAccountsPresented"),
+                value.integer("maximumOrdersPresented"), Duration.ofMillis(value.longValue("admissionWindowMillis")),
+                value.integer("maximumNewAccountsPerWindow"),
+                value.integer("maximumNewOrdersPerAccountWindow"), value.integer("maximumPendingOrdersPerAccount"),
+                value.integer("maximumChallengeValidationsPerAccountWindow"),
+                value.integer("maximumConcurrentFinalizations"), providers(value.list("challengeProviders")),
+                providers(value.list("eabProviders")));
+        value.complete(); return Optional.of(result);
+    }
+
+    private static List<ProviderConfig> providers(List<PkiOperationValue> source) {
+        List<ProviderConfig> result = new ArrayList<>();
+        for (PkiOperationValue item : source) result.add(provider(Fields.of(item)));
+        return List.copyOf(result);
     }
 
     private static PkiServerConfiguration.RuntimeCapabilities runtime(Fields value) {

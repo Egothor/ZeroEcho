@@ -364,6 +364,41 @@ class PkiHttpsServerTest {
     }
 
     @Test
+    void acmeListenerIsLifecycleOwnedAndRouteIsolated() throws Exception {
+        System.out.println("acmeListenerIsLifecycleOwnedAndRouteIsolated");
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        PkiServerConfiguration base = HttpServerTestSupport.configuration(
+                temporaryDirectory.resolve("acme-isolation"), tls.clientCertificate());
+        PkiServerConfiguration.Execution lane = new PkiServerConfiguration.Execution(1, 2, 1, 2, 2,
+                Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ofSeconds(1), Duration.ofSeconds(1));
+        PkiServerConfiguration.AcmeListener acme = new PkiServerConfiguration.AcmeListener("acme-test",
+                java.net.InetAddress.getLoopbackAddress(), 0,
+                new zeroecho.pki.spi.ProviderConfig("test-tls", Map.of()),
+                PkiServerConfiguration.AcmeTransportMode.DIRECT_TLS, List.of(), Set.of(),
+                URI.create("https://acme.example.test"), 16_384, 1_048_576, lane, lane,
+                Duration.ofMinutes(5), 64, 16, 16, Duration.ofMinutes(1), 16, 16, 8, 16, 1,
+                List.of(), List.of());
+        PkiServerConfiguration configuration = new PkiServerConfiguration(base.version(), base.serverName(),
+                base.realm(), base.listener(), base.authentication(), base.execution(), base.runtime(),
+                Optional.empty(), Optional.of(acme));
+        seed(configuration);
+        try (PkiHttpsServer server = PkiHttpsServer.start(configuration, PkiSessionRuntimeDependencies.none(),
+                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader())) {
+            HttpClient anonymous = HttpClient.newBuilder().sslContext(tls.anonymousContext()).build();
+            HttpClient administrator = HttpClient.newBuilder().sslContext(tls.clientContext()).build();
+            URI acmeAdmin = URI.create("https://localhost:" + server.acmeAddress().orElseThrow().getPort()
+                    + "/admin/v1/realm");
+            URI adminAcme = URI.create("https://localhost:" + server.address().getPort()
+                    + "/acme/internal/directory");
+            assertEquals(404, get(anonymous, acmeAdmin).statusCode());
+            assertEquals(404, get(administrator, adminAcme).statusCode());
+            assertTrue(server.realm() == server.realm());
+            System.out.println("...acme-port=" + server.acmeAddress().orElseThrow().getPort());
+        }
+        System.out.println("...ok");
+    }
+
+    @Test
     void authenticatesTrustedProxyWithRfc9440ForwardedClient() throws Exception {
         System.out.println("authenticatesTrustedProxyWithRfc9440ForwardedClient");
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();

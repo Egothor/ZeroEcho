@@ -148,7 +148,23 @@ public final class OperationSecurityDescriptors {
                 control(ServerControlOperation.SetRepositoryAlias.NAME, Permission.Action.REPOSITORY_ALIAS_MANAGE,
                         Permission.ResourceType.REPOSITORY_ALIAS, true, true),
                 control(ServerControlOperation.RemoveRepositoryAlias.NAME, Permission.Action.REPOSITORY_ALIAS_MANAGE,
-                        Permission.ResourceType.REPOSITORY_ALIAS, true, true)));
+                        Permission.ResourceType.REPOSITORY_ALIAS, true, true),
+                control(ServerControlOperation.RegisterAcmeDirectory.NAME, Permission.Action.ACME_DIRECTORY_MANAGE,
+                        Permission.ResourceType.ACME_DIRECTORY, true, true),
+                control(ServerControlOperation.InspectAcmeDirectory.NAME, Permission.Action.ACME_DIRECTORY_READ,
+                        Permission.ResourceType.ACME_DIRECTORY, false, false),
+                control(ServerControlOperation.ListAcmeDirectories.NAME, Permission.Action.ACME_DIRECTORY_READ,
+                        Permission.ResourceType.ACME_DIRECTORY, false, false),
+                control(ServerControlOperation.SetAcmeDirectoryActive.ACTIVATE,
+                        Permission.Action.ACME_DIRECTORY_MANAGE, Permission.ResourceType.ACME_DIRECTORY, true, true),
+                control(ServerControlOperation.SetAcmeDirectoryActive.DEACTIVATE,
+                        Permission.Action.ACME_DIRECTORY_MANAGE, Permission.ResourceType.ACME_DIRECTORY, true, false),
+                control(ServerControlOperation.InspectAcmeAccount.NAME, Permission.Action.ACME_ACCOUNT_READ,
+                        Permission.ResourceType.ACME_ACCOUNT, false, false),
+                control(ServerControlOperation.ListAcmeAccounts.NAME, Permission.Action.ACME_ACCOUNT_READ,
+                        Permission.ResourceType.ACME_ACCOUNT, false, false),
+                control(ServerControlOperation.DeactivateAcmeAccount.NAME, Permission.Action.ACME_ACCOUNT_MANAGE,
+                        Permission.ResourceType.ACME_ACCOUNT, true, false)));
     }
 
     /** Creates a registry and rejects duplicate operation identities. */
@@ -380,6 +396,30 @@ public final class OperationSecurityDescriptors {
             case ServerControlOperation.RemoveRepositoryAlias value -> "authority="
                     + atom(value.authorityId().value()) + ";type=" + value.type().name() + ";expected="
                     + atom(value.expectedCurrentCommitment());
+            case ServerControlOperation.RegisterAcmeDirectory value -> "alias="
+                    + atom(value.registration().alias()) + ";authority="
+                    + atom(value.registration().authorityId().value()) + ";profile="
+                    + atom(value.registration().profileId()) + ";namespaces="
+                    + atom(value.registration().dnsNamespaces().stream().sorted().collect(java.util.stream.Collectors.joining(",")))
+                    + ";validity=" + value.registration().maximumValidity().toMillis()
+                    + ";keyAlgorithms=" + atom(value.registration().publicKeyAlgorithms().stream().sorted()
+                            .collect(java.util.stream.Collectors.joining(",")))
+                    + ";bindings=" + atom(value.registration().x509BindingPolicies().stream().sorted()
+                            .collect(java.util.stream.Collectors.joining(",")))
+                    + ";challenges=" + atom(value.registration().challengeTypes().stream().map(Enum::name)
+                            .sorted().collect(java.util.stream.Collectors.joining(",")))
+                    + ";providers=" + atom(value.registration().challengeProviderIds().stream().sorted()
+                            .collect(java.util.stream.Collectors.joining(",")))
+                    + ";eabProvider=" + atom(value.registration().eabProviderId().orElse("NONE"))
+                    + ";eabRequired=" + value.registration().eabRequired()
+                    + ";disclosure=" + value.registration().disclosurePolicy().name();
+            case ServerControlOperation.InspectAcmeDirectory value -> "directory=" + atom(value.directoryId());
+            case ServerControlOperation.ListAcmeDirectories value -> "offset=" + value.offset() + ";limit=" + value.limit();
+            case ServerControlOperation.SetAcmeDirectoryActive value -> "directory="
+                    + atom(value.directoryId()) + ";active=" + value.active();
+            case ServerControlOperation.InspectAcmeAccount value -> "account=" + atom(value.accountId());
+            case ServerControlOperation.ListAcmeAccounts value -> "offset=" + value.offset() + ";limit=" + value.limit();
+            case ServerControlOperation.DeactivateAcmeAccount value -> "account=" + atom(value.accountId());
         };
     }
 }
