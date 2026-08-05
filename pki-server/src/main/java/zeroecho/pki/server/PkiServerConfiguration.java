@@ -68,7 +68,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener) {
 
     /** Current server configuration schema. */
-    public static final int CURRENT_VERSION = 4;
+    public static final int CURRENT_VERSION = 5;
 
     /** Validates all security-sensitive fields before resource allocation. */
     public PkiServerConfiguration {

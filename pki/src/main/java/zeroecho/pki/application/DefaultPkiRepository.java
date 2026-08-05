@@ -41,6 +41,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.math.BigInteger;
 
 import org.bouncycastle.cert.X509CRLHolder;
 import org.bouncycastle.cert.X509CertificateHolder;
@@ -97,6 +98,12 @@ final class DefaultPkiRepository implements PkiRepository {
     @Override public Optional<Credential> credential(PkiId credentialId) {
         requireOpen.run();
         return store.getCredential(Objects.requireNonNull(credentialId, "credentialId"));
+    }
+
+    @Override public Optional<Credential> credential(PkiId issuerId, BigInteger serial) {
+        requireOpen.run();
+        return store.getCredentialByIssuerAndSerial(Objects.requireNonNull(issuerId, "issuerId"),
+                Objects.requireNonNull(serial, "serial"));
     }
 
     @Override public Optional<StatusObject> statusObject(PkiId statusObjectId) {

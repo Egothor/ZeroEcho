@@ -41,7 +41,7 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.server.acme.AcmeService;
 
 /** Closed transport-neutral server-control administration operation hierarchy. */
-@SuppressWarnings("PMD.ControlStatementBraces")
+@SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.ExcessivePublicCount" })
 public sealed interface ServerControlOperation permits ServerControlOperation.RegisterPrincipal,
         ServerControlOperation.InspectPrincipal, ServerControlOperation.ListPrincipals,
         ServerControlOperation.SetPrincipalEnabled, ServerControlOperation.ListRoleTemplates,
@@ -63,7 +63,9 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.RegisterAcmeDirectory, ServerControlOperation.InspectAcmeDirectory,
         ServerControlOperation.ListAcmeDirectories, ServerControlOperation.SetAcmeDirectoryActive,
         ServerControlOperation.InspectAcmeAccount, ServerControlOperation.ListAcmeAccounts,
-        ServerControlOperation.DeactivateAcmeAccount {
+        ServerControlOperation.DeactivateAcmeAccount, ServerControlOperation.RegisterOcspResponder,
+        ServerControlOperation.InspectOcspResponder, ServerControlOperation.ListOcspResponders,
+        ServerControlOperation.SetOcspResponderActive {
 
     /** @return stable operation identity */
     String name();
@@ -355,6 +357,32 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         public static final String NAME = "acme.account.deactivate";
         public DeactivateAcmeAccount { Permission.requireId(accountId, "ACME account"); }
         @Override public String name() { return NAME; }
+    }
+
+    /** Registers one exact inactive OCSP responder binding. */
+    record RegisterOcspResponder(OcspResponderService.Registration registration) implements ServerControlOperation {
+        public static final String NAME = "ocsp.responder.register";
+        public RegisterOcspResponder { Objects.requireNonNull(registration, "registration"); }
+        @Override public String name() { return NAME; }
+    }
+    /** Inspects one exact OCSP responder binding. */
+    record InspectOcspResponder(String responderId) implements ServerControlOperation {
+        public static final String NAME = "ocsp.responder.inspect";
+        public InspectOcspResponder { Permission.requireId(responderId, "OCSP responder"); }
+        @Override public String name() { return NAME; }
+    }
+    /** Lists a bounded OCSP responder page. */
+    record ListOcspResponders(int offset, int limit) implements ServerControlOperation {
+        public static final String NAME = "ocsp.responder.list";
+        public ListOcspResponders { page(offset, limit); }
+        @Override public String name() { return NAME; }
+    }
+    /** Activates or deactivates one exact responder. */
+    record SetOcspResponderActive(String responderId, boolean active) implements ServerControlOperation {
+        public static final String ACTIVATE = "ocsp.responder.activate";
+        public static final String DEACTIVATE = "ocsp.responder.deactivate";
+        public SetOcspResponderActive { Permission.requireId(responderId, "OCSP responder"); }
+        @Override public String name() { return active ? ACTIVATE : DEACTIVATE; }
     }
 
     private static void page(int offset, int limit) {

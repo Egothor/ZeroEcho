@@ -35,6 +35,7 @@ package zeroecho.pki.application;
 
 import java.util.List;
 import java.util.Optional;
+import java.math.BigInteger;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
@@ -55,6 +56,12 @@ public interface PkiRepository {
     Optional<IssuerChainPath> chainPath(PkiId pathId);
     /** Returns an exact credential metadata record. */
     Optional<Credential> credential(PkiId credentialId);
+    /** Returns an exact credential through the issuer-generation/serial index. */
+    default Optional<Credential> credential(PkiId issuerId, BigInteger serial) {
+        java.util.Objects.requireNonNull(issuerId, "issuerId");
+        java.util.Objects.requireNonNull(serial, "serial");
+        return Optional.empty();
+    }
     /** Returns an exact status-object metadata record. */
     Optional<StatusObject> statusObject(PkiId statusObjectId);
     /** Opens validated immutable certificate content. */

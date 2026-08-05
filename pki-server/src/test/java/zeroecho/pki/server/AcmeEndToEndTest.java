@@ -35,10 +35,12 @@ package zeroecho.pki.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -65,12 +67,23 @@ import java.util.HexFormat;
 import java.security.MessageDigest;
 
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
+import org.bouncycastle.asn1.DEROctetString;
+import org.bouncycastle.asn1.ocsp.OCSPObjectIdentifiers;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.Extensions;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
+import org.bouncycastle.cert.ocsp.BasicOCSPResp;
+import org.bouncycastle.cert.ocsp.CertificateID;
+import org.bouncycastle.cert.ocsp.OCSPReqBuilder;
+import org.bouncycastle.cert.ocsp.OCSPResp;
+import org.bouncycastle.cert.ocsp.RevokedStatus;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -112,12 +125,13 @@ class AcmeEndToEndTest {
         System.out.println("completesRealHttpsAccountIssuanceRolloverRestartAndRevocation");
         HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
         int acmePort = reservePort();
+        int publicPort = reservePort();
         int challengePort = reservePort();
         KeyPair rootKey = rsa((byte) 21);
         KeyPair leafKey = rsa((byte) 22);
         KeyPair accountKey = ec((byte) 23);
         KeyPair replacementKey = ec((byte) 24);
-        Fixture fixture = fixture(tls, acmePort, challengePort, rootKey);
+        Fixture fixture = fixture(tls, acmePort, publicPort, challengePort, rootKey);
         seed(fixture);
 
         URI directoryUri = URI.create("https://localhost:" + acmePort + "/acme/" + DIRECTORY_ALIAS
@@ -181,6 +195,10 @@ class AcmeEndToEndTest {
                     .toList());
             chain.get(0).verify(chain.get(1).getPublicKey());
             leafDer = chain.get(0).getEncoded();
+            assertOcsp(wire, publicPort, chain.get(1), chain.get(0), false);
+            assertOcspNonce(wire, publicPort, chain.get(1), chain.get(0));
+            assertOcspUnknownAndMulti(wire, publicPort, chain.get(1), chain.get(0));
+            assertOcspNoncePolicies(wire, publicPort, chain.get(1), chain.get(0));
 
             assertEquals(200, client.rollover(keyChange, replacementKey).status());
             assertEquals(200, client.postAsGet(accountUri).status());
@@ -201,6 +219,8 @@ class AcmeEndToEndTest {
             String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(leafDer);
             assertEquals(200, replacement.kid(revoke,
                     "{\"certificate\":\"" + encoded + "\",\"reason\":1}").status());
+            List<X509Certificate> chain = certificates(replacement.postAsGet(certificateUri).bodyText());
+            assertOcsp(wire, publicPort, chain.get(1), chain.get(0), true);
             assertFalse(replacement.kid(revoke,
                     "{\"certificate\":\"" + encoded + "\",\"reason\":1}").status() == 200);
             System.out.println("...rollover-restart-revocation=true");
@@ -218,9 +238,10 @@ class AcmeEndToEndTest {
         HttpServerTestSupport.PackagedTls tls = HttpServerTestSupport.packagedTls(root.resolve("tls"));
         int adminPort = reservePort();
         int acmePort = reservePort();
+        int publicPort = reservePort();
         int challengePort = reservePort();
         KeyPair rootKey = rsa((byte) 41);
-        Fixture fixture = packagedFixture(root, tls, adminPort, acmePort, challengePort, rootKey);
+        Fixture fixture = packagedFixture(root, tls, adminPort, acmePort, publicPort, challengePort, rootKey);
         seed(fixture, false);
         Path configuration = root.resolve("server.json");
         java.nio.file.Files.writeString(configuration, packagedJson(fixture.configuration(), tls),
@@ -271,10 +292,12 @@ class AcmeEndToEndTest {
                 URI certificate = URI.create(AcmeTestClient.text(finalized, "certificate"));
                 List<X509Certificate> chain = certificates(client.postAsGet(certificate).bodyText());
                 assertEquals(2, chain.size());
+                assertOcsp(wire, publicPort, chain.get(1), chain.get(0), false);
                 assertEquals(200, client.rollover(rollover, replacement).status());
                 String der = Base64.getUrlEncoder().withoutPadding().encodeToString(chain.get(0).getEncoded());
                 assertEquals(200, client.kid(revoke,
                         "{\"certificate\":\"" + der + "\",\"reason\":1}").status());
+                assertOcsp(wire, publicPort, chain.get(1), chain.get(0), true);
             }
             System.out.println("...installed-launcher-flow=true");
         } finally {
@@ -304,8 +327,8 @@ class AcmeEndToEndTest {
         }
     }
 
-    private Fixture fixture(HttpServerTestSupport.Fixture tls, int acmePort, int challengePort, KeyPair rootKey)
-            throws Exception {
+    private Fixture fixture(HttpServerTestSupport.Fixture tls, int acmePort, int publicPort, int challengePort,
+            KeyPair rootKey) throws Exception {
         Path root = temporaryDirectory.resolve("server");
         PkiServerConfiguration base = HttpServerTestSupport.configuration(root, tls.clientCertificate());
         java.nio.file.Files.setPosixFilePermissions(root, java.nio.file.attribute.PosixFilePermissions
@@ -341,8 +364,13 @@ class AcmeEndToEndTest {
                 URI.create("https://localhost:" + acmePort), 16_384, 1_048_576, lane, lane,
                 Duration.ofMinutes(5), 256, 32, 32, Duration.ofMinutes(1), 32, 32, 16, 32, 2,
                 List.of(http01), List.of(new ProviderConfig(TestAcmeEabProvider.ID, Map.of())));
+        PkiServerConfiguration.PublicListener publicListener = new PkiServerConfiguration.PublicListener(
+                InetAddress.getByName("127.0.0.1"), publicPort,
+                Optional.of(new ProviderConfig("test-tls", Map.of())), false, base.authentication(),
+                16_384, 65_536, lane, Duration.ofSeconds(20), Duration.ofMinutes(5),
+                Duration.ofSeconds(30), true);
         PkiServerConfiguration configuration = new PkiServerConfiguration(base.version(), base.serverName(), realm,
-                base.listener(), base.authentication(), base.execution(), base.runtime(), Optional.empty(),
+                base.listener(), base.authentication(), base.execution(), base.runtime(), Optional.of(publicListener),
                 Optional.of(acme));
         PkiSessionRuntimeDependencies dependencies = PkiSessionRuntimeDependencies.withKeyringUnlockProvider(
                 () -> new KeyringPassword(KEYRING_PASSWORD.clone()));
@@ -365,6 +393,24 @@ class AcmeEndToEndTest {
             PkiId authority = context.session().authorities().orElseThrow().createRoot(new CaCreateCommand(
                     root.definition().formatId(), new SubjectRef("CN=ZeroEcho ACME E2E Root"), "root-ca",
                     Optional.of(new KeyRef("acme-test:root.prv")), new SimpleAttributeSet()));
+            zeroecho.pki.api.ca.CaRecord authorityRecord = context.session().repository().authority(authority)
+                    .orElseThrow();
+            zeroecho.pki.api.ca.IssuerGeneration issuer = context.session().repository()
+                    .issuer(authorityRecord.currentIssuanceIssuerId()).orElseThrow();
+            OcspResponderService.Responder responder = context.ocspResponders().create("ocsp-e2e-root", "root",
+                    authority, issuer.issuerId(), OcspResponderService.SigningMode.ISSUER_SIGNED,
+                    issuer.credentialId(), issuer.signingKeyRef(), authorityRecord.issuanceChainPathId(),
+                    "SHA256withRSA", Optional.empty(), context.session().algorithmBindings().commitment(),
+                    zeroecho.pki.application.OcspResponseService.ResponderId.BY_KEY, Duration.ofMinutes(5),
+                    OcspResponderService.NoncePolicy.OPTIONAL_ECHO, 64,
+                    Set.of(zeroecho.pki.application.OcspResponseService.CertIdHash.SHA1,
+                            zeroecho.pki.application.OcspResponseService.CertIdHash.SHA256),
+                    16_384, 8, Duration.ofMinutes(1));
+            context.ocspResponders().setActive(context.ocspResponders().register(responder).responderId(), true);
+            registerNonceResponder(context, responder, "ocsp-e2e-reject", "reject",
+                    OcspResponderService.NoncePolicy.REJECT);
+            registerNonceResponder(context, responder, "ocsp-e2e-required", "required",
+                    OcspResponderService.NoncePolicy.REQUIRED);
             ActiveCertificateProfile active = context.session().profiles().requireActiveProfile("server-tls");
             AcmeService service = new AcmeService(context, ServerTestSupport.CLOCK, HttpServerTestSupport.random(),
                     Map.of(Http01ChallengeProvider.ID, new Http01ChallengeProvider()),
@@ -389,13 +435,26 @@ class AcmeEndToEndTest {
         }
     }
 
+    private static void registerNonceResponder(ServerRealmContext context,
+            OcspResponderService.Responder template, String responderId, String alias,
+            OcspResponderService.NoncePolicy noncePolicy) {
+        OcspResponderService.Responder responder = context.ocspResponders().create(responderId, alias,
+                template.authorityId(), template.issuerId(), template.signingMode(),
+                template.responderCredentialId(), template.signingKeyRef(), template.chainPathId(),
+                template.signatureAlgorithm(), template.signatureBindingId(),
+                template.signatureBindingCommitment(), template.responderIdForm(), template.responseValidity(),
+                noncePolicy, template.maximumNonceBytes(), template.acceptedHashes(),
+                template.maximumRequestBytes(), template.maximumEntries(), template.cacheLifetime());
+        context.ocspResponders().setActive(context.ocspResponders().register(responder).responderId(), true);
+    }
+
     private PkiHttpsServer start(Fixture fixture) throws Exception {
         return PkiHttpsServer.start(fixture.configuration(), fixture.dependencies(), ServerTestSupport.CLOCK,
                 HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader());
     }
 
     private Fixture packagedFixture(Path root, HttpServerTestSupport.PackagedTls tls, int adminPort, int acmePort,
-            int challengePort, KeyPair rootKey) throws Exception {
+            int publicPort, int challengePort, KeyPair rootKey) throws Exception {
         Path keyring = root.resolve("signing-keyring.zek");
         try (KeyringPassword password = new KeyringPassword(KEYRING_PASSWORD.clone());
                 KeyringStore store = KeyringStore.create(keyring, password)) {
@@ -439,11 +498,16 @@ class AcmeEndToEndTest {
                 URI.create("https://localhost:" + acmePort), 16_384, 1_048_576, lane, lane,
                 Duration.ofMinutes(5), 256, 32, 32, Duration.ofMinutes(1), 32, 32, 16, 32, 2,
                 List.of(http01), List.of());
-        PkiServerConfiguration configuration = new PkiServerConfiguration(4, "packaged-acme", realm,
+        PkiServerConfiguration.PublicListener publicListener = new PkiServerConfiguration.PublicListener(
+                InetAddress.getByName("127.0.0.1"), publicPort, Optional.of(tlsProvider), false,
+                authentication, 16_384, 65_536, lane, Duration.ofSeconds(20), Duration.ofMinutes(5),
+                Duration.ofSeconds(30), true);
+        PkiServerConfiguration configuration = new PkiServerConfiguration(PkiServerConfiguration.CURRENT_VERSION,
+                "packaged-acme", realm,
                 new PkiServerConfiguration.Listener(InetAddress.getByName("127.0.0.1"), adminPort, tlsProvider,
                         true, 16_384, 1_048_576), authentication, lane,
                 new PkiServerConfiguration.RuntimeCapabilities(Optional.of("ZEROECHO_TEST_KEYRING_PASSWORD")),
-                Optional.empty(), Optional.of(acme));
+                Optional.of(publicListener), Optional.of(acme));
         return new Fixture(configuration, PkiSessionRuntimeDependencies.withKeyringUnlockProvider(
                 () -> new KeyringPassword(KEYRING_PASSWORD.clone())), http01);
     }
@@ -464,7 +528,14 @@ class AcmeEndToEndTest {
         String workflow = providerJson(signing.workflow());
         String store = providerJson(realm.pkiSessionConfiguration().store());
         String audit = providerJson(realm.pkiSessionConfiguration().audit());
-        return "{\"version\":4,\"serverName\":\"packaged-acme\",\"realm\":{"
+        String authenticationJson = "{\"mode\":\"DIRECT_MTLS\",\"directClientMappings\":[{"
+                + "\"mappingId\":\"packaged-admin\",\"principalId\":\"administrator\","
+                + "\"certificateSha256\":\""
+                + configuration.authentication().directClientMappings().get(0).certificateSha256().orElseThrow()
+                + "\"}]}";
+        PkiServerConfiguration.PublicListener publicListener = configuration.publicListener().orElseThrow();
+        return "{\"version\":" + PkiServerConfiguration.CURRENT_VERSION
+                + ",\"serverName\":\"packaged-acme\",\"realm\":{"
                 + "\"realmId\":\"production\",\"displayName\":\"Packaged ACME\","
                 + "\"authorityExposure\":{\"mode\":\"ALL_REALM_AUTHORITIES\",\"authorityIds\":[],"
                 + "\"creationPermitted\":true},\"authorizationCommitment\":\"" + realm.authorizationCommitment()
@@ -485,11 +556,14 @@ class AcmeEndToEndTest {
                 + "\"publishers\":[],\"bindingProviders\":[]}},\"listener\":{\"address\":\"127.0.0.1\","
                 + "\"port\":" + configuration.listener().port() + ",\"tlsProvider\":" + tlsJson
                 + ",\"clientCertificateRequired\":true,\"maximumHeaderBytes\":16384,"
-                + "\"maximumBodyBytes\":1048576},\"authentication\":{\"mode\":\"DIRECT_MTLS\","
-                + "\"directClientMappings\":[{\"mappingId\":\"packaged-admin\","
-                + "\"principalId\":\"administrator\",\"certificateSha256\":\""
-                + configuration.authentication().directClientMappings().get(0).certificateSha256().orElseThrow()
-                + "\"}]},\"execution\":" + executionJson() + ",\"publicListener\":{\"enabled\":false},"
+                + "\"maximumBodyBytes\":1048576},\"authentication\":" + authenticationJson
+                + ",\"execution\":" + executionJson() + ",\"publicListener\":{\"enabled\":true,"
+                + "\"address\":\"127.0.0.1\",\"port\":" + publicListener.port()
+                + ",\"tlsProvider\":" + tlsJson + ",\"allowPlaintextLoopback\":false,"
+                + "\"authentication\":" + authenticationJson
+                + ",\"maximumHeaderBytes\":16384,\"maximumBodyBytes\":65536,\"execution\":" + executionJson()
+                + ",\"maximumStreamDurationMillis\":20000,\"publicImmutableCacheMillis\":300000,"
+                + "\"publicAliasCacheMillis\":30000,\"authorityListExposed\":true},"
                 + "\"acmeListener\":{\"enabled\":true,\"listenerId\":\"packaged-acme\","
                 + "\"address\":\"127.0.0.1\",\"port\":" + configuration.acmeListener().orElseThrow().port()
                 + ",\"tlsProvider\":" + tlsJson + ",\"transportMode\":\"DIRECT_TLS\","
@@ -574,6 +648,135 @@ class AcmeEndToEndTest {
             offset = last + end.length();
         }
         return List.copyOf(result);
+    }
+
+    private static void assertOcsp(HttpClient client, int publicPort, X509Certificate issuer,
+            X509Certificate certificate, boolean revoked) throws Exception {
+        JcaX509CertificateHolder issuerHolder = new JcaX509CertificateHolder(issuer);
+        org.bouncycastle.operator.DigestCalculator digest = new JcaDigestCalculatorProviderBuilder().build().get(
+                new org.bouncycastle.asn1.x509.AlgorithmIdentifier(
+                        org.bouncycastle.asn1.nist.NISTObjectIdentifiers.id_sha256));
+        OCSPReqBuilder builder = new OCSPReqBuilder();
+        builder.addRequest(new CertificateID(digest, issuerHolder, certificate.getSerialNumber()));
+        byte[] request = builder.build().getEncoded();
+        URI endpoint = URI.create("https://localhost:" + publicPort + "/ocsp/root");
+        java.net.http.HttpRequest wireRequest;
+        if (revoked) {
+            String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(request);
+            wireRequest = java.net.http.HttpRequest.newBuilder(URI.create(endpoint + "/" + encoded))
+                    .header("Accept", "application/ocsp-response").GET().build();
+        } else {
+            wireRequest = java.net.http.HttpRequest.newBuilder(endpoint)
+                    .header("Accept", "application/ocsp-response")
+                    .header("Content-Type", "application/ocsp-request")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(request)).build();
+        }
+        java.net.http.HttpResponse<byte[]> response = client.send(wireRequest,
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, response.statusCode());
+        assertEquals("application/ocsp-response", response.headers().firstValue("Content-Type").orElseThrow());
+        String etag = response.headers().firstValue("ETag").orElseThrow();
+        OCSPResp parsed = new OCSPResp(response.body());
+        assertEquals(0, parsed.getStatus());
+        BasicOCSPResp basic = assertInstanceOf(BasicOCSPResp.class, parsed.getResponseObject());
+        assertEquals(1, basic.getResponses().length);
+        assertTrue(basic.isSignatureValid(new JcaContentVerifierProviderBuilder().build(issuerHolder)));
+        assertTrue(basic.getResponses()[0].getThisUpdate() != null);
+        assertTrue(basic.getResponses()[0].getNextUpdate() != null);
+        if (revoked) {
+            assertInstanceOf(RevokedStatus.class, basic.getResponses()[0].getCertStatus());
+        } else {
+            assertEquals(null, basic.getResponses()[0].getCertStatus());
+            String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(request);
+            java.net.http.HttpResponse<byte[]> conditional = client.send(java.net.http.HttpRequest.newBuilder(
+                    URI.create(endpoint + "/" + encoded)).header("Accept", "application/ocsp-response")
+                    .header("If-None-Match", etag).GET().build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(304, conditional.statusCode());
+            assertEquals(0, conditional.body().length);
+        }
+    }
+
+    private static void assertOcspNonce(HttpClient client, int publicPort, X509Certificate issuer,
+            X509Certificate certificate) throws Exception {
+        JcaX509CertificateHolder issuerHolder = new JcaX509CertificateHolder(issuer);
+        org.bouncycastle.operator.DigestCalculator digest = new JcaDigestCalculatorProviderBuilder().build()
+                .get(CertificateID.HASH_SHA1);
+        byte[] nonce = new byte[] { 9, 8, 7, 6, 5, 4, 3, 2 };
+        OCSPReqBuilder builder = new OCSPReqBuilder();
+        builder.addRequest(new CertificateID(digest, issuerHolder, certificate.getSerialNumber()));
+        builder.setRequestExtensions(new Extensions(new Extension(OCSPObjectIdentifiers.id_pkix_ocsp_nonce,
+                false, new DEROctetString(new DEROctetString(nonce).getEncoded()))));
+        java.net.http.HttpResponse<byte[]> response = client.send(java.net.http.HttpRequest.newBuilder(
+                URI.create("https://localhost:" + publicPort + "/ocsp/root"))
+                .header("Accept", "application/ocsp-response")
+                .header("Content-Type", "application/ocsp-request")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(builder.build().getEncoded())).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, response.statusCode());
+        assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
+        assertTrue(response.headers().firstValue("ETag").isEmpty());
+        BasicOCSPResp basic = assertInstanceOf(BasicOCSPResp.class,
+                new OCSPResp(response.body()).getResponseObject());
+        Extension echoed = basic.getExtension(OCSPObjectIdentifiers.id_pkix_ocsp_nonce);
+        assertTrue(echoed != null);
+        assertEquals(java.util.HexFormat.of().formatHex(nonce), java.util.HexFormat.of().formatHex(
+                org.bouncycastle.asn1.ASN1OctetString.getInstance(echoed.getParsedValue()).getOctets()));
+    }
+
+    private static void assertOcspUnknownAndMulti(HttpClient client, int publicPort, X509Certificate issuer,
+            X509Certificate certificate) throws Exception {
+        JcaX509CertificateHolder issuerHolder = new JcaX509CertificateHolder(issuer);
+        org.bouncycastle.operator.DigestCalculator digest = new JcaDigestCalculatorProviderBuilder().build()
+                .get(CertificateID.HASH_SHA1);
+        OCSPReqBuilder builder = new OCSPReqBuilder();
+        builder.addRequest(new CertificateID(digest, issuerHolder, certificate.getSerialNumber()));
+        digest = new JcaDigestCalculatorProviderBuilder().build().get(CertificateID.HASH_SHA1);
+        builder.addRequest(new CertificateID(digest, issuerHolder, certificate.getSerialNumber().add(BigInteger.ONE)));
+        java.net.http.HttpResponse<byte[]> response = client.send(java.net.http.HttpRequest.newBuilder(
+                URI.create("https://localhost:" + publicPort + "/ocsp/root"))
+                .header("Accept", "application/ocsp-response").header("Content-Type", "application/ocsp-request")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(builder.build().getEncoded())).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        BasicOCSPResp basic = assertInstanceOf(BasicOCSPResp.class,
+                new OCSPResp(response.body()).getResponseObject());
+        assertEquals(2, basic.getResponses().length);
+        assertEquals(null, basic.getResponses()[0].getCertStatus());
+        assertInstanceOf(org.bouncycastle.cert.ocsp.UnknownStatus.class,
+                basic.getResponses()[1].getCertStatus());
+    }
+
+    private static void assertOcspNoncePolicies(HttpClient client, int publicPort, X509Certificate issuer,
+            X509Certificate certificate) throws Exception {
+        JcaX509CertificateHolder issuerHolder = new JcaX509CertificateHolder(issuer);
+        byte[] nonce = new byte[] { 3, 1, 4, 1, 5, 9, 2, 6 };
+        OCSPReqBuilder nonceBuilder = new OCSPReqBuilder();
+        nonceBuilder.addRequest(new CertificateID(new JcaDigestCalculatorProviderBuilder().build()
+                .get(CertificateID.HASH_SHA1), issuerHolder, certificate.getSerialNumber()));
+        nonceBuilder.setRequestExtensions(new Extensions(new Extension(OCSPObjectIdentifiers.id_pkix_ocsp_nonce,
+                false, new DEROctetString(new DEROctetString(nonce).getEncoded()))));
+        byte[] withNonce = nonceBuilder.build().getEncoded();
+        OCSPReqBuilder plainBuilder = new OCSPReqBuilder();
+        plainBuilder.addRequest(new CertificateID(new JcaDigestCalculatorProviderBuilder().build()
+                .get(CertificateID.HASH_SHA1), issuerHolder, certificate.getSerialNumber()));
+        byte[] withoutNonce = plainBuilder.build().getEncoded();
+        assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.MALFORMED_REQUEST,
+                postOcsp(client, publicPort, "reject", withNonce).getStatus());
+        assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.MALFORMED_REQUEST,
+                postOcsp(client, publicPort, "required", withoutNonce).getStatus());
+        assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.SUCCESSFUL,
+                postOcsp(client, publicPort, "required", withNonce).getStatus());
+    }
+
+    private static OCSPResp postOcsp(HttpClient client, int publicPort, String alias, byte[] request)
+            throws Exception {
+        java.net.http.HttpResponse<byte[]> response = client.send(java.net.http.HttpRequest.newBuilder(
+                URI.create("https://localhost:" + publicPort + "/ocsp/" + alias))
+                .header("Accept", "application/ocsp-response").header("Content-Type", "application/ocsp-request")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(request)).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, response.statusCode());
+        return new OCSPResp(response.body());
     }
 
     private static KeyPair rsa(byte seed) throws Exception {

@@ -1,6 +1,35 @@
 /*******************************************************************************
  * Copyright (C) 2026, Leo Galambos
  * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 package zeroecho.pki.impl.fs;
 
@@ -24,10 +53,11 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.RevocationHistory;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationView;
 
 /** Store-owned coordination of the authoritative log and its derived state. */
 @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources", "PMD.AvoidSynchronizedAtMethodLevel",
-        "PMD.UnusedAssignment" })
+        "PMD.UnusedAssignment", "PMD.ControlStatementBraces" })
 final class FilesystemRevocationAuthority implements AutoCloseable {
 
     private static final FilesystemRevocationCurrentIndex.Configuration INDEX_CONFIGURATION =
@@ -177,6 +207,21 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             }
             StableView view = new StableView(this, checkpoint, head);
             activeResources.add(view);
+            return view;
+        } finally {
+            lifecycle.writeLock().unlock();
+        }
+    }
+
+    /* default */ RevocationView view() throws IOException {
+        lifecycle.writeLock().lock();
+        try {
+            requireOperational();
+            ensureIndex();
+            FilesystemRevocationLog.RecoveryTarget head = log.recoveryTarget();
+            if (index.coveredGlobalRevision() != head.globalRevision()) recoverIndex(head);
+            DirectView view = new DirectView(this, head);
+            view.acquire();
             return view;
         } finally {
             lifecycle.writeLock().unlock();
@@ -387,6 +432,36 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
     private interface OwnedResource {
         /** Closes the resource without reentering owner deregistration. */
         void closeFromOwner() throws IOException;
+    }
+
+    /** Read-lock-backed direct view; callers close it before external signing. */
+    private static final class DirectView implements RevocationView {
+        private final FilesystemRevocationAuthority owner;
+        private final FilesystemRevocationLog.RecoveryTarget head;
+        private boolean closed;
+
+        private DirectView(FilesystemRevocationAuthority owner,
+                FilesystemRevocationLog.RecoveryTarget head) {
+            this.owner = owner;
+            this.head = head;
+        }
+
+        private void acquire() { owner.lifecycle.readLock().lock(); }
+        @Override public long revision() { requireOpen(); return head.globalRevision(); }
+        @Override public String commitment() { requireOpen(); return head.globalCommitment().value(); }
+        @Override public Optional<RevocationRecord> get(PkiId credentialId) throws IOException {
+            requireOpen();
+            return owner.index.lookup(Objects.requireNonNull(credentialId, "credentialId"))
+                    .map(FilesystemRevocationAuthority::record);
+        }
+        @Override public void close() {
+            if (closed) return;
+            closed = true;
+            owner.lifecycle.readLock().unlock();
+        }
+        private void requireOpen() {
+            if (closed) throw new IllegalStateException("Revocation view is closed");
+        }
     }
 
     /** Immutable checkpoint-backed current-state view. */

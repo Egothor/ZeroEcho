@@ -59,6 +59,8 @@ final class ServerRuntime implements AutoCloseable {
     static final String ACME_TRANSPORT_PREFIX = "zeroecho-pki-acme-https-";
     static final String ACME_PROTOCOL_PREFIX = "zeroecho-pki-acme-protocol-";
     static final String ACME_VALIDATION_PREFIX = "zeroecho-pki-acme-validation-";
+    static final String OCSP_TRANSPORT_PREFIX = "zeroecho-pki-ocsp-https-";
+    static final String OCSP_OPERATION_PREFIX = "zeroecho-pki-ocsp-response-";
     static final String SHUTDOWN_NAME = "zeroecho-pki-shutdown";
 
     private final ThreadPoolExecutor transport;
@@ -81,10 +83,12 @@ final class ServerRuntime implements AutoCloseable {
         this.configuration = configuration;
         transport = pool(configuration.transportWorkers(), configuration.transportQueueCapacity(),
                 new NamedThreadFactory(lane == Lane.PUBLIC ? PUBLIC_TRANSPORT_PREFIX
-                        : lane == Lane.ACME ? ACME_TRANSPORT_PREFIX : TRANSPORT_PREFIX));
+                        : lane == Lane.ACME ? ACME_TRANSPORT_PREFIX
+                                : lane == Lane.OCSP ? OCSP_TRANSPORT_PREFIX : TRANSPORT_PREFIX));
         operations = pool(configuration.operationWorkers(), configuration.operationQueueCapacity(),
                 new NamedThreadFactory(lane == Lane.PUBLIC ? PUBLIC_STREAM_PREFIX
-                        : lane == Lane.ACME ? ACME_PROTOCOL_PREFIX : OPERATION_PREFIX));
+                        : lane == Lane.ACME ? ACME_PROTOCOL_PREFIX
+                                : lane == Lane.OCSP ? OCSP_OPERATION_PREFIX : OPERATION_PREFIX));
         admitted = new Semaphore(configuration.maximumAdmittedRequests(), true);
     }
 
@@ -150,9 +154,11 @@ final class ServerRuntime implements AutoCloseable {
         boolean transportWorker = Thread.currentThread().getName().startsWith(TRANSPORT_PREFIX)
                 || Thread.currentThread().getName().startsWith(PUBLIC_TRANSPORT_PREFIX)
                 || Thread.currentThread().getName().startsWith(ACME_TRANSPORT_PREFIX);
+        transportWorker = transportWorker || Thread.currentThread().getName().startsWith(OCSP_TRANSPORT_PREFIX);
         boolean operationWorker = Thread.currentThread().getName().startsWith(OPERATION_PREFIX)
                 || Thread.currentThread().getName().startsWith(PUBLIC_STREAM_PREFIX)
                 || Thread.currentThread().getName().startsWith(ACME_PROTOCOL_PREFIX);
+        operationWorker = operationWorker || Thread.currentThread().getName().startsWith(OCSP_OPERATION_PREFIX);
         if (!operationWorker) {
             await(operations, configuration.gracefulShutdown());
         }
@@ -173,7 +179,7 @@ final class ServerRuntime implements AutoCloseable {
         }
     }
 
-    enum Lane { ADMIN, PUBLIC, ACME }
+    enum Lane { ADMIN, PUBLIC, ACME, OCSP }
 
     /** One separately admitted bounded challenge-validation execution lane. */
     static final class ChallengeRuntime implements AutoCloseable {

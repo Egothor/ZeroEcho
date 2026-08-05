@@ -63,15 +63,15 @@ class ServerControlOperationExecutorTest {
     void catalogContainsOneExplicitPairOfOperationFamilies() {
         System.out.println("catalogContainsOneExplicitPairOfOperationFamilies");
         OperationSecurityDescriptors catalog = new OperationSecurityDescriptors();
-        assertEquals(62, catalog.descriptors().size());
+        assertEquals(67, catalog.descriptors().size());
         assertEquals(16, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
-        assertEquals(46, catalog.descriptors().values().stream()
+        assertEquals(51, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION)
                 .count());
         assertEquals(OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION,
                 catalog.require(ServerControlOperation.IssueCapability.NAME).family());
-        System.out.println("...control-operations=46");
+        System.out.println("...control-operations=51");
         System.out.println("...ok");
     }
 

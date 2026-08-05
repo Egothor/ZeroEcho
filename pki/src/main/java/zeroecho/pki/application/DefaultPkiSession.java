@@ -110,6 +110,7 @@ final class DefaultPkiSession implements PkiSession {
     private final Optional<CertificationRequestService> requests;
     private final Optional<IssuanceService> issuance;
     private final Optional<StatusObjectService> statusObjects;
+    private final Optional<OcspResponseService> ocsp;
     private final Optional<PublicationService> publications;
     private final Optional<PkiSigningBus> signingBus;
     private final Optional<SignatureWorkflow> signatureWorkflow;
@@ -130,6 +131,8 @@ final class DefaultPkiSession implements PkiSession {
         this.requests = graph.requests();
         this.issuance = graph.issuance();
         this.statusObjects = graph.statusObjects();
+        this.ocsp = graph.signingBus().map(bus -> new DefaultOcspResponseService(store, bus,
+                configuration.signing().orElseThrow().signingTtl(), this::requireOpen));
         this.publications = graph.publications();
         this.signingBus = graph.signingBus();
         this.signatureWorkflow = graph.signatureWorkflow();
@@ -153,6 +156,11 @@ final class DefaultPkiSession implements PkiSession {
     /* default */ static PkiSession open(PkiSessionConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies) {
         return open(configuration, dependencies, Clock.systemUTC(), ProductionBootstrap.INSTANCE);
+    }
+
+    /* default */ static PkiSession open(PkiSessionConfiguration configuration,
+            PkiSessionRuntimeDependencies dependencies, Clock clock) {
+        return open(configuration, dependencies, clock, ProductionBootstrap.INSTANCE);
     }
 
     /* default */ static PkiSession open(PkiSessionConfiguration configuration, Clock clock, Bootstrap bootstrap) {
@@ -238,6 +246,8 @@ final class DefaultPkiSession implements PkiSession {
         requireOpen();
         return statusObjects;
     }
+
+    @Override public Optional<OcspResponseService> ocsp() { requireOpen(); return ocsp; }
 
     @Override
     public Optional<PublicationService> publications() {

@@ -164,7 +164,17 @@ public final class OperationSecurityDescriptors {
                 control(ServerControlOperation.ListAcmeAccounts.NAME, Permission.Action.ACME_ACCOUNT_READ,
                         Permission.ResourceType.ACME_ACCOUNT, false, false),
                 control(ServerControlOperation.DeactivateAcmeAccount.NAME, Permission.Action.ACME_ACCOUNT_MANAGE,
-                        Permission.ResourceType.ACME_ACCOUNT, true, false)));
+                        Permission.ResourceType.ACME_ACCOUNT, true, false),
+                control(ServerControlOperation.RegisterOcspResponder.NAME, Permission.Action.OCSP_ADMINISTER,
+                        Permission.ResourceType.OCSP_RESPONDER, true, true),
+                control(ServerControlOperation.InspectOcspResponder.NAME, Permission.Action.OCSP_RESPONDER_READ,
+                        Permission.ResourceType.OCSP_RESPONDER, false, false),
+                control(ServerControlOperation.ListOcspResponders.NAME, Permission.Action.OCSP_RESPONDER_READ,
+                        Permission.ResourceType.OCSP_RESPONDER, false, false),
+                control(ServerControlOperation.SetOcspResponderActive.ACTIVATE, Permission.Action.OCSP_ADMINISTER,
+                        Permission.ResourceType.OCSP_RESPONDER, true, true),
+                control(ServerControlOperation.SetOcspResponderActive.DEACTIVATE, Permission.Action.OCSP_ADMINISTER,
+                        Permission.ResourceType.OCSP_RESPONDER, true, false)));
     }
 
     /** Creates a registry and rejects duplicate operation identities. */
@@ -420,6 +430,16 @@ public final class OperationSecurityDescriptors {
             case ServerControlOperation.InspectAcmeAccount value -> "account=" + atom(value.accountId());
             case ServerControlOperation.ListAcmeAccounts value -> "offset=" + value.offset() + ";limit=" + value.limit();
             case ServerControlOperation.DeactivateAcmeAccount value -> "account=" + atom(value.accountId());
+            case ServerControlOperation.RegisterOcspResponder value -> "responder="
+                    + atom(value.registration().responderId()) + ";authority="
+                    + atom(value.registration().authorityId().value()) + ";issuer="
+                    + atom(value.registration().issuerId().value()) + ";binding="
+                    + value.registration().signatureBindingCommitment();
+            case ServerControlOperation.InspectOcspResponder value -> "responder=" + atom(value.responderId());
+            case ServerControlOperation.ListOcspResponders value -> "offset=" + value.offset()
+                    + ";limit=" + value.limit();
+            case ServerControlOperation.SetOcspResponderActive value -> "responder="
+                    + atom(value.responderId()) + ";active=" + value.active();
         };
     }
 }

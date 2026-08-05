@@ -190,6 +190,8 @@ public final class ServerOperationGateway {
 
     /** Installs the optional configured ACME control capability once before listener readiness. */
     public void installAcme(AcmeService service) { controlExecutor.installAcme(service); }
+    /** Installs the realm-owned OCSP administration capability before readiness. */
+    public void installOcsp(OcspResponderService service) { controlExecutor.installOcsp(service); }
 
     /** Creates the pre-control-plane gateway surface for embedded source compatibility. */
     public ServerOperationGateway(RealmId realmId, AuthorityExposurePolicy exposure, ServerControlStore control,
@@ -538,6 +540,19 @@ public final class ServerOperationGateway {
             case ServerControlOperation.SetAcmeDirectoryActive value -> controlExecutor.acmeScope(value);
             case ServerControlOperation.InspectAcmeAccount value -> controlExecutor.acmeScope(value);
             case ServerControlOperation.DeactivateAcmeAccount value -> controlExecutor.acmeScope(value);
+            case ServerControlOperation.RegisterOcspResponder value -> new Permission.Scope(realmId,
+                    Optional.of(value.registration().authorityId()), Optional.of(value.registration().issuerId()),
+                    Optional.empty());
+            case ServerControlOperation.InspectOcspResponder value -> {
+                OcspResponderService.Responder responder = controlExecutor.ocspResponder(value.responderId());
+                yield new Permission.Scope(realmId, Optional.of(responder.authorityId()),
+                        Optional.of(responder.issuerId()), Optional.empty());
+            }
+            case ServerControlOperation.SetOcspResponderActive value -> {
+                OcspResponderService.Responder responder = controlExecutor.ocspResponder(value.responderId());
+                yield new Permission.Scope(realmId, Optional.of(responder.authorityId()),
+                        Optional.of(responder.issuerId()), Optional.empty());
+            }
             default -> resource.scope();
         };
         if (!actual.equals(resource.scope())) throw new SecurityException("Control scope differs");

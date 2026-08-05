@@ -34,6 +34,7 @@
 package zeroecho.pki.spi.store;
 
 import java.time.Instant;
+import java.math.BigInteger;
 import java.util.List;
 import java.util.Optional;
 
@@ -195,6 +196,18 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
     Optional<Credential> getCredential(PkiId credentialId);
 
     /**
+     * Resolves one exact X.509 credential through the derived issuer-generation
+     * and canonical positive serial index. Implementations must validate the
+     * returned authoritative credential and must not scan the credential
+     * population for a lookup.
+     *
+     * @param issuerId exact issuer-generation identity
+     * @param serial canonical positive X.509 serial
+     * @return matching authoritative credential, when issued
+     */
+    Optional<Credential> getCredentialByIssuerAndSerial(PkiId issuerId, BigInteger serial);
+
+    /**
      * Resolves the exact credential atomically persisted with one issuance intent.
      * Implementations must reject duplicate matches and mismatched command
      * commitments rather than selecting by list order.
@@ -269,6 +282,9 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
      * @throws IllegalStateException if the snapshot cannot be opened
      */
     RevocationSnapshot openRevocationSnapshot();
+
+    /** Opens a stable direct-lookup current-state view for finite protocol work. */
+    RevocationView openRevocationView();
 
     /**
      * Persists a status object.

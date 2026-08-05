@@ -57,10 +57,12 @@ import zeroecho.pki.server.ServerRealmContext;
 public final class PublicRepositoryTransport implements AutoCloseable {
     private final HttpServer listener;
     private final ServerRuntime runtime;
+    private final ServerRuntime ocspRuntime;
 
-    private PublicRepositoryTransport(HttpServer listener, ServerRuntime runtime) {
+    private PublicRepositoryTransport(HttpServer listener, ServerRuntime runtime, ServerRuntime ocspRuntime) {
         this.listener = listener;
         this.runtime = runtime;
+        this.ocspRuntime = ocspRuntime;
     }
 
     /** Starts one separately bounded public listener over the shared realm. */
@@ -72,9 +74,11 @@ public final class PublicRepositoryTransport implements AutoCloseable {
         Objects.requireNonNull(realm, "realm");
         Objects.requireNonNull(authenticator, "authenticator");
         ServerRuntime runtime = null;
+        ServerRuntime ocspRuntime = null;
         HttpServer listener = null;
         try {
             runtime = new ServerRuntime(configuration.execution(), true);
+            ocspRuntime = new ServerRuntime(configuration.execution(), ServerRuntime.Lane.OCSP);
             if (configuration.tlsProvider().isPresent()) {
                 SSLContext context = TlsProviders.create(configuration.tlsProvider().orElseThrow(), loader);
                 HttpsServer secure = HttpsServer.create(configuration.socketAddress(),
@@ -88,15 +92,17 @@ public final class PublicRepositoryTransport implements AutoCloseable {
                         configuration.execution().transportQueueCapacity());
             }
             listener.setExecutor(runtime.transportExecutor());
+            listener.createContext("/ocsp/", new OcspHttpHandler(configuration, realm, authenticator,
+                    ocspRuntime, clock, new RequestIds(random), ready));
             listener.createContext("/", new PublicRepositoryHttpHandler(configuration, realm, authenticator,
                     runtime, clock, new RequestIds(random), ready));
             listener.start();
-            return new PublicRepositoryTransport(listener, runtime);
+            return new PublicRepositoryTransport(listener, runtime, ocspRuntime);
         } catch (IOException failure) {
-            closePartial(listener, runtime);
+            closePartial(listener, runtime, ocspRuntime);
             throw new IllegalStateException("Public repository listener initialization failed", failure);
         } catch (RuntimeException | Error failure) {
-            closePartial(listener, runtime);
+            closePartial(listener, runtime, ocspRuntime);
             throw failure;
         }
     }
@@ -105,7 +111,7 @@ public final class PublicRepositoryTransport implements AutoCloseable {
     public InetSocketAddress address() { return listener.getAddress(); }
 
     /** Prevents new public stream admission. */
-    public void quiesce() { runtime.quiesce(); }
+    public void quiesce() { runtime.quiesce(); ocspRuntime.quiesce(); }
 
     /** Stops the listener and its independent bounded resources. */
     public void shutdown(Duration graceful) {
@@ -113,6 +119,7 @@ public final class PublicRepositoryTransport implements AutoCloseable {
         int seconds = Math.toIntExact(Math.min(Integer.MAX_VALUE,
                 Objects.requireNonNull(graceful, "graceful").toSeconds()));
         listener.stop(seconds);
+        ocspRuntime.close();
         runtime.close();
     }
 
@@ -132,12 +139,15 @@ public final class PublicRepositoryTransport implements AutoCloseable {
         };
     }
 
-    private static void closePartial(HttpServer listener, ServerRuntime runtime) {
+    private static void closePartial(HttpServer listener, ServerRuntime runtime, ServerRuntime ocspRuntime) {
         if (listener != null) {
             listener.stop(0);
         }
         if (runtime != null) {
             runtime.close();
+        }
+        if (ocspRuntime != null) {
+            ocspRuntime.close();
         }
     }
 }

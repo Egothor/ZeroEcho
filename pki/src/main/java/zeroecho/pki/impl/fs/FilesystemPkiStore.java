@@ -35,8 +35,12 @@ package zeroecho.pki.impl.fs;
 
 import java.io.Closeable;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
@@ -108,6 +112,7 @@ import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.impl.ProfileLifecycleFailure;
 import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.core.io.CancellationSignal;
@@ -122,6 +127,7 @@ import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.TemporaryUniqueIndex;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationView;
 import zeroecho.pki.spi.store.RevocationHistory;
 
 /**
@@ -175,7 +181,9 @@ import zeroecho.pki.spi.store.RevocationHistory;
  */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods",
         "PMD.ExcessivePublicCount", "PMD.UseTryWithResources", "PMD.ExceptionAsFlowControl",
-        "PMD.PreserveStackTrace", "PMD.NcssCount", "PMD.AvoidDuplicateLiterals" })
+        "PMD.PreserveStackTrace", "PMD.NcssCount", "PMD.AvoidDuplicateLiterals",
+        "PMD.ControlStatementBraces", "PMD.CollapsibleIfStatements", "PMD.AvoidDeeplyNestedIfStmts",
+        "PMD.AvoidLiteralsInIfCondition" })
 public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
@@ -186,6 +194,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private static final String STATUS_RECORD_NAMESPACE = "io.zeroecho.pki.status-object-record";
     private static final String STATUS_OWNER_NAMESPACE = "io.zeroecho.pki.status-object-owner";
     private static final String PUBLICATION_RECORD_NAMESPACE = "io.zeroecho.pki.publication-record";
+    private static final String CREDENTIAL_SERIAL_INDEX_NAMESPACE = "io.zeroecho.pki.credential-serial-index";
     private static final int CURRENT_SIGN_RECORD_VERSION = 2;
     private static final int SIGN_OWNER_VALUE_VERSION = 1;
     private static final int STATUS_OWNER_VALUE_VERSION = 1;
@@ -294,6 +303,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             this.signingTimeWatermark = new AtomicLong(loadSigningTimeWatermark());
             this.historySeq = new AtomicLong(0L);
             recoverStagedContent();
+            rebuildCredentialSerialIndex();
             recoverPublicationRecords();
             boolean snapshotRestore = requireSnapshotBoundary();
             openedRevocations = FilesystemRevocationAuthority.open(
@@ -637,6 +647,10 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         writeOnce(paths.issuerGenerationPath(generation.issuerId()),
                 FsCodec.encode(FsCodec.ISSUER_GENERATION, generation), "ISSUER_GENERATION",
                 FsUtil.safeId(generation.issuerId()));
+        x509Serial(credential).ifPresent(serial -> {
+            requireSerialAvailable(generation.issuerId(), serial, generation.credentialId());
+            ensureSerialIndex(generation.issuerId(), serial, generation.credentialId());
+        });
     }
 
     @Override
@@ -687,7 +701,11 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     public void putCredential(final Credential credential) {
         requireStoreUsable();
         Objects.requireNonNull(credential, "credential");
+        Optional<BigInteger> serial = indexableSerial(credential);
+        serial.ifPresent(value -> requireSerialAvailable(credential.issuerRef().issuerId(), value, credential));
         credentialContentTransactions.put(credential);
+        serial.ifPresent(value -> ensureSerialIndex(credential.issuerRef().issuerId(), value,
+                credential.credentialId()));
     }
 
     @Override
@@ -703,6 +721,184 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             return Optional.of(credentialContentTransactions.validateLoaded(credentialId, credential));
         } catch (IOException failure) {
             throw new IllegalStateException("Credential read failed", failure);
+        }
+    }
+
+    @Override
+    public Optional<Credential> getCredentialByIssuerAndSerial(PkiId issuerId, BigInteger serial) {
+        requireStoreUsable();
+        Objects.requireNonNull(issuerId, "issuerId");
+        requirePositiveSerial(serial);
+        MetadataKey key = serialIndexKey(issuerId, serial);
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
+            if (stored.isEmpty()) return Optional.empty();
+            PkiId credentialId;
+            try (MetadataSnapshot.Record record = stored.orElseThrow()) {
+                credentialId = decodeSerialIndex(record, issuerId, serial);
+            }
+            Credential credential = getCredential(credentialId)
+                    .orElseThrow(() -> new IllegalStateException("Credential serial index target is missing"));
+            if (!credential.issuerRef().issuerId().equals(issuerId)
+                    || !x509Serial(credential).filter(serial::equals).isPresent()) {
+                throw new IllegalStateException("Credential serial index authority mismatch");
+            }
+            return Optional.of(credential);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Credential serial index is invalid");
+        }
+    }
+
+    private void rebuildCredentialSerialIndex() throws IOException {
+        Path root = paths.root().resolve("credentials").resolve("by-id");
+        if (!Files.isDirectory(root)) return;
+        try (Stream<Path> records = Files.list(root)) {
+            java.util.Iterator<Path> iterator = records
+                    .filter(path -> path.getFileName().toString().endsWith(".bin"))
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString())).iterator();
+            while (iterator.hasNext()) {
+                Credential credential = FsCodec.decode(FsCodec.CREDENTIAL,
+                        FsOperations.readAll(iterator.next()), stagedContent);
+                Optional<BigInteger> serial = indexableSerial(credential);
+                if (serial.isPresent()) {
+                    requireSerialAvailable(credential.issuerRef().issuerId(), serial.orElseThrow(), credential);
+                    ensureSerialIndex(credential.issuerRef().issuerId(), serial.orElseThrow(),
+                            credential.credentialId());
+                }
+            }
+        }
+    }
+
+    private void requireSerialAvailable(PkiId issuerId, BigInteger serial, PkiId credentialId) {
+        Credential candidate = getCredential(credentialId).orElse(null);
+        requireSerialAvailable(issuerId, serial, candidate);
+    }
+
+    private void requireSerialAvailable(PkiId issuerId, BigInteger serial, Credential candidate) {
+        Optional<Credential> existing = getCredentialByIssuerAndSerial(issuerId, serial);
+        if (existing.isPresent() && (candidate == null
+                || !existing.orElseThrow().credentialId().equals(candidate.credentialId()))) {
+            if (candidate == null || !sameImmutableContent(existing.orElseThrow(), candidate)) {
+                throw new IllegalStateException("Duplicate issuer-generation certificate serial");
+            }
+        }
+    }
+
+    private void ensureSerialIndex(PkiId issuerId, BigInteger serial, PkiId credentialId) {
+        MetadataKey key = serialIndexKey(issuerId, serial);
+        try (MetadataSnapshot snapshot = metadataStore.snapshot()) {
+            Optional<MetadataSnapshot.Record> stored = snapshot.get(key);
+            if (stored.isPresent()) {
+                try (MetadataSnapshot.Record record = stored.orElseThrow()) {
+                    PkiId indexedId = decodeSerialIndex(record, issuerId, serial);
+                    if (!indexedId.equals(credentialId)) {
+                        Credential indexed = getCredential(indexedId).orElseThrow(
+                                () -> new IllegalStateException("Credential serial index target is missing"));
+                        Credential candidate = getCredential(credentialId).orElseThrow(
+                                () -> new IllegalStateException("Credential serial candidate is missing"));
+                        if (!sameImmutableContent(indexed, candidate)) {
+                            throw new IllegalStateException("Duplicate issuer-generation certificate serial");
+                        }
+                    }
+                }
+                return;
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException("Credential serial index read failed");
+        }
+        try (MetadataTransaction transaction = metadataStore.beginTransaction()) {
+            transaction.create(key, byteContent(encodeSerialIndex(issuerId, serial, credentialId)),
+                    CancellationSignal.NONE);
+            MetadataCommitResult result = transaction.commit();
+            if (result.outcome() == MetadataCommitResult.Outcome.COMMITTED) return;
+            if (result.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                durabilityUncertain.set(true);
+                throw new PkiException("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED");
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException("Credential serial index persistence failed");
+        }
+        requireSerialAvailable(issuerId, serial, credentialId);
+    }
+
+    private static boolean sameImmutableContent(Credential left, Credential right) {
+        return left.content().storeId().equals(right.content().storeId())
+                && left.content().contentId().equals(right.content().contentId())
+                && left.content().sha256().equals(right.content().sha256())
+                && left.content().length() == right.content().length();
+    }
+
+    private static Optional<BigInteger> x509Serial(Credential credential) {
+        if (!BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) return Optional.empty();
+        try {
+            BigInteger serial = new BigInteger(credential.serialOrUniqueId());
+            if (serial.signum() <= 0 || serial.bitLength() > 160
+                    || !serial.toString().equals(credential.serialOrUniqueId())) return Optional.empty();
+            return Optional.of(serial);
+        } catch (NumberFormatException failure) {
+            return Optional.empty();
+        }
+    }
+
+    private Optional<BigInteger> indexableSerial(Credential credential) {
+        if (credential.issuerRef().issuerId().value().startsWith("issuer-unresolved:")
+                || getIssuerGeneration(credential.issuerRef().issuerId()).isEmpty()) {
+            return Optional.empty();
+        }
+        return x509Serial(credential);
+    }
+
+    private static void requirePositiveSerial(BigInteger serial) {
+        Objects.requireNonNull(serial, "serial");
+        if (serial.signum() <= 0 || serial.bitLength() > 160) {
+            throw new IllegalArgumentException("X.509 serial must be a positive value of at most 20 octets");
+        }
+    }
+
+    private static MetadataKey serialIndexKey(PkiId issuerId, BigInteger serial) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] issuer = issuerId.value().getBytes(StandardCharsets.UTF_8);
+            digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(issuer.length).array());
+            digest.update(issuer);
+            digest.update(serial.toByteArray());
+            return new MetadataKey(CREDENTIAL_SERIAL_INDEX_NAMESPACE,
+                    HexFormat.of().formatHex(digest.digest()));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+    }
+
+    private static byte[] encodeSerialIndex(PkiId issuerId, BigInteger serial, PkiId credentialId) {
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(256);
+                DataOutputStream output = new DataOutputStream(bytes)) {
+            output.writeInt(1);
+            output.writeUTF(issuerId.value());
+            output.writeUTF(serial.toString());
+            output.writeUTF(credentialId.value());
+            output.flush();
+            return bytes.toByteArray();
+        } catch (IOException impossible) {
+            throw new IllegalStateException("Credential serial index encoding failed", impossible);
+        }
+    }
+
+    private static PkiId decodeSerialIndex(MetadataSnapshot.Record record, PkiId issuerId,
+            BigInteger serial) throws IOException {
+        byte[] encoded = readMetadataValue(record);
+        if (encoded.length > 16_384) throw new IOException("Credential serial index exceeds its bound");
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded))) {
+            if (input.readInt() != 1) throw new IOException("Credential serial index version is obsolete");
+            PkiId storedIssuer = new PkiId(input.readUTF());
+            String storedSerial = input.readUTF();
+            PkiId credentialId = new PkiId(input.readUTF());
+            if (input.read() != -1 || !storedIssuer.equals(issuerId)
+                    || !serial.toString().equals(storedSerial)) {
+                throw new IOException("Credential serial index authority mismatch");
+            }
+            return credentialId;
+        } catch (IllegalArgumentException failure) {
+            throw new IOException("Credential serial index is malformed", failure);
         }
     }
 
@@ -936,6 +1132,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         requireStoreUsable();
         try {
             return revocations.snapshot();
+        } catch (IOException failure) {
+            throw corruptRevocationState();
+        }
+    }
+
+    @Override
+    public RevocationView openRevocationView() {
+        requireStoreUsable();
+        try {
+            return revocations.view();
         } catch (IOException failure) {
             throw corruptRevocationState();
         }

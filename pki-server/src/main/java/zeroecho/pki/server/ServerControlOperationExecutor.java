@@ -66,6 +66,7 @@ public final class ServerControlOperationExecutor {
     private final OperationSecurityDescriptors descriptors;
     private final Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies;
     private final java.util.concurrent.atomic.AtomicReference<AcmeService> acme = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<OcspResponderService> ocsp = new java.util.concurrent.atomic.AtomicReference<>();
 
     /** Creates the one control dispatcher over existing durable authorities. */
     public ServerControlOperationExecutor(RealmId realmId, AuthorityExposurePolicy exposure,
@@ -114,6 +115,13 @@ public final class ServerControlOperationExecutor {
     public void installAcme(AcmeService service) {
         if (!acme.compareAndSet(null, Objects.requireNonNull(service, "service"))) {
             throw new IllegalStateException("ACME administration capability is already installed");
+        }
+    }
+
+    /** Installs the realm-owned durable OCSP responder capability exactly once. */
+    public void installOcsp(OcspResponderService service) {
+        if (!ocsp.compareAndSet(null, Objects.requireNonNull(service, "service"))) {
+            throw new IllegalStateException("OCSP administration capability is already installed");
         }
     }
 
@@ -220,11 +228,27 @@ public final class ServerControlOperationExecutor {
                     page(acme().accounts(value.offset(), value.limit()), ServerControlOperationExecutor::account));
             case ServerControlOperation.DeactivateAcmeAccount value -> ordinary(operation,
                     account(acme().deactivateAccount(value.accountId())));
+            case ServerControlOperation.RegisterOcspResponder value -> ordinary(operation,
+                    responder(ocsp().register(value.registration())));
+            case ServerControlOperation.InspectOcspResponder value -> ordinary(operation,
+                    responder(ocsp().require(value.responderId())));
+            case ServerControlOperation.ListOcspResponders value -> ordinary(operation,
+                    page(ocsp().list(value.offset(), value.limit()), ServerControlOperationExecutor::responder));
+            case ServerControlOperation.SetOcspResponderActive value -> ordinary(operation,
+                    responder(ocsp().setActive(value.responderId(), value.active())));
         };
     }
 
     private AcmeService acme() {
         return Optional.ofNullable(acme.get()).orElseThrow(() -> new IllegalStateException("ACME capability unavailable"));
+    }
+
+    private OcspResponderService ocsp() {
+        return Optional.ofNullable(ocsp.get()).orElseThrow(() -> new IllegalStateException("OCSP capability unavailable"));
+    }
+
+    /* default */ OcspResponderService.Responder ocspResponder(String responderId) {
+        return ocsp().require(responderId);
     }
 
     private RepositoryAliasService aliases() {
@@ -389,6 +413,13 @@ public final class ServerControlOperationExecutor {
         return object("accountId", text(value.accountId()), "directoryId", text(value.directoryId()),
                 "directoryRevision", integer(value.directoryRevision()), "status", text(value.status().name()),
                 "createdAt", text(value.createdAt().toString()), "updatedAt", text(value.updatedAt().toString()));
+    }
+    private static PkiOperationValue responder(OcspResponderService.Responder value) {
+        return object("responderId", text(value.responderId()), "alias", text(value.alias()),
+                "authorityId", text(value.authorityId().value()), "issuerId", text(value.issuerId().value()),
+                "signingMode", text(value.signingMode().name()), "responderCredentialId",
+                text(value.responderCredentialId().value()), "state", text(value.state().name()),
+                "configurationCommitment", text(value.configurationCommitment()));
     }
     private static PkiOperationValue template(RoleTemplateCatalog.Template value) {
         List<PkiOperationValue> actions = value.actions().stream().sorted(Comparator.comparingInt(Permission.Action::code))

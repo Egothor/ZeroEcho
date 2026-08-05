@@ -51,10 +51,12 @@ import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.OperationSecurityDescriptors;
+import zeroecho.pki.application.OcspResponseService;
 import zeroecho.pki.server.AdministrativeOperation;
 import zeroecho.pki.server.ApprovalService;
 import zeroecho.pki.server.DisclosureService;
 import zeroecho.pki.server.Permission;
+import zeroecho.pki.server.OcspResponderService;
 import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.RepositoryAliasService;
 import zeroecho.pki.server.RoleTemplateCatalog;
@@ -429,6 +431,39 @@ final class HttpOperationCodec {
             case ServerControlOperation.DeactivateAcmeAccount.NAME -> {
                 fields.exact("accountId"); yield new ServerControlOperation.DeactivateAcmeAccount(fields.text("accountId"));
             }
+            case ServerControlOperation.RegisterOcspResponder.NAME -> {
+                fields.exact("responderId", "alias", "authorityId", "issuerId", "signingMode",
+                        "responderCredentialId", "signingKeyRef", "chainPathId", "signatureAlgorithm",
+                        "signatureBindingId", "signatureBindingCommitment", "responderIdForm",
+                        "responseValidityMillis", "noncePolicy", "maximumNonceBytes", "acceptedHashes",
+                        "maximumRequestBytes", "maximumEntries", "cacheLifetimeMillis");
+                yield new ServerControlOperation.RegisterOcspResponder(new OcspResponderService.Registration(
+                        fields.text("responderId"), fields.text("alias"),
+                        fields.pkiId("authorityId"), fields.pkiId("issuerId"),
+                        OcspResponderService.SigningMode.valueOf(fields.text("signingMode")),
+                        fields.pkiId("responderCredentialId"), new KeyRef(fields.text("signingKeyRef")),
+                        fields.pkiId("chainPathId"), fields.text("signatureAlgorithm"),
+                        fields.optionalText("signatureBindingId"), fields.text("signatureBindingCommitment"),
+                        OcspResponseService.ResponderId.valueOf(fields.text("responderIdForm")),
+                        Duration.ofMillis(fields.longValue("responseValidityMillis")),
+                        OcspResponderService.NoncePolicy.valueOf(fields.text("noncePolicy")),
+                        fields.integer("maximumNonceBytes"),
+                        fields.enumSet("acceptedHashes", OcspResponseService.CertIdHash.class),
+                        fields.integer("maximumRequestBytes"), fields.integer("maximumEntries"),
+                        Duration.ofMillis(fields.longValue("cacheLifetimeMillis"))));
+            }
+            case ServerControlOperation.InspectOcspResponder.NAME -> {
+                fields.exact("responderId"); yield new ServerControlOperation.InspectOcspResponder(fields.text("responderId"));
+            }
+            case ServerControlOperation.ListOcspResponders.NAME -> {
+                fields.exact("offset", "limit"); yield new ServerControlOperation.ListOcspResponders(
+                        fields.integer("offset"), fields.integer("limit"));
+            }
+            case ServerControlOperation.SetOcspResponderActive.ACTIVATE,
+                    ServerControlOperation.SetOcspResponderActive.DEACTIVATE -> {
+                fields.exact("responderId"); yield new ServerControlOperation.SetOcspResponderActive(
+                        fields.text("responderId"), id.equals(ServerControlOperation.SetOcspResponderActive.ACTIVATE));
+            }
             default -> throw new SecurityException("Control operation is not exposed");
         };
     }
@@ -449,6 +484,9 @@ final class HttpOperationCodec {
                     value.authorityId());
             case ServerControlOperation.RegisterAcmeDirectory value -> authorityScope(realmId, authority,
                     value.registration().authorityId());
+            case ServerControlOperation.RegisterOcspResponder value -> new Permission.Scope(realmId,
+                    Optional.of(value.registration().authorityId()), Optional.of(value.registration().issuerId()),
+                    Optional.empty());
             default -> new Permission.Scope(realmId, authority, Optional.empty(), Optional.empty());
         };
     }

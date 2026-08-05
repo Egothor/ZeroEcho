@@ -128,6 +128,7 @@ import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationRecord;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
@@ -622,6 +623,39 @@ public final class FilesystemPkiStoreTest {
             assertThrows(IllegalStateException.class, store::listCas);
         }
         System.out.println("caReferencesRequireValidStandaloneCredentialsAndPreserveOrder...ok");
+    }
+
+    @Test
+    void issuerSerialIndexSeparatesEqualSerialsAndRecoversOnRestart() throws Exception {
+        System.out.println("issuerSerialIndexSeparatesEqualSerialsAndRecoversOnRestart");
+        Path root = tmp.resolve("store-issuer-serial-index");
+        PkiId firstIssuer;
+        PkiId secondIssuer;
+        PkiId firstCredential;
+        PkiId secondCredential;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            CaRecord first = TestObjects.minimalCaRecord(store, "ca-index-one", CaState.ACTIVE);
+            CaRecord second = TestObjects.minimalCaRecord(store, "ca-index-two", CaState.ACTIVE);
+            store.putCa(first);
+            store.putCa(second);
+            firstIssuer = first.currentIssuanceIssuerId();
+            secondIssuer = second.currentIssuanceIssuerId();
+            firstCredential = store.getIssuerGeneration(firstIssuer).orElseThrow().credentialId();
+            secondCredential = store.getIssuerGeneration(secondIssuer).orElseThrow().credentialId();
+            assertEquals(firstCredential, store.getCredentialByIssuerAndSerial(firstIssuer, BigInteger.ONE)
+                    .orElseThrow().credentialId());
+            assertEquals(secondCredential, store.getCredentialByIssuerAndSerial(secondIssuer, BigInteger.ONE)
+                    .orElseThrow().credentialId());
+            assertTrue(store.getCredentialByIssuerAndSerial(firstIssuer, BigInteger.TWO).isEmpty());
+        }
+        try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            assertEquals(firstCredential, reopened.getCredentialByIssuerAndSerial(firstIssuer, BigInteger.ONE)
+                    .orElseThrow().credentialId());
+            assertEquals(secondCredential, reopened.getCredentialByIssuerAndSerial(secondIssuer, BigInteger.ONE)
+                    .orElseThrow().credentialId());
+        }
+        System.out.println("...same-serial-separated=true");
+        System.out.println("issuerSerialIndexSeparatesEqualSerialsAndRecoversOnRestart...ok");
     }
 
     @Test
@@ -1336,9 +1370,9 @@ public final class FilesystemPkiStoreTest {
                         .build(keyPair.getPrivate())).getEncoded();
                 zeroecho.pki.api.content.DurableContentReference content =
                         zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(store.stagedContent(), Encoding.DER, der);
-                return new Credential(credentialId, new FormatId("fmt-x509"),
+                return new Credential(credentialId, BcX509CredentialFramework.FORMAT_ID,
                         new IssuerRef(authorityId, issuerId, pathId), subject,
-                        new Validity(notBefore, notAfter), "CA-" + authorityId.value(),
+                        new Validity(notBefore, notAfter), "1",
                         new PkiId("pk-" + authorityId.value()),
                         new CaProfileBinding(new CertificateProfileRef("profile-ca", 1, new byte[32])),
                         CredentialStatus.ISSUED, content, emptyAttributes());

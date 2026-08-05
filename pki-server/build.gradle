@@ -6,12 +6,20 @@ plugins {
 
 group = 'org.egothor'
 
+configurations {
+    mockitoAgent
+}
+
 dependencies {
     api project(':pki')
     implementation project(':lib')
     implementation platform('tools.jackson:jackson-bom:3.1.5')
     implementation 'tools.jackson.core:jackson-core'
     testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.84'
+    testImplementation 'org.mockito:mockito-core:5.23.0'
+    mockitoAgent('org.mockito:mockito-core:5.23.0') {
+        transitive = false
+    }
 }
 
 application {
@@ -21,6 +29,7 @@ application {
 
 tasks.named('test') {
     dependsOn tasks.named('installDist')
+    jvmArgs("-javaagent:${configurations.mockitoAgent.singleFile}")
 }
 
 jar {

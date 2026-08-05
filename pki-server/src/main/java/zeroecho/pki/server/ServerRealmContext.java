@@ -79,6 +79,7 @@ public final class ServerRealmContext implements AutoCloseable {
     private final DisclosureService disclosure;
     private final RepositoryAliasService repositoryAliases;
     private final AcmeControlStore acmeControl;
+    private final OcspResponderService ocspResponders;
     private final PublicRepositoryGateway publicRepository;
     private final AuditorViews auditorViews;
     private final ServerOperationGateway gateway;
@@ -101,6 +102,9 @@ public final class ServerRealmContext implements AutoCloseable {
         this.repositoryAliases = repositoryAliases;
         this.acmeControl = new AcmeControlStore(control);
         this.acmeControl.validateAndRecover(clock);
+        this.ocspResponders = new OcspResponderService(configuration.realmId(), control, session.repository(),
+                session.algorithmBindings(), session.ocsp(), clock);
+        this.ocspResponders.validateAll();
         this.publicRepository = new PublicRepositoryGateway(configuration.realmId(), configuration.authorityExposure(),
                 session.repository(), control, roles, authorization, breakGlass, disclosure, repositoryAliases,
                 this::requireOpen);
@@ -112,6 +116,7 @@ public final class ServerRealmContext implements AutoCloseable {
                 new OperationSecurityDescriptors(),
                 session.operations(), session.resourceScopes(), configuration.approvalPolicies(), clock, auditSink,
                 this::requireOpen);
+        this.gateway.installOcsp(ocspResponders);
     }
 
     /**
@@ -148,7 +153,7 @@ public final class ServerRealmContext implements AutoCloseable {
             control.validateAll();
             control.validateReferences(roles);
             audit = new SharedAuditSink(PkiBootstrap.openAudit(exact.pkiSessionConfiguration().audit()));
-            session = PkiSession.open(exact.pkiSessionConfiguration(), runtime.withAuditSink(audit));
+            session = PkiSession.open(exact.pkiSessionConfiguration(), runtime.withAuditSink(audit), clock);
             validateExposure(exact.authorityExposure(), session);
             AuthorizationEngine authorization = new AuthorizationEngine(clock);
             ApprovalService approvals = new ApprovalService(control, clock, audit);
@@ -186,6 +191,8 @@ public final class ServerRealmContext implements AutoCloseable {
     public RepositoryAliasService repositoryAliases() { requireOpen(); return repositoryAliases; }
     /** @return typed ACME records in the realm's sole durable control authority */
     public AcmeControlStore acmeControl() { requireOpen(); return acmeControl; }
+    /** @return durable exact OCSP responder bindings */
+    public OcspResponderService ocspResponders() { requireOpen(); return ocspResponders; }
     /** @return read-only disclosed public repository gateway */
     public PublicRepositoryGateway publicRepository() { requireOpen(); return publicRepository; }
     /** @return explicit auditor projection service */

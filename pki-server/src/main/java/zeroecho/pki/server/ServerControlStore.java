@@ -103,9 +103,11 @@ public final class ServerControlStore implements AutoCloseable {
     public static final String ACME_CHALLENGE = "io.zeroecho.server.acme-challenge";
     /** Stable namespace for ACME validation-evidence records. */
     public static final String ACME_EVIDENCE = "io.zeroecho.server.acme-evidence";
+    /** Stable namespace for durable OCSP responder bindings. */
+    public static final String OCSP_RESPONDER = "io.zeroecho.server.ocsp-responder";
 
     private static final int MAGIC = 0x5a455331;
-    private static final int SCHEMA = 4;
+    private static final int SCHEMA = 5;
     private static final int MAXIMUM_RECORD_BYTES = 1_048_576;
     private static final int MAXIMUM_STRING_BYTES = 16_384;
     private static final int MAXIMUM_COLLECTION = 4_096;
@@ -118,39 +120,39 @@ public final class ServerControlStore implements AutoCloseable {
     private static final int KIND_DISCLOSURE = 7;
     private static final int KIND_CAPABILITY = 8;
     private static final int KIND_REPOSITORY_ALIAS = 9;
-    private static final int KIND_ACME = 10;
+    private static final int KIND_PROTOCOL = 10;
 
     /**
-     * Strict opaque ACME payload framed by the server-control authority.
+     * Strict opaque protocol payload framed by the server-control authority.
      *
-     * <p>The ACME domain codec owns the payload schema. This record keeps the
+     * <p>The owning closed protocol codec owns the payload schema. This record keeps the
      * transactional metadata layer independent of protocol classes while still
      * enforcing canonical key identity and bounded content.</p>
      *
-     * @param namespace one closed ACME namespace
+     * @param namespace one closed protocol namespace
      * @param recordId canonical domain identity
      * @param commitment SHA-256 commitment of the complete domain payload
-     * @param payload strict versioned ACME domain encoding
+     * @param payload strict versioned protocol-domain encoding
      */
-    public record AcmeRecord(String namespace, String recordId, String commitment, byte[] payload) {
+    public record ProtocolRecord(String namespace, String recordId, String commitment, byte[] payload) {
         /** Validates namespace, identity, commitment, and defensive payload bounds. */
-        public AcmeRecord {
-            if (!ACME_NAMESPACES.contains(namespace)) {
-                throw new IllegalArgumentException("Unknown ACME control namespace");
+        public ProtocolRecord {
+            if (!PROTOCOL_NAMESPACES.contains(namespace)) {
+                throw new IllegalArgumentException("Unknown protocol control namespace");
             }
-            Permission.requireId(recordId, "ACME record");
+            Permission.requireId(recordId, "protocol record");
             requireDigest(commitment);
             payload = Objects.requireNonNull(payload, "payload").clone();
             if (payload.length == 0 || payload.length > MAXIMUM_RECORD_BYTES / 2) {
-                throw new IllegalArgumentException("ACME control payload bound is invalid");
+                throw new IllegalArgumentException("Protocol control payload bound is invalid");
             }
         }
 
         @Override public byte[] payload() { return payload.clone(); }
     }
 
-    private static final Set<String> ACME_NAMESPACES = Set.of(ACME_DIRECTORY, ACME_ACCOUNT, ACME_ORDER,
-            ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE);
+    private static final Set<String> PROTOCOL_NAMESPACES = Set.of(ACME_DIRECTORY, ACME_ACCOUNT, ACME_ORDER,
+            ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE, OCSP_RESPONDER);
 
     /**
      * Durable realm-control identity and commitments.
@@ -393,72 +395,73 @@ public final class ServerControlStore implements AutoCloseable {
         }
     }
 
-    /** One compare-and-set mutation participating in an atomic ACME state change. */
-    public record AcmeMutation(AcmeRecord record, Optional<String> expectedCommitment) {
+    /** One compare-and-set mutation participating in an atomic protocol-state change. */
+    public record ProtocolMutation(ProtocolRecord record, Optional<String> expectedCommitment) {
         /** Validates the immutable mutation request. */
-        public AcmeMutation {
+        public ProtocolMutation {
             Objects.requireNonNull(record, "record");
             expectedCommitment = Objects.requireNonNull(expectedCommitment, "expectedCommitment");
             expectedCommitment.ifPresent(ServerControlStore::requireDigest);
         }
     }
 
-    /** Reads one exact ACME record from its closed namespace. */
-    public synchronized Optional<AcmeRecord> acmeRecord(String namespace, String recordId) {
-        requireAcmeNamespace(namespace);
-        return read(namespace, recordId, KIND_ACME, input -> readAcme(input, namespace));
+    /** Reads one exact protocol record from its closed namespace. */
+    public synchronized Optional<ProtocolRecord> protocolRecord(String namespace, String recordId) {
+        requireProtocolNamespace(namespace);
+        return read(namespace, recordId, KIND_PROTOCOL, input -> readProtocol(input, namespace));
     }
 
-    /** Returns one bounded deterministic page of ACME records. */
-    public synchronized Page<AcmeRecord> acmeRecords(String namespace, int offset, int limit) {
-        requireAcmeNamespace(namespace);
-        return scanPage(namespace, KIND_ACME, input -> readAcme(input, namespace), offset, limit);
+    /** Returns one bounded deterministic page of protocol records. */
+    public synchronized Page<ProtocolRecord> protocolRecords(String namespace, int offset, int limit) {
+        requireProtocolNamespace(namespace);
+        return scanPage(namespace, KIND_PROTOCOL, input -> readProtocol(input, namespace), offset, limit);
     }
 
     /**
-     * Atomically creates or compare-and-replaces a finite set of ACME records.
+     * Atomically creates or compare-and-replaces a finite set of protocol records.
      * Empty expected commitments mean create-only; present commitments mean exact
      * compare-and-replace. Provider I/O and PKI operations must occur outside this
      * method.
      */
-    public synchronized void mutateAcme(List<AcmeMutation> requested) {
+    public synchronized void mutateProtocol(List<ProtocolMutation> requested) {
         requireOpen();
-        List<AcmeMutation> mutations = List.copyOf(Objects.requireNonNull(requested, "requested"));
+        List<ProtocolMutation> mutations = List.copyOf(Objects.requireNonNull(requested, "requested"));
         if (mutations.isEmpty() || mutations.size() > 256) {
-            throw new IllegalArgumentException("ACME transaction size is invalid");
+            throw new IllegalArgumentException("Protocol transaction size is invalid");
         }
         Set<String> keys = new HashSet<>();
         if (mutations.stream().anyMatch(item -> !keys.add(item.record().namespace() + '\n'
                 + item.record().recordId()))) {
-            throw new IllegalArgumentException("Duplicate ACME transaction identity");
+            throw new IllegalArgumentException("Duplicate protocol transaction identity");
         }
         try (MetadataSnapshot snapshot = metadata.snapshot();
                 MetadataTransaction transaction = metadata.beginTransaction()) {
-            for (AcmeMutation mutation : mutations) {
-                AcmeRecord value = mutation.record();
+            for (ProtocolMutation mutation : mutations) {
+                ProtocolRecord value = mutation.record();
                 MetadataKey metadataKey = key(value.namespace(), value.recordId());
                 Optional<MetadataSnapshot.Record> existing = snapshot.get(metadataKey);
-                byte[] encoded = encode(output -> writeAcme(output, value));
+                byte[] encoded = encode(output -> writeProtocol(output, value));
                 RepeatableContent content = new ByteContent(encoded);
                 if (mutation.expectedCommitment().isEmpty()) {
-                    if (existing.isPresent()) throw new IllegalStateException("ACME record already exists");
+                    if (existing.isPresent()) throw new IllegalStateException("Protocol record already exists");
                     transaction.create(metadataKey, content, CancellationSignal.NONE);
                 } else {
                     MetadataSnapshot.Record current = existing
-                            .orElseThrow(() -> new IllegalStateException("ACME record is unavailable"));
-                    AcmeRecord decoded = decode(current, KIND_ACME, input -> readAcme(input, value.namespace()));
+                            .orElseThrow(() -> new IllegalStateException("Protocol record is unavailable"));
+                    ProtocolRecord decoded = decode(current, KIND_PROTOCOL,
+                            input -> readProtocol(input, value.namespace()));
                     if (!mutation.expectedCommitment().orElseThrow().equals(decoded.commitment())) {
-                        throw new IllegalStateException("ACME record commitment conflict");
+                        throw new IllegalStateException("Protocol record commitment conflict");
                     }
                     transaction.replace(metadataKey, current.recordRevision(), content, CancellationSignal.NONE);
                 }
             }
             MetadataCommitResult result = transaction.commit();
             if (result.outcome() != MetadataCommitResult.Outcome.COMMITTED) {
-                throw new IllegalStateException("ACME metadata commit requires reconciliation");
+                throw new IllegalStateException("Protocol metadata commit requires reconciliation");
             }
         } catch (IOException failure) {
-            throw new IllegalStateException("ACME metadata mutation failed");
+            throw new IllegalStateException("Protocol metadata mutation failed");
         }
     }
 
@@ -519,8 +522,8 @@ public final class ServerControlStore implements AutoCloseable {
         scan(DISCLOSURE, KIND_DISCLOSURE, ServerControlStore::readDisclosure);
         scan(CAPABILITY, KIND_CAPABILITY, ServerControlStore::readCapability);
         scan(REPOSITORY_ALIAS, KIND_REPOSITORY_ALIAS, ServerControlStore::readRepositoryAlias);
-        for (String namespace : ACME_NAMESPACES) {
-            scan(namespace, KIND_ACME, input -> readAcme(input, namespace));
+        for (String namespace : PROTOCOL_NAMESPACES) {
+            scan(namespace, KIND_PROTOCOL, input -> readProtocol(input, namespace));
         }
     }
 
@@ -723,14 +726,14 @@ public final class ServerControlStore implements AutoCloseable {
             case DisclosureService.Record item -> item.objectId().value();
             case DisclosureService.Capability item -> item.capabilityId();
             case RepositoryAliasService.Record item -> item.aliasId();
-            case AcmeRecord item -> item.recordId();
+            case ProtocolRecord item -> item.recordId();
             default -> throw new IllegalArgumentException("Unsupported control record type");
         };
     }
 
-    private static void requireAcmeNamespace(String namespace) {
-        if (!ACME_NAMESPACES.contains(namespace)) {
-            throw new IllegalArgumentException("Unknown ACME control namespace");
+    private static void requireProtocolNamespace(String namespace) {
+        if (!PROTOCOL_NAMESPACES.contains(namespace)) {
+            throw new IllegalArgumentException("Unknown protocol control namespace");
         }
     }
 
@@ -764,15 +767,15 @@ public final class ServerControlStore implements AutoCloseable {
                 readString(in), readString(in), readString(in), new MetadataStoreId(readString(in)));
     }
 
-    private static void writeAcme(DataOutputStream out, AcmeRecord value) throws IOException {
-        out.writeInt(KIND_ACME); writeString(out, value.namespace()); writeString(out, value.recordId());
+    private static void writeProtocol(DataOutputStream out, ProtocolRecord value) throws IOException {
+        out.writeInt(KIND_PROTOCOL); writeString(out, value.namespace()); writeString(out, value.recordId());
         writeString(out, value.commitment()); writeBytes(out, value.payload());
     }
 
-    private static AcmeRecord readAcme(DataInputStream in, String expectedNamespace) throws IOException {
+    private static ProtocolRecord readProtocol(DataInputStream in, String expectedNamespace) throws IOException {
         String namespace = readString(in);
         if (!expectedNamespace.equals(namespace)) throw new IllegalArgumentException("ACME namespace mismatch");
-        return new AcmeRecord(namespace, readString(in), readString(in),
+        return new ProtocolRecord(namespace, readString(in), readString(in),
                 readBoundedBytes(in, MAXIMUM_RECORD_BYTES / 2));
     }
 

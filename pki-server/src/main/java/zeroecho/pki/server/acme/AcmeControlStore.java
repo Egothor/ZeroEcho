@@ -56,7 +56,7 @@ public final class AcmeControlStore {
     /** Creates one record after canonical sealing. */
     public <T> T create(T unsealed) {
         T sealed = seal(unsealed);
-        control.mutateAcme(List.of(new ServerControlStore.AcmeMutation(record(sealed), Optional.empty())));
+        control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(record(sealed), Optional.empty())));
         return sealed;
     }
 
@@ -68,11 +68,11 @@ public final class AcmeControlStore {
                 .map(this::<AcmeState.Authorization>seal).toList();
         List<AcmeState.Challenge> sealedChallenges = challenges.stream()
                 .map(this::<AcmeState.Challenge>seal).toList();
-        List<ServerControlStore.AcmeMutation> changes = new ArrayList<>();
-        changes.add(new ServerControlStore.AcmeMutation(record(sealedOrder), Optional.empty()));
-        sealedAuthorizations.forEach(value -> changes.add(new ServerControlStore.AcmeMutation(record(value), Optional.empty())));
-        sealedChallenges.forEach(value -> changes.add(new ServerControlStore.AcmeMutation(record(value), Optional.empty())));
-        control.mutateAcme(changes);
+        List<ServerControlStore.ProtocolMutation> changes = new ArrayList<>();
+        changes.add(new ServerControlStore.ProtocolMutation(record(sealedOrder), Optional.empty()));
+        sealedAuthorizations.forEach(value -> changes.add(new ServerControlStore.ProtocolMutation(record(value), Optional.empty())));
+        sealedChallenges.forEach(value -> changes.add(new ServerControlStore.ProtocolMutation(record(value), Optional.empty())));
+        control.mutateProtocol(changes);
         return new Graph(sealedOrder, sealedAuthorizations, sealedChallenges);
     }
 
@@ -85,13 +85,13 @@ public final class AcmeControlStore {
     public Transition transition(List<Replacement> replacements, List<?> creations) {
         List<Object> sealed = replacements.stream().map(Replacement::next).map(this::sealObject).toList();
         List<Object> created = creations.stream().map(this::sealObject).toList();
-        List<ServerControlStore.AcmeMutation> changes = new ArrayList<>();
+        List<ServerControlStore.ProtocolMutation> changes = new ArrayList<>();
         for (int index = 0; index < replacements.size(); index++) {
             Object prior = replacements.get(index).prior(); Object next = sealed.get(index);
-            changes.add(new ServerControlStore.AcmeMutation(record(next), Optional.of(commitment(prior))));
+            changes.add(new ServerControlStore.ProtocolMutation(record(next), Optional.of(commitment(prior))));
         }
-        created.forEach(value -> changes.add(new ServerControlStore.AcmeMutation(record(value), Optional.empty())));
-        control.mutateAcme(changes); return new Transition(sealed, created);
+        created.forEach(value -> changes.add(new ServerControlStore.ProtocolMutation(record(value), Optional.empty())));
+        control.mutateProtocol(changes); return new Transition(sealed, created);
     }
 
     /** Results of one atomic ACME graph transition. */
@@ -114,7 +114,7 @@ public final class AcmeControlStore {
     /** Reads one exact typed record and cross-checks its identity. */
     public <T> Optional<T> get(Class<T> type, String recordId) {
         String namespace = namespace(type);
-        return control.acmeRecord(namespace, recordId).map(value -> {
+        return control.protocolRecord(namespace, recordId).map(value -> {
             Object decoded = codec.decode(value.payload());
             if (!type.isInstance(decoded) || !recordId.equals(identity(decoded))
                     || !value.commitment().equals(commitment(decoded))) {
@@ -126,8 +126,8 @@ public final class AcmeControlStore {
 
     /** Returns one bounded typed page without aggregating the namespace. */
     public <T> ServerControlStore.Page<T> page(Class<T> type, int offset, int limit) {
-        ServerControlStore.Page<ServerControlStore.AcmeRecord> page =
-                control.acmeRecords(namespace(type), offset, limit);
+        ServerControlStore.Page<ServerControlStore.ProtocolRecord> page =
+                control.protocolRecords(namespace(type), offset, limit);
         List<T> values = page.values().stream().map(value -> {
             Object decoded = codec.decode(value.payload());
             if (!type.isInstance(decoded) || !value.recordId().equals(identity(decoded))
@@ -251,8 +251,8 @@ public final class AcmeControlStore {
     @SuppressWarnings("unchecked")
     private <T> T seal(T value) { return (T) codec.seal(Objects.requireNonNull(value, "value")); }
     private Object sealObject(Object value) { return codec.seal(Objects.requireNonNull(value, "value")); }
-    private ServerControlStore.AcmeRecord record(Object value) {
-        return new ServerControlStore.AcmeRecord(namespace(value.getClass()), identity(value),
+    private ServerControlStore.ProtocolRecord record(Object value) {
+        return new ServerControlStore.ProtocolRecord(namespace(value.getClass()), identity(value),
                 commitment(value), codec.encode(value));
     }
     private static String commitment(Object value) {

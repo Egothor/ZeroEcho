@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
+import java.time.Clock;
 import java.util.Optional;
 
 import zeroecho.pki.api.CaService;
@@ -77,6 +78,20 @@ public interface PkiSession extends AutoCloseable {
         return DefaultPkiSession.open(configuration, dependencies);
     }
 
+    /**
+     * Opens a production session with explicit process-local capabilities and a
+     * lifecycle clock shared by every time-dependent backend service.
+     *
+     * @param configuration validated immutable provider configuration
+     * @param dependencies process-local key-access capabilities
+     * @param clock authoritative session clock
+     * @return opened lifecycle-owned session
+     */
+    static PkiSession open(PkiSessionConfiguration configuration, PkiSessionRuntimeDependencies dependencies,
+            Clock clock) {
+        return DefaultPkiSession.open(configuration, dependencies, clock);
+    }
+
     /** @return profile lifecycle service owned by this session */
     ProfileService profiles();
 
@@ -102,6 +117,9 @@ public interface PkiSession extends AutoCloseable {
     default Optional<StatusObjectService> statusObjects() {
         return Optional.empty();
     }
+
+    /** @return confined OCSP responder service, or empty when signing is unavailable */
+    default Optional<OcspResponseService> ocsp() { return Optional.empty(); }
 
     /** @return configured publication service, or empty when no destination is enabled */
     default Optional<PublicationService> publications() {
