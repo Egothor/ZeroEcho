@@ -65,7 +65,8 @@ public final class Permission {
         CERTIFICATE_READ_PII(76), CERTIFICATE_DOWNLOAD(77), CERTIFICATE_PUBLICATION_CHANGE(78),
         CERTIFICATE_REVOKE(80), CERTIFICATE_HOLD(81), CERTIFICATE_RELEASE_HOLD(82),
         REVOCATION_HISTORY_READ(83), CRL_GENERATE(84), CRL_PUBLISH(85), CRL_DOWNLOAD(86),
-        OCSP_ADMINISTER(87), OCSP_RESPONDER_READ(88), PUBLICATION_REGISTER(100), PUBLICATION_READ(101),
+        OCSP_ADMINISTER(87), OCSP_RESPONDER_READ(88), OCSP_STATUS_QUERY(89),
+        PUBLICATION_REGISTER(100), PUBLICATION_READ(101),
         PUBLICATION_PROCESS(102), PUBLICATION_RETRY(103), PUBLICATION_RECONCILE(104),
         AUDIT_READ_REDACTED(120), AUDIT_READ_FULL(121), AUDIT_READ_PII(122), AUDIT_EXPORT(123),
         AUDIT_INTEGRITY_VERIFY(124), BACKUP_EXPORT(140), BACKUP_VERIFY(141), RESTORE_EXECUTE(142),
@@ -181,16 +182,24 @@ public final class Permission {
      * @param profileId explicit profile when applicable
      */
     public record Scope(RealmId realmId, Optional<PkiId> authorityId, Optional<PkiId> issuerId,
-            Optional<String> profileId) {
+            Optional<String> profileId, Optional<String> responderId) {
         /** Validates the exact finite scope. */
         public Scope {
             Objects.requireNonNull(realmId, "realmId");
             authorityId = Objects.requireNonNull(authorityId, "authorityId");
             issuerId = Objects.requireNonNull(issuerId, "issuerId");
             profileId = Objects.requireNonNull(profileId, "profileId").map(Permission::requireProfile);
+            responderId = Objects.requireNonNull(responderId, "responderId")
+                    .map(value -> { requireId(value, "OCSP responder"); return value; });
             if (issuerId.isPresent() && authorityId.isEmpty()) {
                 throw new IllegalArgumentException("Issuer scope requires authority scope");
             }
+        }
+
+        /** Creates a scope without an OCSP responder dimension. */
+        public Scope(RealmId realmId, Optional<PkiId> authorityId, Optional<PkiId> issuerId,
+                Optional<String> profileId) {
+            this(realmId, authorityId, issuerId, profileId, Optional.empty());
         }
     }
 

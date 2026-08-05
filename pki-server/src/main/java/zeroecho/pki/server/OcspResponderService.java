@@ -50,6 +50,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 
 import org.bouncycastle.asn1.x509.Extension;
@@ -60,6 +61,7 @@ import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
+import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 import zeroecho.pki.api.ca.IssuerChainPath;
 import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.application.OcspResponseService;
@@ -72,6 +74,123 @@ import zeroecho.pki.application.PkiRepository;
         "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException", "PMD.UseEnumCollections",
         "PMD.ExceptionAsFlowControl" })
 public final class OcspResponderService {
+    /** Closed signed-request authentication policy. */
+    public enum RequestAuthenticationMode {
+        UNSIGNED_ONLY(1), UNSIGNED_OR_AUTHORIZED_SIGNED(2), AUTHORIZED_SIGNED_REQUIRED(3);
+        private final int code;
+        RequestAuthenticationMode(int code) { this.code = code; }
+        /** Stable persistence code. */ public int code() { return code; }
+        /** Resolves an exact stable code. */
+        public static RequestAuthenticationMode fromCode(int code) {
+            return switch (code) { case 1 -> UNSIGNED_ONLY; case 2 -> UNSIGNED_OR_AUTHORIZED_SIGNED;
+                case 3 -> AUTHORIZED_SIGNED_REQUIRED;
+                default -> throw new IllegalArgumentException("Unknown OCSP request-authentication mode code"); };
+        }
+    }
+
+    /** Closed local requester-certificate revocation behavior. */
+    public enum RequesterRevocationPolicy {
+        LOCAL_AUTHORITATIVE_REQUIRED(1), LOCAL_AUTHORITATIVE_IF_MANAGED(2), VALIDITY_AND_TRUST_ONLY(3);
+        private final int code;
+        RequesterRevocationPolicy(int code) { this.code = code; }
+        /** Stable persistence code. */ public int code() { return code; }
+        /** Resolves an exact stable code. */
+        public static RequesterRevocationPolicy fromCode(int code) {
+            return switch (code) { case 1 -> LOCAL_AUTHORITATIVE_REQUIRED;
+                case 2 -> LOCAL_AUTHORITATIVE_IF_MANAGED; case 3 -> VALIDITY_AND_TRUST_ONLY;
+                default -> throw new IllegalArgumentException("Unknown OCSP requester revocation policy code"); };
+        }
+    }
+
+    /** Repository-backed requester trust selector. */
+    @SuppressWarnings("PMD.LongVariable")
+    public enum TrustSelectorType {
+        MANAGED_ISSUER_GENERATIONS(1), CONFIGURED_TRUST_ANCHORS(2), EXACT_REQUESTER_CERTIFICATE_COMMITMENTS(3);
+        private final int code;
+        TrustSelectorType(int code) { this.code = code; }
+        /** Stable persistence code. */ public int code() { return code; }
+        /** Resolves an exact stable code. */
+        public static TrustSelectorType fromCode(int code) {
+            return switch (code) { case 1 -> MANAGED_ISSUER_GENERATIONS; case 2 -> CONFIGURED_TRUST_ANCHORS;
+                case 3 -> EXACT_REQUESTER_CERTIFICATE_COMMITMENTS;
+                default -> throw new IllegalArgumentException("Unknown OCSP requester trust-selector code"); };
+        }
+    }
+
+    /** Cryptographic requester-to-principal mapping type. */
+    public enum PrincipalMappingType {
+        SHA256_CERTIFICATE_COMMITMENT(1), SHA256_SPKI_COMMITMENT(2), ISSUER_AND_SERIAL_COMMITMENT(3);
+        private final int code;
+        PrincipalMappingType(int code) { this.code = code; }
+        /** Stable persistence code. */ public int code() { return code; }
+        /** Resolves an exact stable code. */
+        public static PrincipalMappingType fromCode(int code) {
+            return switch (code) { case 1 -> SHA256_CERTIFICATE_COMMITMENT;
+                case 2 -> SHA256_SPKI_COMMITMENT; case 3 -> ISSUER_AND_SERIAL_COMMITMENT;
+                default -> throw new IllegalArgumentException("Unknown OCSP requester mapping code"); };
+        }
+    }
+
+    /** One explicit repository-backed trust selector. */
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    public record TrustSelector(TrustSelectorType type, Set<String> identities) {
+        /** Validates and snapshots finite identities. */
+        public TrustSelector {
+            Objects.requireNonNull(type, "type"); identities = Set.copyOf(Objects.requireNonNull(identities));
+            if (identities.isEmpty() || identities.size() > 64) {
+                throw new IllegalArgumentException("OCSP requester trust selector is empty or oversized");
+            }
+            for (String identity : identities) {
+                if (type == TrustSelectorType.EXACT_REQUESTER_CERTIFICATE_COMMITMENTS) requireDigest(identity);
+                else new PkiId(identity);
+            }
+        }
+    }
+
+    /** One exact active request-signature binding reference. */
+    public record RequestSignatureBinding(String bindingId, String commitment) {
+        /** Validates stable binding identity and commitment. */
+        public RequestSignatureBinding {
+            Permission.requireId(bindingId, "OCSP request-signature binding");
+            Permission.requireBounded(commitment, 512, "OCSP request-signature commitment");
+        }
+    }
+
+    /** One cryptographic requester-certificate mapping. */
+    public record PrincipalMapping(String mappingId, String principalId, PrincipalMappingType type,
+            String commitment) {
+        /** Validates stable mapping metadata and fixed commitment. */
+        public PrincipalMapping {
+            Permission.requireId(mappingId, "OCSP requester mapping"); Permission.requirePrincipal(principalId);
+            Objects.requireNonNull(type, "type"); requireDigest(commitment);
+        }
+    }
+
+    /** Finite immutable requester trust, mapping, signature and chain policy. */
+    public record RequesterTrustPolicy(List<TrustSelector> trustSelectors,
+            List<PrincipalMapping> principalMappings, List<RequestSignatureBinding> signatureBindings,
+            RequesterRevocationPolicy revocationPolicy, int maximumSignerCertificates,
+            int maximumSignerChainBytes) {
+        /** Validates and snapshots the complete closed policy. */
+        public RequesterTrustPolicy {
+            trustSelectors = List.copyOf(Objects.requireNonNull(trustSelectors));
+            principalMappings = List.copyOf(Objects.requireNonNull(principalMappings));
+            signatureBindings = List.copyOf(Objects.requireNonNull(signatureBindings));
+            Objects.requireNonNull(revocationPolicy, "revocationPolicy");
+            if (trustSelectors.isEmpty() || trustSelectors.size() > 16 || principalMappings.isEmpty()
+                    || principalMappings.size() > 256 || signatureBindings.isEmpty() || signatureBindings.size() > 16
+                    || maximumSignerCertificates < 1 || maximumSignerCertificates > 16
+                    || maximumSignerChainBytes < 1024 || maximumSignerChainBytes > 1_048_576) {
+                throw new IllegalArgumentException("OCSP requester trust policy bounds are invalid");
+            }
+            if (principalMappings.stream().map(PrincipalMapping::mappingId).distinct().count()
+                    != principalMappings.size()
+                    || signatureBindings.stream().map(RequestSignatureBinding::bindingId).distinct().count()
+                    != signatureBindings.size()) {
+                throw new IllegalArgumentException("OCSP requester policy identities are duplicated");
+            }
+        }
+    }
     /** Exact signing authority. */
     public enum SigningMode {
         ISSUER_SIGNED(1), DELEGATED_RESPONDER(2);
@@ -115,7 +234,8 @@ public final class OcspResponderService {
             String signatureAlgorithm, Optional<String> signatureBindingId, String signatureBindingCommitment,
             OcspResponseService.ResponderId responderIdForm, Duration responseValidity, NoncePolicy noncePolicy,
             int maximumNonceBytes, Set<OcspResponseService.CertIdHash> acceptedHashes, int maximumRequestBytes,
-            int maximumEntries, Duration cacheLifetime) {
+            int maximumEntries, Duration cacheLifetime, RequestAuthenticationMode requestAuthenticationMode,
+            Optional<RequesterTrustPolicy> requesterTrustPolicy) {
         /** Snapshots the typed finite registration input. */
         public Registration {
             Permission.requireId(responderId, "OCSP responder"); Permission.requireId(alias, "OCSP alias");
@@ -128,6 +248,22 @@ public final class OcspResponderService {
             Objects.requireNonNull(responseValidity); Objects.requireNonNull(noncePolicy);
             acceptedHashes = Set.copyOf(Objects.requireNonNull(acceptedHashes));
             Objects.requireNonNull(cacheLifetime);
+            Objects.requireNonNull(requestAuthenticationMode, "requestAuthenticationMode");
+            requesterTrustPolicy = Objects.requireNonNull(requesterTrustPolicy, "requesterTrustPolicy");
+            requirePolicyShape(requestAuthenticationMode, requesterTrustPolicy);
+        }
+
+        /** Creates the default public unsigned-only registration. */
+        public Registration(String responderId, String alias, PkiId authorityId, PkiId issuerId,
+                SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef, PkiId chainPathId,
+                String signatureAlgorithm, Optional<String> signatureBindingId, String signatureBindingCommitment,
+                OcspResponseService.ResponderId responderIdForm, Duration responseValidity, NoncePolicy noncePolicy,
+                int maximumNonceBytes, Set<OcspResponseService.CertIdHash> acceptedHashes, int maximumRequestBytes,
+                int maximumEntries, Duration cacheLifetime) {
+            this(responderId, alias, authorityId, issuerId, signingMode, responderCredentialId, signingKeyRef,
+                    chainPathId, signatureAlgorithm, signatureBindingId, signatureBindingCommitment, responderIdForm,
+                    responseValidity, noncePolicy, maximumNonceBytes, acceptedHashes, maximumRequestBytes,
+                    maximumEntries, cacheLifetime, RequestAuthenticationMode.UNSIGNED_ONLY, Optional.empty());
         }
     }
 
@@ -138,7 +274,8 @@ public final class OcspResponderService {
             String signatureBindingCommitment, OcspResponseService.ResponderId responderIdForm,
             Duration responseValidity, NoncePolicy noncePolicy, int maximumNonceBytes,
             Set<OcspResponseService.CertIdHash> acceptedHashes, int maximumRequestBytes,
-            int maximumEntries, Duration cacheLifetime, State state, Instant createdAt,
+            int maximumEntries, Duration cacheLifetime, RequestAuthenticationMode requestAuthenticationMode,
+            Optional<RequesterTrustPolicy> requesterTrustPolicy, State state, Instant createdAt,
             String configurationCommitment) {
         /** Validates all finite immutable dependencies and the record commitment. */
         public Responder {
@@ -157,6 +294,9 @@ public final class OcspResponderService {
             acceptedHashes = Set.copyOf(Objects.requireNonNull(acceptedHashes));
             if (acceptedHashes.isEmpty()) throw new IllegalArgumentException("OCSP CertID hashes are empty");
             positive(cacheLifetime, responseValidity, "cache lifetime"); Objects.requireNonNull(state);
+            Objects.requireNonNull(requestAuthenticationMode, "requestAuthenticationMode");
+            requesterTrustPolicy = Objects.requireNonNull(requesterTrustPolicy, "requesterTrustPolicy");
+            requirePolicyShape(requestAuthenticationMode, requesterTrustPolicy);
             Objects.requireNonNull(createdAt); requireDigest(configurationCommitment);
         }
     }
@@ -167,6 +307,7 @@ public final class OcspResponderService {
     private final X509AlgorithmBindingRegistry bindings;
     private final Optional<OcspResponseService> signing;
     private final Clock clock;
+    private final Map<String, Responder> aliasIndex = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Binds responder control to one realm and one authoritative PKI repository. */
     public OcspResponderService(RealmId realmId, ServerControlStore control, PkiRepository repository,
@@ -185,7 +326,8 @@ public final class OcspResponderService {
                 supplied.chainPathId(), supplied.signatureAlgorithm(), supplied.signatureBindingId(),
                 supplied.signatureBindingCommitment(), supplied.responderIdForm(), supplied.responseValidity(),
                 supplied.noncePolicy(), supplied.maximumNonceBytes(), supplied.acceptedHashes(),
-                supplied.maximumRequestBytes(), supplied.maximumEntries(), supplied.cacheLifetime()));
+                supplied.maximumRequestBytes(), supplied.maximumEntries(), supplied.cacheLifetime(),
+                supplied.requestAuthenticationMode(), supplied.requesterTrustPolicy()));
     }
 
     /** Canonically seals an already constructed internal draft. */
@@ -196,12 +338,13 @@ public final class OcspResponderService {
         if (!supplied.configurationCommitment().equals(commitment(supplied, true))) {
             throw new IllegalArgumentException("OCSP responder commitment differs");
         }
-        if (!aliases(supplied.alias()).isEmpty()) {
+        if (aliasIndex.containsKey(supplied.alias())) {
             throw new IllegalStateException("OCSP responder alias already exists");
         }
         validateDependencies(supplied, true);
         Responder sealed = seal(supplied, State.INACTIVE);
         control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(record(sealed), Optional.empty())));
+        aliasIndex.put(sealed.alias(), sealed);
         return sealed;
     }
 
@@ -217,15 +360,15 @@ public final class OcspResponderService {
         if (result.state() != State.ACTIVE) {
             throw new IllegalStateException("OCSP responder is inactive");
         }
-        validateDependencies(result, false); return result;
+        return result;
     }
 
     /** Resolves one unique durable alias regardless of activation state. */
     public Responder requireAlias(String alias) {
         Permission.requireId(alias, "OCSP alias");
-        List<Responder> matches = aliases(alias);
-        if (matches.size() != 1) throw new IllegalArgumentException("OCSP responder alias is unavailable");
-        return matches.getFirst();
+        Responder indexed = aliasIndex.get(alias);
+        if (indexed == null) throw new IllegalArgumentException("OCSP responder alias is unavailable");
+        return indexed;
     }
 
     /** Lists one bounded deterministic responder page. */
@@ -236,33 +379,31 @@ public final class OcspResponderService {
                 page.nextOffset(), page.hasMore());
     }
 
-    private List<Responder> aliases(String alias) {
-        List<Responder> matches = new ArrayList<>();
-        int offset = 0;
-        while (true) {
-            ServerControlStore.Page<Responder> page = list(offset, 256);
-            page.values().stream().filter(value -> value.alias().equals(alias)).forEach(matches::add);
-            if (!page.hasMore()) return List.copyOf(matches);
-            offset = page.nextOffset();
-        }
-    }
-
     /** Atomically changes only responder activation after dependency revalidation. */
     public Responder setActive(String responderId, boolean active) {
         Responder prior = require(responderId); validateDependencies(prior, true);
         Responder next = seal(prior, active ? State.ACTIVE : State.INACTIVE);
         control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(record(next),
                 Optional.of(record(prior).commitment()))));
+        aliasIndex.put(next.alias(), next);
         return next;
     }
 
     /** Revalidates every durable binding during realm recovery. */
     public void validateAll() {
+        Map<String, Responder> recovered = new java.util.HashMap<>();
         int offset = 0;
         while (true) {
             ServerControlStore.Page<Responder> page = list(offset, 256);
-            page.values().forEach(value -> validateDependencies(value, true));
-            if (!page.hasMore()) return;
+            page.values().forEach(value -> {
+                validateDependencies(value, true);
+                if (recovered.putIfAbsent(value.alias(), value) != null) {
+                    throw new IllegalStateException("OCSP responder alias is duplicated");
+                }
+            });
+            if (!page.hasMore()) {
+                aliasIndex.clear(); aliasIndex.putAll(recovered); return;
+            }
             offset = page.nextOffset();
         }
     }
@@ -274,17 +415,32 @@ public final class OcspResponderService {
             OcspResponseService.ResponderId responderIdForm, Duration validity, NoncePolicy noncePolicy,
             int maximumNonceBytes, Set<OcspResponseService.CertIdHash> hashes, int maximumRequestBytes,
             int maximumEntries, Duration cacheLifetime) {
+        return create(responderId, alias, authorityId, issuerId, signingMode, responderCredentialId,
+                signingKeyRef, chainPathId, signatureAlgorithm, signatureBindingId, bindingCommitment,
+                responderIdForm, validity, noncePolicy, maximumNonceBytes, hashes, maximumRequestBytes,
+                maximumEntries, cacheLifetime, RequestAuthenticationMode.UNSIGNED_ONLY, Optional.empty());
+    }
+
+    /** Creates a canonical unsealed record with explicit signed-request policy. */
+    public Responder create(String responderId, String alias, PkiId authorityId, PkiId issuerId,
+            SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef, PkiId chainPathId,
+            String signatureAlgorithm, Optional<String> signatureBindingId, String bindingCommitment,
+            OcspResponseService.ResponderId responderIdForm, Duration validity, NoncePolicy noncePolicy,
+            int maximumNonceBytes, Set<OcspResponseService.CertIdHash> hashes, int maximumRequestBytes,
+            int maximumEntries, Duration cacheLifetime, RequestAuthenticationMode requestAuthenticationMode,
+            Optional<RequesterTrustPolicy> requesterTrustPolicy) {
         Responder draft = new Responder(responderId, alias, realmId, authorityId, issuerId, signingMode,
                 responderCredentialId, signingKeyRef, chainPathId, signatureAlgorithm, signatureBindingId,
                 bindingCommitment, responderIdForm, validity, noncePolicy, maximumNonceBytes, hashes,
-                maximumRequestBytes, maximumEntries, cacheLifetime, State.INACTIVE, clock.instant(),
-                "0".repeat(64));
+                maximumRequestBytes, maximumEntries, cacheLifetime, requestAuthenticationMode,
+                requesterTrustPolicy, State.INACTIVE, clock.instant(), "0".repeat(64));
         return new Responder(draft.responderId(), draft.alias(), draft.realmId(), draft.authorityId(), draft.issuerId(),
                 draft.signingMode(), draft.responderCredentialId(), draft.signingKeyRef(), draft.chainPathId(),
                 draft.signatureAlgorithm(), draft.signatureBindingId(), draft.signatureBindingCommitment(),
                 draft.responderIdForm(), draft.responseValidity(), draft.noncePolicy(), draft.maximumNonceBytes(),
                 draft.acceptedHashes(), draft.maximumRequestBytes(), draft.maximumEntries(), draft.cacheLifetime(),
-                draft.state(), draft.createdAt(), commitment(draft, true));
+                draft.requestAuthenticationMode(), draft.requesterTrustPolicy(), draft.state(), draft.createdAt(),
+                commitment(draft, true));
     }
 
     private Responder seal(Responder value, State state) {
@@ -293,13 +449,15 @@ public final class OcspResponderService {
                 value.chainPathId(), value.signatureAlgorithm(), value.signatureBindingId(),
                 value.signatureBindingCommitment(), value.responderIdForm(), value.responseValidity(),
                 value.noncePolicy(), value.maximumNonceBytes(), value.acceptedHashes(), value.maximumRequestBytes(),
-                value.maximumEntries(), value.cacheLifetime(), state, value.createdAt(), value.configurationCommitment());
+                value.maximumEntries(), value.cacheLifetime(), value.requestAuthenticationMode(),
+                value.requesterTrustPolicy(), state, value.createdAt(), value.configurationCommitment());
         return new Responder(draft.responderId(), draft.alias(), draft.realmId(), draft.authorityId(), draft.issuerId(),
                 draft.signingMode(), draft.responderCredentialId(), draft.signingKeyRef(), draft.chainPathId(),
                 draft.signatureAlgorithm(), draft.signatureBindingId(), draft.signatureBindingCommitment(),
                 draft.responderIdForm(), draft.responseValidity(), draft.noncePolicy(), draft.maximumNonceBytes(),
                 draft.acceptedHashes(), draft.maximumRequestBytes(), draft.maximumEntries(), draft.cacheLifetime(),
-                draft.state(), draft.createdAt(), commitment(draft, true));
+                draft.requestAuthenticationMode(), draft.requesterTrustPolicy(), draft.state(), draft.createdAt(),
+                commitment(draft, true));
     }
 
     private void validateDependencies(Responder value, boolean proveSigning) {
@@ -310,6 +468,26 @@ public final class OcspResponderService {
                         throw new IllegalStateException("OCSP algorithm registry commitment differs");
                     }
                 });
+        value.requesterTrustPolicy().ifPresent(policy -> {
+            for (RequestSignatureBinding reference : policy.signatureBindings()) {
+                X509AlgorithmBinding binding = bindings.require(reference.bindingId(), reference.commitment());
+                if (binding.role() != X509AlgorithmBinding.Role.OCSP_REQUEST_SIGNATURE) {
+                    throw new IllegalStateException("OCSP requester signature binding has the wrong role");
+                }
+            }
+            for (TrustSelector selector : policy.trustSelectors()) {
+                if (selector.type() == TrustSelectorType.MANAGED_ISSUER_GENERATIONS) {
+                    selector.identities().forEach(identity -> repository.issuer(new PkiId(identity)).orElseThrow(
+                            () -> new IllegalStateException("OCSP requester issuer trust is unavailable")));
+                } else if (selector.type() == TrustSelectorType.CONFIGURED_TRUST_ANCHORS) {
+                    selector.identities().forEach(identity -> {
+                        try { certificate(new PkiId(identity)); }
+                        catch (IOException failure) { throw new IllegalStateException("OCSP requester trust anchor is unavailable"); }
+                    });
+                }
+            }
+            policy.principalMappings().forEach(mapping -> control.requirePrincipal(mapping.principalId()));
+        });
         IssuerGeneration issuer = repository.issuer(value.issuerId()).orElseThrow();
         IssuerChainPath path = repository.chainPath(value.chainPathId()).orElseThrow();
         if (!issuer.authorityId().equals(value.authorityId()) || !path.authorityId().equals(value.authorityId())
@@ -399,11 +577,25 @@ public final class OcspResponderService {
         return sha256(encode(value, ignoreStored));
     }
 
+    /** Returns a safe deterministic commitment to one request-authentication policy. */
+    public static String requestPolicyCommitment(Registration value) {
+        Objects.requireNonNull(value, "value");
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(512);
+                DataOutputStream output = new DataOutputStream(bytes)) {
+            output.writeInt(value.requestAuthenticationMode().code());
+            output.writeBoolean(value.requesterTrustPolicy().isPresent());
+            if (value.requesterTrustPolicy().isPresent()) writePolicy(output, value.requesterTrustPolicy().orElseThrow());
+            output.flush(); return sha256(bytes.toByteArray());
+        } catch (IOException impossible) {
+            throw new IllegalStateException("OCSP requester policy encoding failed", impossible);
+        }
+    }
+
     private static byte[] encode(Responder value) { return encode(value, false); }
     private static byte[] encode(Responder value, boolean ignoreCommitment) {
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(1024);
                 DataOutputStream output = new DataOutputStream(bytes)) {
-            output.writeInt(1); write(output, value.responderId()); write(output, value.alias());
+            output.writeInt(2); write(output, value.responderId()); write(output, value.alias());
             write(output, value.realmId().value()); write(output, value.authorityId().value());
             write(output, value.issuerId().value()); output.writeInt(value.signingMode().code());
             write(output, value.responderCredentialId().value()); write(output, value.signingKeyRef().value());
@@ -417,7 +609,11 @@ public final class OcspResponderService {
                 output.writeInt(hash.code());
             }
             output.writeInt(value.maximumRequestBytes()); output.writeInt(value.maximumEntries());
-            output.writeLong(value.cacheLifetime().toSeconds()); output.writeInt(value.state().code());
+            output.writeLong(value.cacheLifetime().toSeconds());
+            output.writeInt(value.requestAuthenticationMode().code());
+            output.writeBoolean(value.requesterTrustPolicy().isPresent());
+            if (value.requesterTrustPolicy().isPresent()) writePolicy(output, value.requesterTrustPolicy().orElseThrow());
+            output.writeInt(value.state().code());
             output.writeLong(value.createdAt().toEpochMilli());
             write(output, ignoreCommitment ? "0".repeat(64) : value.configurationCommitment()); output.flush();
             return bytes.toByteArray();
@@ -427,7 +623,7 @@ public final class OcspResponderService {
     private static Responder decode(byte[] payload) {
         if (payload.length == 0 || payload.length > 65_536) throw new IllegalStateException("OCSP record bound differs");
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(payload))) {
-            if (input.readInt() != 1) throw new IOException("OCSP record schema is obsolete");
+            if (input.readInt() != 2) throw new IOException("OCSP record schema is obsolete");
             String id = read(input); String alias = read(input); RealmId realm = new RealmId(read(input));
             PkiId authority = new PkiId(read(input)); PkiId issuer = new PkiId(read(input));
             SigningMode mode = SigningMode.fromCode(input.readInt()); PkiId credential = new PkiId(read(input));
@@ -443,11 +639,14 @@ public final class OcspResponderService {
                 hashes.add(OcspResponseService.CertIdHash.fromCode(input.readInt()));
             }
             int requestBytes = input.readInt(); int entries = input.readInt(); Duration cache = Duration.ofSeconds(input.readLong());
+            RequestAuthenticationMode authenticationMode = RequestAuthenticationMode.fromCode(input.readInt());
+            Optional<RequesterTrustPolicy> trustPolicy = input.readBoolean()
+                    ? Optional.of(readPolicy(input)) : Optional.empty();
             State state = State.fromCode(input.readInt()); Instant created = Instant.ofEpochMilli(input.readLong());
             String commitment = read(input); if (input.read() != -1) throw new IOException("Trailing OCSP record data");
             return new Responder(id, alias, realm, authority, issuer, mode, credential, key, path, algorithm,
                     binding, bindingCommitment, form, validity, nonce, nonceBytes, hashes, requestBytes,
-                    entries, cache, state, created, commitment);
+                    entries, cache, authenticationMode, trustPolicy, state, created, commitment);
         } catch (IOException | RuntimeException failure) {
             throw new IllegalStateException("OCSP responder record is invalid");
         }
@@ -457,6 +656,60 @@ public final class OcspResponderService {
         byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
         if (encoded.length > 16_384) throw new IOException("OCSP string bound differs");
         output.writeInt(encoded.length); output.write(encoded);
+    }
+
+    private static void writePolicy(DataOutputStream output, RequesterTrustPolicy policy) throws IOException {
+        output.writeInt(policy.trustSelectors().size());
+        for (TrustSelector selector : policy.trustSelectors()) {
+            output.writeInt(selector.type().code()); output.writeInt(selector.identities().size());
+            for (String identity : selector.identities().stream().sorted().toList()) write(output, identity);
+        }
+        output.writeInt(policy.principalMappings().size());
+        for (PrincipalMapping mapping : policy.principalMappings().stream()
+                .sorted(java.util.Comparator.comparing(PrincipalMapping::mappingId)).toList()) {
+            write(output, mapping.mappingId()); write(output, mapping.principalId());
+            output.writeInt(mapping.type().code()); write(output, mapping.commitment());
+        }
+        output.writeInt(policy.signatureBindings().size());
+        for (RequestSignatureBinding binding : policy.signatureBindings().stream()
+                .sorted(java.util.Comparator.comparing(RequestSignatureBinding::bindingId)).toList()) {
+            write(output, binding.bindingId()); write(output, binding.commitment());
+        }
+        output.writeInt(policy.revocationPolicy().code()); output.writeInt(policy.maximumSignerCertificates());
+        output.writeInt(policy.maximumSignerChainBytes());
+    }
+
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    private static RequesterTrustPolicy readPolicy(DataInputStream input) throws IOException {
+        int selectorCount = boundedCount(input.readInt(), 16, "trust selector");
+        List<TrustSelector> selectors = new ArrayList<>(selectorCount);
+        for (int index = 0; index < selectorCount; index++) {
+            TrustSelectorType type = TrustSelectorType.fromCode(input.readInt());
+            int identityCount = boundedCount(input.readInt(), 64, "trust identity");
+            Set<String> identities = new java.util.HashSet<>();
+            for (int identity = 0; identity < identityCount; identity++) {
+                if (!identities.add(read(input))) throw new IOException("Duplicate OCSP trust identity");
+            }
+            selectors.add(new TrustSelector(type, identities));
+        }
+        int mappingCount = boundedCount(input.readInt(), 256, "principal mapping");
+        List<PrincipalMapping> mappings = new ArrayList<>(mappingCount);
+        for (int index = 0; index < mappingCount; index++) {
+            mappings.add(new PrincipalMapping(read(input), read(input),
+                    PrincipalMappingType.fromCode(input.readInt()), read(input)));
+        }
+        int bindingCount = boundedCount(input.readInt(), 16, "signature binding");
+        List<RequestSignatureBinding> bindings = new ArrayList<>(bindingCount);
+        for (int index = 0; index < bindingCount; index++) {
+            bindings.add(new RequestSignatureBinding(read(input), read(input)));
+        }
+        return new RequesterTrustPolicy(selectors, mappings, bindings,
+                RequesterRevocationPolicy.fromCode(input.readInt()), input.readInt(), input.readInt());
+    }
+
+    private static int boundedCount(int value, int maximum, String label) throws IOException {
+        if (value < 1 || value > maximum) throw new IOException("OCSP " + label + " count differs");
+        return value;
     }
     private static String read(DataInputStream input) throws IOException {
         int length = input.readInt(); if (length < 0 || length > 16_384) throw new IOException("OCSP string bound differs");
@@ -471,6 +724,13 @@ public final class OcspResponderService {
     }
     private static void requireDigest(String value) {
         if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("OCSP commitment is invalid");
+    }
+    private static void requirePolicyShape(RequestAuthenticationMode mode,
+            Optional<RequesterTrustPolicy> policy) {
+        if (mode == RequestAuthenticationMode.UNSIGNED_ONLY && policy.isPresent()
+                || mode != RequestAuthenticationMode.UNSIGNED_ONLY && policy.isEmpty()) {
+            throw new IllegalArgumentException("OCSP requester trust policy does not match authentication mode");
+        }
     }
     private static void positive(Duration value, Duration maximum, String name) {
         if (value == null || value.isZero() || value.isNegative() || value.compareTo(maximum) > 0) {

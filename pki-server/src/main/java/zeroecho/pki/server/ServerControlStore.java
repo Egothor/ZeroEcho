@@ -107,7 +107,7 @@ public final class ServerControlStore implements AutoCloseable {
     public static final String OCSP_RESPONDER = "io.zeroecho.server.ocsp-responder";
 
     private static final int MAGIC = 0x5a455331;
-    private static final int SCHEMA = 5;
+    private static final int SCHEMA = 6;
     private static final int MAXIMUM_RECORD_BYTES = 1_048_576;
     private static final int MAXIMUM_STRING_BYTES = 16_384;
     private static final int MAXIMUM_COLLECTION = 4_096;
@@ -925,10 +925,12 @@ public final class ServerControlStore implements AutoCloseable {
     private static void writeScope(DataOutputStream out, Permission.Scope value) throws IOException {
         writeString(out, value.realmId().value()); writeOptionalPki(out, value.authorityId());
         writeOptionalPki(out, value.issuerId()); writeOptionalString(out, value.profileId());
+        writeOptionalString(out, value.responderId());
     }
 
     private static Permission.Scope readScope(DataInputStream in) throws IOException {
-        return new Permission.Scope(new RealmId(readString(in)), readOptionalPki(in), readOptionalPki(in), readOptionalString(in));
+        return new Permission.Scope(new RealmId(readString(in)), readOptionalPki(in), readOptionalPki(in),
+                readOptionalString(in), readOptionalString(in));
     }
 
     private static void writeString(DataOutputStream out, String value) throws IOException {

@@ -36,6 +36,7 @@ package zeroecho.pki.server.http;
 import java.time.Instant;
 import java.time.Duration;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -243,9 +244,11 @@ final class HttpOperationCodec {
             }
             case ServerControlOperation.CreateGrant.NAME -> {
                 fields.allowed(Set.of("grantId", "principalId", "effect", "action", "resourceType",
-                        "issuerId", "profileId", "relationship", "dataView", "conditions", "expiresAt"));
+                        "issuerId", "profileId", "responderId", "relationship", "dataView", "conditions",
+                        "expiresAt"));
                 Permission.Scope scope = new Permission.Scope(realmId, authority,
-                        fields.optionalText("issuerId").map(PkiId::new), fields.optionalText("profileId"));
+                        fields.optionalText("issuerId").map(PkiId::new), fields.optionalText("profileId"),
+                        fields.optionalText("responderId"));
                 yield new ServerControlOperation.CreateGrant(new Permission.Grant(fields.text("grantId"),
                         fields.text("principalId"), Permission.Effect.valueOf(fields.text("effect")),
                         Permission.Action.valueOf(fields.text("action")),
@@ -432,11 +435,18 @@ final class HttpOperationCodec {
                 fields.exact("accountId"); yield new ServerControlOperation.DeactivateAcmeAccount(fields.text("accountId"));
             }
             case ServerControlOperation.RegisterOcspResponder.NAME -> {
-                fields.exact("responderId", "alias", "authorityId", "issuerId", "signingMode",
+                fields.allowed(Set.of("responderId", "alias", "authorityId", "issuerId", "signingMode",
                         "responderCredentialId", "signingKeyRef", "chainPathId", "signatureAlgorithm",
                         "signatureBindingId", "signatureBindingCommitment", "responderIdForm",
                         "responseValidityMillis", "noncePolicy", "maximumNonceBytes", "acceptedHashes",
-                        "maximumRequestBytes", "maximumEntries", "cacheLifetimeMillis");
+                        "maximumRequestBytes", "maximumEntries", "cacheLifetimeMillis",
+                        "requestAuthenticationMode", "requesterTrustPolicy"));
+                OcspResponderService.RequestAuthenticationMode authenticationMode =
+                        OcspResponderService.RequestAuthenticationMode.valueOf(
+                                fields.text("requestAuthenticationMode"));
+                Optional<OcspResponderService.RequesterTrustPolicy> trustPolicy = fields.contains(
+                        "requesterTrustPolicy") ? Optional.of(requesterTrustPolicy(
+                                fields.object("requesterTrustPolicy"))) : Optional.empty();
                 yield new ServerControlOperation.RegisterOcspResponder(new OcspResponderService.Registration(
                         fields.text("responderId"), fields.text("alias"),
                         fields.pkiId("authorityId"), fields.pkiId("issuerId"),
@@ -450,7 +460,8 @@ final class HttpOperationCodec {
                         fields.integer("maximumNonceBytes"),
                         fields.enumSet("acceptedHashes", OcspResponseService.CertIdHash.class),
                         fields.integer("maximumRequestBytes"), fields.integer("maximumEntries"),
-                        Duration.ofMillis(fields.longValue("cacheLifetimeMillis"))));
+                        Duration.ofMillis(fields.longValue("cacheLifetimeMillis")), authenticationMode,
+                        trustPolicy));
             }
             case ServerControlOperation.InspectOcspResponder.NAME -> {
                 fields.exact("responderId"); yield new ServerControlOperation.InspectOcspResponder(fields.text("responderId"));
@@ -553,6 +564,34 @@ final class HttpOperationCodec {
         };
     }
 
+    private static OcspResponderService.RequesterTrustPolicy requesterTrustPolicy(Fields fields) {
+        fields.exact("trustSelectors", "principalMappings", "signatureBindings", "revocationPolicy",
+                "maximumSignerCertificates", "maximumSignerChainBytes");
+        List<OcspResponderService.TrustSelector> selectors = fields.objects("trustSelectors").stream()
+                .map(value -> {
+                    value.exact("type", "identities");
+                    return new OcspResponderService.TrustSelector(
+                            OcspResponderService.TrustSelectorType.valueOf(value.text("type")),
+                            value.stringSet("identities"));
+                }).toList();
+        List<OcspResponderService.PrincipalMapping> mappings = fields.objects("principalMappings").stream()
+                .map(value -> {
+                    value.exact("mappingId", "principalId", "type", "commitment");
+                    return new OcspResponderService.PrincipalMapping(value.text("mappingId"),
+                            value.text("principalId"), OcspResponderService.PrincipalMappingType.valueOf(
+                                    value.text("type")), value.text("commitment"));
+                }).toList();
+        List<OcspResponderService.RequestSignatureBinding> bindings = fields.objects("signatureBindings").stream()
+                .map(value -> {
+                    value.exact("bindingId", "commitment");
+                    return new OcspResponderService.RequestSignatureBinding(value.text("bindingId"),
+                            value.text("commitment"));
+                }).toList();
+        return new OcspResponderService.RequesterTrustPolicy(selectors, mappings, bindings,
+                OcspResponderService.RequesterRevocationPolicy.valueOf(fields.text("revocationPolicy")),
+                fields.integer("maximumSignerCertificates"), fields.integer("maximumSignerChainBytes"));
+    }
+
     private static Duration duration(String value) {
         try {
             Duration result = Duration.parse(value);
@@ -587,6 +626,7 @@ final class HttpOperationCodec {
             if (!(value instanceof PkiOperationValue.Text text)) throw type(); return text.value(); }
         Optional<String> optionalText(String name) { return fields.containsKey(name)
             ? Optional.of(text(name)) : Optional.empty(); }
+        boolean contains(String name) { return fields.containsKey(name); }
         long longValue(String name) { consumed.add(name); PkiOperationValue value = require(name);
             if (!(value instanceof PkiOperationValue.IntegerValue integer)) throw type(); return integer.value(); }
         int integer(String name) { return Math.toIntExact(longValue(name)); }
@@ -618,6 +658,11 @@ final class HttpOperationCodec {
             return Set.copyOf(result);
         }
         Fields object(String name) { consumed.add(name); return of(require(name)); }
+        List<Fields> objects(String name) {
+            consumed.add(name); PkiOperationValue value = require(name);
+            if (!(value instanceof PkiOperationValue.ListValue list)) throw type();
+            return list.values().stream().map(Fields::of).toList();
+        }
         void complete() { if (!Objects.equals(consumed, fields.keySet()))
             throw new IllegalArgumentException("Request fields were not consumed"); }
         private PkiOperationValue require(String name) { PkiOperationValue value = fields.get(name);

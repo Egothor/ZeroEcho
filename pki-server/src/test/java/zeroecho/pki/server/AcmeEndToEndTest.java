@@ -54,6 +54,7 @@ import java.security.SecureRandom;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -75,7 +76,9 @@ import org.bouncycastle.asn1.x509.Extensions;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.ocsp.BasicOCSPResp;
 import org.bouncycastle.cert.ocsp.CertificateID;
 import org.bouncycastle.cert.ocsp.OCSPReqBuilder;
@@ -90,6 +93,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.storage.KeyringPassword;
 import zeroecho.core.storage.KeyringStore;
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
@@ -199,11 +203,17 @@ class AcmeEndToEndTest {
             assertOcspNonce(wire, publicPort, chain.get(1), chain.get(0));
             assertOcspUnknownAndMulti(wire, publicPort, chain.get(1), chain.get(0));
             assertOcspNoncePolicies(wire, publicPort, chain.get(1), chain.get(0));
+            assertSignedOcsp(wire, publicPort, chain.get(1), chain.get(0), rsa((byte) 81),
+                    requesterCertificate(rsa((byte) 81)), "signed", true, false);
+            assertSignedOcsp(wire, publicPort, chain.get(1), chain.get(0), rsa((byte) 81),
+                    requesterCertificate(rsa((byte) 81)), "mixed", false, false);
 
             assertEquals(200, client.rollover(keyChange, replacementKey).status());
             assertEquals(200, client.postAsGet(accountUri).status());
             System.out.println("...https-jws-http01-issuance=true");
         }
+
+        registerManagedRequester(fixture, leafDer, leafKey);
 
         try (PkiHttpsServer restarted = start(fixture);
                 AcmeTestClient replacement = new AcmeTestClient(wire, directoryUri, replacementKey);
@@ -215,12 +225,22 @@ class AcmeEndToEndTest {
             assertEquals(403, old.postAsGet(accountUri).status());
             assertEquals(200, replacement.postAsGet(orderUri).status());
             assertEquals(200, replacement.postAsGet(certificateUri).status());
+            X509Certificate requesterCertificate = (X509Certificate) CertificateFactory.getInstance("X.509")
+                    .generateCertificate(new ByteArrayInputStream(leafDer));
+            List<X509Certificate> preRevocationChain = certificates(
+                    replacement.postAsGet(certificateUri).bodyText());
+            assertSignedOcsp(wire, publicPort, preRevocationChain.get(1), requesterCertificate, leafKey,
+                    requesterCertificate, "managed", true, false);
             URI revoke = URI.create(AcmeTestClient.text(replacement.directory(), "revokeCert"));
             String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(leafDer);
             assertEquals(200, replacement.kid(revoke,
                     "{\"certificate\":\"" + encoded + "\",\"reason\":1}").status());
             List<X509Certificate> chain = certificates(replacement.postAsGet(certificateUri).bodyText());
             assertOcsp(wire, publicPort, chain.get(1), chain.get(0), true);
+            assertSignedOcsp(wire, publicPort, chain.get(1), chain.get(0), rsa((byte) 81),
+                    requesterCertificate(rsa((byte) 81)), "signed", true, true);
+            assertSignedOcspUnauthorized(wire, publicPort, chain.get(1), requesterCertificate, leafKey,
+                    requesterCertificate, "managed");
             assertFalse(replacement.kid(revoke,
                     "{\"certificate\":\"" + encoded + "\",\"reason\":1}").status() == 200);
             System.out.println("...rollover-restart-revocation=true");
@@ -258,6 +278,8 @@ class AcmeEndToEndTest {
                 + "/directory");
         HttpClient wire = HttpClient.newBuilder().sslContext(tls.anonymousContext())
                 .connectTimeout(Duration.ofMillis(500)).build();
+        X509Certificate packagedIssuer = null;
+        X509Certificate packagedCertificate = null;
         try {
             awaitDirectory(wire, directoryUri, process, output);
             KeyPair accountKey = ec((byte) 42);
@@ -292,7 +314,11 @@ class AcmeEndToEndTest {
                 URI certificate = URI.create(AcmeTestClient.text(finalized, "certificate"));
                 List<X509Certificate> chain = certificates(client.postAsGet(certificate).bodyText());
                 assertEquals(2, chain.size());
+                packagedCertificate = chain.get(0);
+                packagedIssuer = chain.get(1);
                 assertOcsp(wire, publicPort, chain.get(1), chain.get(0), false);
+                assertSignedOcsp(wire, publicPort, chain.get(1), chain.get(0), rsa((byte) 81),
+                        requesterCertificate(rsa((byte) 81)), "signed", true, false);
                 assertEquals(200, client.rollover(rollover, replacement).status());
                 String der = Base64.getUrlEncoder().withoutPadding().encodeToString(chain.get(0).getEncoded());
                 assertEquals(200, client.kid(revoke,
@@ -305,6 +331,21 @@ class AcmeEndToEndTest {
             if (!process.waitFor(10, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 assertTrue(process.waitFor(5, TimeUnit.SECONDS));
+            }
+        }
+        denyPackagedSignedRequester(fixture);
+        Process deniedProcess = builder.start();
+        try {
+            awaitDirectory(wire, directoryUri, deniedProcess, output);
+            assertSignedOcspUnauthorized(wire, publicPort,
+                    java.util.Objects.requireNonNull(packagedIssuer),
+                    java.util.Objects.requireNonNull(packagedCertificate), rsa((byte) 81),
+                    requesterCertificate(rsa((byte) 81)), "signed");
+        } finally {
+            deniedProcess.destroy();
+            if (!deniedProcess.waitFor(10, TimeUnit.SECONDS)) {
+                deniedProcess.destroyForcibly();
+                assertTrue(deniedProcess.waitFor(5, TimeUnit.SECONDS));
             }
         }
         System.out.println("...ok");
@@ -407,6 +448,7 @@ class AcmeEndToEndTest {
                             zeroecho.pki.application.OcspResponseService.CertIdHash.SHA256),
                     16_384, 8, Duration.ofMinutes(1));
             context.ocspResponders().setActive(context.ocspResponders().register(responder).responderId(), true);
+            registerSignedResponder(context, responder, authority, issuer.issuerId());
             registerNonceResponder(context, responder, "ocsp-e2e-reject", "reject",
                     OcspResponderService.NoncePolicy.REJECT);
             registerNonceResponder(context, responder, "ocsp-e2e-required", "required",
@@ -446,6 +488,162 @@ class AcmeEndToEndTest {
                 noncePolicy, template.maximumNonceBytes(), template.acceptedHashes(),
                 template.maximumRequestBytes(), template.maximumEntries(), template.cacheLifetime());
         context.ocspResponders().setActive(context.ocspResponders().register(responder).responderId(), true);
+    }
+
+    private static void registerManagedRequester(Fixture fixture, byte[] requesterDer, KeyPair requesterKey)
+            throws Exception {
+        X509Certificate requester = (X509Certificate) CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(requesterDer));
+        try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
+                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+            OcspResponderService.Responder template = context.ocspResponders().requireAlias("root");
+            String commitment = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(requesterDer));
+            context.createPrincipal(new SecurityPrincipal("managed-ocsp-requester", SecurityPrincipal.Type.SERVICE,
+                    "Managed OCSP requester", Optional.empty(), Map.of(), true), "system");
+            Permission.Scope scope = new Permission.Scope(context.configuration().realmId(),
+                    Optional.of(template.authorityId()), Optional.of(template.issuerId()), Optional.empty(),
+                    Optional.of("ocsp-e2e-managed"));
+            context.grant(new Permission.Grant("ocsp-query-managed-e2e", "managed-ocsp-requester",
+                    Permission.Effect.ALLOW, Permission.Action.OCSP_STATUS_QUERY,
+                    Permission.ResourceType.OCSP_RESPONDER, scope, Permission.Relationship.ANY,
+                    Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(), true), "system");
+            zeroecho.pki.api.algorithm.X509AlgorithmBinding binding = context.session().algorithmBindings()
+                    .standard(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+                            zeroecho.pki.api.algorithm.X509AlgorithmBinding.Role.OCSP_REQUEST_SIGNATURE)
+                    .orElseThrow();
+            OcspResponderService.RequesterTrustPolicy policy = new OcspResponderService.RequesterTrustPolicy(
+                    List.of(new OcspResponderService.TrustSelector(
+                            OcspResponderService.TrustSelectorType.MANAGED_ISSUER_GENERATIONS,
+                            Set.of(template.issuerId().value()))),
+                    List.of(new OcspResponderService.PrincipalMapping("managed-requester-cert",
+                            "managed-ocsp-requester",
+                            OcspResponderService.PrincipalMappingType.SHA256_CERTIFICATE_COMMITMENT, commitment)),
+                    List.of(new OcspResponderService.RequestSignatureBinding(binding.bindingId(),
+                            binding.semanticCommitment())),
+                    OcspResponderService.RequesterRevocationPolicy.LOCAL_AUTHORITATIVE_REQUIRED, 3, 131_072);
+            assertTrue(context.session().repository().credential(template.issuerId(), requester.getSerialNumber())
+                    .isPresent());
+            OcspResponderService.Responder responder = context.ocspResponders().create("ocsp-e2e-managed",
+                    "managed", template.authorityId(), template.issuerId(), template.signingMode(),
+                    template.responderCredentialId(), template.signingKeyRef(), template.chainPathId(),
+                    template.signatureAlgorithm(), template.signatureBindingId(),
+                    template.signatureBindingCommitment(), template.responderIdForm(), template.responseValidity(),
+                    template.noncePolicy(), template.maximumNonceBytes(), template.acceptedHashes(),
+                    template.maximumRequestBytes(), template.maximumEntries(), template.cacheLifetime(),
+                    OcspResponderService.RequestAuthenticationMode.AUTHORIZED_SIGNED_REQUIRED,
+                    Optional.of(policy));
+            OcspResponderService.Responder active = context.ocspResponders().setActive(
+                    context.ocspResponders().register(responder).responderId(), true);
+            assertRequesterService(context, active, requesterKey, requester);
+        }
+    }
+
+    private static void denyPackagedSignedRequester(Fixture fixture) throws Exception {
+        try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
+                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+            OcspResponderService.Responder responder = context.ocspResponders().requireAlias("signed");
+            Permission.Scope scope = new Permission.Scope(context.configuration().realmId(),
+                    Optional.of(responder.authorityId()), Optional.of(responder.issuerId()), Optional.empty(),
+                    Optional.of(responder.responderId()));
+            context.grant(new Permission.Grant("ocsp-query-e2e-deny", "ocsp-requester",
+                    Permission.Effect.DENY, Permission.Action.OCSP_STATUS_QUERY,
+                    Permission.ResourceType.OCSP_RESPONDER, scope, Permission.Relationship.ANY,
+                    Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(), true), "system");
+        }
+    }
+
+    private static void registerSignedResponder(ServerRealmContext context,
+            OcspResponderService.Responder template, PkiId authority, PkiId issuerId) throws Exception {
+        KeyPair requesterKey = rsa((byte) 81);
+        X509Certificate requesterCertificate = requesterCertificate(requesterKey);
+        String certificateCommitment = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(requesterCertificate.getEncoded()));
+        context.createPrincipal(new SecurityPrincipal("ocsp-requester", SecurityPrincipal.Type.SERVICE,
+                "OCSP requester", Optional.empty(), Map.of(), true), "system");
+        Permission.Scope scope = new Permission.Scope(context.configuration().realmId(), Optional.of(authority),
+                Optional.of(issuerId), Optional.empty(), Optional.of("ocsp-e2e-signed"));
+        context.grant(new Permission.Grant("ocsp-query-e2e", "ocsp-requester", Permission.Effect.ALLOW,
+                Permission.Action.OCSP_STATUS_QUERY, Permission.ResourceType.OCSP_RESPONDER, scope,
+                Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(),
+                true), "system");
+        Permission.Scope mixedScope = new Permission.Scope(context.configuration().realmId(),
+                Optional.of(authority), Optional.of(issuerId), Optional.empty(), Optional.of("ocsp-e2e-mixed"));
+        context.grant(new Permission.Grant("ocsp-query-mixed-e2e", "ocsp-requester", Permission.Effect.ALLOW,
+                Permission.Action.OCSP_STATUS_QUERY, Permission.ResourceType.OCSP_RESPONDER, mixedScope,
+                Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(),
+                true), "system");
+        zeroecho.pki.api.algorithm.X509AlgorithmBinding requestBinding = context.session().algorithmBindings()
+                .standard(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+                        zeroecho.pki.api.algorithm.X509AlgorithmBinding.Role.OCSP_REQUEST_SIGNATURE).orElseThrow();
+        OcspResponderService.RequesterTrustPolicy policy = new OcspResponderService.RequesterTrustPolicy(
+                List.of(new OcspResponderService.TrustSelector(
+                        OcspResponderService.TrustSelectorType.EXACT_REQUESTER_CERTIFICATE_COMMITMENTS,
+                        Set.of(certificateCommitment))),
+                List.of(new OcspResponderService.PrincipalMapping("ocsp-requester-cert", "ocsp-requester",
+                        OcspResponderService.PrincipalMappingType.SHA256_CERTIFICATE_COMMITMENT,
+                        certificateCommitment)),
+                List.of(new OcspResponderService.RequestSignatureBinding(requestBinding.bindingId(),
+                        requestBinding.semanticCommitment())),
+                OcspResponderService.RequesterRevocationPolicy.VALIDITY_AND_TRUST_ONLY, 2, 65_536);
+        OcspResponderService.Responder responder = context.ocspResponders().create("ocsp-e2e-signed", "signed",
+                authority, issuerId, template.signingMode(), template.responderCredentialId(),
+                template.signingKeyRef(), template.chainPathId(), template.signatureAlgorithm(),
+                template.signatureBindingId(), template.signatureBindingCommitment(), template.responderIdForm(),
+                template.responseValidity(), template.noncePolicy(), template.maximumNonceBytes(),
+                template.acceptedHashes(), template.maximumRequestBytes(), template.maximumEntries(),
+                template.cacheLifetime(), OcspResponderService.RequestAuthenticationMode.AUTHORIZED_SIGNED_REQUIRED,
+                Optional.of(policy));
+        OcspResponderService.Responder active = context.ocspResponders().setActive(
+                context.ocspResponders().register(responder).responderId(), true);
+        assertTrue(context.authorizeOcspQuery("ocsp-requester", active).allowed());
+        assertRequesterService(context, active, requesterKey, requesterCertificate);
+        OcspResponderService.Responder mixed = context.ocspResponders().create("ocsp-e2e-mixed", "mixed",
+                authority, issuerId, template.signingMode(), template.responderCredentialId(),
+                template.signingKeyRef(), template.chainPathId(), template.signatureAlgorithm(),
+                template.signatureBindingId(), template.signatureBindingCommitment(), template.responderIdForm(),
+                template.responseValidity(), template.noncePolicy(), template.maximumNonceBytes(),
+                template.acceptedHashes(), template.maximumRequestBytes(), template.maximumEntries(),
+                template.cacheLifetime(),
+                OcspResponderService.RequestAuthenticationMode.UNSIGNED_OR_AUTHORIZED_SIGNED,
+                Optional.of(policy));
+        context.ocspResponders().setActive(context.ocspResponders().register(mixed).responderId(), true);
+    }
+
+    private static void assertRequesterService(ServerRealmContext context,
+            OcspResponderService.Responder responder, KeyPair requesterKey, X509Certificate requesterCertificate)
+            throws Exception {
+        X509Certificate issuerCertificate;
+        try (zeroecho.pki.application.PkiRepositoryContent content = context.session().repository()
+                .openCredential(context.session().repository().issuer(responder.issuerId()).orElseThrow()
+                        .credentialId()); java.io.InputStream input = content.openStream()) {
+            issuerCertificate = (X509Certificate) CertificateFactory.getInstance("X.509")
+                    .generateCertificate(input);
+        }
+        OCSPReqBuilder builder = new OCSPReqBuilder();
+        builder.addRequest(new CertificateID(new JcaDigestCalculatorProviderBuilder().build()
+                .get(CertificateID.HASH_SHA1), new JcaX509CertificateHolder(issuerCertificate), BigInteger.ONE));
+        builder.setRequestorName(new GeneralName(new JcaX509CertificateHolder(requesterCertificate).getSubject()));
+        org.bouncycastle.cert.ocsp.OCSPReq request = builder.build(new JcaContentSignerBuilder("SHA256withRSA")
+                .build(requesterKey.getPrivate()), new org.bouncycastle.cert.X509CertificateHolder[] {
+                    new JcaX509CertificateHolder(requesterCertificate) });
+        org.bouncycastle.asn1.ocsp.OCSPRequest structure = org.bouncycastle.asn1.ocsp.OCSPRequest.getInstance(
+                org.bouncycastle.asn1.ASN1Primitive.fromByteArray(request.getEncoded()));
+        org.bouncycastle.asn1.ocsp.Signature signature = structure.getOptionalSignature();
+        org.bouncycastle.cert.ocsp.CertificateID certificateId = request.getRequestList()[0].getCertID();
+        OcspRequesterService.SignedRequest signed = new OcspRequesterService.SignedRequest(
+                structure.getTbsRequest().getEncoded(), requesterCertificate.getSubjectX500Principal().getEncoded(),
+                signature.getSignatureAlgorithm().getEncoded(), signature.getSignature().getOctets(),
+                List.of(requesterCertificate.getEncoded()));
+        try {
+            new OcspRequesterService(context, ServerTestSupport.CLOCK).authenticate(responder, signed,
+                    List.of(new zeroecho.pki.application.OcspResponseService.CertId(
+                            zeroecho.pki.application.OcspResponseService.CertIdHash.SHA1,
+                            certificateId.getIssuerNameHash(), certificateId.getIssuerKeyHash(),
+                            certificateId.getSerialNumber())));
+        } catch (OcspRequesterService.UnauthorizedException failure) {
+            throw new AssertionError("Requester service rejected fixture: " + failure.classification(), failure);
+        }
     }
 
     private PkiHttpsServer start(Fixture fixture) throws Exception {
@@ -766,6 +964,112 @@ class AcmeEndToEndTest {
                 postOcsp(client, publicPort, "required", withoutNonce).getStatus());
         assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.SUCCESSFUL,
                 postOcsp(client, publicPort, "required", withNonce).getStatus());
+        assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.MALFORMED_REQUEST,
+                postOcsp(client, publicPort, "required", withNonce).getStatus());
+    }
+
+    private static void assertSignedOcsp(HttpClient client, int publicPort, X509Certificate issuer,
+            X509Certificate certificate, KeyPair requesterKey, X509Certificate requesterCertificate,
+            String alias, boolean signatureRequired, boolean revoked)
+            throws Exception {
+        JcaX509CertificateHolder issuerHolder = new JcaX509CertificateHolder(issuer);
+        OCSPReqBuilder builder = new OCSPReqBuilder();
+        builder.addRequest(new CertificateID(new JcaDigestCalculatorProviderBuilder().build()
+                .get(CertificateID.HASH_SHA1), issuerHolder, certificate.getSerialNumber()));
+        builder.setRequestorName(new GeneralName(new JcaX509CertificateHolder(requesterCertificate).getSubject()));
+        byte[] request = builder.build(new JcaContentSignerBuilder("SHA256withRSA")
+                .build(requesterKey.getPrivate()),
+                new org.bouncycastle.cert.X509CertificateHolder[] {
+                    new JcaX509CertificateHolder(requesterCertificate) }).getEncoded();
+        URI endpoint = URI.create("https://localhost:" + publicPort + "/ocsp/" + alias);
+        java.net.http.HttpResponse<byte[]> post = client.send(java.net.http.HttpRequest.newBuilder(endpoint)
+                .header("Accept", "application/ocsp-response").header("Content-Type", "application/ocsp-request")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(request)).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, post.statusCode());
+        OCSPResp decoded = new OCSPResp(post.body());
+        assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.SUCCESSFUL, decoded.getStatus());
+        BasicOCSPResp basic = assertInstanceOf(BasicOCSPResp.class, decoded.getResponseObject());
+        assertEquals(1, basic.getResponses().length);
+        if (revoked) assertInstanceOf(org.bouncycastle.cert.ocsp.RevokedStatus.class,
+                basic.getResponses()[0].getCertStatus());
+        else assertEquals(null, basic.getResponses()[0].getCertStatus());
+        assertEquals("private, no-store", post.headers().firstValue("Cache-Control").orElseThrow());
+        assertEquals("no-cache", post.headers().firstValue("Pragma").orElseThrow());
+        assertTrue(post.headers().firstValue("ETag").isEmpty());
+        String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(request);
+        java.net.http.HttpResponse<byte[]> get = client.send(java.net.http.HttpRequest.newBuilder(
+                URI.create(endpoint + "/" + encoded)).header("Accept", "application/ocsp-response").GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.SUCCESSFUL, new OCSPResp(get.body()).getStatus());
+        OCSPReqBuilder unsigned = new OCSPReqBuilder();
+        unsigned.addRequest(new CertificateID(new JcaDigestCalculatorProviderBuilder().build()
+                .get(CertificateID.HASH_SHA1), issuerHolder, certificate.getSerialNumber()));
+        assertEquals(signatureRequired ? org.bouncycastle.cert.ocsp.OCSPRespBuilder.SIG_REQUIRED
+                        : org.bouncycastle.cert.ocsp.OCSPRespBuilder.SUCCESSFUL,
+                postOcsp(client, publicPort, alias, unsigned.build().getEncoded()).getStatus());
+        if ("mixed".equals(alias)) {
+            byte[] invalidSignature = builder.build(new JcaContentSignerBuilder("SHA256withRSA")
+                    .build(rsa((byte) 82).getPrivate()),
+                    new org.bouncycastle.cert.X509CertificateHolder[] {
+                        new JcaX509CertificateHolder(requesterCertificate) }).getEncoded();
+            assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.UNAUTHORIZED,
+                    postOcsp(client, publicPort, alias, invalidSignature).getStatus());
+
+            OCSPReqBuilder partlyForeign = new OCSPReqBuilder();
+            partlyForeign.addRequest(new CertificateID(new JcaDigestCalculatorProviderBuilder().build()
+                    .get(CertificateID.HASH_SHA1), issuerHolder, certificate.getSerialNumber()));
+            partlyForeign.addRequest(new CertificateID(new JcaDigestCalculatorProviderBuilder().build()
+                    .get(CertificateID.HASH_SHA1), new JcaX509CertificateHolder(requesterCertificate),
+                    certificate.getSerialNumber().add(BigInteger.ONE)));
+            partlyForeign.setRequestorName(new GeneralName(
+                    new JcaX509CertificateHolder(requesterCertificate).getSubject()));
+            byte[] partlyForeignRequest = partlyForeign.build(new JcaContentSignerBuilder("SHA256withRSA")
+                    .build(requesterKey.getPrivate()),
+                    new org.bouncycastle.cert.X509CertificateHolder[] {
+                        new JcaX509CertificateHolder(requesterCertificate) }).getEncoded();
+            assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.UNAUTHORIZED,
+                    postOcsp(client, publicPort, alias, partlyForeignRequest).getStatus());
+        }
+        if (signatureRequired) {
+            assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.UNAUTHORIZED,
+                    postOcsp(client, publicPort, "root", request).getStatus());
+        }
+    }
+
+    private static void assertSignedOcspUnauthorized(HttpClient client, int publicPort, X509Certificate issuer,
+            X509Certificate certificate, KeyPair requesterKey, X509Certificate requesterCertificate,
+            String alias) throws Exception {
+        OCSPReqBuilder builder = new OCSPReqBuilder();
+        builder.addRequest(new CertificateID(new JcaDigestCalculatorProviderBuilder().build()
+                .get(CertificateID.HASH_SHA1), new JcaX509CertificateHolder(issuer),
+                certificate.getSerialNumber()));
+        builder.setRequestorName(new GeneralName(new JcaX509CertificateHolder(requesterCertificate).getSubject()));
+        byte[] request = builder.build(new JcaContentSignerBuilder("SHA256withRSA")
+                .build(requesterKey.getPrivate()), new org.bouncycastle.cert.X509CertificateHolder[] {
+                    new JcaX509CertificateHolder(requesterCertificate) }).getEncoded();
+        java.net.http.HttpResponse<byte[]> response = client.send(java.net.http.HttpRequest.newBuilder(
+                URI.create("https://localhost:" + publicPort + "/ocsp/" + alias))
+                .header("Accept", "application/ocsp-response").header("Content-Type", "application/ocsp-request")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(request)).build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, response.statusCode());
+        assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
+        assertEquals(org.bouncycastle.cert.ocsp.OCSPRespBuilder.UNAUTHORIZED,
+                new OCSPResp(response.body()).getStatus());
+    }
+
+    private static X509Certificate requesterCertificate(KeyPair keys) throws Exception {
+        X500Name name = new X500Name("CN=ZeroEcho OCSP Requester Fixture");
+        X509v3CertificateBuilder builder = new X509v3CertificateBuilder(name, BigInteger.valueOf(8801),
+                java.util.Date.from(Instant.parse("2025-01-01T00:00:00Z")),
+                java.util.Date.from(Instant.parse("2035-01-01T00:00:00Z")), name,
+                org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(keys.getPublic().getEncoded()));
+        builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
+        byte[] encoded = builder.build(new JcaContentSignerBuilder("SHA256withRSA")
+                .build(keys.getPrivate())).getEncoded();
+        return (X509Certificate) CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(encoded));
     }
 
     private static OCSPResp postOcsp(HttpClient client, int publicPort, String alias, byte[] request)

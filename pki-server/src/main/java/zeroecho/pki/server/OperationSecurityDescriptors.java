@@ -434,7 +434,8 @@ public final class OperationSecurityDescriptors {
                     + atom(value.registration().responderId()) + ";authority="
                     + atom(value.registration().authorityId().value()) + ";issuer="
                     + atom(value.registration().issuerId().value()) + ";binding="
-                    + value.registration().signatureBindingCommitment();
+                    + value.registration().signatureBindingCommitment() + ";requestPolicy="
+                    + OcspResponderService.requestPolicyCommitment(value.registration());
             case ServerControlOperation.InspectOcspResponder value -> "responder=" + atom(value.responderId());
             case ServerControlOperation.ListOcspResponders value -> "offset=" + value.offset()
                     + ";limit=" + value.limit();

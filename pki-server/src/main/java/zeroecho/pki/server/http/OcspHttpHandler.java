@@ -70,6 +70,7 @@ import zeroecho.pki.application.OcspResponseService;
 import zeroecho.pki.application.PkiRepositoryContent;
 import zeroecho.pki.server.AdministrativeAuthenticationMode;
 import zeroecho.pki.server.OcspResponderService;
+import zeroecho.pki.server.OcspRequesterService;
 import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
@@ -86,6 +87,8 @@ final class OcspHttpHandler implements HttpHandler {
     private final Clock clock;
     private final RequestIds requestIds;
     private final BooleanSupplier ready;
+    private final OcspRequesterService requesters;
+    private final NonceReplayGuard nonceReplay = new NonceReplayGuard();
 
     OcspHttpHandler(PkiServerConfiguration.PublicListener configuration, ServerRealmContext realm,
             AdministrativeAuthenticator authenticator, ServerRuntime runtime, Clock clock,
@@ -94,40 +97,63 @@ final class OcspHttpHandler implements HttpHandler {
         this.authenticator = java.util.Objects.requireNonNull(authenticator); this.runtime = java.util.Objects.requireNonNull(runtime);
         this.clock = java.util.Objects.requireNonNull(clock); this.requestIds = java.util.Objects.requireNonNull(requestIds);
         this.ready = java.util.Objects.requireNonNull(ready);
+        this.requesters = new OcspRequesterService(realm, clock);
     }
 
     @Override public void handle(HttpExchange exchange) throws IOException {
         String requestId = "unavailable-request"; boolean admitted = false;
         OcspResponderService.Responder auditedResponder = null;
+        Optional<String> transportPrincipal = Optional.empty();
+        Optional<String> requesterPrincipal = Optional.empty();
         try {
             requestId = requestIds.resolve(exchange.getRequestHeaders().get(RequestIds.HEADER));
             if (!ready.getAsBoolean()) { transportFailure(exchange, 503); return; }
             requireHeadersBounded(exchange.getRequestHeaders());
-            validateTransport(exchange, requestId);
+            transportPrincipal = validateTransport(exchange, requestId);
             Route route = route(exchange);
+            if (!runtime.tryAdmit()) { audit(requestId, Optional.empty(), transportPrincipal, Optional.empty(),
+                    "OVERLOAD"); transportFailure(exchange, 429); return; }
+            admitted = true;
             OcspResponderService.Responder responder = activeResponder(route.alias());
             auditedResponder = responder;
-            audit(requestId, Optional.of(responder), "ACCEPTED");
-            if (!runtime.tryAdmit()) { audit(requestId, Optional.of(responder), "OVERLOAD"); transportFailure(exchange, 429); return; }
-            admitted = true;
+            audit(requestId, Optional.of(responder), transportPrincipal, Optional.empty(), "ACCEPTED");
             int maximumRequestBytes = Math.min(configuration.maximumBodyBytes(), responder.maximumRequestBytes());
             byte[] request = route.encoded().orElseGet(() -> read(exchange, maximumRequestBytes));
             if (request.length > maximumRequestBytes) { transportFailure(exchange, 413); return; }
             OcspRequestParser.Parsed parsed = OcspRequestParser.parse(request, responder.maximumEntries(),
-                    responder.acceptedHashes(), responder.maximumNonceBytes());
+                    responder.acceptedHashes(), responder.maximumNonceBytes(),
+                    responder.requesterTrustPolicy().map(OcspResponderService.RequesterTrustPolicy
+                            ::maximumSignerCertificates).orElse(16),
+                    responder.requesterTrustPolicy().map(OcspResponderService.RequesterTrustPolicy
+                            ::maximumSignerChainBytes).orElse(maximumRequestBytes));
             validateNonce(responder.noncePolicy(), parsed.nonce());
-            OcspResponseService.Response response = execute(responder, parsed);
-            send(exchange, responder, response, parsed.nonce().isPresent(), requestId);
-            audit(requestId, Optional.of(responder), "RESPONDED_GOOD_" + response.goodCount()
+            requireAuthenticationMode(responder.requestAuthenticationMode(), parsed.signedRequest());
+            Execution execution = execute(responder, parsed);
+            requesterPrincipal = execution.requesterPrincipal();
+            send(exchange, responder, execution.response(), parsed.nonce().isPresent(),
+                    parsed.signedRequest().isPresent(), requestId);
+            OcspResponseService.Response response = execution.response();
+            audit(requestId, Optional.of(responder), transportPrincipal, requesterPrincipal,
+                    "RESPONDED_GOOD_" + response.goodCount()
                     + "_REVOKED_" + response.revokedCount() + "_UNKNOWN_" + response.unknownCount());
-        } catch (UnknownAlias unavailable) { audit(requestId, Optional.empty(), "UNKNOWN_RESPONDER"); transportFailure(exchange, 404);
-        } catch (InactiveResponder inactive) { audit(requestId, Optional.empty(), "INACTIVE_RESPONDER"); transportFailure(exchange, 503);
-        } catch (MethodFailure method) { audit(requestId, Optional.ofNullable(auditedResponder), "METHOD_REJECTED"); transportFailure(exchange, 405);
-        } catch (MediaFailure media) { audit(requestId, Optional.ofNullable(auditedResponder), "MEDIA_REJECTED"); transportFailure(exchange, 406);
-        } catch (IllegalArgumentException malformed) { audit(requestId, Optional.ofNullable(auditedResponder), "MALFORMED"); protocolFailure(exchange, org.bouncycastle.cert.ocsp.OCSPRespBuilder.MALFORMED_REQUEST);
-        } catch (RejectedExecutionException overload) { audit(requestId, Optional.ofNullable(auditedResponder), "OVERLOAD"); transportFailure(exchange, 429);
-        } catch (TimeoutException deadline) { audit(requestId, Optional.ofNullable(auditedResponder), "DEADLINE"); transportFailure(exchange, 504);
-        } catch (RuntimeException failure) { audit(requestId, Optional.ofNullable(auditedResponder), "UNAVAILABLE"); transportFailure(exchange, 503);
+        } catch (SignatureRequired required) { audit(requestId, Optional.ofNullable(auditedResponder),
+                transportPrincipal, requesterPrincipal, "SIGNATURE_REQUIRED"); protocolFailure(exchange,
+                        org.bouncycastle.cert.ocsp.OCSPRespBuilder.SIG_REQUIRED);
+        } catch (OcspRequesterService.UnauthorizedException unauthorized) { audit(requestId,
+                Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
+                "REQUESTER_UNAUTHORIZED_" + unauthorized.classification()); protocolFailure(exchange,
+                        org.bouncycastle.cert.ocsp.OCSPRespBuilder.UNAUTHORIZED);
+        } catch (OcspRequesterService.UnavailableException unavailable) { audit(requestId,
+                Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
+                "REQUESTER_AUTHORITY_UNAVAILABLE"); protocolFailure(exchange, org.bouncycastle.cert.ocsp.OCSPRespBuilder.TRY_LATER);
+        } catch (UnknownAlias unavailable) { audit(requestId, Optional.empty(), transportPrincipal, requesterPrincipal, "UNKNOWN_RESPONDER"); transportFailure(exchange, 404);
+        } catch (InactiveResponder inactive) { audit(requestId, Optional.empty(), transportPrincipal, requesterPrincipal, "INACTIVE_RESPONDER"); transportFailure(exchange, 503);
+        } catch (MethodFailure method) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "METHOD_REJECTED"); transportFailure(exchange, 405);
+        } catch (MediaFailure media) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MEDIA_REJECTED"); transportFailure(exchange, 406);
+        } catch (IllegalArgumentException malformed) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MALFORMED"); protocolFailure(exchange, org.bouncycastle.cert.ocsp.OCSPRespBuilder.MALFORMED_REQUEST);
+        } catch (RejectedExecutionException overload) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "OVERLOAD"); transportFailure(exchange, 429);
+        } catch (TimeoutException deadline) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "DEADLINE"); transportFailure(exchange, 504);
+        } catch (RuntimeException failure) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "UNAVAILABLE"); transportFailure(exchange, 503);
         } finally { if (admitted) runtime.releaseAdmission(); exchange.close(); }
     }
 
@@ -141,7 +167,7 @@ final class OcspHttpHandler implements HttpHandler {
         }
     }
 
-    private OcspResponseService.Response execute(OcspResponderService.Responder responder,
+    private Execution execute(OcspResponderService.Responder responder,
             OcspRequestParser.Parsed parsed) throws TimeoutException {
         IssuerGeneration issuer = realm.session().repository().issuer(responder.issuerId()).orElseThrow();
         IssuerChainPath path = realm.session().repository().chainPath(responder.chainPathId()).orElseThrow();
@@ -156,15 +182,26 @@ final class OcspHttpHandler implements HttpHandler {
                 responder.signingKeyRef(), chain, responder.signatureAlgorithm(), responder.signatureBindingId(),
                 responder.responderIdForm(), produced, produced, produced.plus(responder.responseValidity()),
                 parsed.nonce(), parsed.requests());
-        ServerRuntime.Submitted<OcspResponseService.Response> submitted = runtime.submit(cancellation -> {
+        ServerRuntime.Submitted<Execution> submitted = runtime.submit(cancellation -> {
             cancellation.throwIfCancelled();
-            return realm.session().ocsp().orElseThrow().respond(command);
+            Optional<String> requester = parsed.signedRequest().map(value -> requesters.authenticate(responder,
+                    value, parsed.requests()).principalId());
+            cancellation.throwIfCancelled();
+            if (responder.noncePolicy() == OcspResponderService.NoncePolicy.REQUIRED
+                    && !nonceReplay.accept(responder.responderId(), parsed.nonce().orElseThrow(), clock.instant(),
+                            responder.responseValidity())) {
+                throw new IllegalArgumentException("OCSP nonce was already used");
+            }
+            return new Execution(realm.session().ocsp().orElseThrow().respond(command), requester);
         });
         try {
             return submitted.future().get(configuration.maximumStreamDuration().toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException failure) {
             submitted.cancellation().cancel(); submitted.future().cancel(true); Thread.currentThread().interrupt();
             throw new TimeoutException("OCSP operation interrupted");
+        } catch (TimeoutException failure) {
+            submitted.cancellation().cancel(); submitted.future().cancel(true);
+            throw failure;
         } catch (ExecutionException failure) {
             if (failure.getCause() instanceof RuntimeException runtimeFailure) throw runtimeFailure;
             throw new IllegalStateException("OCSP operation failed");
@@ -193,17 +230,19 @@ final class OcspHttpHandler implements HttpHandler {
         }
     }
 
-    private void validateTransport(HttpExchange exchange, String requestId) {
+    private Optional<String> validateTransport(HttpExchange exchange, String requestId) {
         Map<String, List<String>> headers = Map.copyOf(exchange.getRequestHeaders());
         boolean forwarded = ForwardedClientCertificateParser.containsForwardedIdentity(headers);
         if (configuration.authentication().mode() == AdministrativeAuthenticationMode.DIRECT_MTLS) {
             if (forwarded) throw new IllegalArgumentException("Forwarded identity is prohibited");
-            return;
+            return Optional.empty();
         }
         Optional<PkiServerAuthenticationContext> context = tlsContext(exchange, requestId, headers);
-        if (context.isEmpty() || authenticator.authenticatePublicProxyTransport(context.orElseThrow()).isEmpty()) {
+        Optional<String> transport = context.flatMap(authenticator::authenticatePublicProxyTransport);
+        if (transport.isEmpty()) {
             throw new IllegalArgumentException("Proxy transport is unauthenticated");
         }
+        return transport;
     }
 
     private Optional<PkiServerAuthenticationContext> tlsContext(HttpExchange exchange, String requestId,
@@ -282,10 +321,11 @@ final class OcspHttpHandler implements HttpHandler {
     }
 
     private void send(HttpExchange exchange, OcspResponderService.Responder responder,
-            OcspResponseService.Response response, boolean nonce, String requestId) throws IOException {
+            OcspResponseService.Response response, boolean nonce, boolean signed, String requestId) throws IOException {
         Headers headers = exchange.getResponseHeaders(); headers.set("Content-Type", MEDIA_RESPONSE);
         headers.set("X-Content-Type-Options", "nosniff"); headers.set(RequestIds.HEADER, requestId);
-        if (nonce) { headers.set("Cache-Control", "no-store"); }
+        if (signed) { headers.set("Cache-Control", "private, no-store"); headers.set("Pragma", "no-cache"); }
+        else if (nonce) { headers.set("Cache-Control", "no-store"); }
         else {
             long seconds = Math.min(responder.cacheLifetime().toSeconds(), responder.responseValidity().toSeconds());
             String validator = etag(response.der());
@@ -315,19 +355,46 @@ final class OcspHttpHandler implements HttpHandler {
         exchange.sendResponseHeaders(status, -1);
     }
     private void audit(String requestId, Optional<OcspResponderService.Responder> responder,
-            String classification) {
+            Optional<String> transportPrincipal, Optional<String> requesterPrincipal, String classification) {
         Map<String, String> details = new java.util.LinkedHashMap<>();
         details.put("request", requestId); details.put("classification", classification);
         responder.ifPresent(value -> details.put("responder", value.responderId()));
-        realm.auditTransport("OCSP_REQUEST", "anonymous", Map.copyOf(details));
+        transportPrincipal.ifPresent(value -> details.put("transportPrincipal", value));
+        requesterPrincipal.ifPresent(value -> details.put("requesterPrincipal", value));
+        realm.auditTransport("OCSP_REQUEST", requesterPrincipal.orElse("anonymous"), Map.copyOf(details));
     }
     private static String etag(byte[] value) {
         try { return '"' + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)) + '"'; }
         catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
     }
     private record Route(String alias, Optional<byte[]> encoded) { Route { encoded = encoded.map(byte[]::clone); } }
+    private record Execution(OcspResponseService.Response response, Optional<String> requesterPrincipal) {
+        Execution { java.util.Objects.requireNonNull(response); requesterPrincipal = java.util.Objects.requireNonNull(requesterPrincipal); }
+    }
+    private static void requireAuthenticationMode(OcspResponderService.RequestAuthenticationMode mode,
+            Optional<OcspRequesterService.SignedRequest> signed) {
+        if (mode == OcspResponderService.RequestAuthenticationMode.AUTHORIZED_SIGNED_REQUIRED && signed.isEmpty()) {
+            throw new SignatureRequired();
+        }
+        if (mode == OcspResponderService.RequestAuthenticationMode.UNSIGNED_ONLY && signed.isPresent()) {
+            throw new OcspRequesterService.UnauthorizedException();
+        }
+    }
     private static final class UnknownAlias extends RuntimeException { private static final long serialVersionUID = 1L; }
     private static final class InactiveResponder extends RuntimeException { private static final long serialVersionUID = 1L; }
     private static final class MethodFailure extends RuntimeException { private static final long serialVersionUID = 1L; }
     private static final class MediaFailure extends RuntimeException { private static final long serialVersionUID = 1L; }
+    private static final class SignatureRequired extends RuntimeException { private static final long serialVersionUID = 1L; }
+    private static final class NonceReplayGuard {
+        private static final int MAXIMUM_ENTRIES = 4096;
+        private final java.util.LinkedHashMap<String, Instant> accepted = new java.util.LinkedHashMap<>();
+        synchronized boolean accept(String responderId, byte[] nonce, Instant now, java.time.Duration lifetime) {
+            accepted.entrySet().removeIf(entry -> !now.isBefore(entry.getValue()));
+            String key = etag((responderId + ':' + HexFormat.of().formatHex(nonce))
+                    .getBytes(StandardCharsets.US_ASCII));
+            if (accepted.containsKey(key) || accepted.size() >= MAXIMUM_ENTRIES) return false;
+            accepted.put(key, now.plus(lifetime));
+            return true;
+        }
+    }
 }

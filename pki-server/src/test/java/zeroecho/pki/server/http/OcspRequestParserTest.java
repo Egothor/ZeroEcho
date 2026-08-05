@@ -35,6 +35,7 @@ package zeroecho.pki.server.http;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.math.BigInteger;
@@ -119,8 +120,8 @@ class OcspRequestParserTest {
     }
 
     @Test
-    void rejectsSignedRequestsWithoutTreatingSignaturesAsAuthority() throws Exception {
-        System.out.println("rejectsSignedRequestsWithoutTreatingSignaturesAsAuthority");
+    void retainsExactSignedRequestAndRequiresExplicitSignerBounds() throws Exception {
+        System.out.println("retainsExactSignedRequestAndRequiresExplicitSignerBounds");
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
         KeyPair keys = generator.generateKeyPair();
@@ -133,8 +134,16 @@ class OcspRequestParserTest {
                 new X509CertificateHolder[] { issuer }).getEncoded();
         assertThrows(IllegalArgumentException.class, () -> OcspRequestParser.parse(signed, 1,
                 Set.of(OcspResponseService.CertIdHash.SHA1), 32));
-        System.out.println("...signed-request-authority=false");
-        System.out.println("rejectsSignedRequestsWithoutTreatingSignaturesAsAuthority...ok");
+        OcspRequestParser.Parsed parsed = OcspRequestParser.parse(signed, 1,
+                Set.of(OcspResponseService.CertIdHash.SHA1), 32, 2, 32_768);
+        assertTrue(parsed.signedRequest().isPresent());
+        assertArrayEquals(issuer.getSubject().getEncoded(),
+                parsed.signedRequest().orElseThrow().requestorName());
+        assertArrayEquals(issuer.getEncoded(),
+                parsed.signedRequest().orElseThrow().certificates().getFirst());
+        assertTrue(parsed.signedRequest().orElseThrow().tbsRequest().length > 0);
+        System.out.println("...exact-tbs-and-certificate-retained=true");
+        System.out.println("retainsExactSignedRequestAndRequiresExplicitSignerBounds...ok");
     }
 
     private static X509CertificateHolder certificate() throws Exception {

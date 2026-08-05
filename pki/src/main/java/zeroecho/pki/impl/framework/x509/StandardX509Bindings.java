@@ -402,7 +402,7 @@ public final class StandardX509Bindings {
                     Optional.empty(), commitment));
         }
         return List.of(X509AlgorithmBinding.Role.CSR_SIGNATURE, X509AlgorithmBinding.Role.CERTIFICATE_SIGNATURE,
-                X509AlgorithmBinding.Role.CRL_SIGNATURE).stream()
+                X509AlgorithmBinding.Role.CRL_SIGNATURE, X509AlgorithmBinding.Role.OCSP_REQUEST_SIGNATURE).stream()
                 .map(bindingRole -> new X509AlgorithmBinding(id + "."
                         + bindingRole.name().toLowerCase(java.util.Locale.ROOT), identity,
                         bindingRole, identifier.oid(), X509AlgorithmBinding.Origin.STANDARD, 1, parameters, keyEncoding,

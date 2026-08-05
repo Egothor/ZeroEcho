@@ -105,6 +105,44 @@ class AuthorizationAndRoleTest {
     }
 
     @Test
+    void scopesOcspQuerySeparatelyFromResponderAdministration() {
+        System.out.println("scopesOcspQuerySeparatelyFromResponderAdministration");
+        AuthorizationEngine engine = new AuthorizationEngine(ServerTestSupport.CLOCK);
+        SecurityPrincipal principal = ServerTestSupport.principal("ocsp-client");
+        Permission.Scope exact = new Permission.Scope(ServerTestSupport.REALM,
+                Optional.of(ServerTestSupport.AUTHORITY), Optional.of(new zeroecho.pki.api.PkiId("issuer-a")),
+                Optional.empty(), Optional.of("responder-a"));
+        Permission.Resource resource = new Permission.Resource(Permission.ResourceType.OCSP_RESPONDER, exact,
+                Optional.empty(), Optional.empty());
+        Permission.Grant allow = new Permission.Grant("ocsp-allow", principal.principalId(),
+                Permission.Effect.ALLOW, Permission.Action.OCSP_STATUS_QUERY,
+                Permission.ResourceType.OCSP_RESPONDER, exact, Permission.Relationship.ANY,
+                Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(), true);
+        Permission.Grant administer = new Permission.Grant("ocsp-admin", principal.principalId(),
+                Permission.Effect.ALLOW, Permission.Action.OCSP_ADMINISTER,
+                Permission.ResourceType.OCSP_RESPONDER, exact, Permission.Relationship.ANY,
+                Permission.DataView.METADATA_REDACTED, Set.of(), Optional.empty(), true);
+        AuthorizationEngine.Request request = new AuthorizationEngine.Request(ServerTestSupport.REALM,
+                new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), false),
+                principal, Permission.Action.OCSP_STATUS_QUERY, resource, Permission.Relationship.ANY,
+                Permission.DataView.METADATA_REDACTED, Permission.Context.empty(), List.of(allow), Set.of());
+        assertTrue(engine.authorize(request).allowed());
+        assertEquals(AuthorizationEngine.Code.NO_MATCHING_GRANT, engine.authorize(new AuthorizationEngine.Request(
+                request.realmId(), request.exposure(), principal, request.action(), resource,
+                request.relationship(), request.dataView(), request.context(), List.of(administer), Set.of())).code());
+        Permission.Scope otherResponder = new Permission.Scope(ServerTestSupport.REALM,
+                Optional.of(ServerTestSupport.AUTHORITY), Optional.of(new zeroecho.pki.api.PkiId("issuer-a")),
+                Optional.empty(), Optional.of("responder-b"));
+        assertEquals(AuthorizationEngine.Code.NO_MATCHING_GRANT, engine.authorize(new AuthorizationEngine.Request(
+                request.realmId(), request.exposure(), principal, request.action(),
+                new Permission.Resource(Permission.ResourceType.OCSP_RESPONDER, otherResponder,
+                        Optional.empty(), Optional.empty()), request.relationship(), request.dataView(),
+                request.context(), List.of(allow), Set.of())).code());
+        System.out.println("...query-admin-separation=true responder-scope=true");
+        System.out.println("...ok");
+    }
+
+    @Test
     void loadsExactTemplatesAndRejectsUnknownSchemaFields() throws Exception {
         System.out.println("loadsExactTemplatesAndRejectsUnknownSchemaFields");
         RoleTemplateCatalog catalog = RoleTemplateCatalog.load(getClass().getClassLoader());

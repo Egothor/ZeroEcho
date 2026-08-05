@@ -72,7 +72,9 @@ public record X509AlgorithmBinding(String bindingId, AlgorithmIdentity algorithm
         /** Certificate signature. */
         CERTIFICATE_SIGNATURE,
         /** Certificate-revocation-list signature. */
-        CRL_SIGNATURE
+        CRL_SIGNATURE,
+        /** Signed OCSP request signature. */
+        OCSP_REQUEST_SIGNATURE
     }
 
     /** Authority that owns the OID assignment. */

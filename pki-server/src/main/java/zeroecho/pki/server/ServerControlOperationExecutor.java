@@ -419,6 +419,9 @@ public final class ServerControlOperationExecutor {
                 "authorityId", text(value.authorityId().value()), "issuerId", text(value.issuerId().value()),
                 "signingMode", text(value.signingMode().name()), "responderCredentialId",
                 text(value.responderCredentialId().value()), "state", text(value.state().name()),
+                "requestAuthenticationMode", text(value.requestAuthenticationMode().name()),
+                "requesterRevocationPolicy", text(value.requesterTrustPolicy()
+                        .map(policy -> policy.revocationPolicy().name()).orElse("NOT_APPLICABLE")),
                 "configurationCommitment", text(value.configurationCommitment()));
     }
     private static PkiOperationValue template(RoleTemplateCatalog.Template value) {

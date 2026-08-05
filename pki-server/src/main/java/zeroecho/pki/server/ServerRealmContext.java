@@ -211,6 +211,39 @@ public final class ServerRealmContext implements AutoCloseable {
         requireOpen();
         return control.requirePrincipal(principalId);
     }
+
+    /**
+     * Evaluates the protocol-only OCSP query permission for one exact responder
+     * and issuer generation. The signed-request identity remains independent of
+     * administrative and transport authentication.
+     *
+     * @param principalId cryptographically mapped requester principal
+     * @param responder exact active responder binding
+     * @return default-deny authorization decision
+     */
+    public AuthorizationEngine.Decision authorizeOcspQuery(String principalId,
+            OcspResponderService.Responder responder) {
+        requireOpen();
+        SecurityPrincipal principal = control.requirePrincipal(principalId);
+        java.util.List<Permission.Grant> grants = new java.util.ArrayList<>(control.grantsFor(principalId));
+        for (RoleTemplateCatalog.Assignment assignment : control.assignmentsFor(principalId)) {
+            grants.addAll(roles.instantiate(assignment));
+        }
+        BreakGlassService.ActiveGrants emergency = breakGlass.activeFor(principalId);
+        grants.addAll(emergency.grants());
+        Permission.Scope scope = new Permission.Scope(configuration.realmId(),
+                Optional.of(responder.authorityId()), Optional.of(responder.issuerId()), Optional.empty(),
+                Optional.of(responder.responderId()));
+        Permission.Resource resource = new Permission.Resource(Permission.ResourceType.OCSP_RESPONDER,
+                scope, Optional.empty(), Optional.empty());
+        AuthorizationEngine.Decision decision = authorization.authorize(new AuthorizationEngine.Request(
+                configuration.realmId(), configuration.authorityExposure(), principal,
+                Permission.Action.OCSP_STATUS_QUERY, resource, Permission.Relationship.ANY,
+                Permission.DataView.METADATA_REDACTED, Permission.Context.empty(), grants,
+                emergency.grantIds()));
+        if (decision.usedBreakGlass()) breakGlass.auditUse(principalId);
+        return decision;
+    }
     /**
      * Records one transport-safe lifecycle or request classification through the
      * shared realm audit authority.

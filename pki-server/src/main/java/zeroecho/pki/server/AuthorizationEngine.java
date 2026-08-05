@@ -189,6 +189,8 @@ public final class AuthorizationEngine {
                 && !grant.scope().issuerId().equals(request.resource().scope().issuerId())) return false;
         if (grant.scope().profileId().isPresent()
                 && !grant.scope().profileId().equals(request.resource().scope().profileId())) return false;
+        if (grant.scope().responderId().isPresent()
+                && !grant.scope().responderId().equals(request.resource().scope().responderId())) return false;
         return grant.relationship() == Permission.Relationship.ANY
                 || request.relationship() == Permission.Relationship.OWN
                 && request.resource().ownedBy(request.principal());
