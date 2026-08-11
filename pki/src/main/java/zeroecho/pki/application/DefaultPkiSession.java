@@ -274,6 +274,14 @@ final class DefaultPkiSession implements PkiSession {
     }
 
     @Override
+    public SigningReconciliationResult reconcileSigning(SigningReconciliationRequest request) {
+        requireOpen();
+        Objects.requireNonNull(request, "request");
+        return signingBus.map(value -> value.reconcile(request))
+                .orElseGet(() -> new SigningReconciliationResult(Optional.empty(), 0, 0, 0, 0, true));
+    }
+
+    @Override
     public void close() throws Exception {
         if (!closed.compareAndSet(false, true)) {
             return;

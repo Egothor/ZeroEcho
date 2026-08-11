@@ -356,8 +356,11 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
             X509ExecutionPlan<SignatureWorkflow> executionPlan) {
         authority.authorize(executionPlan, workflow,
                 zeroecho.core.spi.AlgorithmExecutionCapability.Direction.VERIFY);
-        PkiId verifyOperationId = executionPlan.executor().submitVerify(verifyRequest);
-        SignatureWorkflow.OperationStatus status = executionPlan.executor().status(verifyOperationId);
+        Instant callDeadline = verifyRequest.deadline().orElseGet(() -> Instant.now().plusSeconds(30));
+        SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(callDeadline,
+                verifyRequest.cancellation());
+        PkiId verifyOperationId = executionPlan.executor().submitVerify(verifyRequest, control);
+        SignatureWorkflow.OperationStatus status = executionPlan.executor().status(verifyOperationId, control);
         if (status == null) {
             return failed("Verifier returned no status");
         }

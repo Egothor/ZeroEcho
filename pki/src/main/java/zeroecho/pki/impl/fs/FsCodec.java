@@ -114,8 +114,9 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 @SuppressWarnings("PMD.CouplingBetweenObjects")
 final class FsCodec {
 
-    /* package */ static final int MAX_COMPONENT_BYTES = 256 * 1024;
-    /* package */ static final int CURRENT_CODEC_VERSION = 4;
+    /* package */ static final int MAX_COMPONENT_BYTES = 1024 * 1024;
+    /* package */ static final int CURRENT_CODEC_VERSION = 5;
+    private static final int PREVIOUS_CODEC_VERSION = 4;
 
     private static final int CODEC_MAGIC = 0x5A454346;
     private static final int MAX_COLLECTION_ELEMENTS = MAX_COMPONENT_BYTES;
@@ -168,6 +169,7 @@ final class FsCodec {
     private static final int TYPE_PROFILE_BINDING = 73;
     private static final int TYPE_DURABLE_CONTENT = 74;
     private static final int TYPE_ISSUER_GENERATION_STATE_ENUM = 75;
+    private static final int TYPE_RETRY_FAILURE_ENUM = 76;
 
     private static final int ATTRIBUTE_STRING = 1;
     private static final int ATTRIBUTE_BOOLEAN = 2;
@@ -281,6 +283,19 @@ final class FsCodec {
                     throw new IOException("unknown SignWorkflowStore.State code " + code, ex);
                 }
             });
+    private static final ValueSchema<SignWorkflowStore.ReconciliationFailureClass> RECONCILIATION_FAILURE_CLASS =
+            enumSchema(TYPE_RETRY_FAILURE_ENUM, value -> switch (value) {
+                case SUBMISSION_UNCERTAIN -> 1;
+                case STATUS_UNAVAILABLE -> 2;
+                case CANCELLATION_UNCERTAIN -> 3;
+                case LOCAL_FAILURE -> 4;
+            }, code -> switch (code) {
+                case 1 -> SignWorkflowStore.ReconciliationFailureClass.SUBMISSION_UNCERTAIN;
+                case 2 -> SignWorkflowStore.ReconciliationFailureClass.STATUS_UNAVAILABLE;
+                case 3 -> SignWorkflowStore.ReconciliationFailureClass.CANCELLATION_UNCERTAIN;
+                case 4 -> SignWorkflowStore.ReconciliationFailureClass.LOCAL_FAILURE;
+                default -> throw unknownEnum("ReconciliationFailureClass", code);
+            });
     private static final ValueSchema<SubjectRdnType> SUBJECT_RDN_TYPE = enumSchema(TYPE_SUBJECT_RDN_TYPE_ENUM,
             value -> switch (value) {
                 case COMMON_NAME -> 1;
@@ -376,6 +391,8 @@ final class FsCodec {
     private static final ValueSchema<Optional<String>> OPTIONAL_STRING = optionalOf(STRING);
     private static final ValueSchema<Optional<Instant>> OPTIONAL_INSTANT = optionalOf(INSTANT);
     private static final ValueSchema<Optional<EncodedObject>> OPTIONAL_ENCODED_OBJECT = optionalOf(ENCODED_OBJECT);
+    private static final ValueSchema<Optional<SignWorkflowStore.ReconciliationFailureClass>>
+            OPTIONAL_RETRY_FAILURE = optionalOf(RECONCILIATION_FAILURE_CLASS);
 
     private static final ValueSchema<Credential> CREDENTIAL_VALUE = valueSchema(TYPE_CREDENTIAL_RECORD,
             FsCodec::writeCredential, FsCodec::readCredential);
@@ -459,9 +476,10 @@ final class FsCodec {
                 throw new IOException("codec magic mismatch");
             }
             int version = reader.readUnsignedByte();
-            if (version != CURRENT_CODEC_VERSION) {
+            if (version != CURRENT_CODEC_VERSION && version != PREVIOUS_CODEC_VERSION) {
                 throw new IOException("unsupported codec version");
             }
+            reader.codecVersion = version;
             int typeId = reader.readUnsignedByte();
             Schema<?> encodedSchema = TOP_LEVEL_SCHEMAS.get(typeId);
             if (encodedSchema == null) {
@@ -818,15 +836,35 @@ final class FsCodec {
         writer.writeValue(OPTIONAL_STRING, value.detailCode());
         writer.writeValue(OPTIONAL_ENCODED_OBJECT, value.result());
         writer.writeValue(OPTIONAL_INSTANT, value.providerUpdatedAt());
+        writer.writeValue(LONG, (long) value.failureCount());
+        writer.writeValue(OPTIONAL_INSTANT, value.nextEligibleAt());
+        writer.writeValue(OPTIONAL_RETRY_FAILURE, value.reconciliationFailureClass());
     }
 
     private static SignWorkflowStore.Record readSignWorkflowRecord(Reader reader) throws IOException {
-        return new SignWorkflowStore.Record(reader.readValue(PKI_ID), reader.readValue(STRING),
-                reader.readValue(STRING), reader.readValue(PRINCIPAL), reader.readValue(INSTANT),
-                reader.readValue(INSTANT), reader.readValue(ENCODED_OBJECT), reader.readValue(SIGN_STATE),
-                reader.readValue(LONG), reader.readValue(LONG), reader.readValue(OPTIONAL_INSTANT),
-                reader.readValue(OPTIONAL_STRING), reader.readValue(OPTIONAL_ENCODED_OBJECT),
-                reader.readValue(OPTIONAL_INSTANT));
+        PkiId submissionId = reader.readValue(PKI_ID);
+        String namespace = reader.readValue(STRING);
+        String fingerprint = reader.readValue(STRING);
+        Principal owner = reader.readValue(PRINCIPAL);
+        Instant createdAt = reader.readValue(INSTANT);
+        Instant deadline = reader.readValue(INSTANT);
+        EncodedObject request = reader.readValue(ENCODED_OBJECT);
+        SignWorkflowStore.State state = reader.readValue(SIGN_STATE);
+        long revision = reader.readValue(LONG);
+        long fence = reader.readValue(LONG);
+        Optional<Instant> leaseUntil = reader.readValue(OPTIONAL_INSTANT);
+        Optional<String> detailCode = reader.readValue(OPTIONAL_STRING);
+        Optional<EncodedObject> result = reader.readValue(OPTIONAL_ENCODED_OBJECT);
+        Optional<Instant> providerUpdatedAt = reader.readValue(OPTIONAL_INSTANT);
+        if (reader.codecVersion < CURRENT_CODEC_VERSION) {
+            return new SignWorkflowStore.Record(submissionId, namespace, fingerprint, owner, createdAt, deadline,
+                    request, state, revision, fence, leaseUntil, detailCode, result, providerUpdatedAt, 0,
+                    Optional.empty(), Optional.empty());
+        }
+        int failureCount = Math.toIntExact(reader.readValue(LONG));
+        return new SignWorkflowStore.Record(submissionId, namespace, fingerprint, owner, createdAt, deadline,
+                request, state, revision, fence, leaseUntil, detailCode, result, providerUpdatedAt, failureCount,
+                reader.readValue(OPTIONAL_INSTANT), reader.readValue(OPTIONAL_RETRY_FAILURE));
     }
 
     private static <T> Schema<T> topLevel(int typeId, String name, ValueSchema<T> valueSchema) {
@@ -1046,6 +1084,7 @@ final class FsCodec {
 
         private final InputStream input;
         private final StagedContentStore stagedContent;
+        private int codecVersion;
 
         private Reader(InputStream input, StagedContentStore stagedContent) {
             this.input = input;

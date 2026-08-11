@@ -34,9 +34,9 @@
 package zeroecho.pki.impl.fs;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -52,6 +52,7 @@ import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataStoreException;
 
 /** Atomic current-record index reconstructed from committed mutation descriptors. */
+@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidLiteralsInIfCondition", "PMD.ConfusingTernary" })
 final class MetadataStateIndex {
     private static final long INITIAL_STORE_REVISION = 0L;
     private static final long MINIMUM_VALUE_POSITION = 0L;
@@ -62,6 +63,8 @@ final class MetadataStateIndex {
     private NavigableMap<MetadataKey, CurrentRecord> current = new TreeMap<>();
     private Object stateToken = new StateToken();
     private long storeRevision = INITIAL_STORE_REVISION;
+    private final Map<NavigableMap<MetadataKey, CurrentRecord>, Integer> snapshotPins = new IdentityHashMap<>();
+    private long snapshotCopyCount;
 
     /* default */ static RecoveryBuilder recoveryBuilder() {
         return new RecoveryBuilder();
@@ -86,6 +89,18 @@ final class MetadataStateIndex {
         }
     }
 
+    /* default */ SnapshotView snapshot() {
+        writeLock.lock();
+        try {
+            NavigableMap<MetadataKey, CurrentRecord> generation = current;
+            snapshotPins.merge(generation, 1, Math::addExact);
+            return new SnapshotView(java.util.Collections.unmodifiableNavigableMap(generation),
+                    () -> releaseSnapshot(generation));
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
     /* default */ List<CurrentRecord> records() {
         readLock.lock();
         try {
@@ -95,8 +110,35 @@ final class MetadataStateIndex {
         }
     }
 
+    private void releaseSnapshot(NavigableMap<MetadataKey, CurrentRecord> generation) {
+        writeLock.lock();
+        try {
+            Integer pins = snapshotPins.get(generation);
+            if (pins == null || pins <= 0) {
+                throw new IllegalStateException("Metadata snapshot pin accounting is inconsistent");
+            }
+            if (pins == 1) {
+                snapshotPins.remove(generation);
+            } else {
+                snapshotPins.put(generation, pins - 1);
+            }
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    /* default */ long snapshotCopyCount() {
+        readLock.lock();
+        try {
+            return snapshotCopyCount;
+        } finally {
+            readLock.unlock();
+        }
+    }
+
     /*
-     * Copy-then-publish keeps every conflict and validation failure invisible.
+     * Validate-then-publish keeps every conflict and validation failure invisible.
+     * A full map copy occurs only while a stable snapshot pins the prior identity.
      * CREATE and REPLACE record revisions are the authoritative committed store
      * revision, never an independently incremented per-record counter.
      */
@@ -114,15 +156,14 @@ final class MetadataStateIndex {
         try {
             requireNextRevision(committedStoreRevision);
             rejectDuplicateKeys(validated);
-            NavigableMap<MetadataKey, CurrentRecord> candidate = new TreeMap<>(current);
             for (ValidatedMutation mutation : validated) {
-                apply(candidate, committedStoreRevision, mutation);
+                validateAgainstCurrent(current, mutation);
             }
             return new PreparedUpdate(
                     stateToken,
                     storeRevision,
                     committedStoreRevision,
-                    Collections.unmodifiableNavigableMap(candidate));
+                    validated);
         } catch (ArithmeticException | IllegalArgumentException
                 | NullPointerException | IndexOutOfBoundsException failure) {
             throw integrity("Committed metadata transaction contains a malformed descriptor", failure);
@@ -138,7 +179,16 @@ final class MetadataStateIndex {
             if (!stateToken.equals(update.baseToken()) || storeRevision != update.baseRevision()) {
                 throw integrity("Prepared metadata state no longer has its exact base revision");
             }
-            current = update.candidate();
+            boolean currentGenerationPinned = snapshotPins.containsKey(current);
+            NavigableMap<MetadataKey, CurrentRecord> target = !currentGenerationPinned
+                    ? current : new TreeMap<>(current);
+            if (currentGenerationPinned) {
+                snapshotCopyCount++;
+            }
+            for (ValidatedMutation mutation : update.mutations()) {
+                apply(target, update.targetRevision(), mutation);
+            }
+            current = target;
             storeRevision = update.targetRevision();
             stateToken = new StateToken();
         } finally {
@@ -282,6 +332,19 @@ final class MetadataStateIndex {
             case CREATE -> create(candidate, committedStoreRevision, mutation);
             case REPLACE -> replace(candidate, committedStoreRevision, mutation);
             case DELETE -> delete(candidate, mutation);
+        }
+    }
+
+    private static void validateAgainstCurrent(Map<MetadataKey, CurrentRecord> records,
+            ValidatedMutation mutation) throws MetadataStoreException {
+        CurrentRecord existing = records.get(mutation.key());
+        switch (mutation.kind()) {
+            case CREATE -> {
+                if (existing != null) {
+                    throw conflict("Metadata create precondition failed");
+                }
+            }
+            case REPLACE, DELETE -> requireExpected(existing, mutation);
         }
     }
 
@@ -449,10 +512,18 @@ final class MetadataStateIndex {
             Object baseToken,
             long baseRevision,
             long targetRevision,
-            NavigableMap<MetadataKey, CurrentRecord> candidate) {
+            List<ValidatedMutation> mutations) {
         PreparedUpdate {
             Objects.requireNonNull(baseToken, "baseToken");
-            Objects.requireNonNull(candidate, "candidate");
+            mutations = List.copyOf(mutations);
+        }
+    }
+
+    /** Pinned immutable map identity released when its snapshot closes. */
+    /* default */ record SnapshotView(NavigableMap<MetadataKey, CurrentRecord> records, Runnable release) {
+        SnapshotView {
+            Objects.requireNonNull(records, "records");
+            Objects.requireNonNull(release, "release");
         }
     }
 

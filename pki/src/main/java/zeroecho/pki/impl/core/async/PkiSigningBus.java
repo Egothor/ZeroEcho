@@ -37,6 +37,9 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -62,6 +65,8 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
+import zeroecho.pki.application.SigningReconciliationRequest;
+import zeroecho.pki.application.SigningReconciliationResult;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
@@ -94,7 +99,9 @@ import zeroecho.pki.util.async.impl.DurableAsyncBus;
  */
 // The collaborators counted here form one durable signing lifecycle; splitting
 // them would obscure the coordinator/reservation boundary that protects it.
-@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace" })
+@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace",
+        "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops",
+        "PMD.AvoidLiteralsInIfCondition", "PMD.CollapsibleIfStatements" })
 public final class PkiSigningBus implements AutoCloseable {
 
     private static final Logger LOG = Logger.getLogger(PkiSigningBus.class.getName());
@@ -109,6 +116,7 @@ public final class PkiSigningBus implements AutoCloseable {
             "Signing content cleanup failed: code=SIGNING_CONTENT_CLEANUP_FAILED";
     private static final Duration CLAIM_LEASE = Duration.ofSeconds(30);
     private static final long INITIAL_FENCE = 0L;
+    private static final int MAXIMUM_SIGNATURE_BYTES = 1_048_576;
 
     /**
      * System property controlling the maximum number of characters appended after
@@ -454,7 +462,8 @@ public final class PkiSigningBus implements AutoCloseable {
                 EncodedObject persistedRequest = continuation.withSignerOpId(baseOpId).encode();
                 SignWorkflowStore.Record intent = new SignWorkflowStore.Record(baseOpId, namespace, fingerprint,
                         owner, parsed.createdAt(), deadline, persistedRequest, SignWorkflowStore.State.INTENT, 0L,
-                        0L, Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty());
+                        0L, Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty(), 0,
+                        Optional.empty(), Optional.empty());
                 SignWorkflowStore.CreateResult created = store.createSignIntent(intent);
                 if (created == SignWorkflowStore.CreateResult.CONFLICT) {
                     releaseAttachedOrConflictingContent(content);
@@ -543,6 +552,248 @@ public final class PkiSigningBus implements AutoCloseable {
         bus.sweep(now);
         reconcileExpiredOperations();
         store.purgeExpiredSignRecords();
+    }
+
+    /**
+     * Performs one bounded synchronous recovery pass. The pass scans at most the
+     * requested record bound, retains only that page, and invokes the provider no
+     * more than the requested call budget.
+     *
+     * @param request immutable pass bounds
+     * @return aggregate safe pass outcome
+     */
+    public SigningReconciliationResult reconcile(SigningReconciliationRequest request) {
+        Objects.requireNonNull(request, "request");
+        ReconciliationPage page = reconciliationPage(request);
+        int progressed = 0;
+        int unresolved = page.failures();
+        int retryable = page.failures();
+        int providerCalls = 0;
+        for (SignWorkflowStore.Record candidate : page.records()) {
+            if (request.cancellation().isCancelled()) {
+                break;
+            }
+            ReconciliationStep step;
+            try {
+                if (!store.signingNow().isBefore(request.deadline())) {
+                    break;
+                }
+                step = reconcileRecord(candidate, request, request.maximumProviderCalls() - providerCalls);
+            } catch (RuntimeException localFailure) {
+                step = isolateCandidateFailure(candidate, new ProviderCallCounter(), localFailure);
+            }
+            providerCalls += step.providerCalls();
+            if (step.progressed()) {
+                progressed++;
+            }
+            if (step.unresolved()) {
+                unresolved++;
+            }
+            if (step.retryable()) {
+                retryable++;
+            }
+        }
+        return new SigningReconciliationResult(page.nextCursor(), page.examined(), progressed, unresolved, retryable,
+                page.endReached());
+    }
+
+    private ReconciliationPage reconciliationPage(SigningReconciliationRequest request) {
+        zeroecho.core.io.CancellationSignal scanControl = () -> request.cancellation().isCancelled()
+                || !store.signingNow().isBefore(request.deadline());
+        SignWorkflowStore.Page first;
+        try {
+            first = store.pageSignRecords(request.cursor(), request.maximumRecords(), scanControl);
+        } catch (IllegalArgumentException invalidAdvisoryCursor) {
+            first = store.pageSignRecords(Optional.empty(), request.maximumRecords(), scanControl);
+        }
+        List<SignWorkflowStore.Record> records = new ArrayList<>(first.records());
+        if (!first.endReached() || request.cursor().isEmpty() || first.examined() >= request.maximumRecords()) {
+            return new ReconciliationPage(records, first.nextCursor(), first.examined(), first.failures(),
+                    first.endReached());
+        }
+        int remaining = request.maximumRecords() - first.examined();
+        SignWorkflowStore.Page wrapped = store.pageSignRecords(Optional.empty(), remaining, scanControl);
+        Set<PkiId> seen = new HashSet<>();
+        for (SignWorkflowStore.Record record : records) {
+            seen.add(record.submissionId());
+        }
+        for (SignWorkflowStore.Record record : wrapped.records()) {
+            if (seen.add(record.submissionId()) && records.size() < request.maximumRecords()) {
+                records.add(record);
+            }
+        }
+        return new ReconciliationPage(records, wrapped.nextCursor(), first.examined() + wrapped.examined(),
+                first.failures() + wrapped.failures(), true);
+    }
+
+    private record ReconciliationPage(List<SignWorkflowStore.Record> records, Optional<String> nextCursor,
+            int examined, int failures, boolean endReached) {
+        private ReconciliationPage {
+            records = List.copyOf(records);
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private ReconciliationStep reconcileRecord(SignWorkflowStore.Record candidate,
+            SigningReconciliationRequest request, int remainingCalls) {
+        ProviderCallCounter calls = new ProviderCallCounter();
+        SignWorkflowStore.Record before = candidate;
+        try {
+            Optional<SignWorkflowStore.Record> currentOptional = store.getSignRecord(candidate.submissionId());
+            if (currentOptional.isEmpty()) {
+                return ReconciliationStep.RESOLVED;
+            }
+            before = currentOptional.orElseThrow();
+            if (isTerminalSignState(before.state())) {
+                return retireReconciled(before);
+            }
+            Instant now = store.signingNow();
+            if (before.nextEligibleAt().filter(eligible -> eligible.isAfter(now)).isPresent()) {
+                return ReconciliationStep.UNRESOLVED;
+            }
+            if (remainingCalls <= 0) {
+                return ReconciliationStep.UNRESOLVED;
+            }
+            SignatureWorkflow.CallControl control = callControl(request, now);
+            if (before.state() == SignWorkflowStore.State.INTENT) {
+                if (before.fence() == 0L) {
+                    endpoint.execute(before.submissionId(), control, false, calls);
+                } else {
+                    endpoint.reconcileProviderStatus(before.submissionId(), control, calls, true);
+                }
+            } else {
+                endpoint.reconcileProviderStatus(before.submissionId(), control, calls, false);
+            }
+            SignWorkflowStore.Record afterStatus = store.getSignRecord(before.submissionId()).orElse(before);
+            if (!afterStatus.deadline().isAfter(store.signingNow())
+                    && afterStatus.state() == SignWorkflowStore.State.DISPATCHED) {
+                afterStatus = store.transitionSign(afterStatus.submissionId(), afterStatus.revision(),
+                        afterStatus.fence(), SignWorkflowStore.State.CANCELLING, Optional.of("CANCEL_REQUESTED"),
+                        Optional.empty(), Optional.empty()).orElse(afterStatus);
+            }
+            if (afterStatus.state() == SignWorkflowStore.State.CANCELLING) {
+                if (afterStatus.state() == SignWorkflowStore.State.CANCELLING
+                        && afterStatus.detailCode().filter("CANCEL_REQUESTED"::equals).isPresent()
+                        && remainingCalls - calls.attempts() > 0 && callActive(request)) {
+                    submitReconciliationCancellation(afterStatus, callControl(request, store.signingNow()), calls);
+                }
+            }
+            SignWorkflowStore.Record after = store.getSignRecord(before.submissionId()).orElse(before);
+            if (isTerminalSignState(after.state())) {
+                ReconciliationStep retired = retireReconciled(after);
+                return new ReconciliationStep(calls.attempts(), true, retired.unresolved(), retired.retryable());
+            }
+            clearRetry(after);
+            SignWorkflowStore.Record finalState = store.getSignRecord(before.submissionId()).orElse(after);
+            return new ReconciliationStep(calls.attempts(), finalState.revision() != before.revision(), true, false);
+        } catch (RuntimeException failure) {
+            return isolateCandidateFailure(before, calls, failure);
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private ReconciliationStep isolateCandidateFailure(SignWorkflowStore.Record fallback,
+            ProviderCallCounter calls, RuntimeException failure) {
+        rethrowStoreWideFailure(failure);
+        SignWorkflowStore.Record failed = fallback;
+        try {
+            failed = store.getSignRecord(fallback.submissionId()).orElse(fallback);
+        } catch (RuntimeException readFailure) {
+            rethrowStoreWideFailure(readFailure);
+        }
+        if (isTerminalSignState(failed.state())) {
+            return new ReconciliationStep(calls.attempts(), false, true, true);
+        }
+        SignWorkflowStore.ReconciliationFailureClass classification = switch (failed.state()) {
+            case INTENT -> SignWorkflowStore.ReconciliationFailureClass.SUBMISSION_UNCERTAIN;
+            case CANCELLING -> failed.detailCode().filter("CANCEL_REQUESTED"::equals).isPresent()
+                    ? SignWorkflowStore.ReconciliationFailureClass.CANCELLATION_UNCERTAIN
+                    : SignWorkflowStore.ReconciliationFailureClass.STATUS_UNAVAILABLE;
+            case DISPATCHED -> SignWorkflowStore.ReconciliationFailureClass.STATUS_UNAVAILABLE;
+            default -> SignWorkflowStore.ReconciliationFailureClass.LOCAL_FAILURE;
+        };
+        Optional<SignWorkflowStore.Record> deferred = Optional.empty();
+        try {
+            deferred = store.deferSignReconciliation(failed.submissionId(), failed.revision(), failed.fence(),
+                    classification);
+        } catch (RuntimeException writeFailure) {
+            rethrowStoreWideFailure(writeFailure);
+        }
+        return new ReconciliationStep(calls.attempts(), deferred.isPresent(), true, true);
+    }
+
+    private static void rethrowStoreWideFailure(RuntimeException failure) {
+        Throwable current = failure;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.contains("code=STORE_DURABILITY_UNCONFIRMED")) {
+                throw failure;
+            }
+            current = current.getCause();
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private ReconciliationStep retireReconciled(SignWorkflowStore.Record record) {
+        try {
+            SignWorkflowStore.Record retired = confirmRetirement(record.submissionId(), record);
+            store.deleteWorkflowState(record.submissionId());
+            return new ReconciliationStep(0, retired.state() == SignWorkflowStore.State.RETIRED, false, false);
+        } catch (RuntimeException failure) {
+            rethrowStoreWideFailure(failure);
+            return new ReconciliationStep(0, false, true, true);
+        }
+    }
+
+    private void clearRetry(SignWorkflowStore.Record record) {
+        if (record.failureCount() > 0) {
+            store.clearSignReconciliation(record.submissionId(), record.revision(), record.fence());
+        }
+    }
+
+    private void submitReconciliationCancellation(SignWorkflowStore.Record record,
+            SignatureWorkflow.CallControl control, ProviderCallCounter calls) {
+        Optional<ExternalActionCoordinator.Reservation> reservation = externalActions.tryReserve(record.submissionId(),
+                ExternalAction.CANCEL);
+        if (reservation.isEmpty()) {
+            return;
+        }
+        try (ExternalActionCoordinator.Reservation ignored = reservation.orElseThrow()) {
+            calls.beforeProviderCall();
+            signer.cancel(record.submissionId(), record.fence(), "reconciliation", control);
+            control.requireActive(store.signingNow());
+        }
+        markCancellationSubmitted(record.submissionId(), record);
+    }
+
+    private SignatureWorkflow.CallControl callControl(SigningReconciliationRequest request, Instant now) {
+        Instant callDeadline = now.plus(request.providerCallTimeout());
+        if (callDeadline.isAfter(request.deadline())) {
+            callDeadline = request.deadline();
+        }
+        return new SignatureWorkflow.CallControl(callDeadline, request.cancellation());
+    }
+
+    private boolean callActive(SigningReconciliationRequest request) {
+        return !request.cancellation().isCancelled() && store.signingNow().isBefore(request.deadline());
+    }
+
+    private record ReconciliationStep(int providerCalls, boolean progressed, boolean unresolved, boolean retryable) {
+        private static final ReconciliationStep RESOLVED = new ReconciliationStep(0, false, false, false);
+        private static final ReconciliationStep UNRESOLVED = new ReconciliationStep(0, false, true, false);
+    }
+
+    /** Exact attempts made during one candidate reconciliation. */
+    private static final class ProviderCallCounter {
+        private int attempts;
+
+        private void beforeProviderCall() {
+            attempts++;
+        }
+
+        private int attempts() {
+            return attempts;
+        }
     }
 
     /**
@@ -679,7 +930,9 @@ public final class PkiSigningBus implements AutoCloseable {
             return cancelling;
         }
         try (ExternalActionCoordinator.Reservation ignored = reserved.get()) {
-            signer.cancel(operationId, cancelling.fence(), reason);
+            signer.cancel(operationId, cancelling.fence(), reason,
+                    new SignatureWorkflow.CallControl(store.signingNow().plus(CLAIM_LEASE),
+                            zeroecho.core.io.CancellationSignal.NONE));
         } catch (RuntimeException ex) {
             endpoint.reconcileProviderStatus(operationId);
             SignWorkflowStore.Record current = store.getSignRecord(operationId).orElse(cancelling);
@@ -804,7 +1057,7 @@ public final class PkiSigningBus implements AutoCloseable {
                     record.request().encoding(), Optional.of(record.request())));
             Duration ttl = Duration.between(record.createdAt(), record.deadline());
             bus.submit(record.submissionId(), TYPE_SIGN, record.owner(), ENDPOINT_SIGNER, record.createdAt(), ttl);
-        } catch (RuntimeException ex) { // NOPMD - projection is advisory
+        } catch (RuntimeException ex) { // projection is advisory
             if (LOG.isLoggable(Level.FINE)) {
                 LOG.log(Level.FINE, "Advisory projection failed: code={0}, exception={1}",
                         new Object[] { "PROJECTION_REFRESH_FAILED", ex.getClass().getName() });
@@ -1099,21 +1352,36 @@ public final class PkiSigningBus implements AutoCloseable {
          *                              missing
          */
         public void execute(PkiId opId) {
+            execute(opId, new SignatureWorkflow.CallControl(store.signingNow().plus(CLAIM_LEASE),
+                    zeroecho.core.io.CancellationSignal.NONE), true, null);
+        }
+
+        private boolean execute(PkiId opId, SignatureWorkflow.CallControl control, boolean pollAfterAcceptance,
+                ProviderCallCounter calls) {
             Objects.requireNonNull(opId, "opId");
+            Objects.requireNonNull(control, "control");
             Optional<SubmissionCall> prepared = prepareSubmission(opId);
             if (prepared.isEmpty()) {
-                return;
+                return false;
             }
             SubmissionCall call = prepared.get();
             PkiId returned;
             try (ExternalActionCoordinator.Reservation ignored = call.reservation()) {
                 authority.authorize(call.plan(), signer, AlgorithmExecutionCapability.Direction.SIGN);
-                returned = call.plan().executor().submitSign(call.request());
+                control.requireActive(store.signingNow());
+                if (calls != null) {
+                    calls.beforeProviderCall();
+                }
+                returned = call.plan().executor().submitSign(call.request(), control);
+                control.requireActive(store.signingNow());
             } catch (RuntimeException ambiguousFailure) { // NOPMD - provider acceptance is unknown
-                return;
+                throw ambiguousFailure;
             }
             recordSubmissionAcceptance(call, returned);
-            reconcileProviderStatus(opId);
+            if (pollAfterAcceptance) {
+                reconcileProviderStatus(opId);
+            }
+            return true;
         }
 
         // On success the reservation ownership moves into SubmissionCall and spans
@@ -1233,7 +1501,8 @@ public final class PkiSigningBus implements AutoCloseable {
          *
          * <p>
          * Once a downstream signer operation exists, the returned status is derived
-         * from {@link SignatureWorkflow#status(PkiId)} using this mapping:
+     * from {@link SignatureWorkflow#status(PkiId, SignatureWorkflow.CallControl)}
+     * using this mapping:
          * </p>
          * <ul>
          * <li>missing downstream status - {@link AsyncState#RUNNING} with detail code
@@ -1325,29 +1594,46 @@ public final class PkiSigningBus implements AutoCloseable {
 
         // Provider implementations are an untrusted boundary and may throw any runtime
         // failure.
-        @SuppressWarnings("PMD.AvoidCatchingGenericException")
         private void reconcileProviderStatus(PkiId operationId) {
+            reconcileProviderStatus(operationId, new SignatureWorkflow.CallControl(store.signingNow().plus(CLAIM_LEASE),
+                    zeroecho.core.io.CancellationSignal.NONE));
+        }
+
+        private boolean reconcileProviderStatus(PkiId operationId, SignatureWorkflow.CallControl control) {
+            return reconcileProviderStatus(operationId, control, null, false);
+        }
+
+        private boolean reconcileProviderStatus(PkiId operationId, SignatureWorkflow.CallControl control,
+                ProviderCallCounter calls, boolean permitUncertainIntent) {
             removeAdvisory(operationId);
-            Optional<StatusCall> prepared = prepareStatusCall(operationId);
+            Optional<StatusCall> prepared = prepareStatusCall(operationId, permitUncertainIntent);
             if (prepared.isEmpty()) {
-                return;
+                return false;
             }
             StatusCall call = prepared.get();
             try (ExternalActionCoordinator.Reservation ignored = call.reservation()) {
                 try {
-                    SignatureWorkflow.OperationStatus providerStatus = signer.status(operationId);
+                    control.requireActive(store.signingNow());
+                    if (calls != null) {
+                        calls.beforeProviderCall();
+                    }
+                    SignatureWorkflow.OperationStatus providerStatus = signer.status(operationId, control);
+                    control.requireActive(store.signingNow());
                     applyProviderStatus(call, providerStatus);
                 } catch (RuntimeException providerFailure) {
                     throw new PkiException("Provider status failed: code=PROVIDER_STATUS_FAILED");
                 }
             }
+            return true;
         }
 
-        private Optional<StatusCall> prepareStatusCall(PkiId operationId) {
+        private Optional<StatusCall> prepareStatusCall(PkiId operationId, boolean permitUncertainIntent) {
             try (OperationCoordinator.Lease ignored = coordinator.acquire(operationId)) {
                 Optional<SignWorkflowStore.Record> beforeCall = store.getSignRecord(operationId);
                 if (beforeCall.isEmpty() || beforeCall.get().state() != SignWorkflowStore.State.DISPATCHED
-                        && beforeCall.get().state() != SignWorkflowStore.State.CANCELLING) {
+                        && beforeCall.get().state() != SignWorkflowStore.State.CANCELLING
+                        && (!permitUncertainIntent || beforeCall.get().state() != SignWorkflowStore.State.INTENT
+                                || beforeCall.get().fence() <= 0L)) {
                     return Optional.empty();
                 }
                 Optional<ExternalActionCoordinator.Reservation> reserved = externalActions.tryReserve(operationId,
@@ -1357,25 +1643,39 @@ public final class PkiSigningBus implements AutoCloseable {
         }
 
         private void applyProviderStatus(StatusCall call, SignatureWorkflow.OperationStatus providerStatus) {
-            if (!providerStatus.isTerminal()) {
-                return;
-            }
             try (OperationCoordinator.Lease ignored = coordinator.acquire(call.record().submissionId())) {
                 Optional<SignWorkflowStore.Record> currentOptional = store.getSignRecord(call.record().submissionId());
                 if (currentOptional.isEmpty()
                         || currentOptional.get().state() != SignWorkflowStore.State.DISPATCHED
                                 && currentOptional.get().state() != SignWorkflowStore.State.CANCELLING
+                                && currentOptional.get().state() != SignWorkflowStore.State.INTENT
                         || currentOptional.get().fence() != call.record().fence()) {
                     return;
                 }
                 SignWorkflowStore.Record current = currentOptional.get();
+                if (current.state() == SignWorkflowStore.State.INTENT) {
+                    Optional<SignWorkflowStore.Record> attached = store.transitionSign(current.submissionId(),
+                            current.revision(), current.fence(), SignWorkflowStore.State.DISPATCHED,
+                            Optional.of("DISPATCHED"), Optional.empty(), Optional.empty());
+                    if (attached.isEmpty()) {
+                        return;
+                    }
+                    current = attached.orElseThrow();
+                }
+                if (!providerStatus.isTerminal()) {
+                    return;
+                }
                 Optional<EncodedObject> result = providerStatus.result()
                         .flatMap(SignatureWorkflow.OperationResult::signature);
                 SignWorkflowStore.State target = mapProviderState(providerStatus.state());
-                Optional<String> detail = sanitizeProviderDetail(providerStatus.detailCode());
-                if (target == SignWorkflowStore.State.SUCCEEDED && result.isEmpty()) {
+                Optional<String> detail = safeProviderOutcomeCode(providerStatus.state());
+                boolean validSignature = providerStatus.result().isPresent()
+                        && providerStatus.result().orElseThrow().verified().isEmpty()
+                        && result.filter(SignatureWorkflowEndpoint::isValidSignatureResult).isPresent();
+                if (target == SignWorkflowStore.State.SUCCEEDED && !validSignature) {
                     target = SignWorkflowStore.State.FAILED;
-                    detail = Optional.of("PROVIDER_RESULT_MISSING");
+                    detail = Optional.of("PROVIDER_RESULT_INVALID");
+                    result = Optional.empty();
                 }
                 if (target == SignWorkflowStore.State.SUCCEEDED
                         && !providerStatus.updatedAt().isBefore(current.deadline())) {
@@ -1455,15 +1755,26 @@ public final class PkiSigningBus implements AutoCloseable {
             };
         }
 
-        private static Optional<String> sanitizeProviderDetail(Optional<String> detail) {
-            if (detail.isEmpty()) {
-                return Optional.empty();
+        private static boolean isValidSignatureResult(EncodedObject result) {
+            if (result.encoding() != Encoding.BINARY) {
+                return false;
             }
-            String value = detail.orElseThrow();
-            if (value.length() > 64 || !value.matches("[A-Z0-9_]+")) {
-                return Optional.of("PROVIDER_DETAIL_INVALID");
+            byte[] bytes = result.bytes();
+            try {
+                return bytes.length > 0 && bytes.length <= MAXIMUM_SIGNATURE_BYTES;
+            } finally {
+                java.util.Arrays.fill(bytes, (byte) 0);
             }
-            return detail;
+        }
+
+        private static Optional<String> safeProviderOutcomeCode(SignatureWorkflow.State state) {
+            return Optional.of(switch (state) {
+                case SUCCEEDED -> "SIGNED";
+                case CANCELLED -> "CANCELLED";
+                case EXPIRED -> "EXPIRED";
+                case FAILED -> "PROVIDER_FAILED";
+                case PENDING, RUNNING, WAITING_APPROVAL -> "RUNNING";
+            });
         }
 
         private static AsyncStatus mapStoreStatus(SignWorkflowStore.Record record) {

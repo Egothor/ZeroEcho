@@ -76,8 +76,10 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.MetadataSnapshot;
@@ -573,6 +575,129 @@ final class FilesystemSignWorkflowStoreTest {
         System.out.println("...ok");
     }
 
+    @Test
+    void signingPagesAndRetryBackoffAreBoundedAndRestartSafe(@TempDir Path root) throws Exception {
+        Instant createdAt = Instant.parse("2026-01-02T03:04:05.123Z");
+        MutableClock clock = new MutableClock(createdAt);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
+            PkiId first = persistIntent(store, createdAt, 1);
+            PkiId second = persistIntent(store, createdAt, 2);
+            PkiId third = persistIntent(store, createdAt, 3);
+            List<String> expected = java.util.stream.Stream.of(first, second, third).map(PkiId::value).sorted().toList();
+
+            SignWorkflowStore.Page pageOne = store.pageSignRecords(Optional.empty(), 2, CancellationSignal.NONE);
+            assertEquals(expected.subList(0, 2), pageOne.records().stream()
+                    .map(record -> record.submissionId().value()).toList());
+            assertFalse(pageOne.endReached());
+            SignWorkflowStore.Page pageTwo = store.pageSignRecords(pageOne.nextCursor(), 2, CancellationSignal.NONE);
+            assertEquals(List.of(expected.get(2)), pageTwo.records().stream()
+                    .map(record -> record.submissionId().value()).toList());
+            assertTrue(pageTwo.endReached());
+            SignWorkflowStore.Page maximumCursor = store.pageSignRecords(Optional.of("~".repeat(4096)), 1,
+                    CancellationSignal.NONE);
+            assertEquals(0, maximumCursor.examined());
+            assertTrue(maximumCursor.endReached());
+
+            SignWorkflowStore.Record retry = store.tryClaimSign(first, 0L, Duration.ofSeconds(30)).orElseThrow();
+            long[] delays = { 2L, 4L, 8L, 16L, 30L, 30L };
+            for (int index = 0; index < delays.length; index++) {
+                Instant deferredAt = clock.instant();
+                retry = store.deferSignReconciliation(first, retry.revision(), retry.fence(),
+                        SignWorkflowStore.ReconciliationFailureClass.SUBMISSION_UNCERTAIN).orElseThrow();
+                assertEquals(index + 1, retry.failureCount());
+                assertEquals(deferredAt.plusSeconds(delays[index]), retry.nextEligibleAt().orElseThrow());
+                clock.set(deferredAt.plusSeconds(1));
+            }
+            retry = store.clearSignReconciliation(first, retry.revision(), retry.fence()).orElseThrow();
+            assertEquals(0, retry.failureCount());
+            assertEquals(Optional.empty(), retry.nextEligibleAt());
+        }
+    }
+
+    @Test
+    void malformedCandidateAdvancesCursorWithoutStarvingLaterRecords(@TempDir Path root) throws Exception {
+        Instant createdAt = Instant.parse("2026-01-02T03:04:05.123Z");
+        List<String> ordered;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(),
+                Clock.fixed(createdAt, java.time.ZoneOffset.UTC))) {
+            ordered = java.util.stream.Stream.of(
+                    persistIntent(store, createdAt, 1),
+                    persistIntent(store, createdAt, 2),
+                    persistIntent(store, createdAt, 3))
+                    .map(PkiId::value).sorted().toList();
+        }
+
+        Path metadataLog = root.resolve("metadata/transactions.log");
+        MetadataKey malformed = new MetadataKey("io.zeroecho.pki.signing-record", ordered.get(0));
+        try (PosixTransactionalMetadataStore metadata = PosixTransactionalMetadataStore.open(metadataLog);
+                MetadataSnapshot snapshot = metadata.snapshot()) {
+            long revision;
+            try (MetadataSnapshot.Record record = snapshot.get(malformed).orElseThrow()) {
+                revision = record.recordRevision();
+            }
+            try (MetadataTransaction transaction = metadata.beginTransaction()) {
+                transaction.replace(malformed, revision, new ImmutableByteContent(new byte[] { 1, 2, 3 }),
+                        CancellationSignal.NONE);
+                assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
+            }
+        }
+
+        try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(),
+                Clock.fixed(createdAt, java.time.ZoneOffset.UTC))) {
+            SignWorkflowStore.Page page = reopened.pageSignRecords(Optional.empty(), 3, CancellationSignal.NONE);
+            assertEquals(3, page.examined());
+            assertEquals(1, page.failures());
+            assertEquals(ordered.subList(1, 3), page.records().stream()
+                    .map(record -> record.submissionId().value()).toList());
+            assertEquals(Optional.of(ordered.get(2)), page.nextCursor());
+            assertTrue(page.endReached());
+        }
+    }
+
+    @Test
+    void farFutureRetryEligibilityIsRejectedAsCorrupt(@TempDir Path root) throws Exception {
+        Instant createdAt = Instant.parse("2026-01-02T03:04:05.123Z");
+        MutableClock clock = new MutableClock(createdAt);
+        PkiId id;
+        SignWorkflowStore.Record corrupted;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
+            id = persistClaimed(store, createdAt, 4);
+            SignWorkflowStore.Record claimed = store.getSignRecord(id).orElseThrow();
+            corrupted = new SignWorkflowStore.Record(claimed.submissionId(), claimed.namespace(),
+                    claimed.fingerprint(), claimed.owner(), claimed.createdAt(), claimed.deadline(), claimed.request(),
+                    claimed.state(), claimed.revision(), claimed.fence(), claimed.leaseUntil(), claimed.detailCode(),
+                    claimed.result(), claimed.providerUpdatedAt(), 1, Optional.of(createdAt.plusSeconds(31)),
+                    Optional.of(SignWorkflowStore.ReconciliationFailureClass.STATUS_UNAVAILABLE));
+        }
+        writeRawCurrentRecord(root, id, corrupted);
+
+        try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock)) {
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> reopened.getSignRecord(id));
+            assertTrue(failure.getMessage().contains("code=RECONCILIATION_ELIGIBILITY_INVALID"));
+            assertFalse(failure.toString().contains(id.value()));
+        }
+    }
+
+    @Test
+    void previousSigningRecordCodecDecodesWithEmptyRetryMetadata(@TempDir Path root) throws Exception {
+        Instant createdAt = Instant.parse("2026-01-02T03:04:05.123Z");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults())) {
+            PkiId id = SigningSubmissionId
+                    .create(store.signingNamespace() + ".test-signer", createdAt, new SecureRandom()).id();
+            SignWorkflowStore.Record record = intent(store, id, createdAt,
+                    new EncodedObject(Encoding.BINARY, new byte[] { 7 }), TEST_ALGORITHM);
+            byte[] current = FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record);
+            byte[] previous = Arrays.copyOf(current, current.length - 15);
+            previous[Integer.BYTES] = 4;
+            SignWorkflowStore.Record decoded = FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, previous,
+                    store.stagedContent());
+            assertEquals(0, decoded.failureCount());
+            assertEquals(Optional.empty(), decoded.nextEligibleAt());
+            assertEquals(Optional.empty(), decoded.reconciliationFailureClass());
+        }
+    }
+
     private static SignWorkflowStore.Record intent(FilesystemPkiStore store, PkiId id, Instant createdAt,
             EncodedObject request,
             String algorithmId) {
@@ -582,7 +707,7 @@ final class FilesystemSignWorkflowStoreTest {
         String fingerprint = continuation.semanticFingerprint(namespace, deadline);
         return new SignWorkflowStore.Record(id, namespace, fingerprint, TEST_OWNER, createdAt, deadline,
                 continuation.encode(), SignWorkflowStore.State.INTENT, 0L, 0L, Optional.empty(), Optional.of("INTENT"),
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), 0, Optional.empty(), Optional.empty());
     }
 
     private static PkiId persistIntent(FilesystemPkiStore store, Instant createdAt, int marker) {
@@ -637,7 +762,14 @@ final class FilesystemSignWorkflowStoreTest {
             Optional<String> detailCode, Optional<EncodedObject> result, Optional<Instant> providerUpdatedAt) {
         return new SignWorkflowStore.Record(source.submissionId(), source.namespace(), fingerprint, source.owner(),
                 source.createdAt(), source.deadline(), request, state, revision, fence, leaseUntil, detailCode, result,
-                providerUpdatedAt);
+                providerUpdatedAt, state == SignWorkflowStore.State.INTENT
+                        || state == SignWorkflowStore.State.DISPATCHED
+                        || state == SignWorkflowStore.State.CANCELLING ? source.failureCount() : 0,
+                state == SignWorkflowStore.State.INTENT || state == SignWorkflowStore.State.DISPATCHED
+                        || state == SignWorkflowStore.State.CANCELLING ? source.nextEligibleAt() : Optional.empty(),
+                state == SignWorkflowStore.State.INTENT || state == SignWorkflowStore.State.DISPATCHED
+                        || state == SignWorkflowStore.State.CANCELLING
+                                ? source.reconciliationFailureClass() : Optional.empty());
     }
 
     private static String flipFingerprint(String fingerprint) {

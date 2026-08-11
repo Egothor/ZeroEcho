@@ -83,7 +83,7 @@ import zeroecho.pki.api.audit.AccessContext;
  * <ul>
  * <li>Validation and policy failures must not be surfaced as uncaught
  * exceptions. Instead, the provider must return an operation id and expose the
- * failure via {@link #status(PkiId)} using {@link OperationStatus#state()} ==
+ * failure via {@link #status(PkiId, CallControl)} using {@link OperationStatus#state()} ==
  * {@link State#FAILED} and a stable {@link OperationStatus#detailCode()}.</li>
  * <li>{@link IllegalArgumentException} may be thrown only for programmer errors
  * such as {@code request == null} or {@code operationId == null}. These are not
@@ -153,7 +153,7 @@ public interface SignatureWorkflow extends Closeable {
      * committing success. A completion at the deadline is late; it must become
      * {@link State#EXPIRED} without exposing a result. Terminal states are
      * immutable. At and after the configured horizon, submission is rejected and
-     * {@link #status(PkiId)} reports {@link State#EXPIRED}, including after
+     * {@link #status(PkiId, CallControl)} reports {@link State#EXPIRED}, including after
      * payload/result purge and restart. Provider callbacks must run after operation
      * state locks are released.
      * </p>
@@ -161,7 +161,7 @@ public interface SignatureWorkflow extends Closeable {
      * <h4>Failure model (normative)</h4>
      * <ul>
      * <li>For validation and policy failures: do not throw; return operation id and
-     * expose failure via {@link #status(PkiId)} with {@code FAILED} and stable
+     * expose failure via {@link #status(PkiId, CallControl)} with {@code FAILED} and stable
      * {@code detailCode}.</li>
      * <li>Throws {@link IllegalStateException} for identifier/fingerprint conflicts
      * or stale fencing tokens.</li>
@@ -170,9 +170,10 @@ public interface SignatureWorkflow extends Closeable {
      * </ul>
      *
      * @param request request (never {@code null})
+     * @param control cooperative call deadline and cancellation
      * @return operation id (never {@code null})
      */
-    PkiId submitSign(SignRequest request);
+    PkiId submitSign(SignRequest request, CallControl control);
 
     /**
      * Submits a verification request.
@@ -190,24 +191,26 @@ public interface SignatureWorkflow extends Closeable {
      * <h4>Failure model (normative)</h4>
      * <ul>
      * <li>For validation and policy failures: do not throw; return operation id and
-     * expose failure via {@link #status(PkiId)} with {@code FAILED} and stable
+     * expose failure via {@link #status(PkiId, CallControl)} with {@code FAILED} and stable
      * {@code detailCode}.</li>
      * <li>May throw {@link IllegalArgumentException} only for programmer errors
      * (e.g., {@code request == null}).</li>
      * </ul>
      *
      * @param request request (never {@code null})
+     * @param control cooperative call deadline and cancellation
      * @return operation id (never {@code null})
      */
-    PkiId submitVerify(VerifyRequest request);
+    PkiId submitVerify(VerifyRequest request, CallControl control);
 
     /**
      * Reads current status of an operation.
      *
      * @param operationId operation id (never {@code null})
+     * @param control cooperative call deadline and cancellation
      * @return status (never {@code null})
      */
-    OperationStatus status(PkiId operationId);
+    OperationStatus status(PkiId operationId, CallControl control);
 
     /**
      * Best-effort cancellation.
@@ -215,15 +218,26 @@ public interface SignatureWorkflow extends Closeable {
      * <p>
      * A {@code true} return value means only that the provider accepted the
      * cancellation request. It does not prove that the operation is terminal.
-     * Callers must re-read {@link #status(PkiId)} and may retire state only after
+     * Callers must re-read {@link #status(PkiId, CallControl)} and may retire state only after
      * an immutable terminal status is observed.
      * </p>
      *
+     * <p>The operation identifier and fencing-token pair is idempotent across
+     * ambiguous acceptance and restart, regardless of the safe reason supplied on
+     * a replay. A provider may retain the first accepted reason for audit, but a
+     * replay with another reason must not cause another external effect. A lower
+     * fencing token must not mutate provider state, and every terminal state is
+     * immutable.</p>
+     *
      * @param operationId operation id (never {@code null})
+     * @param fencingToken monotonic fencing token
      * @param reason      non-sensitive reason (never blank)
-     * @return true if cancellation was accepted; false if already terminal/unknown
+     * @param control cooperative call deadline and cancellation
+     * @return true if cancellation was accepted or the exact operation/fence pair
+     *         replays an accepted cancellation; false if unknown, stale, superseded,
+     *         or terminal for another outcome
      */
-    boolean cancel(PkiId operationId, long fencingToken, String reason);
+    boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control);
 
     /**
      * Registers a notification sink for status changes.
@@ -249,6 +263,34 @@ public interface SignatureWorkflow extends Closeable {
     void close();
 
     /**
+     * Immutable cooperative deadline and cancellation control for one provider
+     * invocation.
+     *
+     * @param deadline absolute exclusive call deadline
+     * @param cancellation cooperative cancellation signal
+     */
+    record CallControl(Instant deadline, CancellationSignal cancellation) {
+        /** Validates one call control. */
+        public CallControl {
+            Objects.requireNonNull(deadline, "deadline");
+            Objects.requireNonNull(cancellation, "cancellation");
+        }
+
+        /**
+         * Rejects work at or after the deadline or after cancellation.
+         *
+         * @param now authoritative current time
+         * @throws IllegalStateException when the call may no longer continue
+         */
+        public void requireActive(Instant now) {
+            Objects.requireNonNull(now, "now");
+            if (cancellation.isCancelled() || !now.isBefore(deadline)) {
+                throw new IllegalStateException("Signature workflow call is no longer active");
+            }
+        }
+    }
+
+    /**
      * Signing request.
      *
      * <p>
@@ -256,7 +298,7 @@ public interface SignatureWorkflow extends Closeable {
      * {@link IllegalArgumentException} at construction time. Callers building
      * requests for external transports are expected to catch such exceptions and
      * convert them to an appropriate error state before invoking
-     * {@link #submitSign(SignRequest)}.
+     * {@link #submitSign(SignRequest, CallControl)}.
      * </p>
      *
      * @param submissionId               stable caller-assigned submission
@@ -401,7 +443,7 @@ public interface SignatureWorkflow extends Closeable {
      * {@link IllegalArgumentException} at construction time. Callers building
      * requests for external transports are expected to catch such exceptions and
      * convert them to an appropriate error state before invoking
-     * {@link #submitVerify(VerifyRequest)}.
+     * {@link #submitVerify(VerifyRequest, CallControl)}.
      * </p>
      *
      * @param accessContext    audit/governance context (never {@code null})
@@ -443,7 +485,7 @@ public interface SignatureWorkflow extends Closeable {
      * of an operation previously submitted via {@code submitSign} or
      * {@code submitVerify}. Providers must ensure that status transitions are
      * monotonic and observable through repeated calls to
-     * {@link SignatureWorkflow#status(PkiId)}.
+     * {@link SignatureWorkflow#status(PkiId, CallControl)}.
      * </p>
      *
      * <h2>Failure and audit model</h2>
@@ -586,7 +628,8 @@ public interface SignatureWorkflow extends Closeable {
      * <p>
      * The callback must be treated as a best-effort notification mechanism and must
      * not be relied upon as the sole source of truth; callers should always be able
-     * to query the authoritative state via {@link SignatureWorkflow#status(PkiId)}.
+     * to query the authoritative state via
+     * {@link SignatureWorkflow#status(PkiId, CallControl)}.
      * Delivery may be coalesced or dropped under load. Providers must not require
      * callback processing to finish an operation, and sink implementations should
      * return promptly without waiting for operation-level coordination.

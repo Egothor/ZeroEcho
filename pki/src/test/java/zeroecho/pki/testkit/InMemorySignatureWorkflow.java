@@ -86,7 +86,7 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow, Publi
     }
 
     @Override
-    public PkiId submitSign(SignRequest request) {
+    public PkiId submitSign(SignRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
         PkiId opId = request.submissionId();
         Object lock = operationLocks.computeIfAbsent(opId, ignored -> new Object());
@@ -194,7 +194,7 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow, Publi
     }
 
     @Override
-    public PkiId submitVerify(VerifyRequest request) {
+    public PkiId submitVerify(VerifyRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
         PkiId opId = new PkiId("verify:" + (counter++));
         OperationStatus st = new OperationStatus(State.FAILED, Instant.now(), Optional.of("UNSUPPORTED"),
@@ -204,7 +204,7 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow, Publi
     }
 
     @Override
-    public OperationStatus status(PkiId operationId) {
+    public OperationStatus status(PkiId operationId, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         OperationStatus st = status.get(operationId);
         if (st == null) {
@@ -214,7 +214,7 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow, Publi
     }
 
     @Override
-    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
         if (fencingToken <= 0L) {
@@ -223,7 +223,14 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow, Publi
         Object lock = operationLocks.computeIfAbsent(operationId, ignored -> new Object());
         synchronized (lock) {
             OperationStatus existing = status.get(operationId);
-            if (existing == null || existing.isTerminal() || fencingToken < fences.get(operationId)) {
+            if (existing == null) {
+                return false;
+            }
+            long currentFence = fences.get(operationId);
+            if (existing.isTerminal()) {
+                return existing.state() == State.CANCELLED && fencingToken == currentFence;
+            }
+            if (fencingToken < currentFence) {
                 return false;
             }
             fences.put(operationId, fencingToken);

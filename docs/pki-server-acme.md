@@ -8,7 +8,7 @@ An ACME directory is an immutable policy revision bound to one realm, logical au
 
 Direct deployments use server-authenticated TLS. A client TLS certificate is not ACME account authority; ACME identity is the account key authenticated by JWS. Trusted-reverse-proxy deployments require the established mutually authenticated proxy-to-ZeroEcho TLS hop and a dedicated enabled proxy principal with `FORWARD_AUTHENTICATED_CLIENT_IDENTITY`. Forwarded administrative identity is not used as an ACME account. Source addresses and `Forwarded` or `X-Forwarded-*` headers never authorize ACME.
 
-The server configuration schema is version 5. ACME is disabled explicitly with:
+The server configuration schema is version 6. ACME is disabled explicitly with:
 
 ```json
 "acmeListener": {"enabled": false}

@@ -61,6 +61,18 @@ import zeroecho.pki.api.audit.Principal;
  */
 public interface SignWorkflowStore {
 
+    /** Durable classification for one deferred reconciliation retry. */
+    enum ReconciliationFailureClass {
+        /** Submission may have been accepted. */
+        SUBMISSION_UNCERTAIN,
+        /** Provider status could not be obtained. */
+        STATUS_UNAVAILABLE,
+        /** Provider cancellation outcome is uncertain. */
+        CANCELLATION_UNCERTAIN,
+        /** Local durable reconciliation failed. */
+        LOCAL_FAILURE
+    }
+
     /**
      * Signing orchestration states.
      *
@@ -135,7 +147,8 @@ public interface SignWorkflowStore {
     record Record(PkiId submissionId, String namespace, String fingerprint, Principal owner, Instant createdAt,
             Instant deadline, EncodedObject request, State state, long revision, long fence,
             Optional<Instant> leaseUntil, Optional<String> detailCode, Optional<EncodedObject> result,
-            Optional<Instant> providerUpdatedAt) {
+            Optional<Instant> providerUpdatedAt, int failureCount, Optional<Instant> nextEligibleAt,
+            Optional<ReconciliationFailureClass> reconciliationFailureClass) {
         public Record {
             Objects.requireNonNull(submissionId, "submissionId");
             Objects.requireNonNull(namespace, "namespace");
@@ -149,6 +162,8 @@ public interface SignWorkflowStore {
             Objects.requireNonNull(detailCode, "detailCode");
             Objects.requireNonNull(result, "result");
             Objects.requireNonNull(providerUpdatedAt, "providerUpdatedAt");
+            Objects.requireNonNull(nextEligibleAt, "nextEligibleAt");
+            Objects.requireNonNull(reconciliationFailureClass, "reconciliationFailureClass");
             if (namespace.isBlank() || fingerprint.isBlank()) {
                 throw new IllegalArgumentException("namespace and fingerprint must not be blank");
             }
@@ -157,6 +172,34 @@ public interface SignWorkflowStore {
             }
             if (revision < 0L || fence < 0L) {
                 throw new IllegalArgumentException("revision and fence must not be negative");
+            }
+            boolean retryMetadataPresent = nextEligibleAt.isPresent() && reconciliationFailureClass.isPresent();
+            if (failureCount < 0 || failureCount == 0 != !retryMetadataPresent) {
+                throw new IllegalArgumentException("Reconciliation retry metadata is inconsistent");
+            }
+            if ((state == State.SUCCEEDED || state == State.FAILED || state == State.CANCELLED
+                    || state == State.EXPIRED || state == State.RETIRED) && failureCount != 0) {
+                throw new IllegalArgumentException("Terminal signing records cannot retain retry metadata");
+            }
+        }
+    }
+
+    /**
+     * One bounded snapshot page ordered by canonical submission identifier.
+     *
+     * @param records immutable page records
+     * @param nextCursor exclusive cursor after the last returned record
+     * @param endReached whether the snapshot namespace was exhausted
+     */
+    record Page(List<Record> records, Optional<String> nextCursor, int examined, int failures,
+            boolean endReached) {
+        /** Validates one immutable page. */
+        public Page {
+            records = List.copyOf(Objects.requireNonNull(records, "records"));
+            nextCursor = Objects.requireNonNull(nextCursor, "nextCursor");
+            if (examined < records.size() || failures < 0 || failures > examined
+                    || records.size() + failures != examined) {
+                throw new IllegalArgumentException("Signing page counts are inconsistent");
             }
         }
     }
@@ -216,6 +259,33 @@ public interface SignWorkflowStore {
      * @return retained records
      */
     List<Record> listSignRecords();
+
+    /**
+     * Returns at most {@code maximumRecords} records after an advisory exclusive
+     * cursor, ordered by canonical submission identifier.
+     *
+     * @param exclusiveCursor opaque cursor from an earlier page
+     * @param maximumRecords page bound from 1 through 4096
+     * @param cancellation cooperative scan cancellation
+     * @return bounded snapshot page
+     */
+    Page pageSignRecords(Optional<String> exclusiveCursor, int maximumRecords,
+            zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Defers reconciliation with store-authoritative exponential backoff.
+     *
+     * @return updated record, or empty when the revision/fence CAS loses
+     */
+    Optional<Record> deferSignReconciliation(PkiId submissionId, long expectedRevision, long fence,
+            ReconciliationFailureClass failureClass);
+
+    /**
+     * Clears durable retry metadata against the current revision and fence.
+     *
+     * @return updated record, or empty when the revision/fence CAS loses
+     */
+    Optional<Record> clearSignReconciliation(PkiId submissionId, long expectedRevision, long fence);
 
     /**
      * Atomically claims an intent and increments its revision and fencing token.

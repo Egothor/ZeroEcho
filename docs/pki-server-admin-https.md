@@ -84,7 +84,22 @@ Responses are deterministic version-one JSON. They carry only safe typed results
 
 Transport workers, transport backlog, concurrent operation workers, waiting operation capacity, admitted requests, request body size, deadlines, and both shutdown periods are finite configuration values. Saturation never runs a request on the caller thread and a rejected request never invokes the gateway.
 
+Configuration schema version 6 adds `signingReconciliation`. Its production
+defaults are enabled, 256 examined records, 64 provider calls, a 30-second pass
+timeout, a 10-second provider-call timeout, and a fixed 2-second idle interval.
+`maxRecords` is 1 through 4096, `maxCalls` is 1 through the record
+bound, all durations are positive, and the provider timeout cannot exceed the
+pass timeout. Version 5 configurations migrate to these defaults. Set `enabled`
+to `false` only when an external owner deliberately invokes the transport-neutral
+session reconciliation API.
+
 Shutdown first removes readiness and admission, stops listener acceptance, drains for the configured graceful period, cooperatively cancels remaining work, waits only for the forced period, then closes the one realm context. Already committed PKI changes remain committed.
+
+Signing-provider deadlines and cancellation are cooperative for trusted
+in-process implementations. A provider call that remains live after forced
+shutdown causes `SIGNING_RECONCILIATION_SHUTDOWN_TIMEOUT`; the session, provider,
+and store stay open and `close` may be retried after the call returns. Hard
+isolation for non-cooperative providers requires an out-of-process boundary.
 
 ## Request correlation
 

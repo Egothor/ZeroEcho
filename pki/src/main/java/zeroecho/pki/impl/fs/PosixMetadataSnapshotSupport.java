@@ -45,7 +45,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Logger;
 import zeroecho.core.io.CancellationSignal;
@@ -55,6 +54,7 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
 /** Stable snapshot, lazy cursor, and bounded log-slice content lifecycles. */
+@SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
 final class PosixMetadataSnapshotSupport {
     private static final Logger LOGGER = Logger.getLogger(PosixMetadataSnapshotSupport.class.getName());
     private static final String CLEANUP_WARNING =
@@ -91,7 +91,8 @@ final class PosixMetadataSnapshotSupport {
     private final class SnapshotImpl
             implements MetadataSnapshot, PosixMetadataAdapterLifecycle.ManagedResource {
         private final long revision;
-        private final NavigableMap<MetadataKey, RecordMetadata> records;
+        private final NavigableMap<MetadataKey, MetadataStateIndex.CurrentRecord> records;
+        private final Runnable release;
         private final ReentrantLock lock = new ReentrantLock();
         private final Set<RecordImpl> recordChildren =
                 Collections.newSetFromMap(new IdentityHashMap<>());
@@ -102,10 +103,8 @@ final class PosixMetadataSnapshotSupport {
         private SnapshotImpl(PosixMetadataStoreEngine.SnapshotState captured) {
             super();
             revision = captured.revision();
-            NavigableMap<MetadataKey, RecordMetadata> detached = new TreeMap<>();
-            captured.records().forEach(record ->
-                    detached.put(record.key(), new RecordMetadata(record)));
-            records = Collections.unmodifiableNavigableMap(detached);
+            records = captured.records();
+            release = captured.release();
         }
 
         @Override
@@ -126,10 +125,10 @@ final class PosixMetadataSnapshotSupport {
             lock.lock();
             try {
                 requireOpenLocked();
-                RecordMetadata metadata = records.get(key);
+                MetadataStateIndex.CurrentRecord metadata = records.get(key);
                 return metadata == null
                         ? Optional.empty()
-                        : Optional.of(createRecordLocked(metadata));
+                        : Optional.of(createRecordLocked(new RecordMetadata(metadata)));
             } finally {
                 lock.unlock();
             }
@@ -143,7 +142,9 @@ final class PosixMetadataSnapshotSupport {
             lock.lock();
             try {
                 requireOpenLocked();
-                CursorImpl cursor = new CursorImpl(range, records.entrySet().iterator());
+                String lower = range.lowerInclusive().orElse("!");
+                MetadataKey first = new MetadataKey(range.namespace(), lower);
+                CursorImpl cursor = new CursorImpl(range, records.tailMap(first, true).entrySet().iterator());
                 cursorChildren.add(cursor);
                 return cursor;
             } finally {
@@ -170,6 +171,7 @@ final class PosixMetadataSnapshotSupport {
                     return null;
                 }
                 closed = true;
+                release.run();
                 cursors = List.copyOf(cursorChildren);
                 children = List.copyOf(recordChildren);
                 cursorChildren.clear();
@@ -244,13 +246,13 @@ final class PosixMetadataSnapshotSupport {
         /** Cursor retains only one map iterator and one current record. */
         private final class CursorImpl implements MetadataCursor {
             private final KeyRange range;
-            private final Iterator<Map.Entry<MetadataKey, RecordMetadata>> iterator;
+            private final Iterator<Map.Entry<MetadataKey, MetadataStateIndex.CurrentRecord>> iterator;
             private RecordImpl current;
             private boolean cursorClosed;
 
             private CursorImpl(
                     KeyRange range,
-                    Iterator<Map.Entry<MetadataKey, RecordMetadata>> iterator) {
+                    Iterator<Map.Entry<MetadataKey, MetadataStateIndex.CurrentRecord>> iterator) {
                 super();
                 this.range = range;
                 this.iterator = iterator;
@@ -278,10 +280,15 @@ final class PosixMetadataSnapshotSupport {
                         if (!iterator.hasNext()) {
                             return Optional.empty();
                         }
-                        Map.Entry<MetadataKey, RecordMetadata> candidate = iterator.next();
+                        Map.Entry<MetadataKey, MetadataStateIndex.CurrentRecord> candidate = iterator.next();
                         if (range.contains(candidate.getKey())) {
-                            current = createRecordLocked(candidate.getValue());
+                            current = createRecordLocked(new RecordMetadata(candidate.getValue()));
                             return Optional.of(current);
+                        }
+                        if (candidate.getKey().namespace().compareTo(range.namespace()) > 0
+                                || candidate.getKey().namespace().equals(range.namespace())
+                                && range.upperExclusive().isPresent()) {
+                            return Optional.empty();
                         }
                     } finally {
                         lock.unlock();

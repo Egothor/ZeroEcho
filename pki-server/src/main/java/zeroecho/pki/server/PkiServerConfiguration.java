@@ -61,14 +61,16 @@ import zeroecho.pki.spi.ProviderConfig;
  * @param runtime process-local capability references
  * @param publicListener optional separately bounded public repository listener
  * @param acmeListener optional separately bounded ACME protocol listener
+ * @param signingReconciliation bounded recovered-signing owner policy
  */
 @SuppressWarnings("PMD")
 public record PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
         Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
-        Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener) {
+        Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener,
+        SigningReconciliation signingReconciliation) {
 
     /** Current server configuration schema. */
-    public static final int CURRENT_VERSION = 5;
+    public static final int CURRENT_VERSION = 6;
 
     /** Validates all security-sensitive fields before resource allocation. */
     public PkiServerConfiguration {
@@ -81,6 +83,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Objects.requireNonNull(runtime, "runtime");
         publicListener = Objects.requireNonNull(publicListener, "publicListener");
         acmeListener = Objects.requireNonNull(acmeListener, "acmeListener");
+        Objects.requireNonNull(signingReconciliation, "signingReconciliation");
         if (!listener.clientCertificateRequired()) {
             throw new IllegalArgumentException("Administrative HTTPS requires client certificates");
         }
@@ -110,14 +113,53 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
             Optional<PublicListener> publicListener) {
         this(version, serverName, realm, listener, authentication, execution, runtime, publicListener,
-                Optional.empty());
+                Optional.empty(), SigningReconciliation.defaults());
+    }
+
+    /** Creates a configuration with default signing reconciliation. */
+    public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
+            Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
+            Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener) {
+        this(version, serverName, realm, listener, authentication, execution, runtime, publicListener, acmeListener,
+                SigningReconciliation.defaults());
     }
 
     /** Creates a configuration with the public repository listener disabled. */
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
         this(version, serverName, realm, listener, authentication, execution, runtime, Optional.empty(),
-                Optional.empty());
+                Optional.empty(), SigningReconciliation.defaults());
+    }
+
+    /**
+     * Bounded recovered-signing reconciliation policy.
+     *
+     * @param enabled whether the realm owns a reconciliation scheduler
+     * @param maximumRecords maximum records examined per pass
+     * @param maximumProviderCalls maximum provider calls per pass
+     * @param passTimeout positive complete-pass timeout
+     * @param providerCallTimeout positive per-call timeout no greater than the pass timeout
+     * @param idleInterval positive delay after each completed pass
+     */
+    public record SigningReconciliation(boolean enabled, int maximumRecords, int maximumProviderCalls,
+            Duration passTimeout, Duration providerCallTimeout, Duration idleInterval) {
+        /** Validates all reconciliation bounds. */
+        public SigningReconciliation {
+            bounded(maximumRecords, 1, 4096, "signing reconciliation record count");
+            bounded(maximumProviderCalls, 1, maximumRecords, "signing reconciliation provider call count");
+            positive(passTimeout, Duration.ofMinutes(5), "signing reconciliation pass timeout");
+            positive(providerCallTimeout, Duration.ofMinutes(5), "signing reconciliation provider call timeout");
+            positive(idleInterval, Duration.ofMinutes(5), "signing reconciliation idle interval");
+            if (providerCallTimeout.compareTo(passTimeout) > 0) {
+                throw new IllegalArgumentException("Signing reconciliation provider timeout exceeds pass timeout");
+            }
+        }
+
+        /** @return version-6 production defaults */
+        public static SigningReconciliation defaults() {
+            return new SigningReconciliation(true, 256, 64, Duration.ofSeconds(30), Duration.ofSeconds(10),
+                    Duration.ofSeconds(2));
+        }
     }
 
     /**

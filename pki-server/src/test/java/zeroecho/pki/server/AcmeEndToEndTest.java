@@ -755,7 +755,10 @@ class AcmeEndToEndTest {
                 + "\"port\":" + configuration.listener().port() + ",\"tlsProvider\":" + tlsJson
                 + ",\"clientCertificateRequired\":true,\"maximumHeaderBytes\":16384,"
                 + "\"maximumBodyBytes\":1048576},\"authentication\":" + authenticationJson
-                + ",\"execution\":" + executionJson() + ",\"publicListener\":{\"enabled\":true,"
+                + ",\"execution\":" + executionJson()
+                + ",\"signingReconciliation\":{\"enabled\":true,\"maxRecords\":256,\"maxCalls\":64,"
+                + "\"passTimeoutMillis\":30000,\"providerCallTimeoutMillis\":10000,"
+                + "\"idleIntervalMillis\":2000},\"publicListener\":{\"enabled\":true,"
                 + "\"address\":\"127.0.0.1\",\"port\":" + publicListener.port()
                 + ",\"tlsProvider\":" + tlsJson + ",\"allowPlaintextLoopback\":false,"
                 + "\"authentication\":" + authenticationJson

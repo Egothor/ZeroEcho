@@ -36,6 +36,7 @@ package zeroecho.pki.impl.core.async;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -71,6 +72,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spec.AlgorithmSuite;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
@@ -85,6 +87,8 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.orch.OrchestrationDurabilityPolicy;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
+import zeroecho.pki.application.SigningReconciliationRequest;
+import zeroecho.pki.application.SigningReconciliationResult;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmResolver;
@@ -96,6 +100,264 @@ import zeroecho.pki.testkit.InMemorySignatureWorkflow;
 import zeroecho.pki.util.async.AsyncState;
 
 final class PkiSigningBusFailureTest {
+
+    @Test
+    void reconciliationEnforcesIndependentScanAndProviderBudgetsAndWrapsFairly(@TempDir Path tempDir)
+            throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-01T00:00:00Z"));
+        ControlledWorkflow signer = new ControlledWorkflow(clock);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
+            submit(bus);
+            clock.set(clock.instant().plusMillis(1));
+            submit(bus);
+            clock.set(clock.instant().plusMillis(1));
+            submit(bus);
+
+            SigningReconciliationResult first = bus.reconcile(reconciliation(Optional.empty(), 2, 1, clock));
+            assertEquals(2, first.examined());
+            assertEquals(1, signer.submissions.get());
+            assertEquals(1, first.progressed());
+            assertEquals(2, first.unresolved());
+
+            SigningReconciliationResult second = bus.reconcile(reconciliation(first.nextCursor(), 2, 1, clock));
+            assertEquals(2, second.examined());
+            assertEquals(2, signer.submissions.get());
+            assertTrue(second.endReached());
+
+            SigningReconciliationResult third = bus.reconcile(reconciliation(second.nextCursor(), 2, 1, clock));
+            assertEquals(2, third.examined());
+            assertEquals(3, signer.submissions.get());
+        }
+    }
+
+    @Test
+    void reconciliationDeadlineStopsPagingBeforeCandidateDecode(@TempDir Path tempDir) throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-01T01:00:00Z"));
+        assertThrows(IllegalArgumentException.class, () -> new SigningReconciliationRequest(Optional.of("bad/cursor"),
+                1, 1, clock.instant().plusSeconds(1), Duration.ofSeconds(1), CancellationSignal.NONE));
+        assertThrows(IllegalArgumentException.class, () -> new SigningReconciliationRequest(Optional.of("bad-\u2603"),
+                1, 1, clock.instant().plusSeconds(1), Duration.ofSeconds(1), CancellationSignal.NONE));
+        ControlledWorkflow signer = new ControlledWorkflow(clock);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
+            submit(bus);
+            SigningReconciliationRequest expired = new SigningReconciliationRequest(Optional.empty(), 256, 64,
+                    clock.instant(), Duration.ofSeconds(10), CancellationSignal.NONE);
+
+            SigningReconciliationResult result = bus.reconcile(expired);
+
+            assertEquals(0, result.examined());
+            assertEquals(0, signer.submissions.get());
+            assertFalse(result.endReached());
+        }
+    }
+
+    @Test
+    void reconciliationUsesStatusBeforeCancellationAndRetiresTerminalSamePass(@TempDir Path tempDir)
+            throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-02T00:00:00Z"));
+        ControlledWorkflow signer = new ControlledWorkflow(clock);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
+            PkiId id = submit(bus);
+            assertEquals(AsyncState.RUNNING, bus.status(id).orElseThrow().state());
+            SignWorkflowStore.Record dispatched = store.getSignRecord(id).orElseThrow();
+            store.transitionSign(id, dispatched.revision(), dispatched.fence(), SignWorkflowStore.State.CANCELLING,
+                    Optional.of("CANCEL_REQUESTED"), Optional.empty(), Optional.empty()).orElseThrow();
+
+            bus.reconcile(reconciliation(Optional.empty(), 1, 1, clock));
+            assertEquals(0, signer.cancellations.get());
+            assertEquals("CANCEL_REQUESTED", store.getSignRecord(id).orElseThrow().detailCode().orElseThrow());
+
+            bus.reconcile(reconciliation(Optional.empty(), 2, 2, clock));
+            assertEquals(1, signer.cancellations.get());
+            assertEquals(SignWorkflowStore.State.CANCELLING, store.getSignRecord(id).orElseThrow().state());
+
+            SigningReconciliationResult terminal = bus.reconcile(reconciliation(Optional.empty(), 1, 1, clock));
+            assertEquals(SignWorkflowStore.State.RETIRED, store.getSignRecord(id).orElseThrow().state());
+            assertEquals(1, terminal.progressed());
+            assertEquals(0, terminal.unresolved());
+        }
+    }
+
+    @Test
+    void throwingCancellationConsumesExactTwoCallBudgetAndDoesNotTouchLaterRecord(@TempDir Path tempDir)
+            throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-03T00:00:00Z"));
+        ThrowingCancellationWorkflow signer = new ThrowingCancellationWorkflow(clock);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
+            PkiId first = submit(bus);
+            clock.set(clock.instant().plusMillis(1));
+            PkiId second = submit(bus);
+            assertEquals(AsyncState.RUNNING, bus.status(first).orElseThrow().state());
+            assertEquals(AsyncState.RUNNING, bus.status(second).orElseThrow().state());
+            requestCancellation(store, first);
+            requestCancellation(store, second);
+            signer.resetObservations();
+
+            SigningReconciliationResult result = bus.reconcile(reconciliation(Optional.empty(), 2, 2, clock));
+
+            assertEquals(2, result.examined());
+            assertEquals(1, signer.statusReads.get());
+            assertEquals(1, signer.cancellations.get());
+            assertEquals(1, store.getSignRecord(first).orElseThrow().failureCount()
+                    + store.getSignRecord(second).orElseThrow().failureCount());
+        }
+    }
+
+    @Test
+    void pointReadFailureIsolatedAndLaterCandidateUsesRemainingProviderBudget(@TempDir Path tempDir)
+            throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-03T01:00:00Z"));
+        ControlledWorkflow signer = new ControlledWorkflow(clock);
+        AtomicReference<PkiId> faultTarget = new AtomicReference<>();
+        AtomicBoolean faultArmed = new AtomicBoolean();
+        try (FilesystemPkiStore delegate = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(
+                        faultingStore(delegate, "getSignRecord", faultTarget, faultArmed), signer,
+                        tempDir.resolve("bus.log"), signingAuthority(signer))) {
+            PkiId first = submit(bus);
+            clock.set(clock.instant().plusMillis(1));
+            submit(bus);
+            faultTarget.set(first);
+            faultArmed.set(true);
+
+            SigningReconciliationResult result = bus.reconcile(reconciliation(Optional.empty(), 2, 1, clock));
+
+            assertEquals(2, result.examined());
+            assertEquals(1, signer.submissions.get());
+            assertEquals(2, result.unresolved());
+            assertFalse(faultArmed.get());
+        }
+    }
+
+    @Test
+    void retirementFailureIsolatedAndLaterCandidateProgresses(@TempDir Path tempDir) throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-03T02:00:00Z"));
+        ControlledWorkflow signer = new ControlledWorkflow(clock);
+        AtomicReference<PkiId> faultTarget = new AtomicReference<>();
+        AtomicBoolean faultArmed = new AtomicBoolean();
+        try (FilesystemPkiStore delegate = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(
+                        faultingStore(delegate, "retireSign", faultTarget, faultArmed), signer,
+                        tempDir.resolve("bus.log"), signingAuthority(signer))) {
+            PkiId terminal = submit(bus);
+            assertEquals(AsyncState.RUNNING, bus.status(terminal).orElseThrow().state());
+            signer.succeedAt(terminal, clock.instant(), (byte) 7);
+            assertEquals(AsyncState.SUCCEEDED, bus.status(terminal).orElseThrow().state());
+            clock.set(clock.instant().plusMillis(1));
+            submit(bus);
+            faultTarget.set(terminal);
+            faultArmed.set(true);
+
+            SigningReconciliationResult result = bus.reconcile(reconciliation(Optional.empty(), 2, 1, clock));
+
+            assertEquals(2, result.examined());
+            assertEquals(2, signer.submissions.get());
+            assertTrue(result.progressed() >= 1);
+            assertTrue(result.retryable() >= 1);
+            assertFalse(faultArmed.get());
+        }
+    }
+
+    @Test
+    void deferWriteFailureIsolatedWithExactProviderAttemptsAndLaterProgress(@TempDir Path tempDir)
+            throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-03T03:00:00Z"));
+        AcceptedThenThrowsWorkflow signer = new AcceptedThenThrowsWorkflow(clock);
+        AtomicReference<PkiId> faultTarget = new AtomicReference<>();
+        AtomicBoolean faultArmed = new AtomicBoolean();
+        try (FilesystemPkiStore delegate = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(
+                        faultingStore(delegate, "deferSignReconciliation", faultTarget, faultArmed), signer,
+                        tempDir.resolve("bus.log"), signingAuthority(signer))) {
+            PkiId first = submit(bus);
+            clock.set(clock.instant().plusMillis(1));
+            submit(bus);
+            faultTarget.set(first);
+            faultArmed.set(true);
+
+            SigningReconciliationResult result = bus.reconcile(reconciliation(Optional.empty(), 2, 2, clock));
+
+            assertEquals(2, result.examined());
+            assertEquals(2, signer.submissions.get());
+            assertEquals(1, result.progressed());
+            assertEquals(2, result.retryable());
+            assertFalse(faultArmed.get());
+        }
+    }
+
+    @Test
+    void durabilityUncertainStoreFailureFailsPassClosed(@TempDir Path tempDir) throws Exception {
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-03T04:00:00Z"));
+        ControlledWorkflow signer = new ControlledWorkflow(clock);
+        AtomicReference<PkiId> faultTarget = new AtomicReference<>();
+        AtomicBoolean faultArmed = new AtomicBoolean();
+        try (FilesystemPkiStore delegate = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(
+                        faultingStore(delegate, "getSignRecord", faultTarget, faultArmed,
+                                new PkiException("Store durability unconfirmed: code=STORE_DURABILITY_UNCONFIRMED")),
+                        signer, tempDir.resolve("bus.log"), signingAuthority(signer))) {
+            PkiId first = submit(bus);
+            faultTarget.set(first);
+            faultArmed.set(true);
+
+            PkiException failure = assertThrows(PkiException.class,
+                    () -> bus.reconcile(reconciliation(Optional.empty(), 1, 1, clock)));
+
+            assertTrue(failure.getMessage().contains("code=STORE_DURABILITY_UNCONFIRMED"));
+            assertEquals(0, signer.submissions.get());
+        }
+    }
+
+    @Test
+    void acceptedUncertainIntentIsStatusReconciledAcrossRestartAndCancelledAfterDeadline(@TempDir Path tempDir)
+            throws Exception {
+        Instant createdAt = Instant.parse("2026-08-04T00:00:00Z");
+        MutableClock clock = new MutableClock(createdAt);
+        AcceptedThenThrowsWorkflow signer = new AcceptedThenThrowsWorkflow(clock);
+        Path storeRoot = tempDir.resolve("store");
+        Path busLog = tempDir.resolve("bus.log");
+        PkiId id;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(store, signer, busLog, signingAuthority(signer))) {
+            id = submit(bus, Duration.ofSeconds(10));
+            assertThrows(IllegalStateException.class, () -> bus.status(id));
+            SignWorkflowStore.Record uncertain = store.getSignRecord(id).orElseThrow();
+            assertEquals(SignWorkflowStore.State.INTENT, uncertain.state());
+            assertTrue(uncertain.fence() > 0L);
+            assertEquals(1, signer.submissions.get());
+        }
+
+        clock.set(createdAt.plusSeconds(10));
+        try (FilesystemPkiStore reopened = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog, signingAuthority(signer))) {
+            SigningReconciliationResult cancellation = replayed.reconcile(
+                    reconciliation(Optional.empty(), 2, 2, clock));
+            assertEquals(1, cancellation.progressed());
+            assertEquals(1, signer.submissions.get());
+            assertEquals(1, signer.statusReads.get());
+            assertEquals(1, signer.cancellations.get());
+
+            replayed.reconcile(reconciliation(Optional.empty(), 1, 1, clock));
+            assertEquals(SignWorkflowStore.State.RETIRED, reopened.getSignRecord(id).orElseThrow().state());
+            assertEquals(1, signer.submissions.get());
+        }
+    }
 
     @Test
     void constructorsRequireExplicitOwningSignAuthority(@TempDir Path tempDir) throws Exception {
@@ -274,6 +536,55 @@ final class PkiSigningBusFailureTest {
             replayed.retireSignOperation(late, "late completion cleanup");
             assertEquals(SignWorkflowStore.State.RETIRED, reopened.getSignRecord(late).orElseThrow().state());
         }
+    }
+
+    @Test
+    void signResultAdmissionAcceptsExactLimitAndRejectsOversizeWrongMissingAndMixed(@TempDir Path tempDir)
+            throws Exception {
+        Instant createdAt = Instant.parse("2026-06-07T08:09:10Z");
+        MutableClock clock = new MutableClock(createdAt);
+        ControlledWorkflow signer = new ControlledWorkflow(clock);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults(), clock);
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
+            PkiId exact = submit(bus);
+            assertEquals(AsyncState.RUNNING, bus.status(exact).orElseThrow().state());
+            signer.succeedWith(exact, createdAt.plusSeconds(1), new SignatureWorkflow.OperationResult(
+                    Optional.of(new EncodedObject(Encoding.BINARY, new byte[1_048_576])), Optional.empty()));
+            assertEquals(AsyncState.SUCCEEDED, bus.status(exact).orElseThrow().state());
+
+            PkiId oversize = submit(bus);
+            assertEquals(AsyncState.RUNNING, bus.status(oversize).orElseThrow().state());
+            signer.succeedWith(oversize, createdAt.plusSeconds(1), new SignatureWorkflow.OperationResult(
+                    Optional.of(new EncodedObject(Encoding.BINARY, new byte[1_048_577])), Optional.empty()));
+            assertInvalidProviderResult(bus, store, oversize);
+
+            PkiId wrongEncoding = submit(bus);
+            assertEquals(AsyncState.RUNNING, bus.status(wrongEncoding).orElseThrow().state());
+            signer.succeedWith(wrongEncoding, createdAt.plusSeconds(1), new SignatureWorkflow.OperationResult(
+                    Optional.of(new EncodedObject(Encoding.DER, new byte[] { 1 })), Optional.empty()));
+            assertInvalidProviderResult(bus, store, wrongEncoding);
+
+            PkiId missing = submit(bus);
+            assertEquals(AsyncState.RUNNING, bus.status(missing).orElseThrow().state());
+            signer.succeedWith(missing, createdAt.plusSeconds(1),
+                    new SignatureWorkflow.OperationResult(Optional.empty(), Optional.empty()));
+            assertInvalidProviderResult(bus, store, missing);
+
+            PkiId mixed = submit(bus);
+            assertEquals(AsyncState.RUNNING, bus.status(mixed).orElseThrow().state());
+            signer.succeedWith(mixed, createdAt.plusSeconds(1), new SignatureWorkflow.OperationResult(
+                    Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 1 })), Optional.of(true)));
+            assertInvalidProviderResult(bus, store, mixed);
+        }
+    }
+
+    private static void assertInvalidProviderResult(PkiSigningBus bus, FilesystemPkiStore store, PkiId operationId) {
+        assertEquals(AsyncState.FAILED, bus.status(operationId).orElseThrow().state());
+        SignWorkflowStore.Record failed = store.getSignRecord(operationId).orElseThrow();
+        assertEquals(Optional.of("PROVIDER_RESULT_INVALID"), failed.detailCode());
+        assertEquals(Optional.empty(), failed.result());
     }
 
     @Test
@@ -515,7 +826,10 @@ final class PkiSigningBusFailureTest {
             assertEquals(1, signer.submissions.get());
             second.get(5, TimeUnit.SECONDS);
             signer.release.countDown();
-            first.get(5, TimeUnit.SECONDS);
+            java.util.concurrent.ExecutionException late = assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> first.get(5, TimeUnit.SECONDS));
+            assertInstanceOf(IllegalStateException.class, late.getCause());
+            assertEquals(SignWorkflowStore.State.INTENT, store.getSignRecord(id).orElseThrow().state());
             assertEquals(1, signer.submissions.get());
         }
     }
@@ -651,6 +965,41 @@ final class PkiSigningBusFailureTest {
         return submit(bus, Duration.ofMinutes(5));
     }
 
+    private static SigningReconciliationRequest reconciliation(Optional<String> cursor, int maximumRecords,
+            int maximumCalls, Clock clock) {
+        return new SigningReconciliationRequest(cursor, maximumRecords, maximumCalls,
+                clock.instant().plusSeconds(30), Duration.ofSeconds(10), () -> false);
+    }
+
+    private static PkiStore faultingStore(PkiStore delegate, String methodName,
+            AtomicReference<PkiId> target, AtomicBoolean armed) {
+        return faultingStore(delegate, methodName, target, armed,
+                new IllegalStateException("injected candidate-local store failure"));
+    }
+
+    private static PkiStore faultingStore(PkiStore delegate, String methodName,
+            AtomicReference<PkiId> target, AtomicBoolean armed, RuntimeException injectedFailure) {
+        return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
+                (proxy, method, arguments) -> {
+                    if (methodName.equals(method.getName()) && arguments != null && arguments.length > 0
+                            && target.get() != null && target.get().equals(arguments[0])
+                            && armed.compareAndSet(true, false)) {
+                        throw injectedFailure;
+                    }
+                    try {
+                        return method.invoke(delegate, arguments);
+                    } catch (InvocationTargetException failure) {
+                        throw failure.getCause();
+                    }
+                });
+    }
+
+    private static void requestCancellation(SignWorkflowStore store, PkiId id) {
+        SignWorkflowStore.Record dispatched = store.getSignRecord(id).orElseThrow();
+        store.transitionSign(id, dispatched.revision(), dispatched.fence(), SignWorkflowStore.State.CANCELLING,
+                Optional.of("CANCEL_REQUESTED"), Optional.empty(), Optional.empty()).orElseThrow();
+    }
+
     private static PkiId submit(PkiSigningBus bus, Duration ttl) {
         Principal owner = new Principal("TEST", "owner");
         PkiId id = bus.newSubmissionId();
@@ -705,6 +1054,125 @@ final class PkiSigningBusFailureTest {
         };
     }
 
+    private static final class ThrowingCancellationWorkflow implements SignatureWorkflow {
+        private final Clock clock;
+        private final Map<PkiId, OperationStatus> statuses = new java.util.concurrent.ConcurrentHashMap<>();
+        private final AtomicInteger statusReads = new AtomicInteger();
+        private final AtomicInteger cancellations = new AtomicInteger();
+
+        private ThrowingCancellationWorkflow(Clock clock) {
+            this.clock = clock;
+        }
+
+        @Override
+        public String id() {
+            return "throwing-cancellation";
+        }
+
+        @Override
+        public PkiId submitSign(SignRequest request, CallControl control) {
+            statuses.put(request.submissionId(),
+                    new OperationStatus(State.RUNNING, clock.instant(), Optional.of("RUNNING"), Optional.empty()));
+            return request.submissionId();
+        }
+
+        @Override
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OperationStatus status(PkiId operationId, CallControl control) {
+            statusReads.incrementAndGet();
+            return statuses.get(operationId);
+        }
+
+        @Override
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
+            cancellations.incrementAndGet();
+            throw new IllegalStateException("accepted outcome is deliberately uncertain");
+        }
+
+        @Override
+        public Registration register(NotificationSink sink) {
+            return () -> { };
+        }
+
+        @Override
+        public Set<String> supportedAlgorithms() {
+            return Set.of("SHA256withRSA");
+        }
+
+        @Override
+        public void close() {
+            // No owned resources.
+        }
+
+        private void resetObservations() {
+            statusReads.set(0);
+            cancellations.set(0);
+        }
+    }
+
+    private static final class AcceptedThenThrowsWorkflow implements SignatureWorkflow {
+        private final Clock clock;
+        private final Map<PkiId, OperationStatus> statuses = new java.util.concurrent.ConcurrentHashMap<>();
+        private final AtomicInteger submissions = new AtomicInteger();
+        private final AtomicInteger statusReads = new AtomicInteger();
+        private final AtomicInteger cancellations = new AtomicInteger();
+
+        private AcceptedThenThrowsWorkflow(Clock clock) {
+            this.clock = clock;
+        }
+
+        @Override
+        public String id() {
+            return "accepted-then-throws";
+        }
+
+        @Override
+        public PkiId submitSign(SignRequest request, CallControl control) {
+            submissions.incrementAndGet();
+            statuses.putIfAbsent(request.submissionId(),
+                    new OperationStatus(State.RUNNING, clock.instant(), Optional.of("RUNNING"), Optional.empty()));
+            throw new IllegalStateException("accepted before transport failure");
+        }
+
+        @Override
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OperationStatus status(PkiId operationId, CallControl control) {
+            statusReads.incrementAndGet();
+            return statuses.get(operationId);
+        }
+
+        @Override
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
+            cancellations.incrementAndGet();
+            statuses.put(operationId,
+                    new OperationStatus(State.CANCELLED, clock.instant(), Optional.of("CANCELLED"), Optional.empty()));
+            return true;
+        }
+
+        @Override
+        public Registration register(NotificationSink sink) {
+            return () -> { };
+        }
+
+        @Override
+        public Set<String> supportedAlgorithms() {
+            return Set.of("SHA256withRSA");
+        }
+
+        @Override
+        public void close() {
+            // Shared durable-provider simulation remains available across bus restart.
+        }
+    }
+
     private static final class AcceptedDelayedCancellationWorkflow implements SignatureWorkflow {
         private final Clock clock;
         private final Map<PkiId, OperationStatus> statuses = new java.util.concurrent.ConcurrentHashMap<>();
@@ -725,7 +1193,7 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitSign(SignRequest request) {
+        public PkiId submitSign(SignRequest request, CallControl control) {
             submissions.incrementAndGet();
             statuses.put(request.submissionId(),
                     new OperationStatus(State.RUNNING, clock.instant(), Optional.of("RUNNING"), Optional.empty()));
@@ -733,17 +1201,17 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitVerify(VerifyRequest request) {
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public OperationStatus status(PkiId operationId) {
+        public OperationStatus status(PkiId operationId, CallControl control) {
             return statuses.get(operationId);
         }
 
         @Override
-        public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
             cancellations.incrementAndGet();
             return true;
         }
@@ -794,7 +1262,7 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitSign(SignRequest request) {
+        public PkiId submitSign(SignRequest request, CallControl control) {
             submissions.incrementAndGet();
             statuses.put(request.submissionId(),
                     new OperationStatus(State.RUNNING, clock.instant(), Optional.of("RUNNING"), Optional.empty()));
@@ -802,17 +1270,17 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitVerify(VerifyRequest request) {
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public OperationStatus status(PkiId operationId) {
+        public OperationStatus status(PkiId operationId, CallControl control) {
             return statuses.get(operationId);
         }
 
         @Override
-        public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
             cancellations.incrementAndGet();
             statuses.put(operationId,
                     new OperationStatus(State.CANCELLED, clock.instant(), Optional.of("CANCELLED"), Optional.empty()));
@@ -839,6 +1307,10 @@ final class PkiSigningBusFailureTest {
         private void succeedAt(PkiId operationId, Instant completedAt, byte value) {
             OperationResult result = new OperationResult(
                     Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { value })), Optional.empty());
+            succeedWith(operationId, completedAt, result);
+        }
+
+        private void succeedWith(PkiId operationId, Instant completedAt, OperationResult result) {
             statuses.put(operationId,
                     new OperationStatus(State.SUCCEEDED, completedAt, Optional.of("SIGNED"), Optional.of(result)));
         }
@@ -861,7 +1333,7 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitSign(SignRequest request) {
+        public PkiId submitSign(SignRequest request, CallControl control) {
             submissions.incrementAndGet();
             operationId.set(request.submissionId());
             status.set(new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
@@ -869,12 +1341,12 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitVerify(VerifyRequest request) {
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public OperationStatus status(PkiId operationId) {
+        public OperationStatus status(PkiId operationId, CallControl control) {
             if (blockStatus.compareAndSet(true, false)) {
                 statusEntered.countDown();
                 try {
@@ -888,7 +1360,7 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
             OperationStatus current = status.get();
             if (current.isTerminal()) {
                 return false;
@@ -946,23 +1418,23 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitSign(SignRequest request) {
+        public PkiId submitSign(SignRequest request, CallControl control) {
             status.set(new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
             return request.submissionId();
         }
 
         @Override
-        public PkiId submitVerify(VerifyRequest request) {
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public OperationStatus status(PkiId operationId) {
+        public OperationStatus status(PkiId operationId, CallControl control) {
             return status.get();
         }
 
         @Override
-        public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
             cancellations.incrementAndGet();
             OperationResult result = new OperationResult(
                     Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 11, 12 })), Optional.empty());
@@ -1001,7 +1473,7 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitSign(SignRequest request) {
+        public PkiId submitSign(SignRequest request, CallControl control) {
             submissions.incrementAndGet();
             statuses.put(request.submissionId(),
                     new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
@@ -1016,17 +1488,17 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitVerify(VerifyRequest request) {
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public OperationStatus status(PkiId operationId) {
+        public OperationStatus status(PkiId operationId, CallControl control) {
             return statuses.get(operationId);
         }
 
         @Override
-        public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
             return false;
         }
 
@@ -1077,7 +1549,7 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitSign(SignRequest request) {
+        public PkiId submitSign(SignRequest request, CallControl control) {
             submissions.incrementAndGet();
             status.set(new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
             reenterStatus(request.submissionId());
@@ -1085,19 +1557,19 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitVerify(VerifyRequest request) {
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public OperationStatus status(PkiId requested) {
+        public OperationStatus status(PkiId requested, CallControl control) {
             statusReads.incrementAndGet();
             reenterStatus(requested);
             return status.get();
         }
 
         @Override
-        public boolean cancel(PkiId requested, long fencingToken, String reason) {
+        public boolean cancel(PkiId requested, long fencingToken, String reason, CallControl control) {
             cancellations.incrementAndGet();
             reenterStatus(requested);
             status.set(new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"), Optional.empty()));
@@ -1143,7 +1615,7 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitSign(SignRequest request) {
+        public PkiId submitSign(SignRequest request, CallControl control) {
             submissions.incrementAndGet();
             statuses.put(request.submissionId(),
                     new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
@@ -1161,17 +1633,17 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitVerify(VerifyRequest request) {
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public OperationStatus status(PkiId operationId) {
+        public OperationStatus status(PkiId operationId, CallControl control) {
             return statuses.get(operationId);
         }
 
         @Override
-        public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
             statuses.put(operationId,
                     new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"), Optional.empty()));
             return true;
@@ -1205,18 +1677,18 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public PkiId submitSign(SignRequest request) {
+        public PkiId submitSign(SignRequest request, CallControl control) {
             status.set(new OperationStatus(State.RUNNING, Instant.now(), Optional.of("RUNNING"), Optional.empty()));
             return request.submissionId();
         }
 
         @Override
-        public PkiId submitVerify(VerifyRequest request) {
+        public PkiId submitVerify(VerifyRequest request, CallControl control) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public OperationStatus status(PkiId operationId) {
+        public OperationStatus status(PkiId operationId, CallControl control) {
             if (statusReads.incrementAndGet() == 1) {
                 throw new IllegalStateException("injected status failure");
             }
@@ -1224,7 +1696,7 @@ final class PkiSigningBusFailureTest {
         }
 
         @Override
-        public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+        public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
             status.set(new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"), Optional.empty()));
             return true;
         }

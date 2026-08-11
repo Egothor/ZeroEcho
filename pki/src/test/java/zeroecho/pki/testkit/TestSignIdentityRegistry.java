@@ -41,6 +41,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 
 import zeroecho.pki.api.PkiId;
@@ -92,6 +93,14 @@ final class TestSignIdentityRegistry {
             }
             write(path, new Identity(existing.fingerprint, fence));
             return true;
+        }
+    }
+
+    OptionalLong fence(PkiId operationId) {
+        Object lock = locks.computeIfAbsent(operationId, ignored -> new Object());
+        synchronized (lock) {
+            Path path = path(operationId);
+            return Files.exists(path) ? OptionalLong.of(read(path).fence) : OptionalLong.empty();
         }
     }
 

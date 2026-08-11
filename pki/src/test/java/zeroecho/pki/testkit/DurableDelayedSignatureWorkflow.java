@@ -101,7 +101,7 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
     }
 
     @Override
-    public PkiId submitSign(SignRequest request) {
+    public PkiId submitSign(SignRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
 
         PkiId opId = request.submissionId();
@@ -124,13 +124,13 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
     }
 
     @Override
-    public PkiId submitVerify(VerifyRequest request) {
+    public PkiId submitVerify(VerifyRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
         return new PkiId("verify-" + UUID.randomUUID());
     }
 
     @Override
-    public OperationStatus status(PkiId operationId) {
+    public OperationStatus status(PkiId operationId, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         OperationStatus st = loadStatus(operationId);
         if (st.isTerminal()) {
@@ -172,7 +172,7 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
     }
 
     @Override
-    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
         if (fencingToken <= 0L) {
@@ -181,11 +181,12 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
         if (reason.isBlank()) {
             throw new IllegalArgumentException("reason must not be blank");
         }
-        if (!identities.acceptFence(operationId, fencingToken)) {
-            return false;
-        }
-        OperationStatus st = status(operationId);
+        OperationStatus st = status(operationId, control);
         if (st.isTerminal()) {
+            return st.state() == State.CANCELLED
+                    && identities.fence(operationId).orElse(-1L) == fencingToken;
+        }
+        if (!identities.acceptFence(operationId, fencingToken)) {
             return false;
         }
         OperationStatus cancelled = new OperationStatus(State.CANCELLED, Instant.now(), Optional.of("CANCELLED"),

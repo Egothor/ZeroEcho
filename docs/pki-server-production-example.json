@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "serverName": "zeroecho-admin",
   "realm": {
     "realmId": "production",
@@ -74,6 +74,7 @@
     "gracefulShutdownMillis": 30000,
     "forcedShutdownMillis": 10000
   },
+  "signingReconciliation": {"enabled": true, "maxRecords": 256, "maxCalls": 64, "passTimeoutMillis": 30000, "providerCallTimeoutMillis": 10000, "idleIntervalMillis": 2000},
   "publicListener": {"enabled": false},
   "acmeListener": {"enabled": false},
   "runtime": {}

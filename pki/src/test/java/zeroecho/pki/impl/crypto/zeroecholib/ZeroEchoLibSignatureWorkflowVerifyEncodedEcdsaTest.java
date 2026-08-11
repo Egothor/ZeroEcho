@@ -102,8 +102,10 @@ public final class ZeroEchoLibSignatureWorkflowVerifyEncodedEcdsaTest {
                     new ImmutableByteContent(payload), sigObj, Optional.empty(), Optional.of(spkiObj),
                     Optional.of(Instant.now().plusSeconds(5)), CancellationSignal.NONE);
 
-            PkiId opId = wf.submitVerify(vr);
-            SignatureWorkflow.OperationStatus st = wf.status(opId);
+            SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(Instant.MAX,
+                    CancellationSignal.NONE);
+            PkiId opId = wf.submitVerify(vr, control);
+            SignatureWorkflow.OperationStatus st = wf.status(opId, control);
             assertTrue(st.state() == SignatureWorkflow.State.SUCCEEDED);
             assertTrue(st.result().isPresent());
             assertTrue(st.result().get().verified().isPresent());

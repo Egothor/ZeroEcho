@@ -71,7 +71,7 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
  * <ol>
  * <li>{@code submitSign()} creates operation in {@code WAITING_APPROVAL}.</li>
  * <li>Operator calls {@link #approve(PkiId)} or {@link #deny(PkiId)}.</li>
- * <li>On next {@link #status(PkiId)} poll, the operation either expires, fails,
+ * <li>On next {@link #status(PkiId, CallControl)} poll, the operation either expires, fails,
  * or signs and succeeds.</li>
  * </ol>
  */
@@ -136,7 +136,7 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     }
 
     @Override
-    public PkiId submitSign(SignRequest request) {
+    public PkiId submitSign(SignRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
 
         PkiId opId = request.submissionId();
@@ -160,7 +160,7 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     }
 
     @Override
-    public PkiId submitVerify(VerifyRequest request) {
+    public PkiId submitVerify(VerifyRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
         return new PkiId("verify-" + UUID.randomUUID());
     }
@@ -194,7 +194,7 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     }
 
     @Override
-    public OperationStatus status(PkiId operationId) {
+    public OperationStatus status(PkiId operationId, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
 
         OperationStatus st = loadStatus(operationId);
@@ -256,7 +256,7 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     }
 
     @Override
-    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
         if (fencingToken <= 0L) {
@@ -265,12 +265,12 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
         if (reason.isBlank()) {
             throw new IllegalArgumentException("reason must not be blank");
         }
-        if (!identities.acceptFence(operationId, fencingToken)) {
-            return false;
-        }
-
         OperationStatus st = loadStatus(operationId);
         if (st.isTerminal()) {
+            return st.state() == State.CANCELLED
+                    && identities.fence(operationId).orElse(-1L) == fencingToken;
+        }
+        if (!identities.acceptFence(operationId, fencingToken)) {
             return false;
         }
 

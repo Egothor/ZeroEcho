@@ -68,7 +68,7 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
  * The approval flow is intentionally explicit:
  * </p>
  * <ul>
- * <li>After {@link #submitSign(SignRequest)} the operation enters
+ * <li>After {@link #submitSign(SignRequest, CallControl)} the operation enters
  * {@link State#WAITING_APPROVAL}.</li>
  * <li>Tests can call {@link #approve(PkiId)} or {@link #deny(PkiId)}.</li>
  * <li>If the operator does not act within {@link #approvalWindow}, the
@@ -139,7 +139,7 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
     }
 
     @Override
-    public PkiId submitSign(SignRequest request) {
+    public PkiId submitSign(SignRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
 
         long n = seq.incrementAndGet();
@@ -182,7 +182,7 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
     }
 
     @Override
-    public PkiId submitVerify(VerifyRequest request) {
+    public PkiId submitVerify(VerifyRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
         // Not needed for these tests.
         long n = seq.incrementAndGet();
@@ -250,7 +250,7 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
     }
 
     @Override
-    public OperationStatus status(PkiId operationId) {
+    public OperationStatus status(PkiId operationId, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         Path dir = opDir(operationId);
         java.util.Properties p = readPropsSafe(dir.resolve(FILE_META));
@@ -331,7 +331,7 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
     }
 
     @Override
-    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
         if (fencingToken <= 0L) {
@@ -340,9 +340,6 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
         if (reason.isBlank()) {
             throw new IllegalArgumentException("reason must not be blank");
         }
-        if (!identities.acceptFence(operationId, fencingToken)) {
-            return false;
-        }
         Path dir = opDir(operationId);
         java.util.Properties p = readPropsSafe(dir.resolve(FILE_META));
         if (p.isEmpty()) {
@@ -350,6 +347,9 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
         }
         State s = parseState(p.getProperty(K_STATE));
         if (isTerminalState(s)) {
+            return s == State.CANCELLED && identities.fence(operationId).orElse(-1L) == fencingToken;
+        }
+        if (!identities.acceptFence(operationId, fencingToken)) {
             return false;
         }
         Instant now = Instant.now();
@@ -427,7 +427,8 @@ public final class OperatorApprovalSignatureWorkflow implements SignatureWorkflo
     private void notifySink(PkiId opId) {
         for (NotificationSink sink : sinks.values()) {
             try {
-                sink.onStatusChanged(opId, status(opId));
+                sink.onStatusChanged(opId, status(opId,
+                        new CallControl(Instant.MAX, zeroecho.core.io.CancellationSignal.NONE)));
             } catch (RuntimeException ex) {
                 // ignore
             }

@@ -86,12 +86,19 @@ public final class PkiServerConfigurationCodec {
     public static PkiServerConfiguration decode(byte[] document) {
         Fields root = Fields.of(StrictJson.parse(document, MAXIMUM_CONFIGURATION_BYTES));
         root.allowed(Set.of("version", "serverName", "realm", "listener", "authentication", "execution",
-                "runtime", "publicListener", "acmeListener"));
-        PkiServerConfiguration configuration = new PkiServerConfiguration(root.integer("version"),
+                "runtime", "publicListener", "acmeListener", "signingReconciliation"));
+        int encodedVersion = root.integer("version");
+        if (encodedVersion != 5 && encodedVersion != PkiServerConfiguration.CURRENT_VERSION) {
+            throw new IllegalArgumentException("Unsupported server schema version");
+        }
+        PkiServerConfiguration.SigningReconciliation reconciliation = encodedVersion == 5
+                ? PkiServerConfiguration.SigningReconciliation.defaults()
+                : signingReconciliation(root.object("signingReconciliation"));
+        PkiServerConfiguration configuration = new PkiServerConfiguration(PkiServerConfiguration.CURRENT_VERSION,
                 root.text("serverName"), realm(root.object("realm")), listener(root.object("listener")),
                 authentication(root.object("authentication")), execution(root.object("execution")),
                 runtime(root.object("runtime")), publicListener(root.object("publicListener")),
-                acmeListener(root.object("acmeListener")));
+                acmeListener(root.object("acmeListener")), reconciliation);
         root.complete();
         return configuration;
     }
@@ -269,6 +276,18 @@ public final class PkiServerConfigurationCodec {
                 Duration.ofMillis(value.longValue("maximumDeadlineMillis")),
                 Duration.ofMillis(value.longValue("gracefulShutdownMillis")),
                 Duration.ofMillis(value.longValue("forcedShutdownMillis")));
+        value.complete();
+        return result;
+    }
+
+    private static PkiServerConfiguration.SigningReconciliation signingReconciliation(Fields value) {
+        value.exact("enabled", "maxRecords", "maxCalls", "passTimeoutMillis", "providerCallTimeoutMillis",
+                "idleIntervalMillis");
+        PkiServerConfiguration.SigningReconciliation result = new PkiServerConfiguration.SigningReconciliation(
+                value.bool("enabled"), value.integer("maxRecords"), value.integer("maxCalls"),
+                Duration.ofMillis(value.longValue("passTimeoutMillis")),
+                Duration.ofMillis(value.longValue("providerCallTimeoutMillis")),
+                Duration.ofMillis(value.longValue("idleIntervalMillis")));
         value.complete();
         return result;
     }

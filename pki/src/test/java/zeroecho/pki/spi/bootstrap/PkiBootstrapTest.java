@@ -332,10 +332,13 @@ public final class PkiBootstrapTest {
             SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(submissionId,
                     SIGNING_NAMESPACE, 1L, access, new KeyRef("test-prefix:bootstrap"), "SHA256withRSA",
                     new ImmutableByteContent(payload), Optional.of(Encoding.BINARY), Optional.empty());
-            workflow.submitSign(request);
-            assertEquals(SignatureWorkflow.State.SUCCEEDED, workflow.status(submissionId).state());
+            SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(Instant.MAX,
+                    zeroecho.core.io.CancellationSignal.NONE);
+            workflow.submitSign(request, control);
+            assertEquals(SignatureWorkflow.State.SUCCEEDED, workflow.status(submissionId, control).state());
             assertTrue(
-                    workflow.status(submissionId).result().orElseThrow().signature().orElseThrow().bytes().length > 0);
+                    workflow.status(submissionId, control).result().orElseThrow().signature().orElseThrow()
+                            .bytes().length > 0);
         }
 
         try (KeyringPassword password = password(); KeyringStore reopened = KeyringStore.open(keyringPath, password)) {

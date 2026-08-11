@@ -46,6 +46,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -253,7 +254,9 @@ final class PosixMetadataStoreEngine implements AutoCloseable {
         transactionLock.lock();
         try {
             requireOperational();
-            return new SnapshotState(stateIndex.storeRevision(), stateIndex.records());
+            long revision = stateIndex.storeRevision();
+            MetadataStateIndex.SnapshotView view = stateIndex.snapshot();
+            return new SnapshotState(revision, view.records(), view.release());
         } finally {
             transactionLock.unlock();
         }
@@ -458,12 +461,14 @@ final class PosixMetadataStoreEngine implements AutoCloseable {
 
     /** Immutable finite current-state metadata captured under engine serialization. */
     /* default */ record SnapshotState(
-            long revision, List<MetadataStateIndex.CurrentRecord> records) {
+            long revision, NavigableMap<MetadataKey, MetadataStateIndex.CurrentRecord> records,
+            Runnable release) {
         SnapshotState {
             if (revision < MINIMUM_VALUE_BOUNDARY) {
                 throw new IllegalArgumentException("Snapshot revision must not be negative");
             }
-            records = List.copyOf(records);
+            Objects.requireNonNull(records, "records");
+            Objects.requireNonNull(release, "release");
         }
     }
 

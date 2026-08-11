@@ -170,6 +170,29 @@ final class MetadataStateIndexTest {
         System.out.println("...ok");
     }
 
+    @Test
+    void updatesAvoidFullIndexCopiesWithoutPinnedSnapshotAndPreservePinnedView() throws Exception {
+        MetadataStateIndex index = new MetadataStateIndex();
+        for (int revision = 1; revision <= 100; revision++) {
+            index.applyCommitted(revision, List.of(create(key("key-" + revision), revision, 1L)));
+        }
+        assertEquals(0L, index.snapshotCopyCount());
+
+        MetadataStateIndex.SnapshotView pinned = index.snapshot();
+        assertEquals(100, pinned.records().size());
+        index.applyCommitted(101L, List.of(create(key("key-101"), 101L, 1L)));
+        assertEquals(1L, index.snapshotCopyCount());
+        assertEquals(100, pinned.records().size());
+        index.applyCommitted(102L, List.of(create(key("key-102"), 102L, 1L)));
+        assertEquals(1L, index.snapshotCopyCount());
+        assertEquals(100, pinned.records().size());
+        pinned.release().run();
+
+        index.applyCommitted(103L, List.of(create(key("key-103"), 103L, 1L)));
+        assertEquals(1L, index.snapshotCopyCount());
+        assertEquals(103, index.records().size());
+    }
+
     private static MetadataMutationPayloadCodec.Descriptor create(
             MetadataKey key, long offset, long length) {
         return new MetadataMutationPayloadCodec.Descriptor(

@@ -157,6 +157,19 @@ public interface PkiSession extends AutoCloseable {
     PkiRepository repository();
 
     /**
+     * Performs one synchronous, bounded signing-recovery pass.
+     *
+     * <p>The session creates no scheduler. Callers own invocation cadence and must
+     * pass the opaque exclusive cursor returned by the preceding pass. A session
+     * without signing returns an empty, end-reached result.</p>
+     *
+     * @param request validated pass bounds and cancellation
+     * @return aggregate safe pass result
+     * @throws IllegalStateException if the session is closed
+     */
+    SigningReconciliationResult reconcileSigning(SigningReconciliationRequest request);
+
+    /**
      * Closes services and backend resources in reverse construction order.
      * Repeated calls are harmless; primary and suppressed failures are preserved.
      *

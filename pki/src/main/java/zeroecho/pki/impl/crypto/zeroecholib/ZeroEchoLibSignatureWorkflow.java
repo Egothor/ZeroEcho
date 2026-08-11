@@ -122,7 +122,7 @@ import zeroecho.sdk.ZeroEchoSession;
  * The implementation is intentionally synchronous from its internal execution
  * perspective, but it still conforms to the {@link SignatureWorkflow} contract
  * by returning an operation identifier and exposing the terminal outcome
- * through {@link #status(PkiId)}. Each submitted operation is executed
+ * through {@link #status(PkiId, CallControl)}. Each submitted operation is executed
  * immediately in the caller thread. Signing requests and terminal outcomes are
  * retained durably in the configured operation root for the configured
  * operation horizon.
@@ -130,15 +130,15 @@ import zeroecho.sdk.ZeroEchoSession;
  *
  * <h2>Supported operations</h2>
  * <ul>
- * <li>{@link #submitSign(SignRequest)} resolves a private key from the configured
+ * <li>{@link #submitSign(SignRequest, CallControl)} resolves a private key from the configured
  * {@link KeyringStore}, validates the requested algorithm
  * compatibility, produces a signature over the supplied payload, and stores the
  * result as a terminal successful or failed operation status.</li>
- * <li>{@link #submitVerify(VerifyRequest)} verifies a signature either against
+ * <li>{@link #submitVerify(VerifyRequest, CallControl)} verifies a signature either against
  * a key resolved from {@link VerifyRequest#publicKeyRef()} or against a caller-
  * supplied encoded public key from
  * {@link VerifyRequest#publicKeyEncoded()}.</li>
- * <li>{@link #status(PkiId)} returns the retained operation status, or a stable
+ * <li>{@link #status(PkiId, CallControl)} returns the retained operation status, or a stable
  * failed status for unknown operation identifiers.</li>
  * <li>{@link #register(NotificationSink)} installs an in-memory notification
  * sink that is called whenever an operation status changes.</li>
@@ -165,7 +165,7 @@ import zeroecho.sdk.ZeroEchoSession;
  * exceptions once an operation has been accepted for processing. Instead, the
  * provider always returns an operation identifier and records a terminal
  * {@link State#FAILED} status with a stable non-secret detail code retrievable
- * through {@link #status(PkiId)}.
+ * through {@link #status(PkiId, CallControl)}.
  * </p>
  *
  * <p>
@@ -240,7 +240,9 @@ import zeroecho.sdk.ZeroEchoSession;
  * </p>
  */
 // The provider deliberately centralizes operation lifecycle and cleanup in one implementation.
-@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
+@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.TooManyMethods",
+        "PMD.NcssCount", "PMD.CloseResource", "PMD.ExceptionAsFlowControl",
+        "PMD.AvoidCatchingGenericException" })
 public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, PublicKeyInfoSource {
 
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSignatureWorkflow.class.getName());
@@ -265,7 +267,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
 
     private static final OperationStatus UNKNOWN_OPERATION_STATUS = new OperationStatus(State.FAILED, Instant.EPOCH,
             Optional.of(DC_UNKNOWN_OPERATION), Optional.empty());
-    private static final int OPERATION_RECORD_VERSION = 4;
+    private static final int OPERATION_RECORD_VERSION = 5;
+    private static final int PREVIOUS_OPERATION_RECORD_VERSION = 4;
     private static final long MIN_FENCING_TOKEN = 1L;
 
     private final String id;
@@ -281,6 +284,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
     private final ConcurrentMap<PkiId, OperationStatus> statuses;
     private final ConcurrentMap<PkiId, String> fingerprints;
     private final ConcurrentMap<PkiId, Long> fences;
+    private final ConcurrentMap<PkiId, String> cancellationReasons;
     private final ConcurrentMap<PkiId, SignRequest> requests;
     private final ConcurrentMap<PkiId, NotificationSink> sinks;
     private final ConcurrentMap<PkiId, SignLockEntry> operationLocks;
@@ -370,12 +374,15 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
         this.statuses = new ConcurrentHashMap<>();
         this.fingerprints = new ConcurrentHashMap<>();
         this.fences = new ConcurrentHashMap<>();
+        this.cancellationReasons = new ConcurrentHashMap<>();
         this.requests = new ConcurrentHashMap<>();
         this.sinks = new ConcurrentHashMap<>();
         this.operationLocks = new ConcurrentHashMap<>();
         this.domainLock = new ReentrantLock();
         this.keyringLifecycleLock = new ReentrantLock();
         this.timeWatermarkLock = new ReentrantLock();
+        FileChannel acquiredChannel = null;
+        FileLock acquiredLock = null;
         try {
             Files.createDirectories(this.operationRoot);
             restrictPermissions(this.operationRoot, true);
@@ -388,11 +395,10 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
             } else {
                 Files.writeString(owner, id, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             }
-            this.ownershipChannel = FileChannel.open(this.operationRoot.resolve(".lock"), StandardOpenOption.CREATE,
+            acquiredChannel = FileChannel.open(this.operationRoot.resolve(".lock"), StandardOpenOption.CREATE,
                     StandardOpenOption.WRITE);
-            this.ownershipLock = this.ownershipChannel.tryLock();
-            if (this.ownershipLock == null) {
-                this.ownershipChannel.close();
+            acquiredLock = acquiredChannel.tryLock();
+            if (acquiredLock == null) {
                 throw new IllegalStateException("Signing operation root is already in use");
             }
             this.timeWatermark = new AtomicLong(loadTimeWatermark());
@@ -401,8 +407,31 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                     Files.exists(domain) ? Files.readString(domain, StandardCharsets.US_ASCII).trim() : null);
             loadOperationRecords();
             purgeExpiredOperations();
+            this.ownershipChannel = acquiredChannel;
+            this.ownershipLock = acquiredLock;
         } catch (IOException ex) {
+            releaseFailedOwnership(acquiredLock, acquiredChannel, ex);
             throw new IllegalStateException("Cannot initialize signing operation root", ex);
+        } catch (RuntimeException | Error failure) {
+            releaseFailedOwnership(acquiredLock, acquiredChannel, failure);
+            throw failure;
+        }
+    }
+
+    private static void releaseFailedOwnership(FileLock lock, FileChannel channel, Throwable failure) {
+        if (lock != null) {
+            try {
+                lock.release();
+            } catch (IOException cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+        }
+        if (channel != null) {
+            try {
+                channel.close();
+            } catch (IOException cleanup) {
+                failure.addSuppressed(cleanup);
+            }
         }
     }
 
@@ -485,10 +514,11 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
      * @throws IllegalArgumentException if {@code request} is {@code null}
     */
     @Override
-    public PkiId submitSign(SignRequest request) {
+    public PkiId submitSign(SignRequest request, CallControl control) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
         }
+        Objects.requireNonNull(control, "control").requireActive(now());
 
         PkiId opId = request.submissionId();
         if (!request.namespace().endsWith("." + id)) {
@@ -498,20 +528,43 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
         SigningSubmissionId parsed = SigningSubmissionId.parse(opId);
         purgeExpiredOperations();
         parsed.validate(request.namespace(), now(), operationHorizon, Duration.ZERO);
-        if (!beginSign(request)) {
+        if (!beginSign(request, control)) {
             return opId;
         }
 
-        SignExecutionResult execution = executeAcceptedSign(request);
+        SignExecutionResult execution = null;
         try {
+            execution = executeAcceptedSign(request, control);
+            Instant commitTime = now();
+            control.requireActive(commitTime);
             completeSign(request, execution.status);
             return opId;
+        } catch (RuntimeException failure) {
+            Instant stoppedAt = now();
+            if (callStopped(request, control, stoppedAt)) {
+                completeSign(request, stoppedSignStatus(request, control, stoppedAt));
+            }
+            throw failure;
         } finally {
-            clearOwned("sign-result-copy", execution.signatureBytes);
+            if (execution != null) {
+                clearOwned("sign-result-copy", execution.signatureBytes);
+            }
         }
     }
 
-    private SignExecutionResult executeAcceptedSign(SignRequest request) {
+    private static boolean callStopped(SignRequest request, CallControl control, Instant observedAt) {
+        return request.cancellation().isCancelled() || control.cancellation().isCancelled()
+                || !observedAt.isBefore(control.deadline()) || deadlineReached(request.deadline(), observedAt);
+    }
+
+    private static OperationStatus stoppedSignStatus(SignRequest request, CallControl control, Instant observedAt) {
+        boolean cancelled = request.cancellation().isCancelled() || control.cancellation().isCancelled();
+        return cancelled
+                ? new OperationStatus(State.CANCELLED, observedAt, Optional.of(DC_CANCELLED), Optional.empty())
+                : expiredStatus(observedAt);
+    }
+
+    private SignExecutionResult executeAcceptedSign(SignRequest request, CallControl control) {
         byte[] signatureBytes = null;
         try {
             KeyRefParts parts = parseKeyRefOrThrow(request.keyRef(), true);
@@ -525,13 +578,16 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                 throw new InvalidRequestException(DC_INVALID_ALGORITHM_ID);
             }
 
+            control.requireActive(now());
             if (deadlineReached(request.deadline(), now())) {
                 return SignExecutionResult.terminal(expiredStatus());
             }
             KeyringSignatureExecutor executor = requireSignatureExecutor();
             signatureBytes = executor.sign(parts.privateAlias, resolvedAlgorithm.get(), request.content(),
-                    request.cancellation());
+                    () -> request.cancellation().isCancelled() || control.cancellation().isCancelled()
+                            || !now().isBefore(control.deadline()));
 
+            control.requireActive(now());
             Encoding outEnc = request.preferredSignatureEncoding().orElse(Encoding.BINARY);
             EncodedObject signature = encodeSignatureOrThrow(outEnc, signatureBytes);
 
@@ -555,7 +611,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
             }
             return SignExecutionResult.withSignature(failedStatus(detailCode), signatureBytes);
 
-        } catch (InvalidRequestException inv) { // NOPMD
+        } catch (InvalidRequestException inv) {
             return SignExecutionResult.withSignature(failedStatus(inv.detailCode), signatureBytes);
 
         } catch (KeyringSignatureExecutor.Cancellation cancelled) {
@@ -581,7 +637,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
         return new KeyringSignatureExecutor(requireKeyringOrThrow(), session);
     }
 
-    private boolean beginSign(SignRequest request) {
+    private boolean beginSign(SignRequest request, CallControl control) {
         PkiId operationId = request.submissionId();
         SignLockEntry entry = acquireOperationLock(operationId);
         OperationStatus event = null;
@@ -604,6 +660,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                 }
                 return false;
             }
+            control.requireActive(now());
             fingerprints.put(operationId, request.semanticFingerprint());
             fences.put(operationId, request.fencingToken());
             requests.put(operationId, request);
@@ -684,10 +741,11 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
      * @throws IllegalArgumentException if {@code request} is {@code null}
      */
     @Override
-    public PkiId submitVerify(VerifyRequest request) {
+    public PkiId submitVerify(VerifyRequest request, CallControl control) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
         }
+        Objects.requireNonNull(control, "control").requireActive(now());
 
         PkiId opId = newOperationId();
         putStatus(opId, new OperationStatus(State.RUNNING, now(), Optional.of(DC_SUBMITTED), Optional.empty()));
@@ -705,11 +763,14 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                 putStatus(opId, expiredStatus());
                 return opId;
             }
+            control.requireActive(now());
             request.cancellation().throwIfCancelled();
             boolean ok = verifyStreaming(request.algorithmId(), pub, request.content(), signatureBytes,
-                    request.cancellation());
+                    () -> request.cancellation().isCancelled() || control.cancellation().isCancelled()
+                            || !now().isBefore(control.deadline()));
 
             Instant completedAt = now();
+            control.requireActive(completedAt);
             if (deadlineReached(request.deadline(), completedAt)) {
                 putStatus(opId, expiredStatus(completedAt));
                 return opId;
@@ -719,7 +780,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
             putStatus(opId, new OperationStatus(State.SUCCEEDED, completedAt, Optional.of(dc), Optional.of(result)));
             return opId;
 
-        } catch (InvalidRequestException inv) { // NOPMD
+        } catch (InvalidRequestException inv) {
             putStatus(opId, new OperationStatus(State.FAILED, now(), Optional.of(inv.detailCode), Optional.empty()));
             return opId;
 
@@ -760,10 +821,11 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
      * @throws IllegalArgumentException if {@code operationId} is {@code null}
      */
     @Override
-    public OperationStatus status(PkiId operationId) {
+    public OperationStatus status(PkiId operationId, CallControl control) {
         if (operationId == null) {
             throw new IllegalArgumentException("operationId must not be null");
         }
+        Objects.requireNonNull(control, "control").requireActive(now());
         purgeExpiredOperations();
         OperationStatus st = this.statuses.get(operationId);
         if (st == null) {
@@ -772,13 +834,18 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                 String namespace = boundNamespace.get();
                 if (namespace != null && namespace.equals(parsed.namespace())
                         && !now().isBefore(parsed.createdAt().plus(operationHorizon))) {
-                    return new OperationStatus(State.EXPIRED, now(), Optional.of("EXPIRED"), Optional.empty());
+                    OperationStatus expired = new OperationStatus(State.EXPIRED, now(), Optional.of("EXPIRED"),
+                            Optional.empty());
+                    control.requireActive(now());
+                    return expired;
                 }
             } catch (IllegalArgumentException ignored) { // unknown verify operation identifiers remain synthetic failed
                 // handled by the stable unknown status below
             }
+            control.requireActive(now());
             return UNKNOWN_OPERATION_STATUS;
         }
+        control.requireActive(now());
         return st;
     }
 
@@ -788,7 +855,8 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
      * <p>
      * Cancellation is serialized with completion for the same signing identifier,
      * validates the fencing token, and durably records {@link State#CANCELLED}. It
-     * succeeds only while the retained operation is non-terminal.
+     * A replay of an accepted cancellation with the same operation identifier and
+     * fence succeeds without another state change, regardless of its safe reason.
      * </p>
      *
      * @param operationId workflow operation identifier; must not be {@code null}
@@ -800,7 +868,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
      *                                  {@code reason} is {@code null} or blank
      */
     @Override
-    public boolean cancel(PkiId operationId, long fencingToken, String reason) {
+    public boolean cancel(PkiId operationId, long fencingToken, String reason, CallControl control) {
         if (operationId == null) {
             throw new IllegalArgumentException("operationId must not be null");
         }
@@ -810,18 +878,27 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
         if (fencingToken < MIN_FENCING_TOKEN) {
             throw new IllegalArgumentException("fencingToken must be positive");
         }
+        Objects.requireNonNull(control, "control").requireActive(now());
         SignLockEntry entry = acquireOperationLock(operationId);
         OperationStatus cancelled = null;
         try {
             OperationStatus st = this.statuses.get(operationId);
-            if (st == null || st.isTerminal()) {
+            if (st == null) {
+                control.requireActive(now());
                 return false;
             }
             long currentFence = this.fences.getOrDefault(operationId, 0L);
+            if (st.isTerminal()) {
+                control.requireActive(now());
+                return st.state() == State.CANCELLED && fencingToken == currentFence;
+            }
             if (fencingToken < currentFence) {
+                control.requireActive(now());
                 return false;
             }
+            control.requireActive(now());
             this.fences.put(operationId, fencingToken);
+            this.cancellationReasons.putIfAbsent(operationId, cancellationReasonFingerprint(reason));
             cancelled = new OperationStatus(State.CANCELLED, now(), Optional.of(DC_CANCELLED), Optional.empty());
             statuses.put(operationId, cancelled);
             persistOperationRecord(operationId, cancelled);
@@ -831,6 +908,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                 notifySinks(operationId, cancelled);
             }
         }
+        control.requireActive(now());
         return true;
     }
 
@@ -889,6 +967,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
         this.statuses.clear();
         this.fingerprints.clear();
         this.fences.clear();
+        this.cancellationReasons.clear();
         this.requests.clear();
         this.sinks.clear();
         if (keyring != null) {
@@ -1200,7 +1279,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
         for (NotificationSink sink : this.sinks.values()) {
             try {
                 sink.onStatusChanged(id, st);
-            } catch (Throwable ignore) { // NOPMD
+            } catch (Throwable ignore) {
                 // sink must not break provider
                 logSafeFailure("CALLBACK", "NOTIFICATION_FAILED", ignore);
             }
@@ -1304,6 +1383,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                         requests.remove(operationId);
                         fingerprints.remove(operationId);
                         fences.remove(operationId);
+                        cancellationReasons.remove(operationId);
                         statuses.remove(operationId);
                         Files.deleteIfExists(operationRecordPath(operationId));
                     }
@@ -1362,13 +1442,16 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
         try (java.util.stream.Stream<Path> paths = Files.list(records)) {
             for (Path path : paths.filter(Files::isRegularFile).toList()) {
                 try (DataInputStream input = new DataInputStream(Files.newInputStream(path))) {
-                    if (input.readInt() != OPERATION_RECORD_VERSION) {
+                    int version = input.readInt();
+                    if (version != OPERATION_RECORD_VERSION && version != PREVIOUS_OPERATION_RECORD_VERSION) {
                         throw new IllegalStateException("Unsupported signing operation record version");
                     }
                     PkiId operationId = new PkiId(input.readUTF());
                     SigningSubmissionId parsedId = SigningSubmissionId.parse(operationId);
                     String fingerprint = input.readUTF();
                     long fence = input.readLong();
+                    Optional<String> cancellationReason = version == OPERATION_RECORD_VERSION && input.readBoolean()
+                            ? Optional.of(input.readUTF()) : Optional.empty();
                     SignRequest request = readSignRequest(input);
                     if (!operationId.equals(request.submissionId())
                             || !constantTimeEquals(fingerprint, request.semanticFingerprint())
@@ -1400,6 +1483,7 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                     }
                     this.fingerprints.put(operationId, fingerprint);
                     this.fences.put(operationId, fence);
+                    cancellationReason.ifPresent(value -> this.cancellationReasons.put(operationId, value));
                     this.requests.put(operationId, request);
                     this.statuses.put(operationId, loaded);
                     if (repaired) {
@@ -1419,6 +1503,10 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
                 output.writeUTF(operationId.value());
                 output.writeUTF(this.fingerprints.get(operationId));
                 output.writeLong(this.fences.getOrDefault(operationId, 0L));
+                output.writeBoolean(this.cancellationReasons.containsKey(operationId));
+                if (this.cancellationReasons.containsKey(operationId)) {
+                    output.writeUTF(this.cancellationReasons.get(operationId));
+                }
                 writeSignRequest(output, requests.get(operationId));
                 output.writeInt(stateCode(status.state()));
                 output.writeLong(status.updatedAt().getEpochSecond());
@@ -1465,6 +1553,20 @@ public final class ZeroEchoLibSignatureWorkflow implements SignatureWorkflow, Pu
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(operationId.value().getBytes(StandardCharsets.UTF_8));
             return this.operationRoot.resolve("records").resolve(HexFormat.of().formatHex(digest) + ".bin");
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
+    }
+
+    private static String cancellationReasonFingerprint(String reason) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(reason.getBytes(StandardCharsets.UTF_8));
+            try {
+                return HexFormat.of().formatHex(digest);
+            } finally {
+                Arrays.fill(digest, (byte) 0);
+            }
         } catch (NoSuchAlgorithmException ex) {
             throw new IllegalStateException("SHA-256 is unavailable", ex);
         }

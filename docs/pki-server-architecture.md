@@ -243,9 +243,47 @@ retires advisory state before reporting that marker. The retained record does no
 regain a live content reference. Store restart recovery uses authoritative live
 references to reclaim the orphaned staged file safely.
 
+Each fully opened realm owns exactly one signing-reconciliation worker. The
+worker starts immediately before the server becomes ready, runs one synchronous
+bounded pass at a time, and self-schedules the next pass only after the current
+pass returns. It has no queue of missed ticks and creates no active-active lease;
+the existing realm, provider, and filesystem ownership locks remain the
+single-active authority.
+
+The reconciliation cursor is an advisory exclusive key into a metadata snapshot
+ordered by canonical submission identifier. A pass examines no more than its
+record bound, makes no more than its independent provider-call budget, and wraps
+to the beginning after reaching the end so deferred records cannot starve other
+records. Per-record failures are isolated and persisted separately from the
+provider detail code with a store-time retry schedule of 2, 4, 8, 16, then 30
+seconds. Terminal and retired records carry no retry metadata.
+
+Shutdown first stops reconciliation admission and scheduling, then cooperatively
+cancels and drains the active pass before closing the realm session, providers,
+or store. If a provider ignores cancellation beyond the forced-shutdown period,
+the server reports `SIGNING_RECONCILIATION_SHUTDOWN_TIMEOUT` and leaves those
+dependencies open so close can be retried without use-after-close behavior.
+
+`SignatureWorkflow` implementations are trusted in-process components and every
+submit, status, verify, and cancel call now requires a `CallControl` carrying an
+absolute deadline and cancellation signal. This is an intentionally breaking
+provider-SPI migration: implementations must check the control before and
+between I/O, before an externally visible effect, and before returning. These
+controls are cooperative bounds; the server does not kill provider threads or
+close their dependencies while a violating call remains live. Providers that
+need enforcement against untrusted or non-cooperative code require a future
+out-of-process provider boundary with process or RPC isolation.
+
 Payload staging remains streaming `O(n)` time and `O(1)` aggregate auxiliary heap
 excluding the signature. Synchronous waiting performs
-`O(TTL / polling interval)` status observations.
+`O(TTL / polling interval)` status observations. For `M` metadata keys and a
+bound `B`, an ordered reconciliation page is `O(log M + B)` traversal and each
+candidate point access is `O(log M)`, for `O(B log M)` candidate access in the
+worst case. Normal pass auxiliary memory is `O(B)`. A concurrent metadata commit
+may detach the currently pinned index generation once in `O(M)` time and memory;
+later commits do not copy again merely because an older generation remains
+pinned. A pass uses at most `maximumProviderCalls` external calls, and each realm
+owns `O(1)` scheduler state.
 
 ## 7. Authorization architecture
 

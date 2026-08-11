@@ -40,6 +40,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -82,6 +83,7 @@ import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 
 
 import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
@@ -183,7 +185,7 @@ import zeroecho.pki.spi.store.RevocationHistory;
         "PMD.ExcessivePublicCount", "PMD.UseTryWithResources", "PMD.ExceptionAsFlowControl",
         "PMD.PreserveStackTrace", "PMD.NcssCount", "PMD.AvoidDuplicateLiterals",
         "PMD.ControlStatementBraces", "PMD.CollapsibleIfStatements", "PMD.AvoidDeeplyNestedIfStmts",
-        "PMD.AvoidLiteralsInIfCondition" })
+        "PMD.AvoidLiteralsInIfCondition", "PMD.AvoidCatchingGenericException" })
 public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(FilesystemPkiStore.class.getName());
@@ -199,6 +201,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private static final int SIGN_OWNER_VALUE_VERSION = 1;
     private static final int STATUS_OWNER_VALUE_VERSION = 1;
     private static final int METADATA_TRANSFER_BUFFER_BYTES = 16 * 1024;
+    private static final int MAX_METADATA_VALUE_BYTES = FsCodec.MAX_COMPONENT_BYTES + 64 * 1024;
     private static final ThreadLocal<StatusCommitFaultPoint> STATUS_COMMIT_FAULT = new ThreadLocal<>();
     private static final ThreadLocal<PublicationCommitFaultPoint> PUBLICATION_COMMIT_FAULT = new ThreadLocal<>();
     private static final String SIGN_FINGERPRINT_PREFIX = "signfp:v1:";
@@ -1636,6 +1639,137 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return listStoredSigns().stream().map(StoredSign::record).toList();
     }
 
+    @Override
+    public SignWorkflowStore.Page pageSignRecords(Optional<String> exclusiveCursor, int maximumRecords,
+            CancellationSignal cancellation) {
+        requireStoreUsable();
+        Objects.requireNonNull(exclusiveCursor, "exclusiveCursor");
+        Objects.requireNonNull(cancellation, "cancellation");
+        if (maximumRecords < 1 || maximumRecords > 4096) {
+            throw new IllegalArgumentException("maximumRecords must be between 1 and 4096");
+        }
+        Optional<String> lower = exclusiveCursor;
+        MetadataSnapshot.KeyRange range = new MetadataSnapshot.KeyRange(SIGN_RECORD_NAMESPACE, lower,
+                Optional.empty());
+        List<SignWorkflowStore.Record> records = new ArrayList<>(maximumRecords);
+        int examined = 0;
+        int failures = 0;
+        Optional<String> nextCursor = exclusiveCursor;
+        if (cancellation.isCancelled()) {
+            return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false);
+        }
+        try (MetadataSnapshot snapshot = metadataStore.snapshot();
+                MetadataCursor cursor = snapshot.scan(range, cancellation)) {
+            while (examined < maximumRecords) {
+                Optional<MetadataSnapshot.Record> next;
+                try {
+                    next = cursor.next(cancellation);
+                } catch (InterruptedIOException cancelled) {
+                    if (cancellation.isCancelled()) {
+                        return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false);
+                    }
+                    throw cancelled;
+                }
+                if (next.isEmpty()) {
+                    return new SignWorkflowStore.Page(records, nextCursor, examined, failures, true);
+                }
+                try (MetadataSnapshot.Record candidate = next.orElseThrow()) {
+                    String candidateCursor = candidate.key().key();
+                    if (exclusiveCursor.filter(candidateCursor::equals).isPresent()) {
+                        continue;
+                    }
+                    if (cancellation.isCancelled()) {
+                        return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false);
+                    }
+                    examined++;
+                    nextCursor = Optional.of(candidateCursor);
+                    try {
+                        records.add(decodeStoredSign(snapshot, candidate).record());
+                    } catch (RuntimeException | IOException malformedCandidate) {
+                        failures++;
+                    }
+                }
+            }
+            boolean endReached;
+            try {
+                endReached = cursor.next(cancellation).isEmpty();
+            } catch (InterruptedIOException cancelled) {
+                if (!cancellation.isCancelled()) {
+                    throw cancelled;
+                }
+                endReached = false;
+            }
+            return new SignWorkflowStore.Page(records, nextCursor, examined, failures, endReached);
+        } catch (InterruptedIOException exception) {
+            if (cancellation.isCancelled()) {
+                return new SignWorkflowStore.Page(records, nextCursor, examined, failures, false);
+            }
+            throw new IllegalStateException("Failed to page authoritative signing records", exception);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to page authoritative signing records", exception);
+        }
+    }
+
+    @Override
+    public Optional<SignWorkflowStore.Record> deferSignReconciliation(PkiId submissionId, long expectedRevision,
+            long fence, SignWorkflowStore.ReconciliationFailureClass failureClass) {
+        requireStoreUsable();
+        Objects.requireNonNull(failureClass, "failureClass");
+        SignLockEntry lock = acquireSignLock(submissionId);
+        try {
+            Optional<StoredSign> optional = readStoredSign(submissionId);
+            if (optional.isEmpty()) {
+                return Optional.empty();
+            }
+            StoredSign stored = optional.orElseThrow();
+            SignWorkflowStore.Record current = stored.record();
+            if (current.revision() != expectedRevision || current.fence() != fence
+                    || isRetirableSignState(current.state())) {
+                return Optional.empty();
+            }
+            int failureCount = current.failureCount() == Integer.MAX_VALUE
+                    ? Integer.MAX_VALUE : current.failureCount() + 1;
+            long delaySeconds = failureCount >= 5 ? 30L : 2L << failureCount - 1;
+            Instant now = signingNow();
+            Instant proposedEligibility = now.plusSeconds(Math.min(delaySeconds, 30L));
+            Instant horizonEnd = current.createdAt().plus(options.signingOperationHorizon());
+            Instant nextEligible = proposedEligibility.isAfter(horizonEnd) ? horizonEnd : proposedEligibility;
+            SignWorkflowStore.Record deferred = copySignRecord(current, current.state(), current.revision() + 1L,
+                    current.fence(), current.leaseUntil(), current.detailCode(), current.result(),
+                    current.providerUpdatedAt(), failureCount, Optional.of(nextEligible), Optional.of(failureClass));
+            return replaceSignMetadata(stored, deferred, false) ? Optional.of(deferred) : Optional.empty();
+        } finally {
+            releaseSignLock(submissionId, lock);
+        }
+    }
+
+    @Override
+    public Optional<SignWorkflowStore.Record> clearSignReconciliation(PkiId submissionId, long expectedRevision,
+            long fence) {
+        requireStoreUsable();
+        SignLockEntry lock = acquireSignLock(submissionId);
+        try {
+            Optional<StoredSign> optional = readStoredSign(submissionId);
+            if (optional.isEmpty()) {
+                return Optional.empty();
+            }
+            StoredSign stored = optional.orElseThrow();
+            SignWorkflowStore.Record current = stored.record();
+            if (current.revision() != expectedRevision || current.fence() != fence) {
+                return Optional.empty();
+            }
+            if (current.failureCount() == 0) {
+                return Optional.of(current);
+            }
+            SignWorkflowStore.Record cleared = copySignRecord(current, current.state(), current.revision() + 1L,
+                    current.fence(), current.leaseUntil(), current.detailCode(), current.result(),
+                    current.providerUpdatedAt(), 0, Optional.empty(), Optional.empty());
+            return replaceSignMetadata(stored, cleared, false) ? Optional.of(cleared) : Optional.empty();
+        } finally {
+            releaseSignLock(submissionId, lock);
+        }
+    }
+
     private List<StoredSign> listStoredSigns() {
         List<StoredSign> storedSigns = new ArrayList<>();
         Set<String> recordIdentities = new HashSet<>();
@@ -1806,7 +1940,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
             SignWorkflowStore.Record claimed = copySignRecord(current, current.state(), current.revision() + 1L,
                     current.fence() + 1L, Optional.of(now.plus(lease)), current.detailCode(), current.result(),
-                    current.providerUpdatedAt());
+                    current.providerUpdatedAt(), 0, Optional.empty(), Optional.empty());
             return replaceSignMetadata(stored, claimed, false) ? Optional.of(claimed) : Optional.empty();
         } finally {
             releaseSignLock(submissionId, lock);
@@ -1831,7 +1965,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             }
             SignWorkflowStore.Record renewed = copySignRecord(current, current.state(), current.revision() + 1L, fence,
                     Optional.of(signingNow().plus(lease)), current.detailCode(), current.result(),
-                    current.providerUpdatedAt());
+                    current.providerUpdatedAt(), current.failureCount(), current.nextEligibleAt(),
+                    current.reconciliationFailureClass());
             return replaceSignMetadata(stored, renewed, false) ? Optional.of(renewed) : Optional.empty();
         } finally {
             releaseSignLock(submissionId, lock);
@@ -1868,7 +2003,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
                 throw new IllegalArgumentException("Successful signing completion timestamp is not trustworthy");
             }
             SignWorkflowStore.Record transitioned = copySignRecord(current, target, current.revision() + 1L, fence,
-                    Optional.empty(), detailCode, result, providerUpdatedAt);
+                    Optional.empty(), detailCode, result, providerUpdatedAt, 0, Optional.empty(), Optional.empty());
             return replaceSignMetadata(stored, transitioned, false) ? Optional.of(transitioned) : Optional.empty();
         } finally {
             releaseSignLock(submissionId, lock);
@@ -1896,7 +2031,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             SignWorkflowStore.Record retired = new SignWorkflowStore.Record(current.submissionId(),
                     current.namespace(), current.fingerprint(), current.owner(), current.createdAt(),
                     current.deadline(), retiredRequest, SignWorkflowStore.State.RETIRED, current.revision() + 1L,
-                    fence, Optional.empty(), Optional.of("RETIRED"), current.result(), current.providerUpdatedAt());
+                    fence, Optional.empty(), Optional.of("RETIRED"), current.result(), current.providerUpdatedAt(), 0,
+                    Optional.empty(), Optional.empty());
             if (!replaceSignMetadata(stored, retired, true)) {
                 return Optional.empty();
             }
@@ -2308,8 +2444,16 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             requireValidSignRecord(leaseUntil.isAfter(record.createdAt()) && !leaseUntil.isAfter(horizonEnd), record,
                     "LEASE_TIME_INVALID");
         }
+        if (record.nextEligibleAt().isPresent()) {
+            Instant nextEligible = record.nextEligibleAt().orElseThrow();
+            requireValidSignRecord(!nextEligible.isAfter(horizonEnd)
+                    && !nextEligible.isAfter(signingNow().plusSeconds(30L)), record,
+                    "RECONCILIATION_ELIGIBILITY_INVALID");
+        }
         if (record.result().isPresent()) {
-            requireValidSignRecord(record.result().get().bytes().length <= FsCodec.MAX_COMPONENT_BYTES, record,
+            requireValidSignRecord(record.result().get().encoding() == Encoding.BINARY
+                    && record.result().get().bytes().length > 0
+                    && record.result().get().bytes().length <= 1_048_576, record,
                     "RESULT_SIZE_INVALID");
         }
 
@@ -2363,12 +2507,15 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         return result;
     }
 
+    @SuppressWarnings("PMD.ExcessiveParameterList")
     private static SignWorkflowStore.Record copySignRecord(SignWorkflowStore.Record current,
             SignWorkflowStore.State state, long revision, long fence, Optional<Instant> leaseUntil,
-            Optional<String> detailCode, Optional<EncodedObject> result, Optional<Instant> providerUpdatedAt) {
+            Optional<String> detailCode, Optional<EncodedObject> result, Optional<Instant> providerUpdatedAt,
+            int failureCount, Optional<Instant> nextEligibleAt,
+            Optional<SignWorkflowStore.ReconciliationFailureClass> failureClass) {
         return new SignWorkflowStore.Record(current.submissionId(), current.namespace(), current.fingerprint(),
                 current.owner(), current.createdAt(), current.deadline(), current.request(), state, revision, fence,
-                leaseUntil, detailCode, result, providerUpdatedAt);
+                leaseUntil, detailCode, result, providerUpdatedAt, failureCount, nextEligibleAt, failureClass);
     }
 
     private static MetadataKey signingRecordKey(PkiId submissionId) {
@@ -2564,7 +2711,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     private static byte[] readMetadataValue(MetadataSnapshot.Record record) throws IOException {
         long length = record.length().orElseThrow();
-        if (length < 0L || length > FsCodec.MAX_COMPONENT_BYTES) {
+        if (length < 0L || length > MAX_METADATA_VALUE_BYTES) {
             throw new IOException("Metadata value length is invalid");
         }
         byte[] result = new byte[Math.toIntExact(length)];
@@ -2643,7 +2790,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             String ownerId = readOwnerField(input);
             String storeId = readOwnerField(input);
             String contentId = readOwnerField(input);
-            zeroecho.pki.api.Encoding encoding = zeroecho.pki.api.Encoding.valueOf(readOwnerField(input));
+            Encoding encoding = Encoding.valueOf(readOwnerField(input));
             String digest = readOwnerField(input);
             DurableContentReference.Lifecycle lifecycle = DurableContentReference.Lifecycle.valueOf(
                     readOwnerField(input));

@@ -85,10 +85,12 @@ public final class PkiSigningBusOperatorApprovalTest {
                     "test", 1L, access, keyRef, "SHA256withRSA", new ImmutableByteContent(new byte[] { 1 }),
                     Optional.of(Encoding.BINARY), Optional.of(Instant.EPOCH));
 
-            PkiId operationId = signer.submitSign(request);
+            SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(Instant.MAX,
+                    zeroecho.core.io.CancellationSignal.NONE);
+            PkiId operationId = signer.submitSign(request, control);
             signer.approve(operationId);
 
-            SignatureWorkflow.OperationStatus status = signer.status(operationId);
+            SignatureWorkflow.OperationStatus status = signer.status(operationId, control);
             assertEquals(SignatureWorkflow.State.EXPIRED, status.state());
             assertTrue(status.result().isEmpty());
         }

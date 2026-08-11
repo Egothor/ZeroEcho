@@ -80,8 +80,10 @@ public final class ZeroEchoLibKeyRefParsingTest {
                     new KeyRef("zeroecho-lib:abc"), "ECDSA", new ImmutableByteContent(new byte[] { 0x01 }),
                     Optional.of(Encoding.BINARY), Optional.of(Instant.now()));
 
-            PkiId opId = wf.submitSign(req);
-            SignatureWorkflow.OperationStatus st = wf.status(opId);
+            SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(Instant.MAX,
+                    CancellationSignal.NONE);
+            PkiId opId = wf.submitSign(req, control);
+            SignatureWorkflow.OperationStatus st = wf.status(opId, control);
 
             System.out.println("...state=" + st.state());
             System.out.println("...detailCode=" + st.detailCode().orElse("<none>"));
@@ -109,8 +111,10 @@ public final class ZeroEchoLibKeyRefParsingTest {
                     Optional.of(new EncodedObject(Encoding.BINARY, new byte[] { 0x03 })), // unsupported form
                     Optional.of(Instant.now()), CancellationSignal.NONE);
 
-            PkiId opId = wf.submitVerify(req);
-            SignatureWorkflow.OperationStatus st = wf.status(opId);
+            SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(Instant.MAX,
+                    CancellationSignal.NONE);
+            PkiId opId = wf.submitVerify(req, control);
+            SignatureWorkflow.OperationStatus st = wf.status(opId, control);
 
             System.out.println("...state=" + st.state());
             System.out.println("...detailCode=" + st.detailCode().orElse("<none>"));
@@ -130,7 +134,8 @@ public final class ZeroEchoLibKeyRefParsingTest {
                 TestKeyringUnlocks.provider())) {
 
             PkiId unknown = new PkiId("00000000-0000-0000-0000-000000000000");
-            SignatureWorkflow.OperationStatus st = wf.status(unknown);
+            SignatureWorkflow.OperationStatus st = wf.status(unknown,
+                    new SignatureWorkflow.CallControl(Instant.MAX, CancellationSignal.NONE));
 
             System.out.println("...state=" + st.state());
             System.out.println("...detailCode=" + st.detailCode().orElse("<none>"));

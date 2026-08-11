@@ -121,8 +121,24 @@ class PkiHttpsServerTest {
                 valid.realm(), valid.listener(), valid.authentication(), valid.execution(), valid.runtime()));
         String production = java.nio.file.Files.readString(java.nio.file.Path.of(
                 "..", "docs", "pki-server-production-example.json"));
-        assertTrue(PkiServerConfigurationCodec.decode(production.getBytes(
-                java.nio.charset.StandardCharsets.UTF_8)).publicListener().isEmpty());
+        PkiServerConfiguration decoded = PkiServerConfigurationCodec.decode(production.getBytes(
+                java.nio.charset.StandardCharsets.UTF_8));
+        assertTrue(decoded.publicListener().isEmpty());
+        assertEquals(PkiServerConfiguration.SigningReconciliation.defaults(), decoded.signingReconciliation());
+        String versionFive = production.replace("\"version\": 6", "\"version\": 5")
+                .replace("  \"signingReconciliation\": {\"enabled\": true, \"maxRecords\": 256, "
+                        + "\"maxCalls\": 64, \"passTimeoutMillis\": 30000, "
+                        + "\"providerCallTimeoutMillis\": 10000, \"idleIntervalMillis\": 2000},\n", "");
+        PkiServerConfiguration migrated = PkiServerConfigurationCodec.decode(
+                versionFive.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals(PkiServerConfiguration.CURRENT_VERSION, migrated.version());
+        assertEquals(PkiServerConfiguration.SigningReconciliation.defaults(), migrated.signingReconciliation());
+        assertThrows(IllegalArgumentException.class,
+                () -> new PkiServerConfiguration.SigningReconciliation(true, 4, 5, Duration.ofSeconds(30),
+                        Duration.ofSeconds(10), Duration.ofSeconds(2)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PkiServerConfiguration.SigningReconciliation(true, 4, 4, Duration.ofSeconds(5),
+                        Duration.ofSeconds(10), Duration.ofSeconds(2)));
         assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
                 .replace("\"publicListener\": {\"enabled\": false},\n", "")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
