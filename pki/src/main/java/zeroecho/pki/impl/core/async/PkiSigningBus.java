@@ -105,6 +105,8 @@ public final class PkiSigningBus implements AutoCloseable {
     public static final String TYPE_SIGN = "PKI.SIGN";
 
     private static final String ENDPOINT_SIGNER = "signer";
+    private static final String SIGNING_CONTENT_CLEANUP_FAILED =
+            "Signing content cleanup failed: code=SIGNING_CONTENT_CLEANUP_FAILED";
     private static final Duration CLAIM_LEASE = Duration.ofSeconds(30);
     private static final long INITIAL_FENCE = 0L;
 
@@ -394,61 +396,100 @@ public final class PkiSigningBus implements AutoCloseable {
      * @param content         durable repeatable content to sign
      * @param ttl             time-to-live
      * @param workflowPayload minimal continuation payload
+     *
+     * @apiNote Once this method is invoked with a non-null {@code content}
+     *          reference, the bus owns its disposition. A failure before durable
+     *          intent creation retires content only after the store proves that no
+     *          record exists. Committed or durability-uncertain content remains
+     *          owned by the bus for reconciliation and recovery. Callers must not
+     *          release the reference after invoking this method.
      */
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.ExceptionAsFlowControl" })
     public void submitSign(PkiId opId, Principal owner, KeyRef keyRef, String algorithmId,
             DurableContentReference content,
             Duration ttl, Optional<EncodedObject> workflowPayload) {
 
-        Objects.requireNonNull(opId, "opId");
-        Objects.requireNonNull(owner, "owner");
-        Objects.requireNonNull(keyRef, "keyRef");
-        Objects.requireNonNull(algorithmId, "algorithmId");
         Objects.requireNonNull(content, "content");
-        Objects.requireNonNull(ttl, "ttl");
-        Objects.requireNonNull(workflowPayload, "workflowPayload");
 
-        if (algorithmId.isBlank()) {
-            throw new IllegalArgumentException("algorithmId must not be blank");
-        }
-        X509ExecutionPlan<SignatureWorkflow> submittedPlan = authority.planSigning(algorithmId,
-                workflowImplementationId(signer), SignatureWorkflow.class);
-        authority.authorize(submittedPlan, signer, AlgorithmExecutionCapability.Direction.SIGN);
-        AlgorithmIdentity submittedIdentity = submittedPlan.selection().requested();
-        if (ttl.isZero() || ttl.isNegative()) {
-            throw new IllegalArgumentException("ttl must be positive");
-        }
-
-        if (workflowPayload.isEmpty()) {
-            throw new IllegalArgumentException("workflowPayload must be present for new sign operation");
-        }
-        PkiId baseOpId = normalizeBaseOperationId(opId);
-        SignWorkflowStore.Record authoritative;
-        try (OperationCoordinator.Lease ignored = coordinator.acquire(baseOpId)) {
-            SigningSubmissionId parsed = SigningSubmissionId.parse(baseOpId);
-            Instant deadline = parsed.createdAt().plus(ttl);
-            SignContinuation continuation = SignContinuation.decode(workflowPayload.get(), store.stagedContent());
-            X509ExecutionPlan<SignatureWorkflow> continuationPlan = authority.planSigning(continuation.algorithmId,
+        PkiId baseOpId = null;
+        try {
+            Objects.requireNonNull(opId, "opId");
+            Objects.requireNonNull(owner, "owner");
+            Objects.requireNonNull(keyRef, "keyRef");
+            Objects.requireNonNull(algorithmId, "algorithmId");
+            Objects.requireNonNull(ttl, "ttl");
+            Objects.requireNonNull(workflowPayload, "workflowPayload");
+            if (algorithmId.isBlank()) {
+                throw new IllegalArgumentException("algorithmId must not be blank");
+            }
+            X509ExecutionPlan<SignatureWorkflow> submittedPlan = authority.planSigning(algorithmId,
                     workflowImplementationId(signer), SignatureWorkflow.class);
-            authority.authorize(continuationPlan, signer, AlgorithmExecutionCapability.Direction.SIGN);
-            AlgorithmIdentity continuationIdentity = continuationPlan.selection().requested();
-            if (!owner.equals(continuation.accessContext.principal()) || !keyRef.equals(continuation.keyRef)
-                    || !submittedIdentity.equals(continuationIdentity)
-                    || !content.equals(continuation.content())) {
-                throw new IllegalArgumentException("Sign continuation does not match the submitted request");
+            authority.authorize(submittedPlan, signer, AlgorithmExecutionCapability.Direction.SIGN);
+            AlgorithmIdentity submittedIdentity = submittedPlan.selection().requested();
+            if (ttl.isZero() || ttl.isNegative()) {
+                throw new IllegalArgumentException("ttl must be positive");
             }
-            continuation = continuation.withAlgorithmId(submittedIdentity.canonicalForm());
-            String fingerprint = continuation.semanticFingerprint(namespace, deadline);
-            EncodedObject persistedRequest = continuation.withSignerOpId(baseOpId).encode();
-            SignWorkflowStore.Record intent = new SignWorkflowStore.Record(baseOpId, namespace, fingerprint, owner,
-                    parsed.createdAt(), deadline, persistedRequest, SignWorkflowStore.State.INTENT, 0L, 0L,
-                    Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty());
-            SignWorkflowStore.CreateResult created = store.createSignIntent(intent);
-            if (created == SignWorkflowStore.CreateResult.CONFLICT) {
-                throw new PkiException("Signing submission identifier conflicts with a different request");
+
+            if (workflowPayload.isEmpty()) {
+                throw new IllegalArgumentException("workflowPayload must be present for new sign operation");
             }
-            authoritative = store.getSignRecord(baseOpId).orElseThrow();
+            PkiId normalizedBaseOpId = normalizeBaseOperationId(opId);
+            SigningSubmissionId parsed = SigningSubmissionId.parse(normalizedBaseOpId);
+            baseOpId = normalizedBaseOpId;
+            SignWorkflowStore.Record authoritative;
+            try (OperationCoordinator.Lease ignored = coordinator.acquire(baseOpId)) {
+                Instant deadline = parsed.createdAt().plus(ttl);
+                SignContinuation continuation = SignContinuation.decode(workflowPayload.get(), store.stagedContent());
+                X509ExecutionPlan<SignatureWorkflow> continuationPlan = authority.planSigning(
+                        continuation.algorithmId, workflowImplementationId(signer), SignatureWorkflow.class);
+                authority.authorize(continuationPlan, signer, AlgorithmExecutionCapability.Direction.SIGN);
+                AlgorithmIdentity continuationIdentity = continuationPlan.selection().requested();
+                if (!owner.equals(continuation.accessContext.principal()) || !keyRef.equals(continuation.keyRef)
+                        || !submittedIdentity.equals(continuationIdentity)
+                        || !content.equals(continuation.content())) {
+                    throw new IllegalArgumentException("Sign continuation does not match the submitted request");
+                }
+                continuation = continuation.withAlgorithmId(submittedIdentity.canonicalForm());
+                String fingerprint = continuation.semanticFingerprint(namespace, deadline);
+                EncodedObject persistedRequest = continuation.withSignerOpId(baseOpId).encode();
+                SignWorkflowStore.Record intent = new SignWorkflowStore.Record(baseOpId, namespace, fingerprint,
+                        owner, parsed.createdAt(), deadline, persistedRequest, SignWorkflowStore.State.INTENT, 0L,
+                        0L, Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty());
+                SignWorkflowStore.CreateResult created = store.createSignIntent(intent);
+                if (created == SignWorkflowStore.CreateResult.CONFLICT) {
+                    releaseAttachedOrConflictingContent(content);
+                    throw new PkiException("Signing submission identifier conflicts with a different request");
+                }
+                if (created == SignWorkflowStore.CreateResult.ATTACHED) {
+                    releaseAttachedOrConflictingContent(content);
+                }
+                authoritative = store.getSignRecord(baseOpId).orElseThrow();
+            }
+            project(authoritative);
+        } catch (RuntimeException | Error failure) {
+            releaseSubmissionContentIfUnowned(baseOpId, content);
+            throw failure;
         }
-        project(authoritative);
+    }
+
+    private void releaseSubmissionContentIfUnowned(PkiId operationId, DurableContentReference content) {
+        try {
+            if (operationId == null || store.getSignRecord(operationId).isEmpty()) {
+                releaseContent(content);
+            }
+        } catch (RuntimeException | Error cleanupOrDurabilityFailure) { // NOPMD - preserve primary boundary failure
+            // An unreadable durability state is not proof of abandonment. Restart
+            // recovery reconciles committed references and reclaims true orphans.
+        }
+    }
+
+    private void releaseAttachedOrConflictingContent(DurableContentReference content) {
+        try {
+            releaseContent(content);
+        } catch (RuntimeException | Error retainedOrCleanupFailure) { // NOPMD - authoritative record wins
+            // An identical attachment may already own this exact reference. A
+            // cleanup failure leaves an orphan for restart recovery.
+        }
     }
 
     /**
@@ -525,6 +566,9 @@ public final class PkiSigningBus implements AutoCloseable {
      * still-running operation remains durably {@code CANCELLING} for a later retry.
      * Only an observed immutable provider terminal state is changed to
      * {@code RETIRED}, and an on-time successful result is preserved.
+     * If physical staged-content deletion fails after {@code RETIRED} commits,
+     * workflow and advisory state are still removed before a stable cleanup failure
+     * is reported; restart recovery reclaims the resulting orphan.
      * </p>
      *
      * @param opId   operation identifier; must not be {@code null}
@@ -533,6 +577,7 @@ public final class PkiSigningBus implements AutoCloseable {
      * @throws IllegalArgumentException if {@code reason} is {@code null} or blank
      * @throws PkiException             if locally owned cleanup fails
      */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void retireSignOperation(PkiId opId, String reason) {
         PkiId baseOpId = normalizeBaseOperationId(opId);
         if (reason == null || reason.isBlank()) {
@@ -553,18 +598,42 @@ public final class PkiSigningBus implements AutoCloseable {
                 return;
             }
         }
+        Throwable postCommitCleanupFailure = null;
         try (OperationCoordinator.Lease ignored = coordinator.acquire(baseOpId)) {
             state = store.getSignRecord(baseOpId).orElse(state);
             if (!isTerminalSignState(state.state())) {
                 return;
             }
-            state = confirmRetirement(baseOpId, state);
+            try {
+                state = confirmRetirement(baseOpId, state);
+            } catch (RuntimeException | Error failure) {
+                SignWorkflowStore.Record observed = store.getSignRecord(baseOpId)
+                        .orElseThrow(() -> rethrowRetirementFailure(failure));
+                if (observed.state() != SignWorkflowStore.State.RETIRED) {
+                    throw failure;
+                }
+                state = observed;
+                postCommitCleanupFailure = failure;
+            }
             store.deleteWorkflowState(baseOpId);
         }
         AsyncState advisoryState = state.result().isPresent() ? AsyncState.SUCCEEDED : AsyncState.CANCELLED;
         bus.update(baseOpId, new AsyncStatus(advisoryState, store.signingNow(), Optional.of("RETIRED"),
                 Map.of("reason", "local-retirement")), state.result());
         bus.retire(baseOpId);
+        if (postCommitCleanupFailure instanceof Error error) {
+            throw error;
+        }
+        if (postCommitCleanupFailure != null) {
+            throw new PkiException(SIGNING_CONTENT_CLEANUP_FAILED);
+        }
+    }
+
+    private static RuntimeException rethrowRetirementFailure(Throwable failure) {
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        return (RuntimeException) failure;
     }
 
 

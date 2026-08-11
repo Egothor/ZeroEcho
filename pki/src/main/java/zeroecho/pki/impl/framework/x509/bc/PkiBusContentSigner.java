@@ -96,6 +96,25 @@ import zeroecho.pki.util.async.AsyncState;
  * returns or throws.</li>
  * </ul>
  *
+ * <h2>Lifecycle and ownership</h2>
+ * <p>
+ * Each instance is a one-shot resource and must be closed. Closing before
+ * {@link #getSignature()} aborts incomplete staging. Calling
+ * {@code getSignature()} atomically consumes the instance: content completed
+ * before bus submission remains signer-owned, while invoking
+ * {@link PkiSigningBus#submitSign(PkiId, Principal, KeyRef, String, DurableContentReference, Duration, Optional)}
+ * transfers disposition to the bus. The bus releases content only when it can
+ * prove no durable intent exists; committed or durability-uncertain content is
+ * retained for reconciliation.
+ * </p>
+ * <p>
+ * Retirement removes disposable staged to-be-signed bytes and live workflow
+ * continuation state. The store retains content-free terminal evidence, including
+ * immutable content commitment metadata and any trustworthy on-time result,
+ * through its configured signing horizon. Restart recovery reclaims orphaned
+ * staged files without treating retained terminal evidence as live content.
+ * </p>
+ *
  * <h2>Security considerations</h2>
  * <ul>
  * <li>This class never accesses private key material directly.</li>
@@ -111,10 +130,17 @@ import zeroecho.pki.util.async.AsyncState;
  * Instances of this class are not thread-safe. Each instance owns one sequential
  * staged-content sink and is intended for one certificate or CRL signing flow.
  * </p>
+ *
+ * <h2>Complexity</h2>
+ * <p>
+ * Staging is streaming {@code O(n)} time with {@code O(1)} aggregate auxiliary
+ * heap, excluding the returned signature. Polling performs
+ * {@code O(TTL / interval)} status observations.
+ * </p>
  */
 // PMD cannot infer that retaining provider causes would violate the redaction contract.
 @SuppressWarnings("PMD.PreserveStackTrace")
-public final class PkiBusContentSigner implements ContentSigner {
+public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
 
     private final PkiSigningBus bus;
     private final KeyRef keyRef;
@@ -124,6 +150,8 @@ public final class PkiBusContentSigner implements ContentSigner {
 
     private final ContentSink contentSink;
     private final OutputStream contentOutput;
+    private boolean signatureRequested;
+    private boolean closed;
 
     /**
      * Creates a signer that routes signature generation through the PKI signing
@@ -237,9 +265,12 @@ public final class PkiBusContentSigner implements ContentSigner {
      * </p>
      *
      * @return sequential staged-content output stream
+     * @throws IllegalStateException if signing has already been requested or this
+     *                               signer has been closed
      */
     @Override
     public OutputStream getOutputStream() {
+        requireWritable();
         return contentOutput;
     }
 
@@ -269,10 +300,11 @@ public final class PkiBusContentSigner implements ContentSigner {
      * <p>
      * On successful completion, the signature bytes contained in the workflow
      * result are returned. If the workflow reports success but no result is
-     * available, the method fails explicitly. Every operation for which submission
-     * is attempted is retired before the method returns or throws. Cleanup failures
-     * are suppressed on the primary signing failure and otherwise become the
-     * returned failure.
+     * available, the method fails explicitly. Invoking this method consumes the
+     * signer; a second invocation fails. Every operation for which submission is
+     * attempted is retired before the method returns or throws. Cleanup failures
+     * are discarded when a safe primary signing failure already exists and
+     * otherwise become a stable, redacted cleanup failure.
      * </p>
      *
      * <p>
@@ -285,16 +317,21 @@ public final class PkiBusContentSigner implements ContentSigner {
      * @throws PkiException if the signing workflow fails, if a successful workflow
      *                      produces no signature result, or if signing does not
      *                      complete within the configured TTL
+     * @throws IllegalStateException if signing has already been requested or this
+     *                               signer has been closed
      */
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public byte[] getSignature() {
+        requireWritable();
+        signatureRequested = true;
         byte[] consumedResult = null;
+        DurableContentReference content = null;
         PkiId opId = null;
         boolean retirementRequired = false;
         Throwable primaryFailure = null;
         try {
-            DurableContentReference content = completeContent();
+            content = completeContent();
             Principal owner = new Principal("SYSTEM", "pki");
             opId = bus.newSubmissionId();
 
@@ -302,9 +339,10 @@ public final class PkiBusContentSigner implements ContentSigner {
             String canonicalIdentity = algorithmIdentity.canonicalForm();
             SignContinuation cont = new SignContinuation(ac, canonicalIdentity, content, keyRef, Encoding.BINARY,
                     Optional.empty());
+            EncodedObject encodedContinuation = cont.encode();
 
             retirementRequired = true;
-            bus.submitSign(opId, owner, keyRef, canonicalIdentity, content, ttl, Optional.of(cont.encode()));
+            bus.submitSign(opId, owner, keyRef, canonicalIdentity, content, ttl, Optional.of(encodedContinuation));
             consumedResult = awaitSignature(opId);
             return consumedResult.clone();
         } catch (RuntimeException failure) {
@@ -318,13 +356,50 @@ public final class PkiBusContentSigner implements ContentSigner {
             try {
                 if (retirementRequired) {
                     retirePreservingFailure(opId, primaryFailure);
+                } else if (content != null) {
+                    releasePreservingFailure(content, primaryFailure);
                 }
             } finally {
-                closeSink(primaryFailure);
-                if (consumedResult != null) {
-                    java.util.Arrays.fill(consumedResult, (byte) 0);
+                try {
+                    closeSink(primaryFailure);
+                } finally {
+                    closed = true;
+                    if (consumedResult != null) {
+                        java.util.Arrays.fill(consumedResult, (byte) 0);
+                    }
                 }
             }
+        }
+    }
+
+    /**
+     * Aborts incomplete staged content owned by this signer.
+     *
+     * <p>
+     * Closing is idempotent. Closing before {@link #getSignature()} permanently
+     * consumes the signer and removes its partial staged content. Calling this
+     * method after a signing attempt is a no-op because that attempt has already
+     * disposed of or transferred every resource it owned.
+     * </p>
+     *
+     * @throws PkiException if incomplete staging cannot be removed
+     */
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        try {
+            contentSink.close();
+        } catch (IOException cleanupFailure) {
+            throw new PkiException("Signing cleanup failed: code=SIGNING_CLEANUP_FAILED");
+        }
+    }
+
+    private void requireWritable() {
+        if (closed || signatureRequested) {
+            throw new IllegalStateException("Content signer is already consumed");
         }
     }
 
@@ -340,6 +415,17 @@ public final class PkiBusContentSigner implements ContentSigner {
         try {
             contentSink.close();
         } catch (IOException cleanupFailure) {
+            if (primaryFailure == null) {
+                throw new PkiException("Signing cleanup failed: code=SIGNING_CLEANUP_FAILED");
+            }
+        }
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private void releasePreservingFailure(DurableContentReference content, Throwable primaryFailure) {
+        try {
+            bus.releaseContent(content);
+        } catch (RuntimeException cleanupFailure) {
             if (primaryFailure == null) {
                 throw new PkiException("Signing cleanup failed: code=SIGNING_CLEANUP_FAILED");
             }

@@ -160,6 +160,33 @@ final class PkiSigningBusFailureTest {
     }
 
     @Test
+    void preIntentValidationFailureReleasesTransferredContent(@TempDir Path tempDir) throws Exception {
+        InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of(), false);
+        try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
+                FsPkiStoreOptions.defaults());
+                PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"),
+                        signingAuthority(signer))) {
+            Principal owner = new Principal("TEST", "owner");
+            PkiId operationId = bus.newSubmissionId();
+            DurableContentReference content = stage(bus,
+                    new EncodedObject(Encoding.BINARY, new byte[] { 1, 2, 3 }));
+            AccessContext access = new AccessContext(owner, new Purpose("TEST"), Optional.empty(), Optional.empty());
+            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access,
+                    "SHA256withRSA", content, new KeyRef("test"), Encoding.BINARY, Optional.empty());
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> bus.submitSign(operationId, owner, new KeyRef("test"), "unsupported-signature",
+                            content, Duration.ofSeconds(5), Optional.of(continuation.encode())));
+
+            assertTrue(store.getSignRecord(operationId).isEmpty());
+            assertThrows(PkiException.class, () -> bus.openContent(content));
+            assertEquals(0, signer.submittedSignCount());
+        } finally {
+            signer.close();
+        }
+    }
+
+    @Test
     void acceptedCancellationWaitsForObservedTerminalProviderState(@TempDir Path tempDir) throws Exception {
         AcceptedDelayedCancellationWorkflow signer = new AcceptedDelayedCancellationWorkflow();
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"), FsPkiStoreOptions.defaults());
@@ -263,12 +290,17 @@ final class PkiSigningBusFailureTest {
             SignWorkflowStore.Record retired = store.getSignRecord(id).orElseThrow();
             assertEquals(SignWorkflowStore.State.RETIRED, retired.state());
             assertArrayEquals(new byte[] { 11, 12 }, retired.result().orElseThrow().bytes());
+            assertFalse(PkiSigningBus.SignContinuation.decode(retired.request(), store.stagedContent())
+                    .hasLiveContent());
             assertEquals(1, signer.cancellations.get());
         }
         try (FilesystemPkiStore reopened = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
                 PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog, signingAuthority(signer))) {
             assertEquals(AsyncState.SUCCEEDED, replayed.status(id).orElseThrow().state());
             assertArrayEquals(new byte[] { 11, 12 }, replayed.consumeResult(id).orElseThrow().bytes());
+            assertFalse(PkiSigningBus.SignContinuation
+                    .decode(reopened.getSignRecord(id).orElseThrow().request(), reopened.stagedContent())
+                    .hasLiveContent());
         }
     }
 

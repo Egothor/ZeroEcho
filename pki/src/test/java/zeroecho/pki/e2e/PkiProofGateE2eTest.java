@@ -142,6 +142,13 @@ final class PkiProofGateE2eTest {
         Class<?> managedKeyProof = Class.forName("zeroecho.pki.impl.core.CaProofGate$ManagedKeyProof");
         assertTrue(java.util.Arrays.stream(managedKeyProof.getDeclaredConstructors())
                 .noneMatch(constructor -> Modifier.isPublic(constructor.getModifiers())));
+        Class<?> caProofGate = Class.forName("zeroecho.pki.impl.core.CaProofGate");
+        assertTrue(java.util.Arrays.stream(caProofGate.getDeclaredClasses())
+                .noneMatch(type -> type.getSimpleName().equals("BusBackedContentSigner")));
+        assertTrue(java.util.Arrays.stream(caProofGate.getDeclaredMethods())
+                .filter(method -> method.getName().equals("signer"))
+                .allMatch(method -> method.getReturnType().getName()
+                        .equals("zeroecho.pki.impl.framework.x509.bc.PkiBusContentSigner")));
         assertTrue(java.util.Arrays.stream(CredentialFramework.class.getMethods())
                 .noneMatch(method -> method.getName().equals("issuerBackend")));
 

@@ -221,6 +221,7 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     private final CredentialContentTransaction credentialContentTransactions;
     private final PosixTransactionalMetadataStore metadataStore;
     private final FilesystemRevocationAuthority revocations;
+    private final SigningContentRetirementFaultInjector signingContentRetirementFaults;
 
     private final StoreOwnership ownership;
 
@@ -256,12 +257,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
 
     /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
             final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults) {
-        this(root, options, clock, indexUpdateFaults, false);
+        this(root, options, clock, indexUpdateFaults, SigningContentRetirementFaultInjector.NONE, false);
+    }
+
+    /* package */ FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
+            final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults,
+            final SigningContentRetirementFaultInjector signingContentRetirementFaults) {
+        this(root, options, clock, indexUpdateFaults, signingContentRetirementFaults, false);
     }
 
     @SuppressWarnings("PMD.CloseResource")
     private FilesystemPkiStore(final Path root, final FsPkiStoreOptions options, final Clock clock,
             final FilesystemRevocationAuthority.IndexUpdateFaultInjector indexUpdateFaults,
+            final SigningContentRetirementFaultInjector signingContentRetirementFaults,
             final boolean snapshotAssembly) {
         this.options = Objects.requireNonNull(options, "options");
         Objects.requireNonNull(root, "root");
@@ -270,6 +278,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         this.revocationLocks = new ConcurrentHashMap<>();
         this.profileLocks = new ConcurrentHashMap<>();
         this.durabilityUncertain = new AtomicBoolean();
+        this.signingContentRetirementFaults = Objects.requireNonNull(signingContentRetirementFaults,
+                "signingContentRetirementFaults");
         this.signingTimeLock = new ReentrantLock();
         this.paths = new FsPaths(root);
 
@@ -350,7 +360,8 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
     /* package */ static FilesystemPkiStore openSnapshotAssembly(final Path root,
             final FsPkiStoreOptions options) {
         return new FilesystemPkiStore(root, options, Clock.systemUTC(),
-                FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE, true);
+                FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE,
+                SigningContentRetirementFaultInjector.NONE, true);
     }
 
     private boolean requireSnapshotBoundary() throws IOException {
@@ -1892,10 +1903,12 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
             stored.reference().ifPresent(reference -> {
                 try {
                     if (reference.lifecycle() == DurableContentReference.Lifecycle.OPERATION) {
+                        signingContentRetirementFaults.beforeRetirement(reference);
                         stagedContent.retireSigningContent(reference);
                     }
                 } catch (IOException exception) {
                     LOG.log(Level.WARNING, "Signing content retirement cleanup failed");
+                    throw new PkiException("Signing content cleanup failed: code=SIGNING_CONTENT_CLEANUP_FAILED");
                 }
             });
             return Optional.of(retired);
@@ -2530,6 +2543,19 @@ public final class FilesystemPkiStore implements PkiStore, Closeable {
         REPLACE_BEFORE_COMMIT,
         /** Reports uncertainty after one replacement was durably committed. */
         REPLACE_AFTER_COMMIT_AS_UNKNOWN
+    }
+
+    /** Test seam at the post-RETIRED physical content-deletion boundary. */
+    /* default */
+    @FunctionalInterface
+    interface SigningContentRetirementFaultInjector {
+        /** Production no-op. */
+        SigningContentRetirementFaultInjector NONE = reference -> {
+            // No fault.
+        };
+
+        /** Invoked immediately before physical signing-content retirement. */
+        void beforeRetirement(DurableContentReference reference) throws IOException;
     }
 
     private static RepeatableContent byteContent(byte[] value) {

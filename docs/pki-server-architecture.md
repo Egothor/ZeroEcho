@@ -219,6 +219,34 @@ Production `pki` and `pki-server` MUST NOT materialize or expose CA private keys
 
 Signing MUST use `KeyRef` and the established signing workflow boundary.
 
+### 6.4 Signing staging, retirement, and recovery
+
+Synchronous X.509 adapters are one-shot resources. They stream to disposable,
+operation-lifecycle staging and MUST be closed on every path. Closing before the
+signature request completes aborts partial staging. Once submission to the signing
+bus begins, the bus owns disposition of the completed reference: it deletes the
+reference only after proving that no durable intent exists, and retains it when a
+commit is present or durability is uncertain.
+
+Operation retirement separates live payload from durable evidence. After an
+immutable provider terminal state is observed, retirement removes staged
+to-be-signed content and workflow continuation state. The authoritative signing
+record remains through the signing horizon with content-free commitment metadata
+and, for a trustworthy on-time success, the signature result. A provider that is
+not yet terminal remains `CANCELLING`; it is not falsely retired.
+
+If staged-content deletion fails after the content-free `RETIRED` record commits,
+the store retirement boundary reports only the stable redacted cleanup marker
+`SIGNING_CONTENT_CLEANUP_FAILED`; higher-level adapters may map it to their stable
+cleanup marker. Logical retirement still deletes workflow continuation state and
+retires advisory state before reporting that marker. The retained record does not
+regain a live content reference. Store restart recovery uses authoritative live
+references to reclaim the orphaned staged file safely.
+
+Payload staging remains streaming `O(n)` time and `O(1)` aggregate auxiliary heap
+excluding the signature. Synchronous waiting performs
+`O(TTL / polling interval)` status observations.
+
 ## 7. Authorization architecture
 
 ### 7.1 Model

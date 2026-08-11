@@ -35,6 +35,7 @@ package zeroecho.pki.impl.framework.x509.bc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static zeroecho.pki.testkit.PkiTestRuntime.signingAuthority;
@@ -75,6 +76,110 @@ final class PkiBusContentSignerCleanupTest {
     }
 
     @Test
+    void closeBeforeCompletionAbortsStagingAndConsumesSigner(@TempDir Path tempDir) throws Exception {
+        KeyRef issuerKeyRef = new KeyRef("kref:v1:keyring:test:issuer");
+        InMemorySignatureWorkflow workflow = new InMemorySignatureWorkflow(Map.of(), false);
+        Path storeRoot = tempDir.resolve("store");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
+                PkiSigningBus bus = new PkiSigningBus(store, workflow, tempDir.resolve("bus.log"),
+                        signingAuthority(workflow))) {
+            PkiBusContentSigner signer = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
+                    Duration.ofSeconds(5));
+            signer.getOutputStream().write(new byte[] { 1, 2, 3 });
+            signer.close();
+            signer.close();
+
+            assertThrows(IllegalStateException.class, signer::getOutputStream);
+            assertThrows(IllegalStateException.class, signer::getSignature);
+            assertEquals(0L, stagedFileCount(storeRoot));
+            assertEquals(0, workflow.submittedSignCount());
+        } finally {
+            workflow.close();
+        }
+    }
+
+    @Test
+    void continuationEncodingFailureReleasesCompletedContentAndConsumesSigner(@TempDir Path tempDir) throws Exception {
+        KeyRef oversizedKeyRef = new KeyRef("k".repeat(65_536));
+        InMemorySignatureWorkflow workflow = new InMemorySignatureWorkflow(Map.of(), false);
+        Path storeRoot = tempDir.resolve("store");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
+                PkiSigningBus bus = new PkiSigningBus(store, workflow, tempDir.resolve("bus.log"),
+                        signingAuthority(workflow));
+                PkiBusContentSigner signer = new PkiBusContentSigner(bus, oversizedKeyRef, "SHA256withRSA",
+                        Duration.ofSeconds(5))) {
+            signer.getOutputStream().write(new byte[] { 1, 2, 3 });
+
+            PkiException failure = assertThrows(PkiException.class, signer::getSignature);
+
+            assertEquals("Signing workflow failed: code=SIGNING_WORKFLOW_FAILED", failure.getMessage());
+            assertNull(failure.getCause());
+            assertEquals(0, failure.getSuppressed().length);
+            assertThrows(IllegalStateException.class, signer::getOutputStream);
+            assertThrows(IllegalStateException.class, signer::getSignature);
+            assertEquals(0, workflow.submittedSignCount());
+            assertTrue(store.listSignRecords().isEmpty());
+            assertTrue(store.listWorkflowStates().isEmpty());
+            assertEquals(0L, stagedFileCount(storeRoot));
+        } finally {
+            workflow.close();
+        }
+    }
+
+    @Test
+    void interruptionPreservesFlagAndRetiresOperation(@TempDir Path tempDir) throws Exception {
+        KeyRef issuerKeyRef = new KeyRef("kref:v1:keyring:test:issuer");
+        InMemorySignatureWorkflow workflow = new InMemorySignatureWorkflow(Map.of(), false);
+        Path storeRoot = tempDir.resolve("store");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
+                PkiSigningBus bus = new PkiSigningBus(store, workflow, tempDir.resolve("bus.log"),
+                        signingAuthority(workflow));
+                PkiBusContentSigner signer = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
+                        Duration.ofSeconds(5))) {
+            signer.getOutputStream().write(new byte[] { 1, 2, 3 });
+            Thread.currentThread().interrupt();
+            try {
+                PkiException failure = assertThrows(PkiException.class, signer::getSignature);
+                assertEquals("Signing workflow failed: code=SIGNING_WORKFLOW_FAILED", failure.getMessage());
+                assertNull(failure.getCause());
+                assertEquals(0, failure.getSuppressed().length);
+                assertTrue(Thread.currentThread().isInterrupted());
+            } finally {
+                Thread.interrupted();
+            }
+            assertTrue(store.listSignRecords().isEmpty());
+            assertFalse(workflow.hasRunningOperations());
+            assertEquals(0L, stagedFileCount(storeRoot));
+        } finally {
+            workflow.close();
+        }
+    }
+
+    @Test
+    void timeoutRetiresOperationAndStagedContent(@TempDir Path tempDir) throws Exception {
+        KeyRef issuerKeyRef = new KeyRef("kref:v1:keyring:test:issuer");
+        InMemorySignatureWorkflow workflow = new InMemorySignatureWorkflow(Map.of(), false);
+        Path storeRoot = tempDir.resolve("store");
+        try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
+                PkiSigningBus bus = new PkiSigningBus(store, workflow, tempDir.resolve("bus.log"),
+                        signingAuthority(workflow));
+                PkiBusContentSigner signer = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
+                        Duration.ofMillis(1))) {
+            signer.getOutputStream().write(new byte[] { 1, 2, 3 });
+
+            PkiException failure = assertThrows(PkiException.class, signer::getSignature);
+
+            assertEquals("Signing workflow failed: code=SIGNING_WORKFLOW_FAILED", failure.getMessage());
+            assertNull(failure.getCause());
+            assertEquals(0, failure.getSuppressed().length);
+            assertFalse(workflow.hasRunningOperations());
+            assertEquals(0L, stagedFileCount(storeRoot));
+        } finally {
+            workflow.close();
+        }
+    }
+
+    @Test
     void crlPostconditionRejectsEqualFingerprintForeignPlan(@TempDir Path tempDir) throws Exception {
         System.out.println("crlPostconditionRejectsEqualFingerprintForeignPlan");
         KeyRef issuerKeyRef = new KeyRef("kref:v1:keyring:test:issuer");
@@ -85,23 +190,25 @@ final class PkiBusContentSignerCleanupTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(tempDir.resolve("store"),
                 FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, tempDir.resolve("bus.log"), owning)) {
-            PkiBusContentSigner contentSigner = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
-                    Duration.ofSeconds(5));
-            X509ExecutionPlan<SignatureWorkflow> plan = contentSigner.executionPlan();
+            try (PkiBusContentSigner contentSigner = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
+                    Duration.ofSeconds(5))) {
+                X509ExecutionPlan<SignatureWorkflow> plan = contentSigner.executionPlan();
 
-            BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(owning, plan,
-                    plan.selection().requested());
-            assertEquals(owning.semanticFingerprint(), foreign.semanticFingerprint());
-            assertThrows(IllegalArgumentException.class,
-                    () -> BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(foreign, plan,
-                            plan.selection().requested()));
-            assertThrows(PkiException.class,
-                    () -> BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(owning, plan,
-                            BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384));
-            contentSigner.getOutputStream().write(1);
-            contentSigner.getSignature();
-            System.out.println("...fingerprint=" + owning.semanticFingerprint().substring(0, 16));
-            System.out.println("crlPostconditionRejectsEqualFingerprintForeignPlan...ok");
+                BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(owning, plan,
+                        plan.selection().requested());
+                assertEquals(owning.semanticFingerprint(), foreign.semanticFingerprint());
+                assertThrows(IllegalArgumentException.class,
+                        () -> BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(foreign, plan,
+                                plan.selection().requested()));
+                assertThrows(PkiException.class,
+                        () -> BcX509StatusObjectGenerator.requireAuthorizedSigningPlan(owning, plan,
+                                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384));
+                contentSigner.getOutputStream().write(1);
+                contentSigner.getSignature();
+                assertThrows(IllegalStateException.class, contentSigner::getSignature);
+                System.out.println("...fingerprint=" + owning.semanticFingerprint().substring(0, 16));
+                System.out.println("crlPostconditionRejectsEqualFingerprintForeignPlan...ok");
+            }
         } finally {
             signer.close();
         }
@@ -116,11 +223,15 @@ final class PkiBusContentSignerCleanupTest {
 
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, FsPkiStoreOptions.defaults());
                 PkiSigningBus bus = new PkiSigningBus(store, signer, busLog, signingAuthority(signer))) {
-            PkiBusContentSigner contentSigner = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
-                    Duration.ofSeconds(5));
-            contentSigner.getOutputStream()
-                    .write(intermediate ? subjectKey.getPublic().getEncoded() : new byte[] { 1, 2, 3 });
-            assertThrows(PkiException.class, contentSigner::getSignature);
+            try (PkiBusContentSigner contentSigner = new PkiBusContentSigner(bus, issuerKeyRef, "SHA256withRSA",
+                    Duration.ofSeconds(5))) {
+                contentSigner.getOutputStream()
+                        .write(intermediate ? subjectKey.getPublic().getEncoded() : new byte[] { 1, 2, 3 });
+                PkiException failure = assertThrows(PkiException.class, contentSigner::getSignature);
+                assertEquals("Signing workflow failed: code=SIGNING_WORKFLOW_FAILED", failure.getMessage());
+                assertNull(failure.getCause());
+                assertEquals(0, failure.getSuppressed().length);
+            }
 
             assertEquals(1, signer.submittedSignCount());
             assertTrue(store.listWorkflowStates().isEmpty());
@@ -146,6 +257,12 @@ final class PkiBusContentSignerCleanupTest {
             }
         }
         throw new AssertionError("No durable signing operation snapshot found");
+    }
+
+    private static long stagedFileCount(Path storeRoot) throws Exception {
+        try (java.util.stream.Stream<Path> paths = Files.walk(storeRoot.resolve("staged-content"))) {
+            return paths.filter(Files::isRegularFile).count();
+        }
     }
 
     private static KeyPair generateRsa() throws Exception {

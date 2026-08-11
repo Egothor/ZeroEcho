@@ -229,34 +229,35 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
                 Date.from(request.validity().notBefore()), Date.from(request.validity().notAfter()), subjectDn, spki);
         addLeafExtensions(builder, request);
 
-        PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy());
-        X509CertificateHolder leaf;
-        try {
-            leaf = builder.build(signer);
-        } catch (Exception ex) {
-            throw new PkiException("Certificate signing failed: code=CERTIFICATE_SIGN_FAILED");
-        }
+        try (PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy())) {
+            X509CertificateHolder leaf;
+            try {
+                leaf = builder.build(signer);
+            } catch (Exception ex) {
+                throw new PkiException("Certificate signing failed: code=CERTIFICATE_SIGN_FAILED");
+            }
 
-        byte[] certDer;
-        try {
-            certDer = leaf.getEncoded();
-        } catch (Exception ex) {
-            throw new PkiException("Certificate encoding failed: code=CERTIFICATE_ENCODE_FAILED");
-        }
+            byte[] certDer;
+            try {
+                certDer = leaf.getEncoded();
+            } catch (Exception ex) {
+                throw new PkiException("Certificate encoding failed: code=CERTIFICATE_ENCODE_FAILED");
+            }
 
-        PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
-        PkiId publicKeyId = new PkiId("spki:" + fingerprintEncoded(request.exactPublicKey()));
+            PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
+            PkiId publicKeyId = new PkiId("spki:" + fingerprintEncoded(request.exactPublicKey()));
 
-        try {
-            DurableContentReference content = stageCertificate(certDer);
-            validateGeneratedCertificate(content, signer);
-            Credential credential = new Credential(credId, BcX509CredentialFramework.FORMAT_ID,
-                    new IssuerRef(request.issuerCaId()), request.subjectRef(), request.validity(), serial.toString(),
-                    publicKeyId, new EndEntityProfileBinding(request.profileReference()), CredentialStatus.ISSUED,
-                    content, SimpleAttributeSet.builder().build());
-            return new CredentialBundle(credential, java.util.List.of(issuerCertificate));
-        } finally {
-            java.util.Arrays.fill(certDer, (byte) 0);
+            try {
+                DurableContentReference content = stageCertificate(certDer);
+                validateGeneratedCertificate(content, signer);
+                Credential credential = new Credential(credId, BcX509CredentialFramework.FORMAT_ID,
+                        new IssuerRef(request.issuerCaId()), request.subjectRef(), request.validity(), serial.toString(),
+                        publicKeyId, new EndEntityProfileBinding(request.profileReference()), CredentialStatus.ISSUED,
+                        content, SimpleAttributeSet.builder().build());
+                return new CredentialBundle(credential, java.util.List.of(issuerCertificate));
+            } finally {
+                java.util.Arrays.fill(certDer, (byte) 0);
+            }
         }
     }
 
@@ -389,32 +390,32 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
             throw new PkiException("X.509 extension construction failed: code=EXTENSION_BUILD_FAILED");
         }
 
-        PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy());
-        X509CertificateHolder certificate;
-        try {
-            certificate = builder.build(signer);
-        } catch (Exception ex) {
-            throw new PkiException("Certificate signing failed: code=CERTIFICATE_SIGN_FAILED");
-        }
+        try (PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy())) {
+            X509CertificateHolder certificate;
+            try {
+                certificate = builder.build(signer);
+            } catch (Exception ex) {
+                throw new PkiException("Certificate signing failed: code=CERTIFICATE_SIGN_FAILED");
+            }
 
-        byte[] certDer;
-        try {
-            certDer = certificate.getEncoded();
-        } catch (Exception ex) {
-            throw new PkiException("Certificate encoding failed: code=CERTIFICATE_ENCODE_FAILED");
-        }
+            byte[] certDer;
+            try {
+                certDer = certificate.getEncoded();
+            } catch (Exception ex) {
+                throw new PkiException("Certificate encoding failed: code=CERTIFICATE_ENCODE_FAILED");
+            }
 
-        PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
+            PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
 
-        try {
-            DurableContentReference content = stageCertificate(certDer);
-            validateGeneratedCertificate(content, signer);
-            return new Credential(credId, request.formatId(), new IssuerRef(request.issuerCaId()), subjectRef, validity,
-                    serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
-                    CredentialStatus.ISSUED, content,
-                    SimpleAttributeSet.builder().build());
-        } finally {
-            java.util.Arrays.fill(certDer, (byte) 0);
+            try {
+                DurableContentReference content = stageCertificate(certDer);
+                validateGeneratedCertificate(content, signer);
+                return new Credential(credId, request.formatId(), new IssuerRef(request.issuerCaId()), subjectRef,
+                        validity, serial.toString(), publicKeyId, new CaProfileBinding(request.profileReference()),
+                        CredentialStatus.ISSUED, content, SimpleAttributeSet.builder().build());
+            } finally {
+                java.util.Arrays.fill(certDer, (byte) 0);
+            }
         }
     }
 

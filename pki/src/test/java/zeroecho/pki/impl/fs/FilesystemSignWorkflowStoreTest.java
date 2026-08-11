@@ -69,6 +69,7 @@ import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
@@ -226,6 +227,65 @@ final class FilesystemSignWorkflowStoreTest {
         }
         try (FilesystemPkiStore foreign = new FilesystemPkiStore(root.resolve("foreign"), options, clock)) {
             assertThrows(IllegalArgumentException.class, () -> foreign.createSignIntent(intent));
+        }
+    }
+
+    @Test
+    void postRetirementContentFailureStillDeletesWorkflowAndRecoversOnRestart(@TempDir Path root) throws Exception {
+        Path busLog = root.resolveSibling(root.getFileName() + "-bus.log");
+        AtomicBoolean failRetirement = new AtomicBoolean(true);
+        InMemorySignatureWorkflow signer = new InMemorySignatureWorkflow(Map.of());
+        PkiId operationId;
+        DurableContentReference content;
+        try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), Clock.systemUTC(),
+                FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE, reference -> {
+                    if (failRetirement.compareAndSet(true, false)) {
+                        throw new java.io.IOException("injected physical cleanup detail");
+                    }
+                }); PkiSigningBus bus = new PkiSigningBus(store, signer, busLog, signingAuthority(signer))) {
+            operationId = bus.newSubmissionId();
+            try (zeroecho.pki.spi.store.ContentSink sink = store.stagedContent().beginContent(Encoding.BINARY,
+                    DurableContentReference.Lifecycle.OPERATION);
+                    java.io.OutputStream output = sink.outputStream()) {
+                output.write(new byte[] { 1, 2, 3 });
+                content = sink.complete();
+            }
+            AccessContext access = new AccessContext(TEST_OWNER, new Purpose("SIGN"), Optional.empty(),
+                    Optional.empty());
+            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(access,
+                    TEST_ALGORITHM, content, TEST_KEY, Encoding.BINARY, Optional.empty());
+            bus.submitSign(operationId, TEST_OWNER, TEST_KEY, TEST_ALGORITHM, content, Duration.ofSeconds(30),
+                    Optional.of(continuation.encode()));
+            assertTrue(bus.status(operationId).isPresent());
+            assertEquals(1, store.listWorkflowStates().size());
+
+            PkiException failure = assertThrows(PkiException.class,
+                    () -> bus.retireSignOperation(operationId, "test-retirement"));
+
+            assertEquals("Signing content cleanup failed: code=SIGNING_CONTENT_CLEANUP_FAILED",
+                    failure.getMessage());
+            assertFalse(failure.toString().contains("injected physical cleanup detail"));
+            assertEquals(0, failure.getSuppressed().length);
+            SignWorkflowStore.Record retired = store.getSignRecord(operationId).orElseThrow();
+            assertEquals(SignWorkflowStore.State.RETIRED, retired.state());
+            assertFalse(PkiSigningBus.SignContinuation.decode(retired.request(), store.stagedContent())
+                    .hasLiveContent());
+            assertTrue(store.listWorkflowStates().isEmpty());
+            try (RepeatableContent orphan = bus.openContent(content)) {
+                assertEquals(3L, orphan.length().orElseThrow());
+            }
+        }
+
+        try (FilesystemPkiStore reopened = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults());
+                PkiSigningBus replayed = new PkiSigningBus(reopened, signer, busLog, signingAuthority(signer))) {
+            SignWorkflowStore.Record retained = reopened.getSignRecord(operationId).orElseThrow();
+            assertEquals(SignWorkflowStore.State.RETIRED, retained.state());
+            assertFalse(PkiSigningBus.SignContinuation.decode(retained.request(), reopened.stagedContent())
+                    .hasLiveContent());
+            assertTrue(reopened.listWorkflowStates().isEmpty());
+            assertThrows(PkiException.class, () -> replayed.openContent(content));
+        } finally {
+            signer.close();
         }
     }
 

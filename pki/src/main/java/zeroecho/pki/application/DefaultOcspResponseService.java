@@ -129,16 +129,18 @@ final class DefaultOcspResponseService implements OcspResponseService {
         try {
             X509CertificateHolder responder = certificate(responderCredentialId);
             AlgorithmIdentity identity = bus.authority().resolveIdentity(signatureAlgorithm);
-            PkiBusContentSigner signer = signatureBindingId.isPresent()
-                    ? new PkiBusContentSigner(bus, signingKeyRef, identity, signatureBindingId.orElseThrow(), signingTtl)
-                    : new PkiBusContentSigner(bus, signingKeyRef, identity, signingTtl);
-            try (java.io.OutputStream output = signer.getOutputStream()) { output.write(challenge); }
-            org.bouncycastle.operator.ContentVerifier verifier =
-                    new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder().build(responder)
-                            .get(signer.getAlgorithmIdentifier());
-            try (java.io.OutputStream output = verifier.getOutputStream()) { output.write(challenge); }
-            if (!verifier.verify(signer.getSignature())) {
-                throw new IOException("OCSP signing binding differs");
+            try (PkiBusContentSigner signer = signatureBindingId.isPresent()
+                    ? new PkiBusContentSigner(bus, signingKeyRef, identity, signatureBindingId.orElseThrow(),
+                            signingTtl)
+                    : new PkiBusContentSigner(bus, signingKeyRef, identity, signingTtl)) {
+                try (java.io.OutputStream output = signer.getOutputStream()) { output.write(challenge); }
+                org.bouncycastle.operator.ContentVerifier verifier =
+                        new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder().build(responder)
+                                .get(signer.getAlgorithmIdentifier());
+                try (java.io.OutputStream output = verifier.getOutputStream()) { output.write(challenge); }
+                if (!verifier.verify(signer.getSignature())) {
+                    throw new IOException("OCSP signing binding differs");
+                }
             }
         } catch (Exception failure) {
             throw new PkiException("OCSP signing binding validation failed: code=OCSP_SIGNING_BINDING_FAILED");
@@ -192,30 +194,33 @@ final class DefaultOcspResponseService implements OcspResponseService {
                     false, new DEROctetString(new DEROctetString(command.nonce().orElseThrow()).getEncoded()))));
         }
         AlgorithmIdentity identity = bus.authority().resolveIdentity(command.signatureAlgorithm());
-        PkiBusContentSigner signer = command.signatureBindingId().isPresent()
+        try (PkiBusContentSigner signer = command.signatureBindingId().isPresent()
                 ? new PkiBusContentSigner(bus, command.signingKeyRef(), identity,
                         command.signatureBindingId().orElseThrow(), signingTtl)
-                : new PkiBusContentSigner(bus, command.signingKeyRef(), identity, signingTtl);
-        X509CertificateHolder[] chain = new X509CertificateHolder[command.responseChain().size()];
-        for (int index = 0; index < chain.length; index++) chain[index] = certificate(command.responseChain().get(index));
-        BasicOCSPResp basic = builder.build(signer, chain, Date.from(command.producedAt()));
-        OCSPResp outer = new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic);
-        byte[] encoded = outer.getEncoded();
-        OCSPResp decodedOuter = new OCSPResp(encoded);
-        BasicOCSPResp decoded = (BasicOCSPResp) decodedOuter.getResponseObject();
-        if (!Arrays.equals(encoded, decodedOuter.getEncoded())
-                || decodedOuter.getStatus() != OCSPRespBuilder.SUCCESSFUL
-                || decoded == null || !decoded.getProducedAt().equals(Date.from(command.producedAt()))
-                || !decoded.getResponderId().equals(basic.getResponderId())
-                || !decoded.getSignatureAlgorithmID().equals(signer.getAlgorithmIdentifier())
-                || !decoded.isSignatureValid(new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder()
-                        .build(responder))
-                || !matchesResponses(decoded.getResponses(), resolved, command)
-                || !matchesCertificates(decoded.getCerts(), chain)
-                || !matchesNonce(decoded, command.nonce())) {
-            throw new IOException("Generated OCSP response validation failed");
+                : new PkiBusContentSigner(bus, command.signingKeyRef(), identity, signingTtl)) {
+            X509CertificateHolder[] chain = new X509CertificateHolder[command.responseChain().size()];
+            for (int index = 0; index < chain.length; index++) {
+                chain[index] = certificate(command.responseChain().get(index));
+            }
+            BasicOCSPResp basic = builder.build(signer, chain, Date.from(command.producedAt()));
+            OCSPResp outer = new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic);
+            byte[] encoded = outer.getEncoded();
+            OCSPResp decodedOuter = new OCSPResp(encoded);
+            BasicOCSPResp decoded = (BasicOCSPResp) decodedOuter.getResponseObject();
+            if (!Arrays.equals(encoded, decodedOuter.getEncoded())
+                    || decodedOuter.getStatus() != OCSPRespBuilder.SUCCESSFUL
+                    || decoded == null || !decoded.getProducedAt().equals(Date.from(command.producedAt()))
+                    || !decoded.getResponderId().equals(basic.getResponderId())
+                    || !decoded.getSignatureAlgorithmID().equals(signer.getAlgorithmIdentifier())
+                    || !decoded.isSignatureValid(
+                            new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder().build(responder))
+                    || !matchesResponses(decoded.getResponses(), resolved, command)
+                    || !matchesCertificates(decoded.getCerts(), chain)
+                    || !matchesNonce(decoded, command.nonce())) {
+                throw new IOException("Generated OCSP response validation failed");
+            }
+            return encoded;
         }
-        return encoded;
     }
 
     private static boolean matchesResponses(SingleResp[] decoded, List<Resolved> expected, Command command) {

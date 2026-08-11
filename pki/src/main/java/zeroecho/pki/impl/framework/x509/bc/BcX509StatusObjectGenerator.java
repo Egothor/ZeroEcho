@@ -270,22 +270,23 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         boolean accepted = false;
         try {
             entries = encodeEntries(crlEntries);
-            PkiBusContentSigner signer = signatureBindingId.isPresent()
+            X509SignedObjectCompletion completion;
+            try (PkiBusContentSigner signer = signatureBindingId.isPresent()
                     ? new PkiBusContentSigner(signingBus, issuerMaterial.keyRef(), signatureIdentity,
                             signatureBindingId.orElseThrow(), signingTtl)
-                    : new PkiBusContentSigner(signingBus, issuerMaterial.keyRef(), signatureIdentity, signingTtl);
-            byte[] algorithm = signer.getAlgorithmIdentifier().getEncoded();
-            tbs = encodeTbs(issuerMaterial.issuerHolder(), thisUpdate, nextUpdate, entries, algorithm);
-            copyToSigner(tbs, signer);
-            byte[] signature = signer.getSignature();
-            crl = encodeOuter(tbs, algorithm, signature);
-            requireValidResult(crl, tbs, signer.executionPlan(), signer.getAlgorithmIdentifier(), signature,
-                    issuerMaterial.issuerHolder());
-            StatusObject result = new StatusObject(new PkiId("crl:" + crl.sha256()), command.formatId(),
-                    command.issuerCaId(),
-                    command.type(), thisUpdate, Optional.of(nextUpdate), crl, command.attributes());
-            X509SignedObjectCompletion completion = signingBus.authority().completeStatusObject(result,
-                    signer.executionPlan());
+                    : new PkiBusContentSigner(signingBus, issuerMaterial.keyRef(), signatureIdentity, signingTtl)) {
+                byte[] algorithm = signer.getAlgorithmIdentifier().getEncoded();
+                tbs = encodeTbs(issuerMaterial.issuerHolder(), thisUpdate, nextUpdate, entries, algorithm);
+                copyToSigner(tbs, signer);
+                byte[] signature = signer.getSignature();
+                crl = encodeOuter(tbs, algorithm, signature);
+                requireValidResult(crl, tbs, signer.executionPlan(), signer.getAlgorithmIdentifier(), signature,
+                        issuerMaterial.issuerHolder());
+                StatusObject result = new StatusObject(new PkiId("crl:" + crl.sha256()), command.formatId(),
+                        command.issuerCaId(), command.type(), thisUpdate, Optional.of(nextUpdate), crl,
+                        command.attributes());
+                completion = signingBus.authority().completeStatusObject(result, signer.executionPlan());
+            }
             accepted = true;
             return completion;
         } catch (IOException | ArithmeticException exception) {

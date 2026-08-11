@@ -34,7 +34,6 @@
 package zeroecho.pki.impl.core;
 
 import java.io.IOException;
-import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
@@ -44,10 +43,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.operator.ContentSigner;
 
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.io.ImmutableByteContent;
@@ -58,8 +55,6 @@ import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.content.DurableContentReference;
-import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
@@ -71,9 +66,6 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
 import zeroecho.pki.impl.framework.x509.bc.PkiBusContentSigner;
 import zeroecho.pki.spi.audit.AuditSink;
-import zeroecho.pki.util.async.AsyncState;
-import zeroecho.pki.util.async.AsyncStatus;
-import zeroecho.pki.spi.store.ContentSink;
 
 /**
  * Internal fail-closed proof gate for CA signing keys.
@@ -119,21 +111,21 @@ final class CaProofGate {
         this.signingTtl = Objects.requireNonNull(signingTtl, "signingTtl");
     }
 
-    /* default */ ContentSigner signer(ManagedKeyProof proof) {
+    /* default */ PkiBusContentSigner signer(ManagedKeyProof proof) {
         return signatureBindingId.isPresent()
                 ? new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity,
                         signatureBindingId.orElseThrow(), signingTtl)
-                : new BusBackedContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
+                : new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
     }
 
-    /* default */ ContentSigner signer(ManagedKeyProof proof,
+    /* default */ PkiBusContentSigner signer(ManagedKeyProof proof,
             zeroecho.pki.api.profile.X509AlgorithmBindingPolicy bindingPolicy) {
         Optional<String> bindingId = bindingPolicy.certificateSignature()
                 .map(zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.BindingReference::bindingId);
         return bindingId.isPresent()
                 ? new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, bindingId.orElseThrow(),
                         signingTtl)
-                : new BusBackedContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
+                : new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
     }
 
     /* default */ SubjectPublicKeyInfo parseRootSpki(EncodedObject spki, FormatId formatId) {
@@ -240,13 +232,13 @@ final class CaProofGate {
     }
 
     private byte[] signManagedKeyChallenge(KeyRef keyRef, byte[] challenge) {
-        ContentSigner contentSigner = new BusBackedContentSigner(signingBus, keyRef, signatureIdentity, signingTtl);
-        try {
+        try (PkiBusContentSigner contentSigner = new PkiBusContentSigner(signingBus, keyRef, signatureIdentity,
+                signingTtl)) {
             contentSigner.getOutputStream().write(challenge);
+            return contentSigner.getSignature();
         } catch (IOException ex) {
             throw new PkiException("Managed-key challenge buffering failed: code=CHALLENGE_BUFFER_FAILED");
         }
-        return contentSigner.getSignature();
     }
 
     private boolean verifyChallenge(byte[] spkiDer, byte[] challenge, byte[] signature) {
@@ -305,140 +297,4 @@ final class CaProofGate {
         }
     }
 
-    /**
-     * Bounded synchronous adapter over the existing asynchronous signing bus.
-     */
-    private static final class BusBackedContentSigner implements ContentSigner {
-
-        private final PkiSigningBus bus;
-        private final KeyRef keyRef;
-        private final AlgorithmIdentity algorithmIdentity;
-        private final Duration ttl;
-        private final ContentSink sink;
-        private final OutputStream output;
-
-        private BusBackedContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
-                Duration ttl) {
-            this.bus = bus;
-            this.keyRef = keyRef;
-            this.algorithmIdentity = algorithmIdentity;
-            this.ttl = ttl;
-            this.sink = bus.beginSigningContent(Encoding.BINARY);
-            try {
-                this.output = sink.outputStream();
-            } catch (IOException exception) {
-                closeSinkPreserving(exception);
-                throw new PkiException("Signing content staging failed: code=SPOOL_STORAGE_FAILED", exception);
-            }
-        }
-
-        @Override
-        public AlgorithmIdentifier getAlgorithmIdentifier() {
-            return new BcX509AlgorithmAdapter(bus.authority().bindings()).encode(algorithmIdentity,
-                    X509AlgorithmRole.SIGNATURE_ALGORITHM);
-        }
-
-        @Override
-        public OutputStream getOutputStream() {
-            return output;
-        }
-
-        @Override
-        public byte[] getSignature() {
-            DurableContentReference content;
-            try {
-                output.close();
-                content = sink.complete();
-            } catch (IOException exception) {
-                closeSinkPreserving(exception);
-                throw new PkiException("Signing content staging failed: code=SPOOL_STORAGE_FAILED", exception);
-            }
-            Principal owner = new Principal("SYSTEM", "pki");
-            PkiId opId = bus.newSubmissionId();
-            AccessContext accessContext = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(),
-                    Optional.empty());
-            String canonicalIdentity = algorithmIdentity.canonicalForm();
-            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(accessContext,
-                    canonicalIdentity, content, keyRef, Encoding.BINARY, Optional.empty());
-            boolean submitted = false;
-            try {
-                bus.submitSign(opId, owner, keyRef, canonicalIdentity, content, ttl,
-                        Optional.of(continuation.encode()));
-                submitted = true;
-            } finally {
-                if (!submitted) {
-                    deletePreservingFailure(opId);
-                    bus.releaseContent(content);
-                }
-            }
-            return awaitSignature(opId);
-        }
-
-        private void closeSinkPreserving(IOException primaryFailure) {
-            try {
-                sink.close();
-            } catch (IOException cleanupFailure) {
-                primaryFailure.addSuppressed(cleanupFailure);
-            }
-        }
-
-        @SuppressWarnings("PMD.AvoidCatchingGenericException")
-        private byte[] awaitSignature(PkiId opId) {
-            byte[] signature;
-            try {
-                signature = awaitSignatureBeforeCleanup(opId);
-            } catch (RuntimeException failure) {
-                deletePreservingFailure(opId);
-                throw failure;
-            }
-            bus.retireSignOperation(opId, "completed");
-            return signature;
-        }
-
-        private byte[] awaitSignatureBeforeCleanup(PkiId opId) {
-            Instant deadline = Instant.now().plus(ttl);
-            while (Instant.now().isBefore(deadline)) {
-                bus.sweep(Instant.now());
-                Optional<AsyncStatus> status = bus.status(opId);
-                if (status.isPresent() && status.get().state() == AsyncState.SUCCEEDED) {
-                    Optional<EncodedObject> result = bus.consumeResult(opId);
-                    if (result.isEmpty()) {
-                        throw new PkiException("Missing signature result");
-                    }
-                    return result.get().bytes();
-                }
-                if (status.isPresent() && isTerminalFailure(status.get().state())) {
-                    throw new PkiException("Signing failed: " + status.get().state());
-                }
-                boundedWait(deadline);
-            }
-            throw new PkiException("Signing did not complete before TTL");
-        }
-
-        private static boolean isTerminalFailure(AsyncState state) {
-            return state == AsyncState.FAILED || state == AsyncState.CANCELLED || state == AsyncState.EXPIRED;
-        }
-
-        @SuppressWarnings("PMD.DoNotUseThreads")
-        private static void boundedWait(Instant deadline) {
-            long remainingMillis = Duration.between(Instant.now(), deadline).toMillis();
-            long waitMillis = Math.min(10L, Math.max(1L, remainingMillis));
-            try {
-                Thread.sleep(waitMillis);
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                throw new PkiException("Interrupted while awaiting signing", ex);
-            }
-        }
-
-        private void deletePreservingFailure(PkiId opId) {
-            try {
-                bus.retireSignOperation(opId, "failed-or-expired");
-            } catch (RuntimeException cleanupFailure) { // NOPMD - preserve primary failure
-                // The primary safe failure remains authoritative; provider diagnostics are
-                // discarded.
-            }
-        }
-
-    }
 }

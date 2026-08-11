@@ -56,7 +56,6 @@ import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.CertException;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
-import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 
@@ -94,6 +93,7 @@ import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.impl.framework.x509.bc.PkiBusContentSigner;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.audit.AuditSink;
@@ -353,9 +353,8 @@ public final class DefaultCaService implements CaService {
             throw new PkiException("Root extension construction failed: code=ROOT_EXTENSION_BUILD_FAILED");
         }
 
-        ContentSigner signer = proofGate.signer(proof, request.algorithmBindingPolicy());
         X509CertificateHolder cert;
-        try {
+        try (PkiBusContentSigner signer = proofGate.signer(proof, request.algorithmBindingPolicy())) {
             cert = b.build(signer);
         } catch (RuntimeException ex) { // NOPMD
             throw proofGate.rejection(CREATE_ROOT_REJECTED, command.formatId(), Optional.empty(),
