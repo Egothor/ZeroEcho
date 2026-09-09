@@ -49,9 +49,26 @@ import java.util.Objects;
 public final class AuthorizationEngine {
     /** Safe decision codes that reveal no protected-object existence. */
     public enum Code {
-        ALLOWED, NO_MATCHING_GRANT, EXPLICITLY_DENIED, OUTSIDE_REALM,
-        OUTSIDE_AUTHORITY_SCOPE, INSUFFICIENT_DATA_VIEW, APPROVAL_REQUIRED,
-        GRANT_EXPIRED, PRINCIPAL_DISABLED, CONDITION_NOT_SATISFIED
+        /** A matching allow grant authorized the request. */
+        ALLOWED,
+        /** No enabled grant matched the principal, action, resource, and relationship. */
+        NO_MATCHING_GRANT,
+        /** A matching deny grant took precedence. */
+        EXPLICITLY_DENIED,
+        /** The requested resource belongs to another realm. */
+        OUTSIDE_REALM,
+        /** The authority is not exposed by process policy. */
+        OUTSIDE_AUTHORITY_SCOPE,
+        /** A matching grant does not permit the requested data view. */
+        INSUFFICIENT_DATA_VIEW,
+        /** A matching conditional grant requires an approval. */
+        APPROVAL_REQUIRED,
+        /** Matching grants exist but have expired. */
+        GRANT_EXPIRED,
+        /** The authenticated principal is disabled. */
+        PRINCIPAL_DISABLED,
+        /** Another closed grant condition was not satisfied. */
+        CONDITION_NOT_SATISFIED
     }
 
     /**
@@ -103,7 +120,11 @@ public final class AuthorizationEngine {
             }
         }
 
-        /** @return whether execution is authorized */
+        /**
+         * Indicates whether execution is authorized.
+         *
+         * @return {@code true} only for {@link Code#ALLOWED}
+         */
         public boolean allowed() {
             return code == Code.ALLOWED;
         }
@@ -199,7 +220,7 @@ public final class AuthorizationEngine {
     private static boolean conditionsMatch(Permission.Grant grant, Request request) {
         for (Permission.Condition condition : grant.conditions()) {
             boolean matches = switch (condition) {
-                case REASON_REQUIRED -> request.context().reason().isPresent();
+                case REASON_REQUIRED -> request.context().operatorJustification().isPresent();
                 case APPROVAL_REQUIRED -> request.context().approvalPresent();
                 case REQUESTER_APPROVER_SEPARATION -> request.context().safeAttributes()
                         .getOrDefault("requester", "").isBlank()

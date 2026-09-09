@@ -33,35 +33,54 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.pki.spi.audit.AuditSink;
+import zeroecho.pki.spi.confirmation.KeyPossessionProofProvider;
 
 /**
  * Immutable process-local capabilities for one PKI session composition.
  *
  * @param keyringUnlockProvider optional secure key-unlock capability
  * @param auditSink optional precomposed lifecycle-owned audit sink
+ * @param keyPossessionProofProviders explicitly trusted key-possession proof providers
+ * @param credentialConfirmationProofPolicy optional server-controlled proof runtime policy
  */
+// The proof-policy component name defines the exported runtime-wiring accessor.
+@SuppressWarnings("PMD.LongVariable")
 public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyringUnlockProvider,
-        Optional<AuditSink> auditSink) {
+        Optional<AuditSink> auditSink, List<KeyPossessionProofProvider> keyPossessionProofProviders,
+        Optional<CredentialConfirmationProofRuntimePolicy> credentialConfirmationProofPolicy) {
 
-    /** Creates dependencies without an externally composed audit sink. */
+    /**
+     * Creates dependencies without an externally composed audit sink.
+     *
+     * @param keyringUnlockProvider optional secure key-unlock capability
+     */
     public PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyringUnlockProvider) {
-        this(keyringUnlockProvider, Optional.empty());
+        this(keyringUnlockProvider, Optional.empty(), List.of(), Optional.empty());
     }
 
     /** Validates the optional capability container. */
     public PkiSessionRuntimeDependencies {
         keyringUnlockProvider = Objects.requireNonNull(keyringUnlockProvider, "keyringUnlockProvider");
         auditSink = Objects.requireNonNull(auditSink, "auditSink");
+        keyPossessionProofProviders = List.copyOf(
+                Objects.requireNonNull(keyPossessionProofProviders, "keyPossessionProofProviders"));
+        credentialConfirmationProofPolicy = Objects.requireNonNull(
+                credentialConfirmationProofPolicy, "credentialConfirmationProofPolicy");
     }
 
-    /** @return an immutable dependency set without key-unlock access */
+    /**
+     * Creates an empty process-local dependency set.
+     *
+     * @return immutable dependency set without key-unlock access
+     */
     public static PkiSessionRuntimeDependencies none() {
-        return new PkiSessionRuntimeDependencies(Optional.empty(), Optional.empty());
+        return new PkiSessionRuntimeDependencies(Optional.empty(), Optional.empty(), List.of(), Optional.empty());
     }
 
     /**
@@ -72,7 +91,7 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      */
     public static PkiSessionRuntimeDependencies withKeyringUnlockProvider(KeyringUnlockProvider provider) {
         return new PkiSessionRuntimeDependencies(Optional.of(Objects.requireNonNull(provider, "provider")),
-                Optional.empty());
+                Optional.empty(), List.of(), Optional.empty());
     }
 
     /**
@@ -87,6 +106,37 @@ public record PkiSessionRuntimeDependencies(Optional<KeyringUnlockProvider> keyr
      */
     public PkiSessionRuntimeDependencies withAuditSink(AuditSink sink) {
         return new PkiSessionRuntimeDependencies(keyringUnlockProvider,
-                Optional.of(Objects.requireNonNull(sink, "sink")));
+                Optional.of(Objects.requireNonNull(sink, "sink")), keyPossessionProofProviders,
+                credentialConfirmationProofPolicy);
+    }
+
+    /**
+     * Returns dependencies containing the exact explicitly trusted proof providers.
+     *
+     * <p>The source list is defensively copied. Provider identities and
+     * uniqueness are validated before a session opens its store.</p>
+     *
+     * @param providers immutable/thread-safe trusted provider instances
+     * @return immutable dependencies preserving other process-local capabilities
+     * @throws NullPointerException if the list or an element is {@code null}
+     */
+    public PkiSessionRuntimeDependencies withKeyPossessionProofProviders(
+            List<KeyPossessionProofProvider> providers) {
+        return new PkiSessionRuntimeDependencies(keyringUnlockProvider, auditSink,
+                Objects.requireNonNull(providers, "providers"), credentialConfirmationProofPolicy);
+    }
+
+    /**
+     * Returns dependencies containing one exact server-controlled proof runtime policy.
+     *
+     * @param policy immutable proof runtime policy
+     * @return immutable dependencies preserving every other process-local capability
+     * @throws NullPointerException if {@code policy} is {@code null}
+     */
+    public PkiSessionRuntimeDependencies withCredentialConfirmationProofPolicy(
+            CredentialConfirmationProofRuntimePolicy policy) {
+        return new PkiSessionRuntimeDependencies(keyringUnlockProvider, auditSink,
+                keyPossessionProofProviders,
+                Optional.of(Objects.requireNonNull(policy, "policy")));
     }
 }

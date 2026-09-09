@@ -187,6 +187,7 @@ public interface StagedContentStore {
      * </p>
      *
      * @param retained completed content identifiers referenced by durable state
+     * @param retainedOwners durable owner identifiers that remain live
      * @throws IOException if recovery or cleanup fails
      */
     void recoverContent(TemporaryUniqueIndex retained, TemporaryUniqueIndex retainedOwners) throws IOException;

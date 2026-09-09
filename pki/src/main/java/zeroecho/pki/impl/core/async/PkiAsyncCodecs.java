@@ -90,6 +90,11 @@ public final class PkiAsyncCodecs { // NOPMD
      */
     public static final class PkiIdCodec implements IdCodec<PkiId> {
 
+        /** Creates a stateless PKI-identifier codec. */
+        public PkiIdCodec() {
+            // Stateless.
+        }
+
         /**
          * Encodes the identifier as its stable string value.
          *
@@ -129,6 +134,11 @@ public final class PkiAsyncCodecs { // NOPMD
      * </p>
      */
     public static final class PrincipalCodec implements IdCodec<Principal> {
+
+        /** Creates a stateless principal codec. */
+        public PrincipalCodec() {
+            // Stateless.
+        }
 
         /**
          * Encodes the principal as {@code type:name}.
@@ -176,6 +186,11 @@ public final class PkiAsyncCodecs { // NOPMD
      * </p>
      */
     public static final class StringIdCodec implements IdCodec<String> {
+
+        /** Creates a stateless string-identifier codec. */
+        public StringIdCodec() {
+            // Stateless.
+        }
 
         /**
          * Returns the endpoint identifier unchanged.

@@ -41,16 +41,21 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import zeroecho.pki.application.PkiSession;
+import zeroecho.pki.api.confirmation.ConfirmationRealmBinding;
+import zeroecho.pki.application.CredentialConfirmationProofRuntimePolicy;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationOutcome;
+import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
-import zeroecho.pki.impl.fs.PosixTransactionalMetadataStore;
+import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
+import zeroecho.pki.server.acme.AcmeControlStore;
+import zeroecho.pki.server.confirmation.SignatureKeyPossessionProofProvider;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.bootstrap.PkiBootstrap;
-import zeroecho.pki.server.acme.AcmeControlStore;
+import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
 
 /**
  * Lifecycle owner for one server realm, one long-lived PKI session, and one
@@ -61,13 +66,19 @@ import zeroecho.pki.server.acme.AcmeControlStore;
  * transport can retain one instance for its process lifetime and submit existing
  * typed operations through {@link #gateway()}.</p>
  */
+// Realm services share one lifecycle and authorization boundary; splitting them would duplicate state.
 @SuppressWarnings({ "PMD.CommentDefaultAccessModifier", "PMD.CloseResource", "PMD.UseProperClassLoader",
         "PMD.AvoidCatchingGenericException", "PMD.LinguisticNaming", "PMD.ControlStatementBraces",
         "PMD.PreserveStackTrace", "PMD.SignatureDeclareThrowsException", "PMD.CommentRequired",
-        "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidInstantiatingObjectsInLoops" })
+        "PMD.AvoidSynchronizedAtMethodLevel", "PMD.AvoidInstantiatingObjectsInLoops",
+        "PMD.CyclomaticComplexity", "PMD.CouplingBetweenObjects" })
 public final class ServerRealmContext implements AutoCloseable {
     /** Closed lifecycle states. */
-    public enum State { OPEN, CLOSING, CLOSED }
+    public enum State {
+        /** Realm accepts operations. */ OPEN,
+        /** Realm rejects new work while owned resources close. */ CLOSING,
+        /** All realm-owned resources are closed. */ CLOSED
+    }
 
     private final ServerRealmConfiguration configuration;
     private final ServerControlStore control;
@@ -77,14 +88,32 @@ public final class ServerRealmContext implements AutoCloseable {
     private final ApprovalService approvals;
     private final BreakGlassService breakGlass;
     private final DisclosureService disclosure;
+    private final CredentialPublicationGate credentialPublication;
     private final RepositoryAliasService repositoryAliases;
     private final AcmeControlStore acmeControl;
     private final OcspResponderService ocspResponders;
     private final PublicRepositoryGateway publicRepository;
     private final AuditorViews auditorViews;
     private final ServerOperationGateway gateway;
+    private final RevocationAuditProjector revocationAuditProjector;
+    private final AuditEvidenceProjector issuanceAuditProjector;
+    private final AuditEvidenceProjector statusAuditProjector;
+    private final AuditEvidenceProjector publicationAuditProjector;
+    private final java.util.List<AuditEvidenceProjector> evidenceProjectors = new java.util.ArrayList<>();
+    private final RealmReconciliationWakeSignal reconciliationWake = new RealmReconciliationWakeSignal();
     private final SafeAudit audit;
     private final AtomicReference<State> state = new AtomicReference<>(State.OPEN);
+    private final RetryableCloseGate closeGate = new RetryableCloseGate();
+    private final AtomicBoolean closeAuditAttempted = new AtomicBoolean();
+    private final AtomicBoolean sessionClosed = new AtomicBoolean();
+    private final AtomicBoolean controlClosed = new AtomicBoolean();
+    private final AtomicReference<zeroecho.pki.api.audit.AuditIntegrityService> auditIntegrity =
+            new AtomicReference<>();
+    private final AtomicReference<String> auditAnchorCommitment = new AtomicReference<>();
+
+    private static final String AUDIT_ANCHOR_NAMESPACE = ServerControlStore.AUDIT_ANCHOR;
+    private static final String AUDIT_ANCHOR_RECORD_ID = "head";
+    private static final long FIRST_AUDIT_SEQUENCE = 0L;
 
     private ServerRealmContext(ServerRealmConfiguration configuration, ServerControlStore control,
             PkiSession session, RoleTemplateCatalog roles, AuthorizationEngine authorization,
@@ -99,6 +128,8 @@ public final class ServerRealmContext implements AutoCloseable {
         this.approvals = approvals;
         this.breakGlass = breakGlass;
         this.disclosure = disclosure;
+        this.credentialPublication = new CredentialPublicationGate(session.repository(), session.profiles(),
+                session.confirmations(), disclosure, clock, this::requireOpen);
         this.repositoryAliases = repositoryAliases;
         this.acmeControl = new AcmeControlStore(control);
         this.acmeControl.validateAndRecover(clock);
@@ -110,12 +141,30 @@ public final class ServerRealmContext implements AutoCloseable {
                 this::requireOpen);
         this.auditorViews = auditorViews;
         this.audit = new SafeAudit(clock, auditSink);
+        this.revocationAuditProjector = new RevocationAuditProjector(configuration.realmId(), session.revocations(),
+                control, clock, auditSink);
+        this.issuanceAuditProjector = new AuditEvidenceProjector(control, IssuanceAuditProjection.recordId(),
+                session::openIssuanceEvidenceFeed, IssuanceAuditProjection::toEvent, auditSink, clock);
+        this.evidenceProjectors.add(this.issuanceAuditProjector);
+        this.statusAuditProjector = new AuditEvidenceProjector(control, StatusAuditProjection.recordId(),
+                session::openStatusEvidenceFeed, StatusAuditProjection::toEvent, auditSink, clock);
+        this.evidenceProjectors.add(this.statusAuditProjector);
+        this.publicationAuditProjector = new AuditEvidenceProjector(control, PublicationAuditProjection.recordId(),
+                session::openPublicationEvidenceFeed, PublicationAuditProjection::toEvent, auditSink, clock);
+        this.evidenceProjectors.add(this.publicationAuditProjector);
+        // Signing (CA key-usage) audit is an operator opt-in; register its projector only when the store
+        // maintains the signing evidence feed, otherwise the feed opener would throw.
+        if (session.supportsSigningEvidenceFeed()) {
+            this.evidenceProjectors.add(new AuditEvidenceProjector(control, SigningAuditProjection.recordId(),
+                    session::openSigningEvidenceFeed, SigningAuditProjection::toEvent, auditSink, clock));
+        }
         this.gateway = new ServerOperationGateway(configuration.realmId(), configuration.authorityExposure(),
-                control, roles, authorization, approvals, breakGlass, disclosure, auditorViews,
-                Optional.of(repositoryAliases),
+                control, roles, authorization, approvals, breakGlass, disclosure, credentialPublication,
+                auditorViews, Optional.of(repositoryAliases),
                 new OperationSecurityDescriptors(),
-                session.operations(), session.resourceScopes(), configuration.approvalPolicies(), clock, auditSink,
-                this::requireOpen);
+                session.operations(), session.resourceScopes(), configuration.approvalPolicies(),
+                profileId -> session.profiles().requireActiveProfile(profileId).definition().approvalRequirement(),
+                clock, auditSink, reconciliationWake::signal, this::requireOpen);
         this.gateway.installOcsp(ocspResponders);
     }
 
@@ -134,7 +183,8 @@ public final class ServerRealmContext implements AutoCloseable {
     static ServerRealmContext open(ServerRealmConfiguration configuration,
             PkiSessionRuntimeDependencies dependencies, Clock clock, SecureRandom random) {
         ServerRealmConfiguration exact = Objects.requireNonNull(configuration, "configuration");
-        PkiSessionRuntimeDependencies runtime = Objects.requireNonNull(dependencies, "dependencies");
+        PkiSessionRuntimeDependencies runtime = confirmationProofRuntime(exact,
+                Objects.requireNonNull(dependencies, "dependencies"));
         Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(random, "random");
         if (Files.isSymbolicLink(exact.controlLogPath())) {
@@ -147,7 +197,8 @@ public final class ServerRealmContext implements AutoCloseable {
             control = new ServerControlStore(openControl(exact));
             ServerControlStore.RealmRecord realm = new ServerControlStore.RealmRecord(exact.realmId(),
                     exact.displayName(), exact.authorityExposure(), exact.authorizationCommitment(),
-                    exact.approvalCommitment(), exact.disclosureCommitment(), exact.controlStoreId());
+                    exact.approvalCommitment(), exact.extendedApprovalCommitment(), exact.disclosureCommitment(),
+                    exact.controlStoreId());
             control.ensureRealm(realm);
             RoleTemplateCatalog roles = RoleTemplateCatalog.load(ServerRealmContext.class.getClassLoader());
             control.validateAll();
@@ -165,6 +216,11 @@ public final class ServerRealmContext implements AutoCloseable {
             AuditorViews views = new AuditorViews(clock, audit);
             ServerRealmContext result = new ServerRealmContext(exact, control, session, roles, authorization,
                     approvals, breakGlass, disclosure, aliases, views, audit, clock);
+            if (audit.supportsQuery()) {
+                result.gateway.installAudit(audit, audit);
+                result.auditIntegrity.set(audit);
+                result.reconcileAuditAnchor();
+            }
             result.audit.record("REALM_OPEN", "system", Optional.empty(), Map.of("realm", exact.realmId().value()));
             return result;
         } catch (RuntimeException | Error primary) {
@@ -173,32 +229,160 @@ public final class ServerRealmContext implements AutoCloseable {
         }
     }
 
-    /** @return exact realm configuration without rendering provider values */
+    static PkiSessionRuntimeDependencies confirmationProofRuntime(
+            ServerRealmConfiguration configuration, PkiSessionRuntimeDependencies dependencies) {
+        ServerRealmConfiguration exact = Objects.requireNonNull(configuration, "configuration");
+        PkiSessionRuntimeDependencies runtime = Objects.requireNonNull(dependencies, "dependencies");
+        CredentialConfirmationProofPolicy configured = exact.confirmationProofPolicy();
+        SignatureKeyPossessionProofProvider provider = new SignatureKeyPossessionProofProvider();
+        KeyPossessionProofDescriptor descriptor =
+                provider.descriptor(configured.rsaMaximumModulusBits());
+        CredentialConfirmationProofRuntimePolicy policy =
+                new CredentialConfirmationProofRuntimePolicy(
+                        new ConfirmationRealmBinding(exact.realmId().value()),
+                        configured.audience(), configured.challengeTimeToLive(),
+                        descriptor.proofSuiteBinding());
+        return runtime.withKeyPossessionProofProviders(java.util.List.of(provider))
+                .withCredentialConfirmationProofPolicy(policy);
+    }
+
+    /**
+     * Returns exact realm configuration without rendering provider values.
+     *
+     * @return exact realm configuration without rendering provider values
+     */
     public ServerRealmConfiguration configuration() { requireOpen(); return configuration; }
-    /** @return the one long-lived PKI session */
+    /**
+     * Returns the one long-lived PKI session.
+     *
+     * @return the one long-lived PKI session
+     */
     public PkiSession session() { requireOpen(); return session; }
-    /** @return immutable built-in role template catalog */
+    /**
+     * Returns immutable built-in role template catalog.
+     *
+     * @return immutable built-in role template catalog
+     */
     public RoleTemplateCatalog roleTemplates() { requireOpen(); return roles; }
-    /** @return deterministic authorization engine */
+    /**
+     * Returns deterministic authorization engine.
+     *
+     * @return deterministic authorization engine
+     */
     public AuthorizationEngine authorization() { requireOpen(); return authorization; }
-    /** @return durable approval service */
+    /**
+     * Returns durable approval service.
+     *
+     * @return durable approval service
+     */
     public ApprovalService approvals() { requireOpen(); return approvals; }
-    /** @return durable break-glass service */
+    /**
+     * Returns durable break-glass service.
+     *
+     * @return durable break-glass service
+     */
     public BreakGlassService breakGlass() { requireOpen(); return breakGlass; }
-    /** @return durable disclosure decision service */
+    /**
+     * Returns durable disclosure decision service.
+     *
+     * @return durable disclosure decision service
+     */
     public DisclosureService disclosure() { requireOpen(); return disclosure; }
-    /** @return durable non-authoritative public repository alias service */
+    /**
+     * Returns synchronous authoritative credential publication gate.
+     *
+     * @return synchronous authoritative credential publication gate
+     */
+    public CredentialPublicationGate credentialPublication() { requireOpen(); return credentialPublication; }
+    /**
+     * Returns durable non-authoritative public repository alias service.
+     *
+     * @return durable non-authoritative public repository alias service
+     */
     public RepositoryAliasService repositoryAliases() { requireOpen(); return repositoryAliases; }
-    /** @return typed ACME records in the realm's sole durable control authority */
+    /**
+     * Returns typed ACME records in the realm's sole durable control authority.
+     *
+     * @return typed ACME records in the realm's sole durable control authority
+     */
     public AcmeControlStore acmeControl() { requireOpen(); return acmeControl; }
-    /** @return durable exact OCSP responder bindings */
+    /**
+     * Returns durable exact OCSP responder bindings.
+     *
+     * @return durable exact OCSP responder bindings
+     */
     public OcspResponderService ocspResponders() { requireOpen(); return ocspResponders; }
-    /** @return read-only disclosed public repository gateway */
+    /**
+     * Returns read-only disclosed public repository gateway.
+     *
+     * @return read-only disclosed public repository gateway
+     */
     public PublicRepositoryGateway publicRepository() { requireOpen(); return publicRepository; }
-    /** @return explicit auditor projection service */
+    /**
+     * Returns explicit auditor projection service.
+     *
+     * @return explicit auditor projection service
+     */
     public AuditorViews auditorViews() { requireOpen(); return auditorViews; }
-    /** @return authorized typed-operation gateway */
+    /**
+     * Returns authorized typed-operation gateway.
+     *
+     * @return authorized typed-operation gateway
+     */
     public ServerOperationGateway gateway() { requireOpen(); return gateway; }
+    /**
+     * Returns synchronous authoritative-revocation audit projector owned by this realm.
+     *
+     * @return synchronous authoritative-revocation audit projector owned by this realm
+     */
+    /* default */ RevocationAuditProjector revocationAuditProjector() {
+        requireOpen();
+        return revocationAuditProjector;
+    }
+
+    /** Runs one bounded pass of every per-family success-evidence projector and folds their scheduling hints. */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // A projector failure must not stop scheduling.
+    /* default */ SigningReconciliationWorker.EvidenceHint runEvidenceProjections(int maximumRecords,
+            int maximumSinkCalls, zeroecho.core.io.CancellationSignal cancellation) {
+        boolean immediate = false;
+        Optional<java.time.Instant> earliest = Optional.empty();
+        for (AuditEvidenceProjector projector : evidenceProjectors) {
+            try {
+                AuditEvidenceProjector.PassResult result = projector.project(maximumRecords, maximumSinkCalls,
+                        cancellation);
+                if (!result.endReached() && !result.blocked()) {
+                    immediate = true;
+                }
+                earliest = earliestInstant(earliest, result.nextEligible());
+            } catch (IOException | RuntimeException ignored) {
+                // A projector failure is retried on the next cycle; it must not abort scheduling.
+            }
+        }
+        return new SigningReconciliationWorker.EvidenceHint(immediate, earliest);
+    }
+
+    private static Optional<java.time.Instant> earliestInstant(Optional<java.time.Instant> first,
+            Optional<java.time.Instant> second) {
+        if (first.isEmpty()) {
+            return second;
+        }
+        if (second.isEmpty()) {
+            return first;
+        }
+        return Optional.of(first.orElseThrow().isBefore(second.orElseThrow())
+                ? first.orElseThrow() : second.orElseThrow());
+    }
+    /**
+     * Returns realm-scoped payload-free reconciliation wake capability.
+     *
+     * @return realm-scoped payload-free reconciliation wake capability
+     */
+    /* default */ RealmReconciliationWakeSignal reconciliationWakeSignal() {
+        requireOpen();
+        return reconciliationWake;
+    }
+    /** Signals committed reconciliation work without retaining its identity. */
+    /* default */ void signalReconciliation() { reconciliationWake.signal(); }
     /**
      * Resolves one persisted principal for transport authentication.
      *
@@ -258,10 +442,19 @@ public final class ServerRealmContext implements AutoCloseable {
         Permission.requirePrincipal(principalId);
         audit.record(action, principalId, Optional.empty(), Map.copyOf(safeDetails));
     }
-    /** @return current lifecycle state */
+    /**
+     * Returns current lifecycle state.
+     *
+     * @return current lifecycle state
+     */
     public State state() { return state.get(); }
 
-    /** Creates a principal and records only safe administrative audit metadata. */
+    /**
+     * Creates a principal and records only safe administrative audit metadata.
+     *
+     * @param principal validated principal to create
+     * @param actorPrincipalId authenticated administrative actor
+     */
     public void createPrincipal(SecurityPrincipal principal, String actorPrincipalId) {
         requireOpen();
         control.createPrincipal(principal);
@@ -269,7 +462,14 @@ public final class ServerRealmContext implements AutoCloseable {
                 Map.of("principal", principal.principalId(), "enabled", Boolean.toString(principal.enabled())));
     }
 
-    /** Changes only the enabled state of an existing principal. */
+    /**
+     * Changes only the enabled state of an existing principal.
+     *
+     * @param principalId stable principal identifier
+     * @param enabled desired enabled state
+     * @param actorPrincipalId authenticated administrative actor
+     * @return durably updated principal
+     */
     public SecurityPrincipal setPrincipalEnabled(String principalId, boolean enabled, String actorPrincipalId) {
         requireOpen();
         SecurityPrincipal current = control.requirePrincipal(principalId);
@@ -281,7 +481,12 @@ public final class ServerRealmContext implements AutoCloseable {
         return updated;
     }
 
-    /** Creates one scoped role assignment; templates remain non-authoritative alone. */
+    /**
+     * Creates one scoped role assignment; templates remain non-authoritative alone.
+     *
+     * @param assignment validated scoped role assignment
+     * @param actorPrincipalId authenticated administrative actor
+     */
     public void assignRole(RoleTemplateCatalog.Assignment assignment, String actorPrincipalId) {
         requireOpen();
         roles.instantiate(assignment);
@@ -291,7 +496,12 @@ public final class ServerRealmContext implements AutoCloseable {
                 Map.of("assignment", assignment.assignmentId(), "template", assignment.templateId()));
     }
 
-    /** Creates one explicit scoped direct grant. */
+    /**
+     * Creates one explicit scoped direct grant.
+     *
+     * @param grant validated scoped permission grant
+     * @param actorPrincipalId authenticated administrative actor
+     */
     public void grant(Permission.Grant grant, String actorPrincipalId) {
         requireOpen();
         control.requirePrincipal(grant.principalId());
@@ -304,29 +514,117 @@ public final class ServerRealmContext implements AutoCloseable {
      * Rejects new work and closes session then server-control authority. Repeated
      * calls are harmless and failure suppression preserves causal order.
      */
+    // Cross-store tamper-evidence: verify the audit log against the durably anchored trusted head, then
+    // advance the anchor. A consistent full rewrite of the audit file alone (which its self-contained hash
+    // chain cannot reveal) is detected because the rewritten head no longer matches the separately stored
+    // anchor. Runs once at boot before any operation writes.
+    private void reconcileAuditAnchor() {
+        zeroecho.pki.api.audit.AuditIntegrityService service = auditIntegrity.get();
+        Optional<ServerControlStore.ProtocolRecord> stored = control.protocolRecord(
+                AUDIT_ANCHOR_NAMESPACE, AUDIT_ANCHOR_RECORD_ID);
+        zeroecho.pki.api.audit.AuditIntegrityReport report = stored.isPresent()
+                ? service.verifyAnchoredPrefix(decodeAuditAnchor(stored.orElseThrow()))
+                : service.verifyIntegrity(Optional.empty());
+        if (report.status() != zeroecho.pki.api.audit.AuditIntegrityReport.Status.INTACT) {
+            throw new IllegalStateException("Audit log integrity verification failed: " + report.status());
+        }
+        writeAuditAnchor(report.head(), stored.map(ServerControlStore.ProtocolRecord::commitment));
+    }
+
+    private void advanceAuditAnchorOnClose() {
+        zeroecho.pki.api.audit.AuditIntegrityService service = auditIntegrity.get();
+        if (service == null) {
+            return;
+        }
+        zeroecho.pki.api.audit.AuditIntegrityReport report = service.verifyIntegrity(Optional.empty());
+        if (report.status() == zeroecho.pki.api.audit.AuditIntegrityReport.Status.INTACT) {
+            writeAuditAnchor(report.head(), Optional.ofNullable(auditAnchorCommitment.get()));
+        }
+    }
+
+    private void writeAuditAnchor(zeroecho.pki.api.audit.AuditChainHead head,
+            Optional<String> expectedCommitment) {
+        // Never persist a genesis (empty-log) anchor: verifyAnchoredPrefix accepts any consistent chain for a
+        // sequence < 0 anchor, so blessing one would let a first-boot-empty-log-then-crash window skip
+        // detection. Leaving no anchor until the first real record forces presence+hash verification.
+        if (head.sequence() < FIRST_AUDIT_SEQUENCE) {
+            return;
+        }
+        byte[] payload = (head.sequence() + "\n" + head.recordHash())
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String commitment = ApprovalService.digest(head.sequence() + ":" + head.recordHash());
+        control.mutateProtocol(java.util.List.of(new ServerControlStore.ProtocolMutation(
+                new ServerControlStore.ProtocolRecord(AUDIT_ANCHOR_NAMESPACE, AUDIT_ANCHOR_RECORD_ID,
+                        commitment, payload), expectedCommitment)));
+        auditAnchorCommitment.set(commitment);
+    }
+
+    private static zeroecho.pki.api.audit.AuditChainHead decodeAuditAnchor(
+            ServerControlStore.ProtocolRecord record) {
+        String payload = new String(record.payload(), java.nio.charset.StandardCharsets.UTF_8);
+        int separator = payload.indexOf('\n');
+        if (separator < 0) {
+            throw new IllegalStateException("Audit anchor record is malformed");
+        }
+        return new zeroecho.pki.api.audit.AuditChainHead(Long.parseLong(payload.substring(0, separator)),
+                payload.substring(separator + 1));
+    }
+
     @Override
     public void close() throws Exception {
-        if (!state.compareAndSet(State.OPEN, State.CLOSING)) return;
+        closeFromServerWorker(false);
+    }
+
+    void closeFromServerWorker(boolean workerThread) throws Exception {
+        closeGate.close(workerThread, this::quiesce, this::closeAttempt);
+    }
+
+    private void quiesce() {
+        state.compareAndSet(State.OPEN, State.CLOSING);
+    }
+
+    private Throwable closeAttempt() {
+        quiesce();
         Throwable primary = null;
-        try {
-            audit.record("REALM_CLOSE", "system", Optional.empty(), Map.of("realm", configuration.realmId().value()));
-        } catch (Throwable failure) {
-            primary = failure;
+        if (closeAuditAttempted.compareAndSet(false, true)) {
+            try {
+                audit.record("REALM_CLOSE", "system", Optional.empty(),
+                        Map.of("realm", configuration.realmId().value()));
+                advanceAuditAnchorOnClose();
+            } catch (Throwable failure) {
+                primary = failure;
+            }
         }
-        primary = closeOne(session, primary);
-        primary = closeOne(control, primary);
-        state.set(State.CLOSED);
-        rethrow(primary);
+        if (!sessionClosed.get()) {
+            try {
+                session.close();
+                sessionClosed.set(true);
+            } catch (Throwable failure) {
+                return preferFailure(failure, primary);
+            }
+        }
+        if (!controlClosed.get()) {
+            try {
+                control.close();
+                controlClosed.set(true);
+            } catch (Throwable failure) {
+                primary = suppress(primary, failure);
+            }
+        }
+        if (primary == null) {
+            state.set(State.CLOSED);
+        }
+        return primary;
     }
 
     private void requireOpen() {
         if (state.get() != State.OPEN) throw new IllegalStateException("Server realm is not open");
     }
 
-    private static PosixTransactionalMetadataStore openControl(ServerRealmConfiguration configuration) {
+    private static DurableTransactionalMetadataStore openControl(ServerRealmConfiguration configuration) {
         try {
             if (Files.exists(configuration.controlLogPath())) {
-                PosixTransactionalMetadataStore opened = PosixTransactionalMetadataStore.open(
+                DurableTransactionalMetadataStore opened = DurableTransactionalMetadataStore.open(
                         configuration.controlLogPath(), OptionalLong.of(1_048_576));
                 if (!opened.id().equals(configuration.controlStoreId())) {
                     opened.close();
@@ -334,7 +632,7 @@ public final class ServerRealmContext implements AutoCloseable {
                 }
                 return opened;
             }
-            return PosixTransactionalMetadataStore.create(configuration.controlLogPath(),
+            return DurableTransactionalMetadataStore.create(configuration.controlLogPath(),
                     configuration.controlStoreId(), OptionalLong.of(1_048_576));
         } catch (IOException failure) {
             throw new IllegalStateException("Server-control metadata authority cannot be opened");
@@ -346,7 +644,7 @@ public final class ServerRealmContext implements AutoCloseable {
             for (zeroecho.pki.api.PkiId authorityId : exposure.authorityIds()) {
                 PkiOperationOutcome outcome = session.operations().execute(
                         new PkiOperation.InspectAuthority(authorityId), zeroecho.core.io.CancellationSignal.NONE);
-                if (!(outcome instanceof PkiOperationOutcome.Success)) {
+                if (!(outcome instanceof PkiOperationOutcome.Completed)) {
                     throw new IllegalStateException("Configured authority exposure contains an unavailable authority");
                 }
             }
@@ -365,20 +663,32 @@ public final class ServerRealmContext implements AutoCloseable {
         try {
             resource.close();
         } catch (Throwable failure) {
-            if (primary == null) return failure;
+            return suppress(primary, failure);
+        }
+        return primary;
+    }
+
+    @SuppressWarnings("PMD.CompareObjectsWithEquals") // Suppression must not attach a Throwable to itself.
+    private static Throwable suppress(Throwable primary, Throwable failure) {
+        if (primary == null) {
+            return failure;
+        }
+        if (primary != failure) {
             primary.addSuppressed(failure);
         }
         return primary;
     }
 
-    private static void rethrow(Throwable failure) throws Exception {
-        if (failure == null) return;
-        if (failure instanceof Exception exception) throw exception;
-        if (failure instanceof Error error) throw error;
-        throw new IllegalStateException("Unexpected realm close failure");
+    @SuppressWarnings("PMD.CompareObjectsWithEquals") // Suppression must preserve exact primary identity.
+    private static Throwable preferFailure(Throwable failure, Throwable prior) {
+        if (prior != null && prior != failure) {
+            failure.addSuppressed(prior);
+        }
+        return failure;
     }
 
-    private static final class SharedAuditSink implements AuditSink {
+    private static final class SharedAuditSink implements AuditSink,
+            zeroecho.pki.api.audit.AuditService, zeroecho.pki.api.audit.AuditIntegrityService {
         private final AuditSink delegate;
         private boolean closed;
 
@@ -389,6 +699,34 @@ public final class ServerRealmContext implements AutoCloseable {
         }
         @Override public synchronized void close() {
             if (!closed) { closed = true; delegate.close(); }
+        }
+
+        /** @return whether the underlying sink supports bounded search and hash-chain verification */
+        synchronized boolean supportsQuery() {
+            return delegate instanceof zeroecho.pki.api.audit.AuditService
+                    && delegate instanceof zeroecho.pki.api.audit.AuditIntegrityService;
+        }
+
+        // Reads are serialized against writes so a bounded admin query never races an in-progress append.
+        @Override public synchronized java.util.List<zeroecho.pki.api.audit.AuditEvent> search(
+                zeroecho.pki.api.audit.AuditQuery query) {
+            if (closed) throw new IllegalStateException("Audit sink is closed");
+            return ((zeroecho.pki.api.audit.AuditService) delegate).search(query);
+        }
+        @Override public synchronized Optional<zeroecho.pki.api.audit.AuditEvent> get(
+                zeroecho.pki.api.PkiId eventId) {
+            if (closed) throw new IllegalStateException("Audit sink is closed");
+            return ((zeroecho.pki.api.audit.AuditService) delegate).get(eventId);
+        }
+        @Override public synchronized zeroecho.pki.api.audit.AuditIntegrityReport verifyIntegrity(
+                Optional<zeroecho.pki.api.audit.AuditChainHead> expectedHead) {
+            if (closed) throw new IllegalStateException("Audit sink is closed");
+            return ((zeroecho.pki.api.audit.AuditIntegrityService) delegate).verifyIntegrity(expectedHead);
+        }
+        @Override public synchronized zeroecho.pki.api.audit.AuditIntegrityReport verifyAnchoredPrefix(
+                zeroecho.pki.api.audit.AuditChainHead anchor) {
+            if (closed) throw new IllegalStateException("Audit sink is closed");
+            return ((zeroecho.pki.api.audit.AuditIntegrityService) delegate).verifyAnchoredPrefix(anchor);
         }
     }
 }

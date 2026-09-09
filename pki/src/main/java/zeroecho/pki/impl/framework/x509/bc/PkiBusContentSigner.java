@@ -37,27 +37,34 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
-import org.bouncycastle.operator.ContentSigner;
+import zeroecho.pkix.AlgorithmIdentifier;
+import zeroecho.pkix.sign.ContentSigner;
 
+import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.SigningExecutionException;
+import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
 import zeroecho.pki.impl.core.async.PkiSigningBus.SignContinuation;
+import zeroecho.pki.impl.core.async.PendingSigningOperation;
+import zeroecho.pki.impl.core.async.DomainContinuationTemplate;
+import zeroecho.pki.impl.core.async.DomainSigningRequest;
+import zeroecho.pki.impl.core.async.ImmediateSigningPending;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.store.ContentSink;
-import zeroecho.pki.util.async.AsyncState;
 
 /**
  * {@link ContentSigner} implementation that delegates the actual signature
@@ -73,11 +80,11 @@ import zeroecho.pki.util.async.AsyncState;
  * </p>
  *
  * <p>
- * Although the underlying signing path is modeled as a durable asynchronous
- * workflow, this adapter exposes a synchronous caller experience required by
- * Bouncy Castle. It therefore blocks in {@link #getSignature()} until the
- * delegated workflow reaches a terminal state or until the configured
- * time-to-live expires.
+ * The Bouncy Castle call is bounded: it performs at most the initial signing
+ * step and one authoritative observation. Immediate completion returns the
+ * signature. A delayed domain operation unwinds with its durable private
+ * {@link PkiId}; an immediate-only capability fails after cancellation rather
+ * than retaining the caller thread.
  * </p>
  *
  * <h2>Execution model</h2>
@@ -88,12 +95,11 @@ import zeroecho.pki.util.async.AsyncState;
  * operation.</li>
  * <li>A fresh client operation identifier is generated for each signature
  * request and canonicalized by the signing bus.</li>
- * <li>The signer polls the bus by repeatedly calling
- * {@link PkiSigningBus#sweep(Instant)} and {@link PkiSigningBus#status(PkiId)}
- * until the workflow succeeds, fails, or times out.</li>
- * <li>Every submitted operation is retired through
- * {@link PkiSigningBus#retireSignOperation(PkiId, String)} before the method
- * returns or throws.</li>
+ * <li>No sleep, polling loop, callback owner, lease, or activity root is retained
+ * by the foreground call.</li>
+ * <li>Immediate terminal operations are retired before return. Delayed operations
+ * are owned by the atomically linked domain continuation and later realm
+ * reconciliation.</li>
  * </ul>
  *
  * <h2>Lifecycle and ownership</h2>
@@ -120,9 +126,8 @@ import zeroecho.pki.util.async.AsyncState;
  * <li>This class never accesses private key material directly.</li>
  * <li>The staged to-be-signed content and returned signature bytes are
  * operationally sensitive and must not be logged.</li>
- * <li>The generated operation identifier is an internal workflow handle and
- * must not be treated as a durable business identifier outside the signing
- * flow.</li>
+ * <li>The generated operation identifier is a stable lookup identifier for the
+ * persisted signing state; it carries no live workflow context.</li>
  * </ul>
  *
  * <h2>Thread-safety</h2>
@@ -134,19 +139,23 @@ import zeroecho.pki.util.async.AsyncState;
  * <h2>Complexity</h2>
  * <p>
  * Staging is streaming {@code O(n)} time with {@code O(1)} aggregate auxiliary
- * heap, excluding the returned signature. Polling performs
- * {@code O(TTL / interval)} status observations.
+ * heap, excluding the returned signature. Foreground status work is exactly one
+ * bounded observation, independent of TTL.
  * </p>
  */
-// PMD cannot infer that retaining provider causes would violate the redaction contract.
-@SuppressWarnings("PMD.PreserveStackTrace")
+// PMD cannot infer the one-shot field ownership or that retaining provider causes
+// would violate the redaction contract.
+@SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CloseResource", "PMD.UseTryWithResources" })
 public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
 
     private final PkiSigningBus bus;
     private final KeyRef keyRef;
     private final AlgorithmIdentity algorithmIdentity;
     private final X509ExecutionPlan<SignatureWorkflow> executionPlan;
-    private final Duration ttl;
+    private final Instant deadline;
+    private final CancellationSignal cancellation;
+    private final PkiSigningBus.NewSignAdmission newSignAdmission;
+    private final Optional<DomainContinuationTemplate> domainContinuation;
 
     private final ContentSink contentSink;
     private final OutputStream contentOutput;
@@ -163,13 +172,27 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
      *                    boundary; must not be {@code null}
      * @param algorithmId non-blank signature algorithm identifier in JCA naming
      *                    form; must not be {@code null} or blank
-     * @param ttl         positive maximum time to wait for delegated signing
-     *                    completion; must not be {@code null}, zero, or negative
+     * @param ttl         positive durable signing deadline bound; must not be
+     *                    {@code null}, zero, or negative
      * @throws IllegalArgumentException if any argument violates the described
      *                                  contract
      */
     public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, String algorithmId, Duration ttl) {
-        this(bus, keyRef, bus.authority().resolveIdentity(algorithmId), ttl);
+        this(bus, keyRef, algorithmId, ttl, CancellationSignal.NONE);
+    }
+
+    /**
+     * Creates a signer carrying one originating caller cancellation signal.
+     *
+     * @param bus signing bus that owns submission and reconciliation
+     * @param keyRef managed signing-key reference
+     * @param algorithmId nonblank signature algorithm identifier
+     * @param ttl positive durable signing lifetime
+     * @param cancellation originating cooperative cancellation signal
+     */
+    public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, String algorithmId, Duration ttl,
+            CancellationSignal cancellation) {
+        this(bus, keyRef, bus.authority().resolveIdentity(algorithmId), ttl, cancellation);
     }
 
     /**
@@ -183,7 +206,37 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
      *                                  authoritative signature binding exists
      */
     public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity, Duration ttl) {
-        this(bus, keyRef, algorithmIdentity, Optional.empty(), ttl);
+        this(bus, keyRef, algorithmIdentity, ttl, CancellationSignal.NONE);
+    }
+
+    /**
+     * Creates an identity-bound signer carrying caller cancellation.
+     *
+     * @param bus signing bus that owns submission and reconciliation
+     * @param keyRef managed signing-key reference
+     * @param algorithmIdentity exact provider-independent signature identity
+     * @param ttl positive durable signing lifetime
+     * @param cancellation originating cooperative cancellation signal
+     */
+    public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity, Duration ttl,
+            CancellationSignal cancellation) {
+        this(bus, keyRef, algorithmIdentity, Optional.empty(), ttl, cancellation, Optional.empty());
+    }
+
+    /**
+     * Creates a signer whose delayed result is owned by a durable domain continuation.
+     *
+     * @param bus signing bus that owns submission and reconciliation
+     * @param keyRef managed signing-key reference
+     * @param algorithmIdentity exact provider-independent signature identity
+     * @param ttl positive durable signing lifetime
+     * @param cancellation originating cooperative cancellation signal
+     * @param domainContinuation durable outer continuation that will own a delayed result
+     */
+    public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
+            Duration ttl, CancellationSignal cancellation, DomainContinuationTemplate domainContinuation) {
+        this(bus, keyRef, algorithmIdentity, Optional.empty(), ttl, cancellation,
+                Optional.of(Objects.requireNonNull(domainContinuation, "domainContinuation")));
     }
 
     /**
@@ -197,11 +250,47 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
      */
     public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
             String bindingId, Duration ttl) {
-        this(bus, keyRef, algorithmIdentity, Optional.of(bindingId), ttl);
+        this(bus, keyRef, algorithmIdentity, bindingId, ttl, CancellationSignal.NONE);
     }
 
+    /**
+     * Creates an explicitly bound signer carrying caller cancellation.
+     *
+     * @param bus signing bus that owns submission and reconciliation
+     * @param keyRef managed signing-key reference
+     * @param algorithmIdentity exact provider-independent signature identity
+     * @param bindingId stable active X.509 binding identifier
+     * @param ttl positive durable signing lifetime
+     * @param cancellation originating cooperative cancellation signal
+     */
+    public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
+            String bindingId, Duration ttl, CancellationSignal cancellation) {
+        this(bus, keyRef, algorithmIdentity, Optional.of(bindingId), ttl, cancellation, Optional.empty());
+    }
+
+    /**
+     * Creates an explicitly bound signer with a durable domain continuation.
+     *
+     * @param bus signing bus that owns submission and reconciliation
+     * @param keyRef managed signing-key reference
+     * @param algorithmIdentity exact provider-independent signature identity
+     * @param bindingId stable active X.509 binding identifier
+     * @param ttl positive durable signing lifetime
+     * @param cancellation originating cooperative cancellation signal
+     * @param domainContinuation durable outer continuation that will own a delayed result
+     */
+    public PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
+            String bindingId, Duration ttl, CancellationSignal cancellation,
+            DomainContinuationTemplate domainContinuation) {
+        this(bus, keyRef, algorithmIdentity, Optional.of(bindingId), ttl, cancellation,
+                Optional.of(Objects.requireNonNull(domainContinuation, "domainContinuation")));
+    }
+
+    // Constructor validation keeps all signing and continuation invariants atomic before publication.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.CyclomaticComplexity" })
     private PkiBusContentSigner(PkiSigningBus bus, KeyRef keyRef, AlgorithmIdentity algorithmIdentity,
-            Optional<String> bindingId, Duration ttl) {
+            Optional<String> bindingId, Duration ttl, CancellationSignal cancellation,
+            Optional<DomainContinuationTemplate> domainContinuation) {
         if (bus == null) {
             throw new IllegalArgumentException("bus must not be null");
         }
@@ -216,23 +305,37 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
         }
         this.bus = bus;
         this.keyRef = keyRef;
+        String implementation = bus.signingImplementationId(keyRef);
         X509ExecutionPlan<SignatureWorkflow> plan = bindingId.isPresent()
                 ? bus.authority().planSigningWithBinding(algorithmIdentity.canonicalForm(), bindingId.orElseThrow(),
-                        SignatureWorkflow.class)
-                : bus.authority().planSigning(algorithmIdentity.canonicalForm(), SignatureWorkflow.class);
+                        implementation, SignatureWorkflow.class)
+                : bus.authority().planSigning(algorithmIdentity.canonicalForm(), implementation,
+                        SignatureWorkflow.class);
         bus.authority().authorize(plan, plan.executor(),
                 zeroecho.core.spi.AlgorithmExecutionCapability.Direction.SIGN);
         this.executionPlan = plan;
         this.algorithmIdentity = plan.selection().requested();
-        this.ttl = ttl;
-        this.contentSink = bus.beginSigningContent(Encoding.BINARY);
+        this.deadline = Instant.now().plus(ttl);
+        this.cancellation = Objects.requireNonNull(cancellation, "cancellation");
+        this.domainContinuation = Objects.requireNonNull(domainContinuation, "domainContinuation");
+        this.newSignAdmission = bus.reserveNewSignAdmission();
+        ContentSink openedSink;
         try {
-            this.contentOutput = contentSink.outputStream();
+            openedSink = bus.beginSigningContent(Encoding.BINARY);
+        } catch (RuntimeException | Error stagingFailure) {
+            newSignAdmission.close();
+            throw stagingFailure;
+        }
+        this.contentSink = openedSink;
+        try {
+            this.contentOutput = openedSink.outputStream();
         } catch (IOException ex) {
             try {
-                contentSink.close();
+                openedSink.close();
             } catch (IOException cleanupFailure) {
                 ex.addSuppressed(cleanupFailure);
+            } finally {
+                newSignAdmission.close();
             }
             throw new PkiException("Signing content staging failed: code=SPOOL_STORAGE_FAILED");
         }
@@ -252,8 +355,8 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
      *                          signature algorithm identifier
      */
     @Override
-    public AlgorithmIdentifier getAlgorithmIdentifier() {
-        return BcX509AlgorithmAdapter.toBc(executionPlan.selection().binding());
+    public AlgorithmIdentifier algorithm() {
+        return BcX509AlgorithmAdapter.toLib(executionPlan.selection().binding());
     }
 
     /**
@@ -269,9 +372,18 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
      *                               signer has been closed
      */
     @Override
-    public OutputStream getOutputStream() {
+    public OutputStream contentStream() {
         requireWritable();
         return contentOutput;
+    }
+
+    /**
+     * Compatibility alias for {@link #contentStream()}.
+     *
+     * @return sequential staged-content output stream
+     */
+    public OutputStream getOutputStream() {
+        return contentStream();
     }
 
     /*
@@ -283,28 +395,28 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
     }
 
     /**
-     * Submits the buffered to-be-signed payload to the PKI signing bus and waits
-     * for the resulting signature bytes.
+     * Submits the buffered to-be-signed payload and performs one bounded result
+     * observation.
      *
      * <p>
      * The method creates a synthetic system-owned signing workflow using purpose
-     * {@code X509_SIGN}, submits it to {@link PkiSigningBus}, and then polls the
-     * bus until one of the following terminal conditions occurs:
+     * {@code X509_SIGN}, submits it to {@link PkiSigningBus}, and observes one of:
      * </p>
      * <ul>
      * <li>the workflow succeeds and produces a signature result,</li>
      * <li>the workflow fails,</li>
-     * <li>the configured TTL expires before completion.</li>
+     * <li>a durable pending state owned by the linked outer continuation.</li>
      * </ul>
      *
      * <p>
      * On successful completion, the signature bytes contained in the workflow
      * result are returned. If the workflow reports success but no result is
      * available, the method fails explicitly. Invoking this method consumes the
-     * signer; a second invocation fails. Every operation for which submission is
-     * attempted is retired before the method returns or throws. Cleanup failures
-     * are discarded when a safe primary signing failure already exists and
-     * otherwise become a stable, redacted cleanup failure.
+     * signer; a second invocation fails. Immediate terminal or unsupported
+     * delayed operations are retired before return. A supported delayed operation
+     * remains owned solely by its persisted outer continuation. Cleanup failures
+     * are discarded when a safe primary failure already exists and otherwise
+     * become a stable, redacted cleanup failure.
      * </p>
      *
      * <p>
@@ -314,59 +426,127 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
      * </p>
      *
      * @return raw signature bytes produced by the delegated sign workflow
-     * @throws PkiException if the signing workflow fails, if a successful workflow
-     *                      produces no signature result, or if signing does not
-     *                      complete within the configured TTL
+     * @throws PkiException if the signing workflow fails or a successful workflow
+     *                      produces no signature result
      * @throws IllegalStateException if signing has already been requested or this
      *                               signer has been closed
      */
+    /**
+     * Compatibility alias for {@link #signature()}.
+     *
+     * @return raw signature bytes produced by the delegated sign workflow
+     */
+    public byte[] getSignature() {
+        return signature();
+    }
+
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    public byte[] getSignature() {
+    public byte[] signature() {
         requireWritable();
+        PkiSigningBus.ForegroundCall foregroundCall;
+        try {
+            foregroundCall = bus.registerForegroundCall(cancellation);
+        } catch (RuntimeException | Error rejected) {
+            close();
+            throw rejected;
+        }
         signatureRequested = true;
-        byte[] consumedResult = null;
-        DurableContentReference content = null;
-        PkiId opId = null;
-        boolean retirementRequired = false;
+        SigningAttempt attempt = new SigningAttempt();
         Throwable primaryFailure = null;
         try {
-            content = completeContent();
-            Principal owner = new Principal("SYSTEM", "pki");
-            opId = bus.newSubmissionId();
-
-            AccessContext ac = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(), Optional.empty());
-            String canonicalIdentity = algorithmIdentity.canonicalForm();
-            SignContinuation cont = new SignContinuation(ac, canonicalIdentity, content, keyRef, Encoding.BINARY,
-                    Optional.empty());
-            EncodedObject encodedContinuation = cont.encode();
-
-            retirementRequired = true;
-            bus.submitSign(opId, owner, keyRef, canonicalIdentity, content, ttl, Optional.of(encodedContinuation));
-            consumedResult = awaitSignature(opId);
-            return consumedResult.clone();
+            attempt.result = executeAttempt(foregroundCall, attempt);
+            return attempt.result.clone();
+        } catch (PendingSigningOperation | ImmediateSigningPending | SigningExecutionException
+                | Error signingFailure) {
+            primaryFailure = signingFailure;
+            throw signingFailure;
         } catch (RuntimeException failure) {
             PkiException sanitized = new PkiException("Signing workflow failed: code=SIGNING_WORKFLOW_FAILED");
             primaryFailure = sanitized;
             throw sanitized;
-        } catch (Error failure) {
-            primaryFailure = failure;
-            throw failure;
         } finally {
+            attempt.finish(this, primaryFailure, foregroundCall);
+        }
+    }
+
+    private byte[] executeAttempt(PkiSigningBus.ForegroundCall foregroundCall, SigningAttempt attempt) {
+        foregroundCall.requireActive();
+        attempt.content = completeContent();
+        foregroundCall.requireActive();
+        Principal owner = new Principal("SYSTEM", "pki");
+        attempt.operationId = bus.newSubmissionId(keyRef);
+        foregroundCall.requireActive();
+        String canonicalIdentity = algorithmIdentity.canonicalForm();
+        AccessContext access = new AccessContext(owner, new Purpose("X509_SIGN"), Optional.empty(), Optional.empty());
+        SignContinuation continuation = new SignContinuation(access, canonicalIdentity, attempt.content,
+                keyRef, Encoding.BINARY, Optional.empty());
+        EncodedObject encodedContinuation = continuation.encode();
+        Duration ttl = submissionTtl(attempt.operationId);
+        attempt.dispositionTransferred = true;
+        submitAttempt(foregroundCall, attempt, owner, canonicalIdentity, encodedContinuation, ttl);
+        return observeAttempt(foregroundCall, attempt);
+    }
+
+    private void submitAttempt(PkiSigningBus.ForegroundCall foregroundCall, SigningAttempt attempt,
+            Principal owner, String canonicalIdentity, EncodedObject continuation, Duration ttl) {
+        if (domainContinuation.isPresent()) {
+            bus.submitInitialSign(newSignAdmission, new DomainSigningRequest(
+                    attempt.operationId, owner, keyRef, canonicalIdentity, attempt.content,
+                    ttl, Optional.of(continuation), domainContinuation.orElseThrow()), foregroundCall);
+        } else {
+            bus.submitInitialSign(newSignAdmission, attempt.operationId, owner, keyRef,
+                    canonicalIdentity, attempt.content, ttl, Optional.of(continuation), foregroundCall);
+        }
+    }
+
+    private byte[] observeAttempt(PkiSigningBus.ForegroundCall foregroundCall, SigningAttempt attempt) {
+        PkiSigningBus.SigningObservation observation = bus.observeSigningResult(attempt.operationId,
+                foregroundCall.cancellation());
+        if (observation instanceof PkiSigningBus.SigningObservation.Pending durablePending) {
+            if (domainContinuation.isPresent()) {
+                attempt.pending = true;
+                throw new PendingSigningOperation(durablePending.operationId());
+            }
+            throw new ImmediateSigningPending();
+        }
+        if (observation instanceof PkiSigningBus.SigningObservation.Failed terminalFailure) {
+            throw new PkiException("Signing failed: " + terminalFailure.state());
+        }
+        return ((PkiSigningBus.SigningObservation.Completed) observation).signature().bytes();
+    }
+
+    /** Stack-confined mutable disposition of one synchronous adapter attempt. */
+    private static final class SigningAttempt {
+        private DurableContentReference content;
+        private PkiId operationId;
+        private byte[] result;
+        private boolean dispositionTransferred;
+        private boolean pending;
+
+        private void finish(PkiBusContentSigner owner, Throwable primaryFailure,
+                PkiSigningBus.ForegroundCall foregroundCall) {
             try {
-                if (retirementRequired) {
-                    retirePreservingFailure(opId, primaryFailure);
+                if (dispositionTransferred && !pending) {
+                    owner.retirePreservingFailure(operationId, primaryFailure, foregroundCall);
                 } else if (content != null) {
-                    releasePreservingFailure(content, primaryFailure);
+                    owner.releasePreservingFailure(content, primaryFailure);
                 }
             } finally {
-                try {
-                    closeSink(primaryFailure);
-                } finally {
-                    closed = true;
-                    if (consumedResult != null) {
-                        java.util.Arrays.fill(consumedResult, (byte) 0);
-                    }
+                close(owner, primaryFailure, foregroundCall);
+            }
+        }
+
+        private void close(PkiBusContentSigner owner, Throwable primaryFailure,
+                PkiSigningBus.ForegroundCall foregroundCall) {
+            try {
+                owner.closeSink(primaryFailure);
+            } finally {
+                owner.closed = true;
+                owner.newSignAdmission.close();
+                foregroundCall.close();
+                if (result != null) {
+                    java.util.Arrays.fill(result, (byte) 0);
                 }
             }
         }
@@ -394,6 +574,8 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
             contentSink.close();
         } catch (IOException cleanupFailure) {
             throw new PkiException("Signing cleanup failed: code=SIGNING_CLEANUP_FAILED");
+        } finally {
+            newSignAdmission.close();
         }
     }
 
@@ -432,46 +614,20 @@ public final class PkiBusContentSigner implements ContentSigner, AutoCloseable {
         }
     }
 
-    private byte[] awaitSignature(PkiId opId) {
-        Instant deadline = Instant.now().plus(ttl);
-        while (Instant.now().isBefore(deadline)) {
-            bus.sweep(Instant.now());
-            Optional<zeroecho.pki.util.async.AsyncStatus> status = bus.status(opId);
-            if (status.isPresent() && status.get().state() == AsyncState.SUCCEEDED) {
-                Optional<EncodedObject> result = bus.consumeResult(opId);
-                if (result.isEmpty()) {
-                    throw new PkiException("Missing signature result");
-                }
-                return result.get().bytes();
-            }
-            if (status.isPresent() && isTerminalFailure(status.get().state())) {
-                throw new PkiException("Signing failed: " + status.get().state());
-            }
-            boundedWait(deadline);
+    private Duration submissionTtl(PkiId operationId) {
+        Duration exactTtl = Duration.between(SigningSubmissionId.parse(operationId).createdAt(), deadline);
+        if (exactTtl.isZero() || exactTtl.isNegative()) {
+            throw new PkiException("Signing deadline expired: code=SIGNING_DEADLINE_EXPIRED");
         }
-        throw new PkiException("Signing did not complete before TTL");
-    }
-
-    private static boolean isTerminalFailure(AsyncState state) {
-        return state == AsyncState.FAILED || state == AsyncState.CANCELLED || state == AsyncState.EXPIRED;
-    }
-
-    @SuppressWarnings("PMD.DoNotUseThreads")
-    private static void boundedWait(Instant deadline) {
-        long remainingMillis = Duration.between(Instant.now(), deadline).toMillis();
-        long waitMillis = Math.min(10L, Math.max(1L, remainingMillis));
-        try {
-            Thread.sleep(waitMillis);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new PkiException("Interrupted while awaiting signing", ex);
-        }
+        return exactTtl;
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    private void retirePreservingFailure(PkiId opId, Throwable primaryFailure) {
+    private void retirePreservingFailure(PkiId opId, Throwable primaryFailure,
+            PkiSigningBus.ForegroundCall foregroundCall) {
         try {
-            bus.retireSignOperation(opId, primaryFailure == null ? "completed" : "failed-or-expired");
+            bus.retireSignOperation(opId, primaryFailure == null ? "completed" : "failed-or-expired",
+                    foregroundCall);
         } catch (RuntimeException cleanupFailure) {
             if (primaryFailure == null) {
                 throw new PkiException("Signing cleanup failed: code=SIGNING_CLEANUP_FAILED");

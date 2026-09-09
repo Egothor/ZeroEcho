@@ -193,7 +193,7 @@ final class H7ProfileEnforcementTest {
         ParsedCertificationRequest parsed = parse(csr(keyPair, subject.build(), List.of(extensions)));
 
         assertEquals(List.of(new SubjectRdn(SubjectRdnType.COMMON_NAME, "#literal\\name")), parsed.subjectRdns());
-        assertEquals(BcX509ProfileSupport.subject(parsed.subjectRdns()).toString(), parsed.subjectRef().value());
+        assertEquals(BcX509ProfileSupport.subjectRefString(parsed.subjectRdns()), parsed.subjectRef().value());
         assertEquals(List.of(new SubjectAlternativeName.DnsName("www.example.com"),
                 new SubjectAlternativeName.IpAddress(new byte[] { 10, 0, 0, 1 }),
                 new SubjectAlternativeName.UriName("https://example.com/a%2Fb"),
@@ -265,9 +265,9 @@ final class H7ProfileEnforcementTest {
     void postconditionRejectsDuplicateEkuAndUnknownExtensions() throws Exception {
         KeyPair pair = rsa();
         ValidatedCertificateRequest request = validatedRequest(pair);
-        X509CertificateHolder exact = certificate(pair, request, false, false);
-        X509CertificateHolder duplicateEku = certificate(pair, request, true, false);
-        X509CertificateHolder unknownExtension = certificate(pair, request, false, true);
+        java.security.cert.X509Certificate exact = certificate(pair, request, false, false);
+        java.security.cert.X509Certificate duplicateEku = certificate(pair, request, true, false);
+        java.security.cert.X509Certificate unknownExtension = certificate(pair, request, false, true);
 
         assertTrue(BcX509ProfileSupport.matchesLeafExtensions(exact, request));
         assertFalse(BcX509ProfileSupport.matchesLeafExtensions(duplicateEku, request));
@@ -340,7 +340,7 @@ final class H7ProfileEnforcementTest {
             ProfileService mismatched = mismatchedProfileService(runtime.profileService());
             DefaultIssuanceService service = new DefaultIssuanceService(runtime.store(), runtime.framework(),
                     runtime.issuerBackend(), runtime.auditSink(), runtime.statusResolver(), mismatched,
-                    Clock.systemUTC());
+                    Clock.systemUTC(), runtime.revocationService());
             assertThrows(PkiException.class, () -> service
                     .issueEndEntity(new IssueEndEntityCommand(caId, request, "requested", Optional.empty())));
             assertEquals(signs, runtime.submittedSignCount());
@@ -489,9 +489,9 @@ final class H7ProfileEnforcementTest {
                 Set.of(new ExtendedKeyUsageId(KeyPurposeId.id_kp_serverAuth.getId())), true, false, true);
     }
 
-    private static X509CertificateHolder certificate(KeyPair pair, ValidatedCertificateRequest request,
+    private static java.security.cert.X509Certificate certificate(KeyPair pair, ValidatedCertificateRequest request,
             boolean duplicateEku, boolean unknownExtension) throws Exception {
-        X500Name subject = BcX509ProfileSupport.subject(request.subjectRdns());
+        X500Name subject = X500Name.getInstance(BcX509ProfileSupport.subject(request.subjectRdns()).getEncoded());
         X509v3CertificateBuilder builder = new X509v3CertificateBuilder(subject, BigInteger.ONE,
                 Date.from(request.validity().notBefore()), Date.from(request.validity().notAfter()), subject,
                 SubjectPublicKeyInfo.getInstance(pair.getPublic().getEncoded()));
@@ -506,7 +506,8 @@ final class H7ProfileEnforcementTest {
         if (unknownExtension) {
             builder.addExtension(new ASN1ObjectIdentifier("1.2.3.4"), false, DERNull.INSTANCE);
         }
-        return builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(pair.getPrivate()));
+        return zeroecho.pkix.Pkix.parseCertificate(
+                builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(pair.getPrivate())).getEncoded());
     }
 
     private static void assertCode(String code, ThrowingAction action) {

@@ -37,6 +37,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.publication.PublicationRecord;
 import zeroecho.pki.api.publication.PublicationSourceType;
 import zeroecho.pki.api.status.StatusObject;
@@ -53,10 +54,16 @@ final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver 
     }
 
     @Override
-    public Optional<PkiId> credentialAuthority(PkiId credentialId) {
+    public Optional<CredentialScope> credentialScope(PkiId credentialId) {
         openCheck.run();
         return store.getCredential(Objects.requireNonNull(credentialId, "credentialId"))
-                .map(credential -> credential.issuerRef().caId());
+                .map(credential -> {
+                    if (!(credential.profileBinding() instanceof EndEntityProfileBinding binding)) {
+                        throw new IllegalStateException("Credential is not bound to an end-entity profile");
+                    }
+                    return new CredentialScope(credential.issuerRef().caId(),
+                            binding.reference().profileId());
+                });
     }
 
     @Override
@@ -72,6 +79,7 @@ final class DefaultPkiResourceScopeResolver implements PkiResourceScopeResolver 
         Optional<PublicationRecord> record = store.getPublicationRecord(
                 Objects.requireNonNull(publicationId, "publicationId"));
         return record.flatMap(value -> value.sourceType() == PublicationSourceType.CREDENTIAL
-                ? credentialAuthority(value.sourceId()) : statusObjectAuthority(value.sourceId()));
+                ? credentialScope(value.sourceId()).map(CredentialScope::authorityId)
+                : statusObjectAuthority(value.sourceId()));
     }
 }

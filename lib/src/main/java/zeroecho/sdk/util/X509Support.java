@@ -50,6 +50,9 @@ import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.csr.CertificationRequest;
+
 /**
  * Utility class providing support for working with X.509 certificates, private
  * keys, and certification requests using PEM-encoded files and the Bouncy
@@ -155,14 +158,14 @@ public final class X509Support {
      * Loads a PKCS#10 Certification Request (CSR) from a PEM file.
      *
      * @param path the file path to the CSR PEM file
-     * @return the loaded {@link PKCS10CertificationRequest} or null if invalid
+     * @return the loaded {@link CertificationRequest} or null if invalid
      * @throws IOException if an I/O error occurs reading the file
      */
-    public static PKCS10CertificationRequest loadCSR(final String path) throws IOException {
+    public static CertificationRequest loadCSR(final String path) throws IOException {
         try (PEMParser pemParser = new PEMParser(Files.newBufferedReader(Paths.get(path), StandardCharsets.UTF_8))) {
             final Object obj = pemParser.readObject();
-            if (obj instanceof PKCS10CertificationRequest) {
-                return (PKCS10CertificationRequest) obj;
+            if (obj instanceof PKCS10CertificationRequest request) {
+                return Pkix.parseCertificationRequest(request.getEncoded());
             } else {
                 System.err.println("File does not contain a valid PKCS#10 CSR.");
                 return null;

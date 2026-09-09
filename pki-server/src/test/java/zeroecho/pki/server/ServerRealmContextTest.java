@@ -34,9 +34,18 @@
 package zeroecho.pki.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Duration;
@@ -44,20 +53,134 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
+import org.mockito.Answers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.confirmation.ConfirmationRealmBinding;
+import zeroecho.pki.application.CredentialConfirmationProofRuntimePolicy;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationOutcome;
+import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiSessionConfiguration;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
+import zeroecho.pki.server.confirmation.SignatureKeyPossessionProofProvider;
 import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.confirmation.KeyPossessionProofDescriptor;
 
 /** Realm composition, one-session lifecycle and exposure-policy tests. */
 class ServerRealmContextTest {
     @TempDir Path temporaryDirectory;
+
+    @Test
+    void concurrentCloseSharesOneSuccessfulAttemptAndClosesExactlyOnce() throws Exception {
+        PkiSession session = mock(PkiSession.class);
+        ServerControlStore control = mock(ServerControlStore.class);
+        ServerRealmContext context = closeContext(session, control);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            entered.countDown();
+            release.await();
+            return null;
+        }).when(session).close();
+
+        try (ExecutorService callers = Executors.newFixedThreadPool(2)) {
+            Future<?> owner = submitClose(callers, context, null);
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            AtomicReference<Thread> joiningThread = new AtomicReference<>();
+            Future<?> joiner = submitClose(callers, context, joiningThread);
+            awaitWaiting(joiningThread);
+            release.countDown();
+            owner.get(2, TimeUnit.SECONDS);
+            joiner.get(2, TimeUnit.SECONDS);
+        }
+        context.close();
+        assertEquals(ServerRealmContext.State.CLOSED, context.state());
+        verify(session, times(1)).close();
+        verify(control, times(1)).close();
+    }
+
+    @Test
+    void concurrentFailureIsSharedAndOneLaterRetryClosesRemainingResources() throws Exception {
+        PkiSession session = mock(PkiSession.class);
+        ServerControlStore control = mock(ServerControlStore.class);
+        ServerRealmContext context = closeContext(session, control);
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch firstRelease = new CountDownLatch(1);
+        CountDownLatch retryEntered = new CountDownLatch(1);
+        CountDownLatch retryRelease = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        IllegalStateException exact = new IllegalStateException("SESSION_DRAIN_TIMEOUT");
+        doAnswer(invocation -> {
+            if (calls.incrementAndGet() == 1) {
+                firstEntered.countDown();
+                firstRelease.await();
+                throw exact;
+            }
+            retryEntered.countDown();
+            retryRelease.await();
+            return null;
+        }).when(session).close();
+
+        try (ExecutorService callers = Executors.newFixedThreadPool(2)) {
+            Future<?> owner = submitClose(callers, context, null);
+            assertTrue(firstEntered.await(2, TimeUnit.SECONDS));
+            AtomicReference<Thread> joiningThread = new AtomicReference<>();
+            Future<?> joiner = submitClose(callers, context, joiningThread);
+            awaitWaiting(joiningThread);
+            firstRelease.countDown();
+            assertSame(exact, cause(owner));
+            assertSame(exact, cause(joiner));
+        }
+        assertEquals(ServerRealmContext.State.CLOSING, context.state());
+        verify(control, never()).close();
+
+        try (ExecutorService callers = Executors.newFixedThreadPool(2)) {
+            Future<?> owner = submitClose(callers, context, null);
+            assertTrue(retryEntered.await(2, TimeUnit.SECONDS));
+            AtomicReference<Thread> joiningThread = new AtomicReference<>();
+            Future<?> joiner = submitClose(callers, context, joiningThread);
+            awaitWaiting(joiningThread);
+            retryRelease.countDown();
+            owner.get(2, TimeUnit.SECONDS);
+            joiner.get(2, TimeUnit.SECONDS);
+        }
+        assertEquals(ServerRealmContext.State.CLOSED, context.state());
+        verify(session, times(2)).close();
+        verify(control, times(1)).close();
+    }
+
+    @Test
+    void serverWorkerOnlyQuiescesAndRequestsExternalRetry() throws Exception {
+        PkiSession session = mock(PkiSession.class);
+        ServerControlStore control = mock(ServerControlStore.class);
+        ServerRealmContext context = closeContext(session, control);
+
+        IllegalStateException retry = assertThrows(IllegalStateException.class,
+                () -> context.closeFromServerWorker(true));
+        assertTrue(retry.getMessage().contains("SERVER_CLOSE_RETRY_REQUIRED"));
+        assertEquals(ServerRealmContext.State.CLOSING, context.state());
+        verify(session, never()).close();
+        verify(control, never()).close();
+
+        context.close();
+        assertEquals(ServerRealmContext.State.CLOSED, context.state());
+        verify(session, times(1)).close();
+        verify(control, times(1)).close();
+    }
 
     @Test
     void opensOneLongLivedSessionClosesAndRecoversControlState() throws Exception {
@@ -67,12 +190,13 @@ class ServerRealmContextTest {
         try (ServerRealmContext context = ServerRealmContext.open(configuration,
                 PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
             assertSame(context.session(), context.session());
+            assertSame(context.session().confirmations(), context.session().confirmations());
             PkiOperationOutcome first = context.session().operations().execute(new PkiOperation.ValidateConfiguration(),
                     zeroecho.core.io.CancellationSignal.NONE);
             PkiOperationOutcome second = context.session().operations().execute(new PkiOperation.ValidateConfiguration(),
                     zeroecho.core.io.CancellationSignal.NONE);
-            assertEquals(PkiOperationOutcome.Success.class, first.getClass());
-            assertEquals(PkiOperationOutcome.Success.class, second.getClass());
+            assertEquals(PkiOperationOutcome.Completed.class, first.getClass());
+            assertEquals(PkiOperationOutcome.Completed.class, second.getClass());
             context.createPrincipal(ServerTestSupport.principal("auditor"), "bootstrap");
             assertEquals(ServerRealmContext.State.OPEN, context.state());
             System.out.println("...session-reused=true");
@@ -85,6 +209,37 @@ class ServerRealmContextTest {
             System.out.println("...control-recovered=true");
         }
         System.out.println("...ok");
+    }
+
+    @Test
+    void composesExactNondefaultProofRuntimeWithoutMutableRegistration() {
+        ServerRealmConfiguration configured = configuration(new AuthorityExposurePolicy(
+                AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true));
+        CredentialConfirmationProofPolicy proof = new CredentialConfirmationProofPolicy(
+                configured.confirmationProofPolicy().audience(), Duration.ofSeconds(45L), 4_096);
+        ServerRealmConfiguration nondefault = new ServerRealmConfiguration(configured.realmId(),
+                configured.displayName(), proof, configured.pkiSessionConfiguration(),
+                configured.authorityExposure(), configured.authorizationCommitment(),
+                configured.approvalCommitment(), configured.extendedApprovalCommitment(),
+                configured.disclosureCommitment(),
+                configured.disclosureDefaults(), configured.controlLogPath(), configured.controlStoreId(),
+                configured.approvalPolicies());
+
+        PkiSessionRuntimeDependencies runtime = ServerRealmContext.confirmationProofRuntime(
+                nondefault, PkiSessionRuntimeDependencies.none());
+        CredentialConfirmationProofRuntimePolicy policy = runtime
+                .credentialConfirmationProofPolicy().orElseThrow();
+        assertEquals(new ConfirmationRealmBinding(nondefault.realmId().value()), policy.realm());
+        assertEquals(proof.audience(), policy.audience());
+        assertEquals(proof.challengeTimeToLive(), policy.challengeTimeToLive());
+        assertEquals(4_096, policy.proofSuiteBinding().rsaMaximumModulusBits());
+        SignatureKeyPossessionProofProvider provider = assertInstanceOf(
+                SignatureKeyPossessionProofProvider.class,
+                runtime.keyPossessionProofProviders().getFirst());
+        KeyPossessionProofDescriptor descriptor = provider.descriptor(4_096);
+        assertEquals(descriptor.proofSuiteBinding(), policy.proofSuiteBinding());
+        assertThrows(UnsupportedOperationException.class,
+                () -> runtime.keyPossessionProofProviders().clear());
     }
 
     @Test
@@ -111,13 +266,69 @@ class ServerRealmContextTest {
         }
         String changed = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd";
         ServerRealmConfiguration incompatible = new ServerRealmConfiguration(original.realmId(),
-                original.displayName(), original.pkiSessionConfiguration(), original.authorityExposure(), changed,
-                original.approvalCommitment(), original.disclosureCommitment(), original.disclosureDefaults(),
+                original.displayName(), original.confirmationProofPolicy(), original.pkiSessionConfiguration(),
+                original.authorityExposure(), changed,
+                original.approvalCommitment(), original.extendedApprovalCommitment(),
+                original.disclosureCommitment(), original.disclosureDefaults(),
                 original.controlLogPath(), original.controlStoreId(), original.approvalPolicies());
         assertThrows(IllegalStateException.class, () -> ServerRealmContext.open(incompatible,
                 PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom()));
         System.out.println("...changed-commitment=rejected");
         System.out.println("...ok");
+    }
+
+    @Test
+    void auditAnchorDetectsAuditLogRewriteAcrossReopen() throws Exception {
+        System.out.println("auditAnchorDetectsAuditLogRewriteAcrossReopen");
+        Path auditDir = temporaryDirectory.resolve("audit");
+        ServerRealmConfiguration config = fileAuditConfiguration(auditDir);
+        try (ServerRealmContext context = ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
+            context.createPrincipal(ServerTestSupport.principal("auditor"), "bootstrap");
+        }
+        // Clean reopen verifies the durable anchor against the intact log and succeeds.
+        try (ServerRealmContext reopened = ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom())) {
+            assertEquals(ServerTestSupport.REALM, config.realmId());
+        }
+        // Simulate a full audit-log rewrite by removing the log; the separately stored anchor no longer matches.
+        deleteRecursively(auditDir);
+        assertThrows(IllegalStateException.class, () -> ServerRealmContext.open(config,
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, deterministicRandom()));
+        System.out.println("...ok");
+    }
+
+    private ServerRealmConfiguration fileAuditConfiguration(Path auditDir) {
+        ApprovalService.Policy approval = new ApprovalService.Policy("high-risk", 1, Set.of("approver"),
+                Set.of(), true, Duration.ofHours(1), true);
+        PkiSessionConfiguration pki = new PkiSessionConfiguration(1,
+                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("pki-store-audit").toString())),
+                new ProviderConfig("file", Map.of("root", auditDir.toString())), Optional.empty(),
+                List.of(), List.of());
+        return new ServerRealmConfiguration(ServerTestSupport.REALM, "Production",
+                ServerTestSupport.CONFIRMATION_PROOF_POLICY, pki,
+                new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true),
+                ServerTestSupport.DIGEST, approval.commitment(),
+                ServerRealmConfiguration.extendedApprovalCommitment(
+                        Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval)),
+                ServerTestSupport.DIGEST, DisclosureService.Defaults.recommended(),
+                temporaryDirectory.resolve("control-audit.log"), ServerTestSupport.STORE_ID,
+                Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval));
+    }
+
+    private static void deleteRecursively(Path dir) throws java.io.IOException {
+        if (!java.nio.file.Files.exists(dir)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> walk = java.nio.file.Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    java.nio.file.Files.deleteIfExists(path);
+                } catch (java.io.IOException failure) {
+                    throw new java.io.UncheckedIOException(failure);
+                }
+            });
+        }
     }
 
     private ServerRealmConfiguration configuration(AuthorityExposurePolicy exposure) {
@@ -126,11 +337,64 @@ class ServerRealmContextTest {
         PkiSessionConfiguration pki = new PkiSessionConfiguration(1,
                 new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("pki-store").toString())),
                 new ProviderConfig("memory", Map.of("size", "128")), Optional.empty(), List.of(), List.of());
-        return new ServerRealmConfiguration(ServerTestSupport.REALM, "Production", pki, exposure,
-                ServerTestSupport.DIGEST, approval.commitment(), ServerTestSupport.DIGEST,
+        return new ServerRealmConfiguration(ServerTestSupport.REALM, "Production",
+                ServerTestSupport.CONFIRMATION_PROOF_POLICY, pki, exposure,
+                ServerTestSupport.DIGEST, approval.commitment(),
+                ServerRealmConfiguration.extendedApprovalCommitment(
+                        Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval)),
+                ServerTestSupport.DIGEST,
                 DisclosureService.Defaults.recommended(), temporaryDirectory.resolve("control.log"),
                 ServerTestSupport.STORE_ID,
                 Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval));
+    }
+
+    private static ServerRealmContext closeContext(PkiSession session, ServerControlStore control)
+            throws Exception {
+        ServerRealmContext context = mock(ServerRealmContext.class, Answers.CALLS_REAL_METHODS);
+        ServerRealmConfiguration configuration = mock(ServerRealmConfiguration.class);
+        when(configuration.realmId()).thenReturn(ServerTestSupport.REALM);
+        setField(context, "configuration", configuration);
+        setField(context, "session", session);
+        setField(context, "control", control);
+        setField(context, "audit", mock(SafeAudit.class));
+        setField(context, "state", new AtomicReference<>(ServerRealmContext.State.OPEN));
+        setField(context, "closeGate", new RetryableCloseGate());
+        setField(context, "closeAuditAttempted", new AtomicBoolean());
+        setField(context, "sessionClosed", new AtomicBoolean());
+        setField(context, "controlClosed", new AtomicBoolean());
+        setField(context, "auditIntegrity", new AtomicReference<>());
+        setField(context, "auditAnchorCommitment", new AtomicReference<>());
+        return context;
+    }
+
+    private static void setField(ServerRealmContext context, String name, Object value) throws Exception {
+        Field field = ServerRealmContext.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(context, value);
+    }
+
+    private static Future<?> submitClose(ExecutorService callers, ServerRealmContext context,
+            AtomicReference<Thread> thread) {
+        return callers.submit(() -> {
+            if (thread != null) thread.set(Thread.currentThread());
+            context.close();
+            return null;
+        });
+    }
+
+    private static void awaitWaiting(AtomicReference<Thread> selected) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2L);
+        while (selected.get() == null && System.nanoTime() < deadline) Thread.onSpinWait();
+        Thread thread = selected.get();
+        assertTrue(thread != null);
+        while (thread.getState() != Thread.State.WAITING && System.nanoTime() < deadline) {
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1L));
+        }
+        assertEquals(Thread.State.WAITING, thread.getState());
+    }
+
+    private static Throwable cause(Future<?> future) {
+        return assertThrows(ExecutionException.class, () -> future.get(2, TimeUnit.SECONDS)).getCause();
     }
 
     private static SecureRandom deterministicRandom() throws Exception {

@@ -50,15 +50,17 @@ import java.util.Optional;
 import java.util.Set;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
+import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
+import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 import zeroecho.pki.api.profile.CertificateProfileRef;
-import zeroecho.pki.server.DisclosureService;
 import zeroecho.pki.server.RealmId;
 
 /** Strict versioned canonical binary codec for durable ACME records. */
 @SuppressWarnings("PMD")
 final class AcmeStateCodec {
     private static final int MAGIC = 0x5a454143;
-    private static final int VERSION = 1;
+    private static final int VERSION = 5;
     private static final int MAX_TEXT = 16_384;
     private static final int MAX_COLLECTION = 256;
     private static final String ZERO = "0".repeat(64);
@@ -79,17 +81,18 @@ final class AcmeStateCodec {
                     item.realmId(), item.authorityId(), item.profile(), item.issuerId(), item.issuancePathId(),
                     item.issuancePathCommitment(), item.identifierTypes(), item.dnsNamespaces(), item.maximumValidity(),
                     item.publicKeyAlgorithms(), item.x509BindingPolicies(), item.challengeTypes(),
-                    item.challengeProviderIds(), item.eabProviderId(), item.eabRequired(), item.disclosurePolicy(),
-                    item.status(), item.policyCommitment(), item.createdAt(), value);
+                    item.challengeProviderIds(), item.eabProviderId(), item.eabRequired(), item.confirmationPolicy(),
+                    item.confirmationPolicyCommitment(), item.status(), item.policyCommitment(), item.createdAt(),
+                    value);
             case AcmeState.Account item -> new AcmeState.Account(item.accountId(), item.directoryId(),
-                    item.directoryRevision(), item.directoryCommitment(), item.keyThumbprint(), item.publicKeySpki(),
+                    item.directoryRevision(), item.directoryPolicyCommitment(), item.keyThumbprint(), item.publicKeySpki(),
                     item.status(), item.contacts(), item.termsAgreed(), item.eabPolicyCommitment(), item.createdAt(),
                     item.updatedAt(), value);
             case AcmeState.Order item -> new AcmeState.Order(item.orderId(), item.accountId(), item.directoryId(),
-                    item.directoryRevision(), item.directoryCommitment(), item.authorityId(), item.profile(),
+                    item.directoryRevision(), item.directoryPolicyCommitment(), item.authorityId(), item.profile(),
                     item.issuerId(), item.issuancePathId(), item.issuancePathCommitment(), item.identifiers(),
                     item.notBefore(), item.notAfter(), item.status(), item.authorizationIds(), item.credentialId(),
-                    item.createdAt(), item.expiresAt(), value);
+                    item.issuanceCommitment(), item.signingOperationId(), item.createdAt(), item.expiresAt(), value);
             case AcmeState.Authorization item -> new AcmeState.Authorization(item.authorizationId(), item.orderId(),
                     item.accountId(), item.identifier(), item.status(), item.challengeIds(), item.expiresAt(),
                     item.evidenceId(), value);
@@ -149,7 +152,8 @@ final class AcmeStateCodec {
         enums(out, v.identifierTypes()); strings(out, v.dnsNamespaces()); out.writeLong(v.maximumValidity().toSeconds());
         strings(out, v.publicKeyAlgorithms()); strings(out, v.x509BindingPolicies()); enums(out, v.challengeTypes());
         strings(out, v.challengeProviderIds()); optional(out, v.eabProviderId()); out.writeBoolean(v.eabRequired());
-        string(out, v.disclosurePolicy().name()); string(out, v.status().name()); string(out, v.policyCommitment());
+        confirmationPolicy(out, v.confirmationPolicy()); string(out, v.confirmationPolicyCommitment());
+        string(out, v.status().name()); string(out, v.policyCommitment());
         instant(out, v.createdAt()); string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.Directory readDirectory(DataInputStream in) throws IOException {
@@ -161,16 +165,33 @@ final class AcmeStateCodec {
         Set<String> algorithms = strings(in), bindings = strings(in);
         Set<AcmeState.ChallengeType> challenges = enumSet(in, AcmeState.ChallengeType.class);
         Set<String> providers = strings(in); Optional<String> eab = optional(in); boolean required = in.readBoolean();
-        DisclosureService.Policy disclosure = DisclosureService.Policy.valueOf(string(in));
+        CredentialConfirmationPolicy confirmation = confirmationPolicy(in);
+        String confirmationCommitment = string(in);
         AcmeState.DirectoryStatus status = AcmeState.DirectoryStatus.valueOf(string(in));
         return new AcmeState.Directory(id, alias, revision, realm, authority, profile, issuer, path, pathCommitment,
-                types, namespaces, validity, algorithms, bindings, challenges, providers, eab, required, disclosure,
-                status, string(in), instant(in), string(in));
+                types, namespaces, validity, algorithms, bindings, challenges, providers, eab, required,
+                confirmation, confirmationCommitment, status, string(in), instant(in), string(in));
+    }
+
+    private static void confirmationPolicy(DataOutputStream out, CredentialConfirmationPolicy value)
+            throws IOException {
+        string(out, value.disclosurePolicy().name());
+        out.writeLong(value.confirmationWindow().getSeconds());
+        out.writeInt(value.confirmationWindow().getNano());
+        string(out, value.proofSuite().suiteId());
+        string(out, value.proofSuite().configurationCommitment());
+    }
+
+    private static CredentialConfirmationPolicy confirmationPolicy(DataInputStream in) throws IOException {
+        ConfirmationDisclosurePolicy disclosure = ConfirmationDisclosurePolicy.valueOf(string(in));
+        Duration window = Duration.ofSeconds(in.readLong(), in.readInt());
+        ConfirmationProofSuiteRef proofSuite = new ConfirmationProofSuiteRef(string(in), string(in));
+        return new CredentialConfirmationPolicy(disclosure, window, proofSuite);
     }
 
     private static void writeAccount(DataOutputStream out, AcmeState.Account v, boolean committed) throws IOException {
         out.writeInt(ACCOUNT); string(out, v.accountId()); string(out, v.directoryId()); out.writeInt(v.directoryRevision());
-        string(out, v.directoryCommitment()); string(out, v.keyThumbprint()); bytes(out, v.publicKeySpki());
+        string(out, v.directoryPolicyCommitment()); string(out, v.keyThumbprint()); bytes(out, v.publicKeySpki());
         string(out, v.status().name()); stringsList(out, v.contacts()); out.writeBoolean(v.termsAgreed());
         optional(out, v.eabPolicyCommitment()); instant(out, v.createdAt()); instant(out, v.updatedAt());
         string(out, committed ? v.commitment() : ZERO);
@@ -183,22 +204,27 @@ final class AcmeStateCodec {
 
     private static void writeOrder(DataOutputStream out, AcmeState.Order v, boolean committed) throws IOException {
         out.writeInt(ORDER); string(out, v.orderId()); string(out, v.accountId()); string(out, v.directoryId());
-        out.writeInt(v.directoryRevision()); string(out, v.directoryCommitment()); string(out, v.authorityId().value());
+        out.writeInt(v.directoryRevision()); string(out, v.directoryPolicyCommitment()); string(out, v.authorityId().value());
         profile(out, v.profile()); string(out, v.issuerId().value()); string(out, v.issuancePathId().value());
         string(out, v.issuancePathCommitment()); identifiers(out, v.identifiers()); optionalInstant(out, v.notBefore());
         optionalInstant(out, v.notAfter()); string(out, v.status().name()); stringsList(out, v.authorizationIds());
-        optional(out, v.credentialId().map(PkiId::value)); instant(out, v.createdAt()); instant(out, v.expiresAt());
+        optional(out, v.credentialId().map(PkiId::value)); optional(out, v.issuanceCommitment());
+        instant(out, v.createdAt()); instant(out, v.expiresAt());
+        optional(out, v.signingOperationId().map(PkiId::value));
         string(out, committed ? v.commitment() : ZERO);
     }
     private static AcmeState.Order readOrder(DataInputStream in) throws IOException {
         String id = string(in), account = string(in), directory = string(in); int revision = in.readInt();
-        String directoryCommitment = string(in); PkiId authority = new PkiId(string(in)); CertificateProfileRef profile = profile(in);
+        String directoryPolicyCommitment = string(in); PkiId authority = new PkiId(string(in)); CertificateProfileRef profile = profile(in);
         PkiId issuer = new PkiId(string(in)), path = new PkiId(string(in)); String pathCommitment = string(in);
         List<AcmeState.Identifier> identifiers = identifiers(in); Optional<Instant> from = optionalInstant(in), to = optionalInstant(in);
         AcmeState.OrderStatus status = AcmeState.OrderStatus.valueOf(string(in)); List<String> authorizations = stringsList(in);
-        Optional<PkiId> credential = optional(in).map(PkiId::new); Instant created = instant(in), expires = instant(in);
-        return new AcmeState.Order(id, account, directory, revision, directoryCommitment, authority, profile, issuer,
-                path, pathCommitment, identifiers, from, to, status, authorizations, credential, created, expires, string(in));
+        Optional<PkiId> credential = optional(in).map(PkiId::new); Optional<String> issuanceCommitment = optional(in);
+        Instant created = instant(in), expires = instant(in);
+        Optional<PkiId> signingOperation = optional(in).map(PkiId::new);
+        return new AcmeState.Order(id, account, directory, revision, directoryPolicyCommitment, authority, profile, issuer,
+                path, pathCommitment, identifiers, from, to, status, authorizations, credential,
+                issuanceCommitment, signingOperation, created, expires, string(in));
     }
 
     private static void writeAuthorization(DataOutputStream out, AcmeState.Authorization v, boolean committed) throws IOException {

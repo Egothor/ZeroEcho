@@ -88,6 +88,14 @@ public final class CompactOneLineFormatter extends Formatter {
             .withZone(ZoneId.systemDefault());
 
     /**
+     * Creates a formatter using the system time zone for timestamps.
+     */
+    public CompactOneLineFormatter() {
+        super();
+        // Stateless apart from the immutable shared timestamp formatter.
+    }
+
+    /**
      * Formats a {@link LogRecord} into a single line.
      *
      * <p>

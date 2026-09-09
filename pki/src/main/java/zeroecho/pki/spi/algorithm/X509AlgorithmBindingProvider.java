@@ -47,15 +47,31 @@ import zeroecho.pki.impl.framework.x509.X509BindingRule;
  */
 public interface X509AlgorithmBindingProvider {
 
-    /** @return stable provider identity used by explicit configuration */
+    /**
+     * Returns the provider identity.
+     *
+     * @return stable provider identity used by explicit configuration
+     */
     String providerId();
 
-    /** @return stable version or commitment of the complete contributed set */
+    /**
+     * Returns the contributed binding-set version.
+     *
+     * @return stable version or commitment of the complete contributed set
+     */
     String bindingSetVersion();
 
-    /** @return finite immutable safe descriptors */
+    /**
+     * Returns the contributed binding descriptors.
+     *
+     * @return finite immutable safe descriptors
+     */
     List<X509AlgorithmBinding> bindings();
 
-    /** @return finite immutable role-specific encoding rules */
+    /**
+     * Returns the contributed encoding rules.
+     *
+     * @return finite immutable role-specific encoding rules
+     */
     List<X509BindingRule> rules();
 }

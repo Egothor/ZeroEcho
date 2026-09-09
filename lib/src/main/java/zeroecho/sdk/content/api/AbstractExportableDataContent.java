@@ -68,6 +68,13 @@ public abstract class AbstractExportableDataContent implements ExportableDataCon
     protected DataContent input;
 
     /**
+     * Creates an exporter with {@link ExportMode#RAW} selected and no input.
+     */
+    public AbstractExportableDataContent() {
+        // Field initializers establish the initial state.
+    }
+
+    /**
      * Sets the input {@link DataContent} for export.
      *
      * @param input the input data to be exported

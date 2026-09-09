@@ -63,6 +63,13 @@ public final class Ed25519KeyGenSpec implements AlgorithmKeySpec {
     private static final Ed25519KeyGenSpec DEFAULT = new Ed25519KeyGenSpec();
 
     /**
+     * Creates the parameter-free Ed25519 key-generation specification.
+     */
+    public Ed25519KeyGenSpec() {
+        // Ed25519 key generation has no configurable parameters.
+    }
+
+    /**
      * Returns the canonical, shared default spec instance for Ed25519 key
      * generation.
      *

@@ -44,14 +44,6 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.List;
 import java.util.Set;
 
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider;
-import org.bouncycastle.operator.ContentVerifier;
-import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
-
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
@@ -59,17 +51,22 @@ import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spec.AlgorithmSuite;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.sign.ContentVerifier;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 
 /**
- * Stateless Bouncy Castle verification executor at the X.509 adapter edge.
+ * Stateless verification executor at the X.509 adapter edge.
  *
  * <p>
  * This executor never selects identity, OID, parameters, policy, or provider
  * precedence. It accepts only an execution plan minted by the same authority
  * snapshot and performs verification after immediate provenance validation.
+ * Cryptographic verification is delegated to the ZeroEcho PKIX library and to the
+ * globally registered JCA providers; this class holds no concrete cryptographic
+ * toolkit type.
  * </p>
  */
 public final class BcX509VerificationExecutor implements AlgorithmExecutionCapabilityProvider {
@@ -77,14 +74,18 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
     /** Stable semantic implementation identifier. */
     public static final String IMPLEMENTATION_ID = "bc.x509-verification";
 
-    private static final BouncyCastleProvider BC_PROVIDER = new BouncyCastleProvider();
+    private static final int BUFFER_BYTES = 16 * 1024;
     private static final Set<AlgorithmIdentity> SIGNATURES = Set.of(
             BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384,
             BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512, BootstrapAlgorithmIdentities.RSA_PSS_SHA256,
             BootstrapAlgorithmIdentities.ECDSA_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA384,
             BootstrapAlgorithmIdentities.ECDSA_SHA512, BootstrapAlgorithmIdentities.ED25519_SIGNATURE,
             BootstrapAlgorithmIdentities.ED448_SIGNATURE, BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE);
-    private static final BouncyCastlePQCProvider BC_PQC_PROVIDER = new BouncyCastlePQCProvider();
+
+    /** Creates a stateless X.509 verification executor. */
+    public BcX509VerificationExecutor() {
+        // Stateless.
+    }
 
     @Override
     public List<AlgorithmExecutionCapability> capabilities() {
@@ -112,8 +113,8 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
      *
      * @param authority owning authority snapshot
      * @param plan exact verification plan
-     * @param publicKeyInfo exact subject public key
-     * @param algorithmIdentifier exact signature AlgorithmIdentifier
+     * @param publicKeyInfoDer exact subject public key info DER
+     * @param algorithmIdentifier exact signature algorithm identifier
      * @param signedContent exact repeatable signed content
      * @param signature signature bytes
      * @return whether the signature is valid
@@ -122,67 +123,39 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
      *                                  authorized plan
      * @throws GeneralSecurityException if key or provider processing fails
      * @throws IOException if the signed bytes cannot be supplied
-     * @throws OperatorCreationException if verifier construction fails
      */
     public boolean verify(X509AuthoritySnapshot authority, X509ExecutionPlan<BcX509VerificationExecutor> plan,
-            SubjectPublicKeyInfo publicKeyInfo, AlgorithmIdentifier algorithmIdentifier, RepeatableContent signedContent,
-            byte[] signature) throws GeneralSecurityException, IOException, OperatorCreationException {
+            byte[] publicKeyInfoDer, zeroecho.pkix.AlgorithmIdentifier algorithmIdentifier,
+            RepeatableContent signedContent, byte[] signature) throws GeneralSecurityException, IOException {
         authority.authorize(plan, this, AlgorithmExecutionCapability.Direction.VERIFY);
         BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(authority.bindings());
         AlgorithmIdentity signatureIdentity = adapter.decode(algorithmIdentifier,
                 X509AlgorithmRole.SIGNATURE_ALGORITHM);
         if (!plan.selection().requested().equals(signatureIdentity)
-                || !plan.selection().binding().equals(BcX509AlgorithmAdapter.fromBc(algorithmIdentifier))) {
+                || !plan.selection().binding().equals(BcX509AlgorithmAdapter.fromLib(algorithmIdentifier))) {
             throw new IllegalArgumentException("Signature AlgorithmIdentifier does not match execution plan");
         }
-        AlgorithmIdentity publicKeyIdentity = adapter.decode(publicKeyInfo.getAlgorithm(),
+        AlgorithmIdentity publicKeyIdentity = adapter.decode(Pkix.subjectPublicKeyAlgorithm(publicKeyInfoDer),
                 X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
         if (!plan.selection().suite().publicKey().equals(publicKeyIdentity)) {
             throw new IllegalArgumentException("SubjectPublicKeyInfo does not match execution plan");
         }
-        SubjectPublicKeyInfo nativePublicKey = new BcX509PublicKeyAdapter(authority.bindings()).unwrap(publicKeyInfo);
+        byte[] nativePublicKey = new BcX509PublicKeyAdapter(authority.bindings()).unwrap(publicKeyInfoDer);
         if (BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE.equals(signatureIdentity)) {
-            return verifySphincs(nativePublicKey, signedContent, signature);
+            return verifyNamed(nativePublicKey, "SPHINCS+", signedContent, signature);
         }
         if (!authority.bindings().resolve(signatureIdentity, X509AlgorithmRole.SIGNATURE_ALGORITHM)
-                .equals(BcX509AlgorithmAdapter.fromBc(algorithmIdentifier))) {
+                .equals(BcX509AlgorithmAdapter.fromLib(algorithmIdentifier))) {
             return verifyCustomClassic(signatureIdentity, nativePublicKey, signedContent, signature);
         }
-        ContentVerifier verifier = new JcaContentVerifierProviderBuilder().setProvider(BC_PROVIDER)
-                .build(nativePublicKey).get(algorithmIdentifier);
-        try (InputStream input = signedContent.openStream(); OutputStream output = verifier.getOutputStream()) {
-            byte[] buffer = new byte[16 * 1024];
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                CancellationSignal.NONE.throwIfCancelled();
-                if (read != 0) {
-                    output.write(buffer, 0, read);
-                }
-            }
+        ContentVerifier verifier = Pkix.verifier(nativePublicKey, algorithmIdentifier);
+        try (InputStream input = signedContent.openStream(); OutputStream output = verifier.contentStream()) {
+            copy(input, output);
         }
         return verifier.verify(signature);
     }
 
-    private static boolean verifySphincs(SubjectPublicKeyInfo publicKeyInfo, RepeatableContent signedContent,
-            byte[] signatureBytes) throws GeneralSecurityException, IOException {
-        PublicKey publicKey = KeyFactory.getInstance("SPHINCS+", BC_PQC_PROVIDER)
-                .generatePublic(new X509EncodedKeySpec(publicKeyInfo.getEncoded()));
-        Signature verifier = Signature.getInstance("SPHINCS+", BC_PQC_PROVIDER);
-        verifier.initVerify(publicKey);
-        try (InputStream input = signedContent.openStream()) {
-            byte[] buffer = new byte[16 * 1024];
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                CancellationSignal.NONE.throwIfCancelled();
-                if (read != 0) {
-                    verifier.update(buffer, 0, read);
-                }
-            }
-        }
-        return verifier.verify(signatureBytes);
-    }
-
-    private static boolean verifyCustomClassic(AlgorithmIdentity identity, SubjectPublicKeyInfo publicKeyInfo,
+    private static boolean verifyCustomClassic(AlgorithmIdentity identity, byte[] publicKeyInfoDer,
             RepeatableContent signedContent, byte[] signatureBytes) throws GeneralSecurityException, IOException {
         String algorithm;
         if (BootstrapAlgorithmIdentities.ED25519_SIGNATURE.equals(identity)) {
@@ -192,12 +165,17 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
         } else {
             throw new GeneralSecurityException("Custom classic binding lacks an exact JCA verification contract");
         }
-        PublicKey publicKey = KeyFactory.getInstance(algorithm, BC_PROVIDER)
-                .generatePublic(new X509EncodedKeySpec(publicKeyInfo.getEncoded()));
-        Signature verifier = Signature.getInstance(algorithm, BC_PROVIDER);
+        return verifyNamed(publicKeyInfoDer, algorithm, signedContent, signatureBytes);
+    }
+
+    private static boolean verifyNamed(byte[] publicKeyInfoDer, String jcaAlgorithm, RepeatableContent signedContent,
+            byte[] signatureBytes) throws GeneralSecurityException, IOException {
+        PublicKey publicKey = KeyFactory.getInstance(jcaAlgorithm)
+                .generatePublic(new X509EncodedKeySpec(publicKeyInfoDer));
+        Signature verifier = Signature.getInstance(jcaAlgorithm);
         verifier.initVerify(publicKey);
         try (InputStream input = signedContent.openStream()) {
-            byte[] buffer = new byte[16 * 1024];
+            byte[] buffer = new byte[BUFFER_BYTES];
             int read;
             while ((read = input.read(buffer)) >= 0) {
                 CancellationSignal.NONE.throwIfCancelled();
@@ -207,5 +185,16 @@ public final class BcX509VerificationExecutor implements AlgorithmExecutionCapab
             }
         }
         return verifier.verify(signatureBytes);
+    }
+
+    private static void copy(InputStream input, OutputStream output) throws IOException {
+        byte[] buffer = new byte[BUFFER_BYTES];
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            CancellationSignal.NONE.throwIfCancelled();
+            if (read != 0) {
+                output.write(buffer, 0, read);
+            }
+        }
     }
 }

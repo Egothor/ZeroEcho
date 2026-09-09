@@ -72,6 +72,13 @@ public final class AesHeaderCodec implements SymmetricHeaderCodec {
     private static final Logger LOG = Logger.getLogger(AesHeaderCodec.class.getName());
 
     /**
+     * Creates a stateless AES stream-header codec.
+     */
+    public AesHeaderCodec() {
+        // Stateless codec.
+    }
+
+    /**
      * Writes the header to {@code out} using values from the provided context.
      *
      * @param out       destination stream

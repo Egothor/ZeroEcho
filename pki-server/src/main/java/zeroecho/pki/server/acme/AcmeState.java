@@ -41,8 +41,8 @@ import java.util.Optional;
 import java.util.Set;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 import zeroecho.pki.api.profile.CertificateProfileRef;
-import zeroecho.pki.server.DisclosureService;
 import zeroecho.pki.server.RealmId;
 
 /**
@@ -55,23 +55,61 @@ import zeroecho.pki.server.RealmId;
 @SuppressWarnings("PMD")
 public final class AcmeState {
     /** Supported identifier kinds. */
-    public enum IdentifierType { DNS }
+    public enum IdentifierType {
+        /** Domain Name System identifier. */ DNS
+    }
     /** Supported proof challenges. */
-    public enum ChallengeType { HTTP_01, DNS_01 }
+    public enum ChallengeType {
+        /** HTTP token-file validation. */ HTTP_01,
+        /** DNS TXT-record validation. */ DNS_01
+    }
     /** Directory lifecycle. */
-    public enum DirectoryStatus { INACTIVE, ACTIVE }
+    public enum DirectoryStatus {
+        /** Directory exists but does not accept protocol operations. */ INACTIVE,
+        /** Directory accepts protocol operations. */ ACTIVE
+    }
     /** Account lifecycle. */
-    public enum AccountStatus { VALID, DEACTIVATED, REVOKED }
+    public enum AccountStatus {
+        /** Account may perform protocol operations. */ VALID,
+        /** Account was voluntarily deactivated. */ DEACTIVATED,
+        /** Account authority was revoked. */ REVOKED
+    }
     /** Order lifecycle. */
-    public enum OrderStatus { PENDING, READY, PROCESSING, VALID, INVALID }
+    public enum OrderStatus {
+        /** Order awaits successful identifier authorization. */ PENDING,
+        /** Order is authorized and ready for finalization. */ READY,
+        /** Finalization and issuance are in progress. */ PROCESSING,
+        /** Order completed with an issued credential. */ VALID,
+        /** Order cannot complete successfully. */ INVALID
+    }
     /** Authorization lifecycle. */
-    public enum AuthorizationStatus { PENDING, VALID, INVALID, EXPIRED, DEACTIVATED }
+    public enum AuthorizationStatus {
+        /** Authorization awaits challenge validation. */ PENDING,
+        /** Authorization has current validation evidence. */ VALID,
+        /** Authorization validation failed terminally. */ INVALID,
+        /** Authorization evidence expired. */ EXPIRED,
+        /** Authorization was administratively deactivated. */ DEACTIVATED
+    }
     /** Challenge lifecycle. */
-    public enum ChallengeStatus { PENDING, PROCESSING, VALID, INVALID }
+    public enum ChallengeStatus {
+        /** Challenge awaits an explicit trigger. */ PENDING,
+        /** Challenge validation is in progress. */ PROCESSING,
+        /** Challenge validation succeeded. */ VALID,
+        /** Challenge validation failed. */ INVALID
+    }
     /** Durable validation result. */
-    public enum EvidenceResult { VALID, INVALID }
+    public enum EvidenceResult {
+        /** Validator proved the authorization. */ VALID,
+        /** Validator rejected the authorization. */ INVALID
+    }
 
-    /** One canonical DNS identifier with an explicit wildcard bit. */
+    /**
+     * One canonical DNS identifier with an explicit wildcard bit.
+     *
+     * @param type identifier type
+     * @param value canonical lowercase ASCII value without wildcard prefix
+     * @param wildcard whether the presentation represents the wildcard subdomain
+     */
     public record Identifier(IdentifierType type, String value, boolean wildcard) {
         /** Validates the canonical lower-case ASCII DNS representation. */
         public Identifier {
@@ -89,17 +127,49 @@ public final class AcmeState {
             }
         }
 
-        /** Returns the ACME presentation form. */
+        /**
+         * Returns the ACME presentation form.
+         *
+         * @return canonical value, prefixed with {@code *.} when wildcard
+         */
         public String presentation() { return wildcard ? "*." + value : value; }
     }
 
-    /** Immutable directory policy revision bound to one exact PKI authority. */
+    /**
+     * Immutable directory policy revision bound to one exact PKI authority.
+     *
+     * @param directoryId stable directory identifier
+     * @param alias unique public directory alias
+     * @param revision positive policy revision
+     * @param realmId owning security realm
+     * @param authorityId exact logical authority
+     * @param profile frozen certificate profile reference
+     * @param issuerId exact issuer generation
+     * @param issuancePathId exact issuance chain path
+     * @param issuancePathCommitment expected chain-path commitment
+     * @param identifierTypes accepted identifier types
+     * @param dnsNamespaces permitted DNS namespace suffixes
+     * @param maximumValidity maximum issued credential validity
+     * @param publicKeyAlgorithms accepted public-key algorithm identifiers
+     * @param x509BindingPolicies accepted X.509 binding-policy identifiers
+     * @param challengeTypes enabled proof challenge types
+     * @param challengeProviderIds enabled challenge-provider identifiers
+     * @param eabProviderId optional external-account-binding provider
+     * @param eabRequired whether new accounts require external account binding
+     * @param confirmationPolicy credential-confirmation policy
+     * @param confirmationPolicyCommitment expected confirmation-policy commitment
+     * @param status directory lifecycle state
+     * @param policyCommitment commitment to protocol policy
+     * @param createdAt server-authoritative creation time
+     * @param commitment commitment to the complete record
+     */
     public record Directory(String directoryId, String alias, int revision, RealmId realmId,
             PkiId authorityId, CertificateProfileRef profile, PkiId issuerId, PkiId issuancePathId,
             String issuancePathCommitment, Set<IdentifierType> identifierTypes, Set<String> dnsNamespaces,
             Duration maximumValidity, Set<String> publicKeyAlgorithms, Set<String> x509BindingPolicies,
             Set<ChallengeType> challengeTypes, Set<String> challengeProviderIds,
-            Optional<String> eabProviderId, boolean eabRequired, DisclosureService.Policy disclosurePolicy,
+            Optional<String> eabProviderId, boolean eabRequired,
+            CredentialConfirmationPolicy confirmationPolicy, String confirmationPolicyCommitment,
             DirectoryStatus status, String policyCommitment, Instant createdAt, String commitment) {
         /** Validates the complete frozen directory revision. */
         public Directory {
@@ -122,21 +192,41 @@ public final class AcmeState {
             if (eabRequired && eabProviderId.isEmpty()) {
                 throw new IllegalArgumentException("ACME EAB policy is contradictory");
             }
-            Objects.requireNonNull(disclosurePolicy, "disclosurePolicy");
+            Objects.requireNonNull(confirmationPolicy, "confirmationPolicy");
+            digest(confirmationPolicyCommitment);
+            if (!confirmationPolicy.configurationCommitment().equals(confirmationPolicyCommitment)) {
+                throw new IllegalArgumentException("ACME confirmation policy commitment differs");
+            }
             Objects.requireNonNull(status, "status"); digest(policyCommitment);
             Objects.requireNonNull(createdAt, "createdAt"); digest(commitment);
         }
     }
 
-    /** Durable protocol-scoped ACME account. */
+    /**
+     * Durable protocol-scoped ACME account.
+     *
+     * @param accountId stable account identifier
+     * @param directoryId owning directory identifier
+     * @param directoryRevision frozen directory revision
+     * @param directoryPolicyCommitment frozen directory-policy commitment
+     * @param keyThumbprint SHA-256 account-key thumbprint
+     * @param publicKeySpki canonical account public-key encoding
+     * @param status account lifecycle state
+     * @param contacts bounded account contact URIs
+     * @param termsAgreed whether the subscriber agreed to current terms
+     * @param eabPolicyCommitment optional external-account-binding policy commitment
+     * @param createdAt server-authoritative creation time
+     * @param updatedAt server-authoritative last-update time
+     * @param commitment commitment to the complete account record
+     */
     public record Account(String accountId, String directoryId, int directoryRevision,
-            String directoryCommitment, String keyThumbprint, byte[] publicKeySpki,
+            String directoryPolicyCommitment, String keyThumbprint, byte[] publicKeySpki,
             AccountStatus status, List<String> contacts, boolean termsAgreed,
             Optional<String> eabPolicyCommitment, Instant createdAt, Instant updatedAt, String commitment) {
         /** Validates account identity, bounded public material, PII and commitments. */
         public Account {
             id(accountId); id(directoryId); positive(directoryRevision, "directory revision");
-            digest(directoryCommitment); digest(keyThumbprint);
+            digest(directoryPolicyCommitment); digest(keyThumbprint);
             publicKeySpki = Objects.requireNonNull(publicKeySpki, "publicKeySpki").clone();
             if (publicKeySpki.length < 32 || publicKeySpki.length > 16_384) {
                 throw new IllegalArgumentException("ACME account public key bound is invalid");
@@ -152,20 +242,50 @@ public final class AcmeState {
             Objects.requireNonNull(createdAt, "createdAt"); Objects.requireNonNull(updatedAt, "updatedAt");
             digest(commitment);
         }
+        /**
+         * Returns the account public key.
+         *
+         * @return defensive copy of canonical subject-public-key information
+         */
         @Override public byte[] publicKeySpki() { return publicKeySpki.clone(); }
     }
 
-    /** Durable ACME order frozen to one directory revision and issuance selection. */
+    /**
+     * Durable ACME order frozen to one directory revision and issuance selection.
+     *
+     * @param orderId stable order identifier
+     * @param accountId owning account identifier
+     * @param directoryId owning directory identifier
+     * @param directoryRevision frozen directory revision
+     * @param directoryPolicyCommitment frozen directory-policy commitment
+     * @param authorityId exact logical authority
+     * @param profile frozen certificate profile reference
+     * @param issuerId exact issuer generation
+     * @param issuancePathId exact issuance chain path
+     * @param issuancePathCommitment expected chain-path commitment
+     * @param identifiers distinct ordered requested identifiers
+     * @param notBefore optional requested validity start
+     * @param notAfter optional requested validity end, present with {@code notBefore}
+     * @param status order lifecycle state
+     * @param authorizationIds authorization identifiers corresponding to requested identifiers
+     * @param credentialId issued credential identifier, present exactly for a valid order
+     * @param issuanceCommitment optional frozen issuance-input commitment
+     * @param signingOperationId optional durable signing operation identifier
+     * @param createdAt server-authoritative creation time
+     * @param expiresAt order expiration time
+     * @param commitment commitment to the complete order record
+     */
     public record Order(String orderId, String accountId, String directoryId, int directoryRevision,
-            String directoryCommitment, PkiId authorityId, CertificateProfileRef profile,
+            String directoryPolicyCommitment, PkiId authorityId, CertificateProfileRef profile,
             PkiId issuerId, PkiId issuancePathId, String issuancePathCommitment,
             List<Identifier> identifiers, Optional<Instant> notBefore, Optional<Instant> notAfter,
             OrderStatus status, List<String> authorizationIds, Optional<PkiId> credentialId,
+            Optional<String> issuanceCommitment, Optional<PkiId> signingOperationId,
             Instant createdAt, Instant expiresAt, String commitment) {
         /** Validates exact policy and object bindings. */
         public Order {
             id(orderId); id(accountId); id(directoryId); positive(directoryRevision, "directory revision");
-            digest(directoryCommitment); Objects.requireNonNull(authorityId, "authorityId");
+            digest(directoryPolicyCommitment); Objects.requireNonNull(authorityId, "authorityId");
             Objects.requireNonNull(profile, "profile"); Objects.requireNonNull(issuerId, "issuerId");
             Objects.requireNonNull(issuancePathId, "issuancePathId"); digest(issuancePathCommitment);
             identifiers = distinctIdentifiers(identifiers);
@@ -178,8 +298,16 @@ public final class AcmeState {
             Objects.requireNonNull(status, "status");
             authorizationIds = distinctIds(authorizationIds, identifiers.size(), "authorization");
             credentialId = Objects.requireNonNull(credentialId, "credentialId");
+            issuanceCommitment = Objects.requireNonNull(issuanceCommitment, "issuanceCommitment");
+            issuanceCommitment.ifPresent(AcmeState::digest);
+            signingOperationId = Objects.requireNonNull(signingOperationId, "signingOperationId");
             if ((status == OrderStatus.VALID) != credentialId.isPresent()) {
                 throw new IllegalArgumentException("ACME order credential state mismatch");
+            }
+            if (signingOperationId.isPresent() && issuanceCommitment.isEmpty()
+                    || status == OrderStatus.PROCESSING
+                            && (signingOperationId.isEmpty() || issuanceCommitment.isEmpty())) {
+                throw new IllegalArgumentException("Processing ACME order lacks its signing operation");
             }
             Objects.requireNonNull(createdAt, "createdAt"); Objects.requireNonNull(expiresAt, "expiresAt");
             if (!expiresAt.isAfter(createdAt)) throw new IllegalArgumentException("ACME order expiry is invalid");
@@ -187,7 +315,19 @@ public final class AcmeState {
         }
     }
 
-    /** Durable identifier authorization owned by one account order. */
+    /**
+     * Durable identifier authorization owned by one account order.
+     *
+     * @param authorizationId stable authorization identifier
+     * @param orderId owning order identifier
+     * @param accountId owning account identifier
+     * @param identifier exact identifier being authorized
+     * @param status authorization lifecycle state
+     * @param challengeIds available challenge identifiers
+     * @param expiresAt authorization expiration time
+     * @param evidenceId validator evidence identifier, present exactly when valid
+     * @param commitment commitment to the complete authorization record
+     */
     public record Authorization(String authorizationId, String orderId, String accountId,
             Identifier identifier, AuthorizationStatus status, List<String> challengeIds,
             Instant expiresAt, Optional<String> evidenceId, String commitment) {
@@ -205,7 +345,22 @@ public final class AcmeState {
         }
     }
 
-    /** Durable explicitly triggered challenge attempt. */
+    /**
+     * Durable explicitly triggered challenge attempt.
+     *
+     * @param challengeId stable challenge identifier
+     * @param authorizationId owning authorization identifier
+     * @param type challenge type
+     * @param token unpredictable ACME challenge token
+     * @param status challenge lifecycle state
+     * @param providerId selected validator provider
+     * @param attempt nonnegative attempt number
+     * @param failureCode optional stable safe failure classification
+     * @param evidenceId validator evidence identifier, present exactly when valid
+     * @param createdAt server-authoritative creation time
+     * @param updatedAt server-authoritative last-update time
+     * @param commitment commitment to the complete challenge record
+     */
     public record Challenge(String challengeId, String authorizationId, ChallengeType type,
             String token, ChallengeStatus status, String providerId, int attempt,
             Optional<String> failureCode, Optional<String> evidenceId,
@@ -229,7 +384,24 @@ public final class AcmeState {
         }
     }
 
-    /** Immutable validator evidence; no control operation may construct it. */
+    /**
+     * Immutable validator evidence; no control operation may construct it.
+     *
+     * @param evidenceId stable evidence identifier
+     * @param authorizationId authorized identifier record
+     * @param providerId validator provider identifier
+     * @param challengeType validated challenge type
+     * @param identifier exact validated identifier
+     * @param accountKeyCommitment account-key commitment used in validation
+     * @param keyAuthorizationCommitment derived key-authorization commitment
+     * @param directoryPolicyCommitment frozen directory-policy commitment
+     * @param attempt positive challenge attempt
+     * @param validatedAt server-authoritative validation time
+     * @param expiresAt evidence expiration time
+     * @param result validator result
+     * @param failureCode safe failure classification, present exactly when invalid
+     * @param commitment commitment to the complete evidence record
+     */
     public record AuthorizationEvidence(String evidenceId, String authorizationId, String providerId,
             ChallengeType challengeType, Identifier identifier, String accountKeyCommitment,
             String keyAuthorizationCommitment, String directoryPolicyCommitment, int attempt,

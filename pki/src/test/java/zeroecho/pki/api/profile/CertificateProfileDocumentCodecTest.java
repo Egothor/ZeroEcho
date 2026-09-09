@@ -56,6 +56,9 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
+import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
+import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 
 final class CertificateProfileDocumentCodecTest {
 
@@ -63,14 +66,22 @@ final class CertificateProfileDocumentCodecTest {
 
     private static final String VALID_DOCUMENT = """
             {
-              "schemaVersion": 3,
+              "schemaVersion": 5,
               "certificateType": "END_ENTITY",
               "profileId": "tls-service",
               "profileVersion": 7,
               "formatId": "x509",
               "displayName": "TLS service",
               "maxValidity": "PT24H",
+              "approvalRequirement": "NONE",
               "algorithmBindings": {"mode":"STANDARD_ONLY"},
+              "confirmationPolicy": {
+                "disclosurePolicy": "OWNER_ONLY",
+                "confirmationWindow": "PT24H",
+                "proofSuiteId": "zeroecho.signature-pop.v1",
+                "proofSuiteCommitment": "5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11",
+                "policyCommitment": "4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30"
+              },
               "subject": {
                 "allowEmpty": false,
                 "rules": [
@@ -139,7 +150,7 @@ final class CertificateProfileDocumentCodecTest {
     void parsesEverySupportedRuleShapeIntoAuthoritativeTypedPolicies() {
         CertificateProfileDefinition definition = parse(VALID_DOCUMENT);
 
-        assertEquals(3, CertificateProfileDefinition.SCHEMA_VERSION);
+        assertEquals(5, CertificateProfileDefinition.SCHEMA_VERSION);
         assertEquals(CertificateProfileKind.END_ENTITY, definition.certificateType());
         assertEquals("tls-service", definition.profileId());
         assertEquals(7, definition.profileVersion());
@@ -267,13 +278,13 @@ final class CertificateProfileDocumentCodecTest {
         List<CertificateProfileDefinition> invalid = List.of(
                 new CertificateProfileDefinition(valid.certificateType(), " padded", valid.profileVersion(),
                         valid.formatId(), valid.displayName(), valid.maximumValidity(), valid.subjectPolicy(),
-                        valid.certificatePolicy()),
+                        valid.certificatePolicy(), valid.algorithmBindingPolicy(), valid.confirmationPolicy()),
                 new CertificateProfileDefinition(valid.certificateType(), valid.profileId(), valid.profileVersion(),
                         new FormatId("x509 "), valid.displayName(), valid.maximumValidity(), valid.subjectPolicy(),
-                        valid.certificatePolicy()),
+                        valid.certificatePolicy(), valid.algorithmBindingPolicy(), valid.confirmationPolicy()),
                 new CertificateProfileDefinition(valid.certificateType(), valid.profileId(), valid.profileVersion(),
                         valid.formatId(), " padded ", valid.maximumValidity(), valid.subjectPolicy(),
-                        valid.certificatePolicy()));
+                        valid.certificatePolicy(), valid.algorithmBindingPolicy(), valid.confirmationPolicy()));
 
         for (CertificateProfileDefinition definition : invalid) {
             assertWriteCode(definition, "CANONICALIZATION_FAILED");
@@ -312,10 +323,10 @@ final class CertificateProfileDocumentCodecTest {
 
     @Test
     void rejectsDuplicateUnknownMissingNullWrongAndNonintegralFields() {
-        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 3,", "\"schemaVersion\": 3,\"schemaVersion\": 3,"),
+        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 5,", "\"schemaVersion\": 5,\"schemaVersion\": 5,"),
                 "DUPLICATE_FIELD");
         for (String document : List.of(
-                VALID_DOCUMENT.replace("\"schemaVersion\": 3,", "\"secret-field\": true,\"schemaVersion\": 3,"),
+                VALID_DOCUMENT.replace("\"schemaVersion\": 5,", "\"secret-field\": true,\"schemaVersion\": 5,"),
                 VALID_DOCUMENT.replace("\"allowEmpty\": false,", "\"unknown\": true,\"allowEmpty\": false,"),
                 VALID_DOCUMENT.replace("\"oid\": \"2.5.4.3\",", "\"unknown\": true,\"oid\": \"2.5.4.3\","),
                 VALID_DOCUMENT.replace("\"minimumTotal\": 1,", "\"unknown\": true,\"minimumTotal\": 1,"),
@@ -331,7 +342,7 @@ final class CertificateProfileDocumentCodecTest {
                         "\"keyUsageCritical\": true,\"keyUsageCritical\": true,"))) {
             assertCode(document, "DUPLICATE_FIELD");
         }
-        for (String document : List.of(VALID_DOCUMENT.replace("\"schemaVersion\": 3,\n", ""),
+        for (String document : List.of(VALID_DOCUMENT.replace("\"schemaVersion\": 5,\n", ""),
                 VALID_DOCUMENT.replace("\"allowEmpty\": false,\n", ""),
                 VALID_DOCUMENT.replace("\"oid\": \"2.5.4.3\",\n", ""),
                 VALID_DOCUMENT.replace("\"minimumTotal\": 1,\n", ""),
@@ -355,8 +366,44 @@ final class CertificateProfileDocumentCodecTest {
     }
 
     @Test
+    void rejectsMissingLeafAndForbiddenCaConfirmationPolicies() {
+        String leaf = canonical(parse(VALID_DOCUMENT));
+        String confirmationPolicy = canonicalConfirmationPolicy();
+        assertTrue(leaf.contains(confirmationPolicy));
+        assertCode(leaf.replace(confirmationPolicy + ",", ""), "MISSING_FIELD");
+
+        String ca = canonical(caDefinition("confirmation-ca", CertificateProfileKind.ROOT_CA, 1));
+        assertCode(ca.replace("\"subject\":", confirmationPolicy + ",\"subject\":"),
+                "FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE");
+    }
+
+    @Test
+    void rejectsMalformedOrUncommittedConfirmationPolicyFields() {
+        String document = canonical(parse(VALID_DOCUMENT));
+        assertCode(document.replace("\"confirmationPolicy\":{",
+                "\"confirmationPolicy\":{\"unknown\":true,"), "UNKNOWN_FIELD");
+        assertCode(document.replace("\"disclosurePolicy\":\"OWNER_ONLY\",",
+                "\"disclosurePolicy\":\"OWNER_ONLY\",\"disclosurePolicy\":\"OWNER_ONLY\","),
+                "DUPLICATE_FIELD");
+        assertCode(document.replace("\"proofSuiteId\":\"zeroecho.signature-pop.v1\",", ""),
+                "MISSING_FIELD");
+        assertCode(document.replace("\"confirmationWindow\":\"PT24H\"",
+                "\"confirmationWindow\":true"), "WRONG_TYPE");
+        assertCode(document.replace("zeroecho.signature-pop.v1", "ZeroEcho.signature-pop.v1"),
+                "SEMANTIC_INVALID");
+        assertCode(document.replace(
+                "5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11",
+                "A322be16ba20d5be93e2e08c90716a87361dab4abc474e5643948199a9d129e7"),
+                "SEMANTIC_INVALID");
+        assertCode(document.replace(
+                "4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30",
+                "0000000000000000000000000000000000000000000000000000000000000000"),
+                "SEMANTIC_INVALID");
+    }
+
+    @Test
     void rejectsUnsupportedVersionsTokensCaseWhitespaceAndNoncanonicalDuration() {
-        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 3", "\"schemaVersion\": 1"),
+        assertCode(VALID_DOCUMENT.replace("\"schemaVersion\": 5", "\"schemaVersion\": 1"),
                 "SCHEMA_VERSION_UNSUPPORTED");
         assertCode(VALID_DOCUMENT.replace("\"certificateType\": \"END_ENTITY\"", "\"certificateType\": \"end_entity\""),
                 "CERTIFICATE_TYPE_UNSUPPORTED");
@@ -474,8 +521,8 @@ final class CertificateProfileDocumentCodecTest {
     @Test
     void redactsHostileInputAndParserDetailsFromFailures() {
         String secret = "do-not-disclose-credential";
-        String hostile = VALID_DOCUMENT.replace("\"schemaVersion\": 3,",
-                "\"" + secret + "\": true,\"schemaVersion\": 3,");
+        String hostile = VALID_DOCUMENT.replace("\"schemaVersion\": 5,",
+                "\"" + secret + "\": true,\"schemaVersion\": 5,");
 
         PkiException exception = assertThrows(PkiException.class, () -> parse(hostile));
 
@@ -509,8 +556,8 @@ final class CertificateProfileDocumentCodecTest {
         logger.addHandler(handler);
         try {
             for (String field : hostileFields) {
-                String document = VALID_DOCUMENT.replace("\"schemaVersion\": 3,",
-                        "\"" + field + "\":\"" + probeName + "\",\"schemaVersion\": 3,");
+                String document = VALID_DOCUMENT.replace("\"schemaVersion\": 5,",
+                        "\"" + field + "\":\"" + probeName + "\",\"schemaVersion\": 5,");
                 PkiException exception = assertThrows(PkiException.class, () -> parse(document));
                 assertTrue(exception.getMessage().contains("code=UNKNOWN_FIELD "));
                 assertFalse(exception.getMessage().contains(field));
@@ -532,12 +579,28 @@ final class CertificateProfileDocumentCodecTest {
         return new String(CertificateProfileDocumentCodec.writeCanonical(definition), StandardCharsets.UTF_8);
     }
 
+    private static String canonicalConfirmationPolicy() {
+        return "\"confirmationPolicy\":{\"disclosurePolicy\":\"OWNER_ONLY\","
+                + "\"confirmationWindow\":\"PT24H\",\"proofSuiteId\":\"zeroecho.signature-pop.v1\","
+                + "\"proofSuiteCommitment\":"
+                + "\"5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11\","
+                + "\"policyCommitment\":"
+                + "\"4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30\"}";
+    }
+
     private static CertificateProfileDefinition definition(String id, SubjectPolicy subject,
             SubjectAlternativeNamePolicy san, Set<ExtendedKeyUsageId> extendedKeyUsages, Set<String> algorithms) {
         LeafCertificatePolicy leaf = new LeafCertificatePolicy(san, Set.of(LeafKeyUsage.DIGITAL_SIGNATURE),
                 extendedKeyUsages, true, false, true, algorithms);
         return new CertificateProfileDefinition(CertificateProfileKind.END_ENTITY, id, 1, new FormatId("x509"), id,
-                Duration.ofDays(1), subject, leaf);
+                Duration.ofDays(1), subject, leaf, X509AlgorithmBindingPolicy.standardOnly(),
+                Optional.of(confirmationPolicy()));
+    }
+
+    private static CredentialConfirmationPolicy confirmationPolicy() {
+        return new CredentialConfirmationPolicy(ConfirmationDisclosurePolicy.OWNER_ONLY,
+                Duration.ofHours(24L), new ConfirmationProofSuiteRef("zeroecho.signature-pop.v1",
+                        "5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11"));
     }
 
     private static CertificateProfileDefinition caDefinition(String id, CertificateProfileKind kind, int pathLength) {

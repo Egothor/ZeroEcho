@@ -70,17 +70,42 @@ public final class PkiRepositoryContent implements AutoCloseable {
         this.content = Objects.requireNonNull(content, "content");
     }
 
-    /** @return exact object identity */
+    /**
+     * Returns the exact repository-object identity.
+     *
+     * @return exact object identity
+     */
     public PkiId objectId() { return objectId; }
-    /** @return exact owning authority */
+    /**
+     * Returns the owning authority.
+     *
+     * @return exact owning authority
+     */
     public PkiId authorityId() { return authorityId; }
-    /** @return semantic representation role */
+    /**
+     * Returns the representation role.
+     *
+     * @return semantic representation role
+     */
     public Role role() { return role; }
-    /** @return exact validated content length */
+    /**
+     * Returns the validated content length.
+     *
+     * @return exact length in bytes
+     */
     public long length() { return reference.length(); }
-    /** @return immutable SHA-256 content commitment */
+    /**
+     * Returns the immutable content commitment.
+     *
+     * @return lowercase SHA-256 content commitment
+     */
     public String sha256() { return reference.sha256(); }
-    /** Opens a new integrity-checking sequential content stream. */
+    /**
+     * Opens a new integrity-checking sequential content stream.
+     *
+     * @return newly opened stream positioned at the first content byte
+     * @throws IOException if the content cannot be opened
+     */
     public InputStream openStream() throws IOException { return content.openStream(); }
     /** Releases provider-owned lease resources. */
     @Override public void close() throws IOException { content.close(); }

@@ -44,13 +44,11 @@ import java.io.OutputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
-import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
@@ -66,7 +64,7 @@ import java.util.UUID;
 /** Strict durable I/O for bounded filesystem metadata records. */
 final class DurableMetadataFiles {
 
-    private static final int FINAL_TEMPORARY_CREATE_ATTEMPT = 15;
+    private static final int FINAL_TEMP_CREATE_ATTEMPT = 15;
     private static final long ZERO_BYTES = 0L;
     private static final Set<java.nio.file.attribute.PosixFilePermission> OWNER_ONLY =
             PosixFilePermissions.fromString("rw-------");
@@ -87,7 +85,7 @@ final class DurableMetadataFiles {
         Objects.requireNonNull(decoder, "decoder");
         requireMaximum(maximumBytes);
         Path parent = requireParent(target);
-        try (SecureDirectoryStream<Path> directory = openSecureDirectory(parent);
+        try (DurableDirectory directory = openDurableDirectory(parent);
                 SeekableByteChannel channel = openRead(directory, target.getFileName());
                 InputStream raw = Channels.newInputStream(channel);
                 DataInputStream input = new DataInputStream(
@@ -104,10 +102,9 @@ final class DurableMetadataFiles {
     /* default */ static List<Path> list(Path parent, String suffix) throws IOException {
         Objects.requireNonNull(suffix, "suffix");
         List<Path> paths = new ArrayList<>();
-        try (SecureDirectoryStream<Path> directory = openSecureDirectory(parent)) {
-            for (Path relative : directory) {
-                Path name = relative.getFileName();
-                if (name != null && name.toString().endsWith(suffix)) {
+        try (DurableDirectory directory = openDurableDirectory(parent)) {
+            for (Path name : directory.listNames()) {
+                if (name.toString().endsWith(suffix)) {
                     paths.add(parent.resolve(name));
                 }
             }
@@ -118,7 +115,7 @@ final class DurableMetadataFiles {
 
     /* default */ static boolean delete(Path target) throws IOException {
         Path parent = requireParent(target);
-        try (SecureDirectoryStream<Path> directory = openSecureDirectory(parent)) {
+        try (DurableDirectory directory = openDurableDirectory(parent)) {
             try {
                 directory.deleteFile(target.getFileName());
             } catch (NoSuchFileException missing) {
@@ -171,7 +168,7 @@ final class DurableMetadataFiles {
 
     private static void move(Path source, Path target, boolean replace) throws IOException {
         if (replace) {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            AtomicPublish.replaceExisting(source, target);
         } else {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
         }
@@ -190,12 +187,12 @@ final class DurableMetadataFiles {
         for (int attempt = 0; attempt < 16; attempt++) {
             trip(FaultPoint.TEMP_CREATE);
             Path candidate = parent.resolve(".metadata-" + UUID.randomUUID() + ".tmp");
-            try (SecureDirectoryStream<Path> directory = openSecureDirectory(parent);
+            try (DurableDirectory directory = openDurableDirectory(parent);
                     SeekableByteChannel ignored = directory.newByteChannel(candidate.getFileName(),
                             openOptions(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), fileAttributes(parent))) {
                 return candidate;
             } catch (java.nio.file.FileAlreadyExistsException collision) {
-                if (attempt == FINAL_TEMPORARY_CREATE_ATTEMPT) {
+                if (attempt == FINAL_TEMP_CREATE_ATTEMPT) {
                     throw new IOException("Unable to create durable metadata temporary file", collision);
                 }
             }
@@ -204,7 +201,7 @@ final class DurableMetadataFiles {
     }
 
     private static void writeAndForce(Path path, long maximumBytes, Encoder encoder) throws IOException {
-        try (SecureDirectoryStream<Path> directory = openSecureDirectory(path.getParent());
+        try (DurableDirectory directory = openDurableDirectory(path.getParent());
                 SeekableByteChannel channel = directory.newByteChannel(path.getFileName(),
                         openOptions(StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING))) {
             if (!(channel instanceof FileChannel)) {
@@ -221,18 +218,13 @@ final class DurableMetadataFiles {
         }
     }
 
-    private static SeekableByteChannel openRead(SecureDirectoryStream<Path> directory, Path name) throws IOException {
+    private static SeekableByteChannel openRead(DurableDirectory directory, Path name) throws IOException {
         return directory.newByteChannel(name, openOptions(StandardOpenOption.READ));
     }
 
-    private static SecureDirectoryStream<Path> openSecureDirectory(Path directory) throws IOException {
+    private static DurableDirectory openDurableDirectory(Path directory) throws IOException {
         trip(FaultPoint.SECURE_OPEN);
-        DirectoryStream<Path> opened = Files.newDirectoryStream(directory);
-        if (opened instanceof SecureDirectoryStream<?>) {
-            return (SecureDirectoryStream<Path>) opened;
-        }
-        opened.close();
-        throw new IOException("Secure durable metadata directory access is unavailable");
+        return DurableDirectory.open(directory);
     }
 
     private static Set<OpenOption> openOptions(StandardOpenOption... options) {
@@ -250,7 +242,7 @@ final class DurableMetadataFiles {
     }
 
     private static void cleanupTemporary(Path temporary) throws IOException {
-        try (SecureDirectoryStream<Path> directory = openSecureDirectory(temporary.getParent())) {
+        try (DurableDirectory directory = openDurableDirectory(temporary.getParent())) {
             try {
                 directory.deleteFile(temporary.getFileName());
             } catch (NoSuchFileException missing) {
@@ -261,9 +253,7 @@ final class DurableMetadataFiles {
     }
 
     private static void forceDirectory(Path directory) throws IOException {
-        try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
-            channel.force(true);
-        }
+        SigningFormatSupport.forceDirectory(directory);
     }
 
     private static Path requireParent(Path target) throws IOException {

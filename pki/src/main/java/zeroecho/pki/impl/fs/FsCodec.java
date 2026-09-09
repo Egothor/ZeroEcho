@@ -91,6 +91,7 @@ import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.SignWorkflowStore;
+import zeroecho.pki.spi.store.DomainContinuationStore;
 
 /**
  * Closed binary codec for the current filesystem persistence schema.
@@ -115,8 +116,7 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 final class FsCodec {
 
     /* package */ static final int MAX_COMPONENT_BYTES = 1024 * 1024;
-    /* package */ static final int CURRENT_CODEC_VERSION = 5;
-    private static final int PREVIOUS_CODEC_VERSION = 4;
+    /* package */ static final int CURRENT_CODEC_VERSION = 8;
 
     private static final int CODEC_MAGIC = 0x5A454346;
     private static final int MAX_COLLECTION_ELEMENTS = MAX_COMPONENT_BYTES;
@@ -133,6 +133,7 @@ final class FsCodec {
     private static final int TOP_ACTIVE_PROFILE_REF = 12;
     private static final int TOP_ISSUER_GENERATION = 13;
     private static final int TOP_ISSUER_CHAIN_PATH = 14;
+    private static final int TOP_DOMAIN_CONTINUATION = 15;
 
     private static final int TYPE_STRING = 1;
     private static final int TYPE_BOOLEAN = 2;
@@ -168,8 +169,10 @@ final class FsCodec {
     private static final int TYPE_PROFILE_REF = 72;
     private static final int TYPE_PROFILE_BINDING = 73;
     private static final int TYPE_DURABLE_CONTENT = 74;
-    private static final int TYPE_ISSUER_GENERATION_STATE_ENUM = 75;
+    private static final int TYPE_ISSUER_GEN_STATE_ENUM = 75;
     private static final int TYPE_RETRY_FAILURE_ENUM = 76;
+    private static final int TYPE_DOMAIN_KIND_ENUM = 77;
+    private static final int TYPE_DOMAIN_STATE_ENUM = 78;
 
     private static final int ATTRIBUTE_STRING = 1;
     private static final int ATTRIBUTE_BOOLEAN = 2;
@@ -227,7 +230,7 @@ final class FsCodec {
         default -> throw unknownEnum("CaState", code);
     });
     private static final ValueSchema<IssuerGenerationState> ISSUER_GENERATION_STATE = enumSchema(
-            TYPE_ISSUER_GENERATION_STATE_ENUM, value -> switch (value) {
+            TYPE_ISSUER_GEN_STATE_ENUM, value -> switch (value) {
                 case ACTIVE -> 1;
                 case RETIRED -> 2;
                 case COMPROMISED -> 3;
@@ -238,6 +241,32 @@ final class FsCodec {
                 case 3 -> IssuerGenerationState.COMPROMISED;
                 case 4 -> IssuerGenerationState.DISABLED;
                 default -> throw unknownEnum("IssuerGenerationState", code);
+            });
+    private static final ValueSchema<DomainContinuationStore.Kind> DOMAIN_KIND = enumSchema(
+            TYPE_DOMAIN_KIND_ENUM, value -> switch (value) {
+                case CA -> 1;
+                case ISSUANCE -> 2;
+                case STATUS -> 3;
+            }, code -> switch (code) {
+                case 1 -> DomainContinuationStore.Kind.CA;
+                case 2 -> DomainContinuationStore.Kind.ISSUANCE;
+                case 3 -> DomainContinuationStore.Kind.STATUS;
+                default -> throw unknownEnum("DomainContinuationKind", code);
+            });
+    private static final ValueSchema<DomainContinuationStore.State> DOMAIN_STATE = enumSchema(
+            TYPE_DOMAIN_STATE_ENUM, value -> switch (value) {
+                case SIGNING -> 1;
+                case PUBLISHING -> 2;
+                case COMPLETED -> 3;
+                case FAILED -> 4;
+                case EXPIRED -> 5;
+            }, code -> switch (code) {
+                case 1 -> DomainContinuationStore.State.SIGNING;
+                case 2 -> DomainContinuationStore.State.PUBLISHING;
+                case 3 -> DomainContinuationStore.State.COMPLETED;
+                case 4 -> DomainContinuationStore.State.FAILED;
+                case 5 -> DomainContinuationStore.State.EXPIRED;
+                default -> throw unknownEnum("DomainContinuationState", code);
             });
     private static final ValueSchema<CredentialStatus> CREDENTIAL_STATUS = enumSchema(TYPE_CREDENTIAL_STATUS_ENUM,
             value -> switch (value) {
@@ -255,12 +284,10 @@ final class FsCodec {
                 case CRL -> 1;
                 case DELTA_CRL -> 2;
                 case OCSP -> 3;
-                case REVOCATION_LIST -> 4;
             }, code -> switch (code) {
                 case 1 -> StatusObjectType.CRL;
                 case 2 -> StatusObjectType.DELTA_CRL;
                 case 3 -> StatusObjectType.OCSP;
-                case 4 -> StatusObjectType.REVOCATION_LIST;
                 default -> throw unknownEnum("StatusObjectType", code);
             });
     private static final ValueSchema<OrchestrationDurabilityPolicy> DURABILITY_POLICY = enumSchema(
@@ -391,6 +418,8 @@ final class FsCodec {
     private static final ValueSchema<Optional<String>> OPTIONAL_STRING = optionalOf(STRING);
     private static final ValueSchema<Optional<Instant>> OPTIONAL_INSTANT = optionalOf(INSTANT);
     private static final ValueSchema<Optional<EncodedObject>> OPTIONAL_ENCODED_OBJECT = optionalOf(ENCODED_OBJECT);
+    private static final ValueSchema<Optional<DurableContentReference>> OPTIONAL_DURABLE_CONTENT =
+            optionalOf(DURABLE_CONTENT);
     private static final ValueSchema<Optional<SignWorkflowStore.ReconciliationFailureClass>>
             OPTIONAL_RETRY_FAILURE = optionalOf(RECONCILIATION_FAILURE_CLASS);
 
@@ -420,6 +449,9 @@ final class FsCodec {
             "ISSUER_GENERATION", valueSchema(110, FsCodec::writeIssuerGeneration, FsCodec::readIssuerGeneration));
     /* package */ static final Schema<IssuerChainPath> ISSUER_CHAIN_PATH = topLevel(TOP_ISSUER_CHAIN_PATH,
             "ISSUER_CHAIN_PATH", valueSchema(111, FsCodec::writeIssuerChainPath, FsCodec::readIssuerChainPath));
+    /* package */ static final Schema<DomainContinuationStore.Record> DOMAIN_CONTINUATION = topLevel(
+            TOP_DOMAIN_CONTINUATION, "DOMAIN_CONTINUATION",
+            valueSchema(112, FsCodec::writeDomainContinuation, FsCodec::readDomainContinuation));
 
     private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(Map.entry(TOP_CA_RECORD, CA_RECORD),
             Map.entry(TOP_CREDENTIAL, CREDENTIAL), Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
@@ -428,7 +460,8 @@ final class FsCodec {
             Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE), Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD),
             Map.entry(TOP_PROFILE_VERSION, PROFILE_VERSION), Map.entry(TOP_ACTIVE_PROFILE_REF, ACTIVE_PROFILE_REF),
             Map.entry(TOP_ISSUER_GENERATION, ISSUER_GENERATION),
-            Map.entry(TOP_ISSUER_CHAIN_PATH, ISSUER_CHAIN_PATH));
+            Map.entry(TOP_ISSUER_CHAIN_PATH, ISSUER_CHAIN_PATH),
+            Map.entry(TOP_DOMAIN_CONTINUATION, DOMAIN_CONTINUATION));
 
     private FsCodec() {
         // utility
@@ -476,10 +509,9 @@ final class FsCodec {
                 throw new IOException("codec magic mismatch");
             }
             int version = reader.readUnsignedByte();
-            if (version != CURRENT_CODEC_VERSION && version != PREVIOUS_CODEC_VERSION) {
+            if (version != CURRENT_CODEC_VERSION) {
                 throw new IOException("unsupported codec version");
             }
-            reader.codecVersion = version;
             int typeId = reader.readUnsignedByte();
             Schema<?> encodedSchema = TOP_LEVEL_SCHEMAS.get(typeId);
             if (encodedSchema == null) {
@@ -825,6 +857,12 @@ final class FsCodec {
         writer.writeValue(PKI_ID, value.submissionId());
         writer.writeValue(STRING, value.namespace());
         writer.writeValue(STRING, value.fingerprint());
+        byte[] configurationCommitment = value.configurationCommitment().bytes();
+        try {
+            writer.writeValue(BYTES, configurationCommitment);
+        } finally {
+            Arrays.fill(configurationCommitment, (byte) 0);
+        }
         writer.writeValue(PRINCIPAL, value.owner());
         writer.writeValue(INSTANT, value.createdAt());
         writer.writeValue(INSTANT, value.deadline());
@@ -845,6 +883,14 @@ final class FsCodec {
         PkiId submissionId = reader.readValue(PKI_ID);
         String namespace = reader.readValue(STRING);
         String fingerprint = reader.readValue(STRING);
+        byte[] encodedConfigCommitment = reader.readValue(BYTES);
+        zeroecho.pki.spi.crypto.SignatureWorkflow.ConfigurationCommitment configurationCommitment;
+        try {
+            configurationCommitment = new zeroecho.pki.spi.crypto.SignatureWorkflow.ConfigurationCommitment(
+                    encodedConfigCommitment);
+        } finally {
+            Arrays.fill(encodedConfigCommitment, (byte) 0);
+        }
         Principal owner = reader.readValue(PRINCIPAL);
         Instant createdAt = reader.readValue(INSTANT);
         Instant deadline = reader.readValue(INSTANT);
@@ -856,15 +902,38 @@ final class FsCodec {
         Optional<String> detailCode = reader.readValue(OPTIONAL_STRING);
         Optional<EncodedObject> result = reader.readValue(OPTIONAL_ENCODED_OBJECT);
         Optional<Instant> providerUpdatedAt = reader.readValue(OPTIONAL_INSTANT);
-        if (reader.codecVersion < CURRENT_CODEC_VERSION) {
-            return new SignWorkflowStore.Record(submissionId, namespace, fingerprint, owner, createdAt, deadline,
-                    request, state, revision, fence, leaseUntil, detailCode, result, providerUpdatedAt, 0,
-                    Optional.empty(), Optional.empty());
-        }
         int failureCount = Math.toIntExact(reader.readValue(LONG));
-        return new SignWorkflowStore.Record(submissionId, namespace, fingerprint, owner, createdAt, deadline,
-                request, state, revision, fence, leaseUntil, detailCode, result, providerUpdatedAt, failureCount,
-                reader.readValue(OPTIONAL_INSTANT), reader.readValue(OPTIONAL_RETRY_FAILURE));
+        return new SignWorkflowStore.Record(submissionId, namespace, fingerprint, configurationCommitment, owner,
+                createdAt, deadline, request, state, revision, fence, leaseUntil, detailCode, result,
+                providerUpdatedAt, failureCount, reader.readValue(OPTIONAL_INSTANT),
+                reader.readValue(OPTIONAL_RETRY_FAILURE));
+    }
+
+    private static void writeDomainContinuation(Writer writer,
+            DomainContinuationStore.Record value) throws IOException {
+        writer.writeValue(PKI_ID, value.operationId());
+        writer.writeValue(LONG, (long) value.version());
+        writer.writeValue(DOMAIN_KIND, value.kind());
+        writer.writeValue(OPTIONAL_STRING, value.correlationId());
+        writer.writeValue(DOMAIN_STATE, value.state());
+        writer.writeValue(LONG, value.revision());
+        writer.writeValue(INSTANT, value.createdAt());
+        writer.writeValue(INSTANT, value.deadline());
+        writer.writeValue(ENCODED_OBJECT, value.command());
+        writer.writeValue(STRING, value.commandCommitment());
+        writer.writeValue(OPTIONAL_DURABLE_CONTENT, value.signingContent());
+        writer.writeValue(OPTIONAL_ENCODED_OBJECT, value.result());
+        writer.writeValue(OPTIONAL_STRING, value.detailCode());
+    }
+
+    private static DomainContinuationStore.Record readDomainContinuation(Reader reader) throws IOException {
+        return new DomainContinuationStore.Record(reader.readValue(PKI_ID),
+                Math.toIntExact(reader.readValue(LONG)), reader.readValue(DOMAIN_KIND),
+                reader.readValue(OPTIONAL_STRING), reader.readValue(DOMAIN_STATE),
+                reader.readValue(LONG), reader.readValue(INSTANT),
+                reader.readValue(INSTANT), reader.readValue(ENCODED_OBJECT), reader.readValue(STRING),
+                reader.readValue(OPTIONAL_DURABLE_CONTENT), reader.readValue(OPTIONAL_ENCODED_OBJECT),
+                reader.readValue(OPTIONAL_STRING));
     }
 
     private static <T> Schema<T> topLevel(int typeId, String name, ValueSchema<T> valueSchema) {
@@ -1084,8 +1153,6 @@ final class FsCodec {
 
         private final InputStream input;
         private final StagedContentStore stagedContent;
-        private int codecVersion;
-
         private Reader(InputStream input, StagedContentStore stagedContent) {
             this.input = input;
             this.stagedContent = stagedContent;

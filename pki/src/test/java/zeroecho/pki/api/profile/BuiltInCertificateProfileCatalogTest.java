@@ -63,6 +63,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
 
 final class BuiltInCertificateProfileCatalogTest {
 
@@ -140,6 +141,24 @@ final class BuiltInCertificateProfileCatalogTest {
             assertTrue(ip.allowIpv6());
             assertLeafPolicy(leaf, Set.of(SERVER_AUTH));
         }
+    }
+
+    @Test
+    void endEntityTemplatesPinEnterpriseConfirmationPolicy() {
+        Map<String, CertificateProfileDefinition> profiles = productionDefinitions();
+        for (String profileId : List.of("server-tls", "vpn-server", "vpn-client", "email-signing")) {
+            zeroecho.pki.api.confirmation.CredentialConfirmationPolicy policy =
+                    profiles.get(profileId).confirmationPolicy().orElseThrow();
+            assertEquals(ConfirmationDisclosurePolicy.OWNER_ONLY, policy.disclosurePolicy());
+            assertEquals(Duration.ofHours(24L), policy.confirmationWindow());
+            assertEquals("zeroecho.signature-pop.v1", policy.proofSuite().suiteId());
+            assertEquals("5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11",
+                    policy.proofSuite().configurationCommitment());
+            assertEquals("4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30",
+                    policy.configurationCommitment());
+        }
+        assertTrue(profiles.get("root-ca").confirmationPolicy().isEmpty());
+        assertTrue(profiles.get("intermediate-ca").confirmationPolicy().isEmpty());
     }
 
     @Test
@@ -245,10 +264,10 @@ final class BuiltInCertificateProfileCatalogTest {
     @Test
     void profileDocumentsFailClosedForInvalidSchemaFieldsEncodingAndClassMetadata() {
         List<byte[]> invalidDocuments = List.of(
-                replace(mainResource(SERVER), "\"schemaVersion\":3", "\"schemaVersion\":1"),
-                replace(mainResource(SERVER), "\"schemaVersion\":3,", "\"schemaVersion\":3,\"active\":true,"),
-                replace(mainResource(SERVER), "\"schemaVersion\":3,",
-                        "\"schemaVersion\":3,\"@class\":\"" + InitializationSentinel.CLASS_NAME + "\","),
+                replace(mainResource(SERVER), "\"schemaVersion\":5", "\"schemaVersion\":1"),
+                replace(mainResource(SERVER), "\"schemaVersion\":5,", "\"schemaVersion\":5,\"active\":true,"),
+                replace(mainResource(SERVER), "\"schemaVersion\":5,",
+                        "\"schemaVersion\":5,\"@class\":\"" + InitializationSentinel.CLASS_NAME + "\","),
                 malformedUtf8(mainResource(SERVER)));
         for (byte[] invalid : invalidDocuments) {
             Map<String, List<byte[]>> resources = baseResources();
@@ -267,7 +286,8 @@ final class BuiltInCertificateProfileCatalogTest {
         CertificateProfileDefinition server = CertificateProfileDocumentCodec.parse(mainResource(SERVER));
         CertificateProfileDefinition changed = new CertificateProfileDefinition(server.certificateType(),
                 server.profileId(), server.profileVersion(), server.formatId(), "Changed display",
-                server.maximumValidity(), server.subjectPolicy(), server.certificatePolicy());
+                server.maximumValidity(), server.subjectPolicy(), server.certificatePolicy(),
+                server.algorithmBindingPolicy(), server.confirmationPolicy());
         Map<String, List<byte[]>> duplicateIdentity = baseResources();
         duplicateIdentity.put(VPN_SERVER, List.of(CertificateProfileDocumentCodec.writeCanonical(changed)));
         assertCode(duplicateIdentity, "DUPLICATE_PROFILE_IDENTITY");

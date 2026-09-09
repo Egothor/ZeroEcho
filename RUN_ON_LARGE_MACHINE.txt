@@ -1,0 +1,39 @@
+# Run these commands from the transferred ZeroEcho project root.
+# Correctness validation R0-R4 is complete on the development machine. These
+# commands perform only the final Java 25 reference-host performance measurement.
+
+java --version
+./gradlew --no-daemon -q javaToolchains
+
+mkdir -p reference-evidence-java25
+
+# Run the first unmodified acceptance anchor. Do not set diagnostic environment,
+# steady or transient resident-index-budget, duration, warm-up, drain, rate,
+# lane, or population overrides; the benchmark must use its frozen acceptance
+# fingerprint.
+./gradlew --no-daemon :pki:signingPerformanceBenchmark \
+  -PsigningBenchmarkProfile=acceptance \
+  -PsigningBenchmarkTarget=native-shared-ledger \
+  -PsigningBenchmarkHeap=4g \
+  -PsigningBenchmarkOutput="$PWD/reference-evidence-java25/anchor-1.json"
+
+# Stop here and transfer anchor-1.json (or anchor-1.failure.json) together with
+# the command output. Run anchors 2 and 3 only after anchor 1 has been inspected
+# and confirmed structurally valid and evaluable.
+
+./gradlew --no-daemon :pki:signingPerformanceBenchmark \
+  -PsigningBenchmarkProfile=acceptance \
+  -PsigningBenchmarkTarget=native-shared-ledger \
+  -PsigningBenchmarkHeap=4g \
+  -PsigningBenchmarkOutput="$PWD/reference-evidence-java25/anchor-2.json"
+
+./gradlew --no-daemon :pki:signingPerformanceBenchmark \
+  -PsigningBenchmarkProfile=acceptance \
+  -PsigningBenchmarkTarget=native-shared-ledger \
+  -PsigningBenchmarkHeap=4g \
+  -PsigningBenchmarkOutput="$PWD/reference-evidence-java25/anchor-3.json"
+
+# After anchors 2 and 3 complete, transfer the complete
+# reference-evidence-java25 directory together with both command outputs. The
+# remaining fixed-grid and sidecar evidence is scheduled only after all three
+# anchors have been inspected.

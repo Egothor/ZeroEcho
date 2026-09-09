@@ -49,6 +49,11 @@ public final class MldsaPublicKeyBuilder implements PublicKeyImporter<MldsaPubli
 
     private static final String ALG = "ML-DSA";
 
+    /** Creates a stateless ML-DSA public-key importer. */
+    public MldsaPublicKeyBuilder() {
+        // Stateless importer.
+    }
+
     /**
      * Imports a public key from X.509 encoding.
      *

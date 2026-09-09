@@ -62,6 +62,13 @@ public final class Ed448KeyGenSpec implements AlgorithmKeySpec {
     private static final Ed448KeyGenSpec DEFAULT = new Ed448KeyGenSpec();
 
     /**
+     * Creates the parameter-free Ed448 key-generation specification.
+     */
+    public Ed448KeyGenSpec() {
+        // Ed448 key generation has no configurable parameters.
+    }
+
+    /**
      * Returns the shared default specification instance for Ed448 key generation.
      *
      * <p>

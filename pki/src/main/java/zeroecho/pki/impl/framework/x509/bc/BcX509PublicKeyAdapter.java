@@ -34,11 +34,7 @@
 package zeroecho.pki.impl.framework.x509.bc;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Objects;
-
-import org.bouncycastle.asn1.ASN1Encoding;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
@@ -46,13 +42,20 @@ import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509BindingCatalog;
 import zeroecho.pki.impl.framework.x509.X509BindingRule;
 
-/** Bouncy Castle adapter for binding-owned SubjectPublicKeyInfo encodings. */
+/**
+ * Adapter for binding-owned {@code SubjectPublicKeyInfo} encodings, expressed
+ * entirely in terms of canonical DER byte arrays and the ZeroEcho PKIX library.
+ */
 public final class BcX509PublicKeyAdapter {
 
     private static final int MAXIMUM_SPKI_BYTES = 1024 * 1024;
     private final X509BindingCatalog catalog;
 
-    /** Creates an adapter for one immutable binding catalog. */
+    /**
+     * Creates an adapter for one immutable binding catalog.
+     *
+     * @param catalog authoritative X.509 representation-binding catalog
+     */
     public BcX509PublicKeyAdapter(X509BindingCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
     }
@@ -60,45 +63,41 @@ public final class BcX509PublicKeyAdapter {
     /**
      * Wraps canonical native SPKI DER under one explicit binding.
      *
-     * @param nativeSpki canonical provider-native SPKI
+     * @param nativeSpki canonical provider-native SPKI DER
      * @param identity exact public-key identity
      * @param bindingId explicit SPKI binding
-     * @return canonical bound SPKI
+     * @return canonical bound SPKI DER
      * @throws IOException if either SPKI cannot be represented canonically
      */
-    public SubjectPublicKeyInfo wrap(byte[] nativeSpki, AlgorithmIdentity identity, String bindingId)
-            throws IOException {
+    public byte[] wrap(byte[] nativeSpki, AlgorithmIdentity identity, String bindingId) throws IOException {
         requireCanonical(nativeSpki);
-        org.bouncycastle.asn1.x509.AlgorithmIdentifier algorithm = BcX509AlgorithmAdapter.toBc(
+        zeroecho.pkix.AlgorithmIdentifier algorithm = BcX509AlgorithmAdapter.toLib(
                 catalog.resolve(bindingId, identity, X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM));
-        SubjectPublicKeyInfo wrapped = new SubjectPublicKeyInfo(algorithm, nativeSpki);
-        requireCanonical(wrapped.getEncoded(ASN1Encoding.DER));
+        byte[] wrapped = zeroecho.pkix.Pkix.buildSubjectPublicKeyInfo(algorithm, nativeSpki);
+        requireCanonical(wrapped);
         return wrapped;
     }
 
     /**
-     * Returns provider-native SPKI for verification or key import.
+     * Returns provider-native SPKI DER for verification or key import.
      *
-     * @param input exact active SPKI
-     * @return canonical native SPKI; the input itself for standard encodings
+     * @param input exact active SPKI DER
+     * @return canonical native SPKI DER; the input itself for standard encodings
      * @throws IOException if nested SPKI bytes are malformed or non-canonical
      */
-    public SubjectPublicKeyInfo unwrap(SubjectPublicKeyInfo input) throws IOException {
+    public byte[] unwrap(byte[] input) throws IOException {
         Objects.requireNonNull(input, "input");
-        String bindingId = catalog.bindingId(BcX509AlgorithmAdapter.fromBc(input.getAlgorithm()),
+        String bindingId = catalog.bindingId(
+                BcX509AlgorithmAdapter.fromLib(zeroecho.pkix.Pkix.subjectPublicKeyAlgorithm(input)),
                 X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
         X509BindingRule rule = catalog.rules().stream().filter(candidate -> candidate.id().equals(bindingId))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("SPKI binding rule is unavailable"));
         if (rule.publicKeyEncoding() != X509BindingRule.PublicKeyEncoding.NESTED_SPKI_DER) {
             return input;
         }
-        byte[] nested = input.getPublicKeyData().getBytes();
+        byte[] nested = zeroecho.pkix.Pkix.subjectPublicKeyBytes(input);
         requireCanonical(nested);
-        SubjectPublicKeyInfo nativeSpki = SubjectPublicKeyInfo.getInstance(nested);
-        if (!Arrays.equals(nested, nativeSpki.getEncoded(ASN1Encoding.DER))) {
-            throw new IOException("Nested SubjectPublicKeyInfo is not canonical DER");
-        }
-        return nativeSpki;
+        return nested;
     }
 
     private static void requireCanonical(byte[] encoded) throws IOException {

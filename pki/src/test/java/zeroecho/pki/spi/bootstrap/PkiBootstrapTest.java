@@ -37,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -46,6 +47,9 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.Duration;
+import java.time.Clock;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +57,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -63,6 +68,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringPassword;
 import zeroecho.core.storage.KeyringStore;
@@ -78,11 +85,12 @@ import zeroecho.pki.api.orch.SigningSubmissionId;
 import zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSignatureWorkflowProvider;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
+import zeroecho.pki.spi.crypto.LocalSigningLedgerParticipant;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
-import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.store.PkiStore;
+import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
 import zeroecho.pki.util.async.AsyncBus;
 
 /**
@@ -154,6 +162,32 @@ public final class PkiBootstrapTest {
         assertEquals("zeroecho.pki.impl.fs.FilesystemPkiStore", storeClassName);
 
         System.out.println("...ok");
+    }
+
+    @Test
+    public void configuredStoreReceivesExactRuntimeClockAndDefaultUsesSystemUtc() throws Exception {
+        ProviderConfig explicitConfig = new ProviderConfig("fs",
+                Map.of("root", tempDir.resolve("explicit-clock-store").toString()));
+        Clock fixed = Clock.fixed(Instant.parse("2026-08-04T12:00:00Z"), ZoneOffset.UTC);
+        try (PkiStore store = PkiBootstrap.openStore(explicitConfig,
+                new PkiStoreRuntimeDependencies(fixed))) {
+            assertSame(fixed, filesystemStoreClock(store));
+        }
+
+        ProviderConfig defaultConfig = new ProviderConfig("fs",
+                Map.of("root", tempDir.resolve("default-clock-store").toString()));
+        Instant before = Instant.now();
+        try (PkiStore store = PkiBootstrap.openStore(defaultConfig)) {
+            Clock clock = filesystemStoreClock(store);
+            assertEquals(ZoneOffset.UTC, clock.getZone());
+            assertFalse(clock.instant().isBefore(before));
+        }
+    }
+
+    private static Clock filesystemStoreClock(PkiStore store) throws Exception {
+        java.lang.reflect.Field field = store.getClass().getDeclaredField("clock");
+        field.setAccessible(true);
+        return (Clock) field.get(store);
     }
 
     @Test
@@ -299,8 +333,6 @@ public final class PkiBootstrapTest {
         createSigningKeyring(keyringPath);
         System.setProperty("zeroecho.pki.crypto.workflow", "zeroecho-lib");
         System.setProperty("zeroecho.pki.crypto.workflow.keyringPath", keyringPath.toString());
-        System.setProperty("zeroecho.pki.crypto.workflow.operationRoot",
-                this.tempDir.resolve("workflow").resolve("operations").toString());
         System.setProperty("zeroecho.pki.crypto.workflow.keyRefPrefix", "test-prefix:");
         System.setProperty("zeroecho.pki.crypto.workflow.requireComponentSuffix", "false");
 
@@ -312,8 +344,8 @@ public final class PkiBootstrapTest {
             suppliedPassword.set(password);
             return password;
         };
-        SignatureWorkflowRuntimeDependencies dependencies = SignatureWorkflowRuntimeDependencies
-                .withKeyringUnlockProvider(unlockProvider);
+        SignatureWorkflowRuntimeDependencies dependencies = SignatureWorkflowRuntimeDependencies.local(
+                unlockProvider, new TestLocalParticipant());
 
         try (SignatureWorkflow workflow = PkiBootstrap.openSignatureWorkflow(dependencies)) {
             assertNotNull(workflow);
@@ -330,8 +362,10 @@ public final class PkiBootstrapTest {
                     Optional.empty(), Optional.empty());
             PkiId submissionId = SigningSubmissionId.create(SIGNING_NAMESPACE, Instant.now(), new SecureRandom()).id();
             SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(submissionId,
-                    SIGNING_NAMESPACE, 1L, access, new KeyRef("test-prefix:bootstrap"), "SHA256withRSA",
-                    new ImmutableByteContent(payload), Optional.of(Encoding.BINARY), Optional.empty());
+                    SIGNING_NAMESPACE, workflow.configurationCommitment(), 1L, access,
+                    new KeyRef("test-prefix:bootstrap"), "SHA256withRSA",
+                    SignatureWorkflow.ContentCommitment.sha256(payload), new ImmutableByteContent(payload),
+                    Optional.of(Encoding.BINARY), Optional.empty());
             SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(Instant.MAX,
                     zeroecho.core.io.CancellationSignal.NONE);
             workflow.submitSign(request, control);
@@ -386,7 +420,8 @@ public final class PkiBootstrapTest {
                 throw new IOException(sentinel);
             };
             PkiException exception = assertThrows(PkiException.class, () -> PkiBootstrap
-                    .openSignatureWorkflow(SignatureWorkflowRuntimeDependencies.withKeyringUnlockProvider(failing)));
+                    .openSignatureWorkflow(SignatureWorkflowRuntimeDependencies.local(failing,
+                            new TestLocalParticipant())));
             System.out.println("...code=" + exception.getMessage());
 
             assertEquals(ZeroEchoLibSignatureWorkflowProvider.DC_KEYRING_UNLOCK_PROVIDER_FAILED,
@@ -397,7 +432,7 @@ public final class PkiBootstrapTest {
             assertTrue(records.stream().noneMatch(record -> String.valueOf(record.getMessage()).contains(sentinel)));
 
             try (SignatureWorkflow workflow = PkiBootstrap.openSignatureWorkflow(
-                    SignatureWorkflowRuntimeDependencies.withKeyringUnlockProvider(() -> password()))) {
+                    SignatureWorkflowRuntimeDependencies.local(() -> password(), new TestLocalParticipant()))) {
                 assertNotNull(workflow);
             }
         } finally {
@@ -423,14 +458,15 @@ public final class PkiBootstrapTest {
         };
 
         PkiException exception = assertThrows(PkiException.class, () -> PkiBootstrap
-                .openSignatureWorkflow(SignatureWorkflowRuntimeDependencies.withKeyringUnlockProvider(wrongProvider)));
+                .openSignatureWorkflow(SignatureWorkflowRuntimeDependencies.local(wrongProvider,
+                        new TestLocalParticipant())));
         assertEquals(ZeroEchoLibSignatureWorkflowProvider.DC_KEYRING_OPEN_FAILED, exception.getMessage());
         assertNull(exception.getCause());
         assertEquals(0, exception.getSuppressed().length);
         assertTrue(suppliedPassword.get().isDestroyed());
 
         try (SignatureWorkflow workflow = PkiBootstrap.openSignatureWorkflow(
-                SignatureWorkflowRuntimeDependencies.withKeyringUnlockProvider(() -> password()))) {
+                SignatureWorkflowRuntimeDependencies.local(() -> password(), new TestLocalParticipant()))) {
             assertNotNull(workflow);
         }
 
@@ -458,6 +494,20 @@ public final class PkiBootstrapTest {
                         && "openSignatureWorkflow".equals(method.getName())));
 
         System.out.println("...ok");
+    }
+
+    @Test
+    public void localSigningRuntimeDependency_preservesPublicPortIdentityAndSpiBoundary() {
+        TestLocalParticipant participant = new TestLocalParticipant();
+        SignatureWorkflowRuntimeDependencies dependencies = SignatureWorkflowRuntimeDependencies.local(
+                () -> password(), participant);
+
+        assertSame(participant, dependencies.localSigningLedgerParticipant().orElseThrow());
+        assertFalse(List.of(SignatureWorkflowRuntimeDependencies.class, LocalSigningLedgerParticipant.class).stream()
+                .flatMap(type -> java.util.Arrays.stream(type.getDeclaredMethods()))
+                .filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
+                .map(java.lang.reflect.Method::toGenericString)
+                .anyMatch(signature -> signature.contains("zeroecho.pki.impl.")));
     }
 
     @Test
@@ -491,7 +541,6 @@ public final class PkiBootstrapTest {
     private void configureWorkflow(Path root) {
         System.setProperty("zeroecho.pki.crypto.workflow", "zeroecho-lib");
         System.setProperty("zeroecho.pki.crypto.workflow.keyringPath", root.resolve("keyring.zek").toString());
-        System.setProperty("zeroecho.pki.crypto.workflow.operationRoot", root.resolve("operations").toString());
         System.setProperty("zeroecho.pki.crypto.workflow.keyRefPrefix", "test-prefix:");
         System.setProperty("zeroecho.pki.crypto.workflow.requireComponentSuffix", "false");
     }
@@ -530,5 +579,32 @@ public final class PkiBootstrapTest {
                 // No owned resource.
             }
         };
+    }
+
+    private static final class TestLocalParticipant implements LocalSigningLedgerParticipant {
+        private final Map<PkiId, SignatureWorkflow.OperationStatus> statuses = new ConcurrentHashMap<>();
+
+        @Override public Instant signingNow() { return Instant.now(); }
+        @Override public String localSigningNamespace(String providerId) { return SIGNING_NAMESPACE; }
+        @Override public Duration signingHorizon() { return Duration.ofDays(90); }
+        @Override public Acceptance acceptLocalSign(SignatureWorkflow.SignRequest request) {
+            return statuses.putIfAbsent(request.submissionId(), new SignatureWorkflow.OperationStatus(
+                    SignatureWorkflow.State.RUNNING, signingNow(), Optional.of("SUBMITTED"), Optional.empty())) == null
+                            ? Acceptance.EXECUTE : Acceptance.ATTACHED;
+        }
+        @Override public boolean completeLocalSign(SignatureWorkflow.SignRequest request,
+                SignatureWorkflow.OperationStatus terminal) {
+            statuses.put(request.submissionId(), terminal);
+            return true;
+        }
+        @Override public CancellationSignal localCancellation(PkiId operationId) {
+            return CancellationSignal.NONE;
+        }
+        @Override public SignatureWorkflow.OperationStatus localSignStatus(PkiId operationId) {
+            return statuses.getOrDefault(operationId, new SignatureWorkflow.OperationStatus(
+                    SignatureWorkflow.State.FAILED, Instant.EPOCH, Optional.of("UNKNOWN_OPERATION"),
+                    Optional.empty()));
+        }
+        @Override public boolean cancelLocalSign(PkiId operationId, long fencingToken) { return false; }
     }
 }

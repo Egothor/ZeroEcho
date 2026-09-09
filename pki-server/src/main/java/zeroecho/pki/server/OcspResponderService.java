@@ -39,8 +39,14 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateExpiredException;
+import java.security.cert.CertificateNotYetValidException;
+import java.security.cert.CertificateParsingException;
+import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -53,10 +59,7 @@ import java.util.Optional;
 import java.util.Map;
 import java.util.Set;
 
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.KeyUsage;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+import zeroecho.pkix.Pkix;
 
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
@@ -74,13 +77,29 @@ import zeroecho.pki.application.PkiRepository;
         "PMD.PreserveStackTrace", "PMD.AvoidCatchingGenericException", "PMD.UseEnumCollections",
         "PMD.ExceptionAsFlowControl" })
 public final class OcspResponderService {
+    /** {@code id-kp-OCSPSigning} extended-key-usage OID (RFC 6960). */
+    private static final String OID_KP_OCSP_SIGNING = "1.3.6.1.5.5.7.3.9";
+
     /** Closed signed-request authentication policy. */
+    @SuppressWarnings("PMD.LongVariable")
     public enum RequestAuthenticationMode {
-        UNSIGNED_ONLY(1), UNSIGNED_OR_AUTHORIZED_SIGNED(2), AUTHORIZED_SIGNED_REQUIRED(3);
+        /** Accepts only unsigned OCSP requests. */ UNSIGNED_ONLY(1),
+        /** Accepts unsigned or successfully authorized signed requests. */ UNSIGNED_OR_AUTHORIZED_SIGNED(2),
+        /** Requires every request to carry an authorized signature. */ AUTHORIZED_SIGNED_REQUIRED(3);
         private final int code;
         RequestAuthenticationMode(int code) { this.code = code; }
-        /** Stable persistence code. */ public int code() { return code; }
-        /** Resolves an exact stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded value
+         */
+        public int code() { return code; }
+        /**
+         * Resolves an exact stable code.
+         *
+         * @param code persisted authentication-mode code
+         * @return corresponding authentication mode
+         */
         public static RequestAuthenticationMode fromCode(int code) {
             return switch (code) { case 1 -> UNSIGNED_ONLY; case 2 -> UNSIGNED_OR_AUTHORIZED_SIGNED;
                 case 3 -> AUTHORIZED_SIGNED_REQUIRED;
@@ -89,12 +108,25 @@ public final class OcspResponderService {
     }
 
     /** Closed local requester-certificate revocation behavior. */
+    @SuppressWarnings("PMD.LongVariable")
     public enum RequesterRevocationPolicy {
-        LOCAL_AUTHORITATIVE_REQUIRED(1), LOCAL_AUTHORITATIVE_IF_MANAGED(2), VALIDITY_AND_TRUST_ONLY(3);
+        /** Requires authoritative local revocation state for every requester. */ LOCAL_AUTHORITATIVE_REQUIRED(1),
+        /** Requires local revocation state only for managed requesters. */ LOCAL_AUTHORITATIVE_IF_MANAGED(2),
+        /** Relies on certificate validity and trust without local revocation state. */ VALIDITY_AND_TRUST_ONLY(3);
         private final int code;
         RequesterRevocationPolicy(int code) { this.code = code; }
-        /** Stable persistence code. */ public int code() { return code; }
-        /** Resolves an exact stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded value
+         */
+        public int code() { return code; }
+        /**
+         * Resolves an exact stable code.
+         *
+         * @param code persisted requester-revocation code
+         * @return corresponding requester-revocation policy
+         */
         public static RequesterRevocationPolicy fromCode(int code) {
             return switch (code) { case 1 -> LOCAL_AUTHORITATIVE_REQUIRED;
                 case 2 -> LOCAL_AUTHORITATIVE_IF_MANAGED; case 3 -> VALIDITY_AND_TRUST_ONLY;
@@ -105,11 +137,23 @@ public final class OcspResponderService {
     /** Repository-backed requester trust selector. */
     @SuppressWarnings("PMD.LongVariable")
     public enum TrustSelectorType {
-        MANAGED_ISSUER_GENERATIONS(1), CONFIGURED_TRUST_ANCHORS(2), EXACT_REQUESTER_CERTIFICATE_COMMITMENTS(3);
+        /** Selects managed issuer generations. */ MANAGED_ISSUER_GENERATIONS(1),
+        /** Selects explicitly configured trust-anchor credentials. */ CONFIGURED_TRUST_ANCHORS(2),
+        /** Selects exact requester certificate commitments. */ EXACT_REQUESTER_CERTIFICATE_COMMITMENTS(3);
         private final int code;
         TrustSelectorType(int code) { this.code = code; }
-        /** Stable persistence code. */ public int code() { return code; }
-        /** Resolves an exact stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded value
+         */
+        public int code() { return code; }
+        /**
+         * Resolves an exact stable code.
+         *
+         * @param code persisted selector-type code
+         * @return corresponding trust-selector type
+         */
         public static TrustSelectorType fromCode(int code) {
             return switch (code) { case 1 -> MANAGED_ISSUER_GENERATIONS; case 2 -> CONFIGURED_TRUST_ANCHORS;
                 case 3 -> EXACT_REQUESTER_CERTIFICATE_COMMITMENTS;
@@ -118,12 +162,25 @@ public final class OcspResponderService {
     }
 
     /** Cryptographic requester-to-principal mapping type. */
+    @SuppressWarnings("PMD.LongVariable")
     public enum PrincipalMappingType {
-        SHA256_CERTIFICATE_COMMITMENT(1), SHA256_SPKI_COMMITMENT(2), ISSUER_AND_SERIAL_COMMITMENT(3);
+        /** Maps the SHA-256 commitment of the requester certificate. */ SHA256_CERTIFICATE_COMMITMENT(1),
+        /** Maps the SHA-256 commitment of requester subject-public-key information. */ SHA256_SPKI_COMMITMENT(2),
+        /** Maps a commitment to the requester issuer and serial number. */ ISSUER_AND_SERIAL_COMMITMENT(3);
         private final int code;
         PrincipalMappingType(int code) { this.code = code; }
-        /** Stable persistence code. */ public int code() { return code; }
-        /** Resolves an exact stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded value
+         */
+        public int code() { return code; }
+        /**
+         * Resolves an exact stable code.
+         *
+         * @param code persisted mapping-type code
+         * @return corresponding mapping type
+         */
         public static PrincipalMappingType fromCode(int code) {
             return switch (code) { case 1 -> SHA256_CERTIFICATE_COMMITMENT;
                 case 2 -> SHA256_SPKI_COMMITMENT; case 3 -> ISSUER_AND_SERIAL_COMMITMENT;
@@ -131,7 +188,12 @@ public final class OcspResponderService {
         }
     }
 
-    /** One explicit repository-backed trust selector. */
+    /**
+     * One explicit repository-backed trust selector.
+     *
+     * @param type selector interpretation
+     * @param identities finite exact identities selected under that interpretation
+     */
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public record TrustSelector(TrustSelectorType type, Set<String> identities) {
         /** Validates and snapshots finite identities. */
@@ -147,7 +209,12 @@ public final class OcspResponderService {
         }
     }
 
-    /** One exact active request-signature binding reference. */
+    /**
+     * One exact active request-signature binding reference.
+     *
+     * @param bindingId active binding identifier
+     * @param commitment expected immutable binding commitment
+     */
     public record RequestSignatureBinding(String bindingId, String commitment) {
         /** Validates stable binding identity and commitment. */
         public RequestSignatureBinding {
@@ -156,7 +223,14 @@ public final class OcspResponderService {
         }
     }
 
-    /** One cryptographic requester-certificate mapping. */
+    /**
+     * One cryptographic requester-certificate mapping.
+     *
+     * @param mappingId stable mapping identifier
+     * @param principalId security principal selected by a match
+     * @param type cryptographic value represented by the commitment
+     * @param commitment lowercase SHA-256 commitment
+     */
     public record PrincipalMapping(String mappingId, String principalId, PrincipalMappingType type,
             String commitment) {
         /** Validates stable mapping metadata and fixed commitment. */
@@ -166,7 +240,16 @@ public final class OcspResponderService {
         }
     }
 
-    /** Finite immutable requester trust, mapping, signature and chain policy. */
+    /**
+     * Finite immutable requester trust, mapping, signature and chain policy.
+     *
+     * @param trustSelectors repository-backed trust selectors
+     * @param principalMappings cryptographic requester-to-principal mappings
+     * @param signatureBindings permitted OCSP request-signature bindings
+     * @param revocationPolicy requester revocation validation policy
+     * @param maximumSignerCertificates maximum certificates accepted in a requester chain
+     * @param maximumSignerChainBytes maximum encoded requester-chain size in bytes
+     */
     public record RequesterTrustPolicy(List<TrustSelector> trustSelectors,
             List<PrincipalMapping> principalMappings, List<RequestSignatureBinding> signatureBindings,
             RequesterRevocationPolicy revocationPolicy, int maximumSignerCertificates,
@@ -193,11 +276,22 @@ public final class OcspResponderService {
     }
     /** Exact signing authority. */
     public enum SigningMode {
-        ISSUER_SIGNED(1), DELEGATED_RESPONDER(2);
+        /** Uses the issuer certificate and key directly. */ ISSUER_SIGNED(1),
+        /** Uses an issuer-authorized delegated responder certificate and key. */ DELEGATED_RESPONDER(2);
         private final int code;
         SigningMode(int code) { this.code = code; }
-        /** Stable persistence code. */ public int code() { return code; }
-        /** Resolves an exact stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded value
+         */
+        public int code() { return code; }
+        /**
+         * Resolves an exact stable code.
+         *
+         * @param code persisted signing-mode code
+         * @return corresponding signing mode
+         */
         public static SigningMode fromCode(int code) {
             return switch (code) { case 1 -> ISSUER_SIGNED; case 2 -> DELEGATED_RESPONDER;
                 default -> throw new IllegalArgumentException("Unknown OCSP signing mode code"); };
@@ -205,11 +299,23 @@ public final class OcspResponderService {
     }
     /** Closed nonce behavior. */
     public enum NoncePolicy {
-        REJECT(1), OPTIONAL_ECHO(2), REQUIRED(3);
+        /** Rejects requests containing a nonce. */ REJECT(1),
+        /** Accepts and echoes an optional nonce. */ OPTIONAL_ECHO(2),
+        /** Requires and echoes a nonce. */ REQUIRED(3);
         private final int code;
         NoncePolicy(int code) { this.code = code; }
-        /** Stable persistence code. */ public int code() { return code; }
-        /** Resolves an exact stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded value
+         */
+        public int code() { return code; }
+        /**
+         * Resolves an exact stable code.
+         *
+         * @param code persisted nonce-policy code
+         * @return corresponding nonce policy
+         */
         public static NoncePolicy fromCode(int code) {
             return switch (code) { case 1 -> REJECT; case 2 -> OPTIONAL_ECHO; case 3 -> REQUIRED;
                 default -> throw new IllegalArgumentException("Unknown OCSP nonce policy code"); };
@@ -217,18 +323,53 @@ public final class OcspResponderService {
     }
     /** Durable activation state. */
     public enum State {
-        INACTIVE(1), ACTIVE(2);
+        /** Responder configuration exists but cannot serve requests. */ INACTIVE(1),
+        /** Responder is eligible to serve requests. */ ACTIVE(2);
         private final int code;
         State(int code) { this.code = code; }
-        /** Stable persistence code. */ public int code() { return code; }
-        /** Resolves an exact stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded value
+         */
+        public int code() { return code; }
+        /**
+         * Resolves an exact stable code.
+         *
+         * @param code persisted state code
+         * @return corresponding responder state
+         */
         public static State fromCode(int code) {
             return switch (code) { case 1 -> INACTIVE; case 2 -> ACTIVE;
                 default -> throw new IllegalArgumentException("Unknown OCSP responder state code"); };
         }
     }
 
-    /** Closed administrator input without server-authoritative timestamps, state, or record commitments. */
+    /**
+     * Closed administrator input without server-authoritative timestamps, state, or record commitments.
+     *
+     * @param responderId stable responder identifier
+     * @param alias unique public responder alias
+     * @param authorityId logical authority identifier
+     * @param issuerId exact issuer generation identifier
+     * @param signingMode issuer or delegated signing mode
+     * @param responderCredentialId exact responder certificate identifier
+     * @param signingKeyRef exact signing-key reference
+     * @param chainPathId responder certificate-chain path identifier
+     * @param signatureAlgorithm signature algorithm identifier
+     * @param signatureBindingId optional explicit signature binding
+     * @param signatureBindingCommitment expected binding or registry commitment
+     * @param responderIdForm OCSP responder-identifier representation
+     * @param responseValidity positive response validity
+     * @param noncePolicy request nonce policy
+     * @param maximumNonceBytes maximum accepted nonce size in bytes
+     * @param acceptedHashes accepted certificate-identifier hash algorithms
+     * @param maximumRequestBytes maximum encoded request size in bytes
+     * @param maximumEntries maximum certificate identifiers per request
+     * @param cacheLifetime positive response-cache lifetime
+     * @param requestAuthenticationMode signed-request authentication policy
+     * @param requesterTrustPolicy requester trust policy required by signed modes
+     */
     public record Registration(String responderId, String alias, PkiId authorityId, PkiId issuerId,
             SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef, PkiId chainPathId,
             String signatureAlgorithm, Optional<String> signatureBindingId, String signatureBindingCommitment,
@@ -253,7 +394,29 @@ public final class OcspResponderService {
             requirePolicyShape(requestAuthenticationMode, requesterTrustPolicy);
         }
 
-        /** Creates the default public unsigned-only registration. */
+        /**
+         * Creates the default public unsigned-only registration.
+         *
+         * @param responderId stable responder identifier
+         * @param alias unique public responder alias
+         * @param authorityId logical authority identifier
+         * @param issuerId exact issuer generation identifier
+         * @param signingMode issuer or delegated signing mode
+         * @param responderCredentialId exact responder certificate identifier
+         * @param signingKeyRef exact signing-key reference
+         * @param chainPathId responder certificate-chain path identifier
+         * @param signatureAlgorithm signature algorithm identifier
+         * @param signatureBindingId optional explicit signature binding
+         * @param signatureBindingCommitment expected binding or registry commitment
+         * @param responderIdForm OCSP responder-identifier representation
+         * @param responseValidity positive response validity
+         * @param noncePolicy request nonce policy
+         * @param maximumNonceBytes maximum accepted nonce size in bytes
+         * @param acceptedHashes accepted certificate-identifier hash algorithms
+         * @param maximumRequestBytes maximum encoded request size in bytes
+         * @param maximumEntries maximum certificate identifiers per request
+         * @param cacheLifetime positive response-cache lifetime
+         */
         public Registration(String responderId, String alias, PkiId authorityId, PkiId issuerId,
                 SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef, PkiId chainPathId,
                 String signatureAlgorithm, Optional<String> signatureBindingId, String signatureBindingCommitment,
@@ -267,7 +430,35 @@ public final class OcspResponderService {
         }
     }
 
-    /** Strict versioned responder binding. */
+    /**
+     * Strict versioned responder binding.
+     *
+     * @param responderId stable responder identifier
+     * @param alias unique public responder alias
+     * @param realmId owning security realm
+     * @param authorityId logical authority identifier
+     * @param issuerId exact issuer generation identifier
+     * @param signingMode issuer or delegated signing mode
+     * @param responderCredentialId exact responder certificate identifier
+     * @param signingKeyRef exact signing-key reference
+     * @param chainPathId responder certificate-chain path identifier
+     * @param signatureAlgorithm signature algorithm identifier
+     * @param signatureBindingId optional explicit signature binding
+     * @param signatureBindingCommitment expected binding or registry commitment
+     * @param responderIdForm OCSP responder-identifier representation
+     * @param responseValidity positive response validity
+     * @param noncePolicy request nonce policy
+     * @param maximumNonceBytes maximum accepted nonce size in bytes
+     * @param acceptedHashes accepted certificate-identifier hash algorithms
+     * @param maximumRequestBytes maximum encoded request size in bytes
+     * @param maximumEntries maximum certificate identifiers per request
+     * @param cacheLifetime positive response-cache lifetime
+     * @param requestAuthenticationMode signed-request authentication policy
+     * @param requesterTrustPolicy requester trust policy required by signed modes
+     * @param state durable activation state
+     * @param createdAt server-authoritative creation time
+     * @param configurationCommitment SHA-256 commitment to the complete configuration
+     */
     public record Responder(String responderId, String alias, RealmId realmId, PkiId authorityId,
             PkiId issuerId, SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef,
             PkiId chainPathId, String signatureAlgorithm, Optional<String> signatureBindingId,
@@ -309,7 +500,16 @@ public final class OcspResponderService {
     private final Clock clock;
     private final Map<String, Responder> aliasIndex = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Binds responder control to one realm and one authoritative PKI repository. */
+    /**
+     * Binds responder control to one realm and one authoritative PKI repository.
+     *
+     * @param realmId owning security realm
+     * @param control durable server-control store
+     * @param repository authoritative PKI repository
+     * @param bindings active X.509 algorithm-binding registry
+     * @param signing optional status-object signing service
+     * @param clock authoritative server clock
+     */
     public OcspResponderService(RealmId realmId, ServerControlStore control, PkiRepository repository,
             X509AlgorithmBindingRegistry bindings, Optional<OcspResponseService> signing, Clock clock) {
         this.realmId = Objects.requireNonNull(realmId); this.control = Objects.requireNonNull(control);
@@ -318,7 +518,12 @@ public final class OcspResponderService {
         this.clock = Objects.requireNonNull(clock);
     }
 
-    /** Creates authoritative metadata and durably registers one inactive responder. */
+    /**
+     * Creates authoritative metadata and durably registers one inactive responder.
+     *
+     * @param supplied validated administrator input
+     * @return durably sealed inactive responder
+     */
     public Responder register(Registration supplied) {
         Objects.requireNonNull(supplied, "supplied");
         return register(create(supplied.responderId(), supplied.alias(), supplied.authorityId(), supplied.issuerId(),
@@ -348,13 +553,23 @@ public final class OcspResponderService {
         return sealed;
     }
 
-    /** Returns one exact responder. */
+    /**
+     * Returns one exact responder.
+     *
+     * @param responderId stable responder identifier
+     * @return durable responder configuration
+     */
     public Responder require(String responderId) {
         return control.protocolRecord(ServerControlStore.OCSP_RESPONDER, responderId)
                 .map(this::decode).orElseThrow(() -> new IllegalArgumentException("OCSP responder is unavailable"));
     }
 
-    /** Resolves one unique active public alias. */
+    /**
+     * Resolves one unique active public alias.
+     *
+     * @param alias public responder alias
+     * @return active responder configuration
+     */
     public Responder requireActiveAlias(String alias) {
         Responder result = requireAlias(alias);
         if (result.state() != State.ACTIVE) {
@@ -363,7 +578,12 @@ public final class OcspResponderService {
         return result;
     }
 
-    /** Resolves one unique durable alias regardless of activation state. */
+    /**
+     * Resolves one unique durable alias regardless of activation state.
+     *
+     * @param alias public responder alias
+     * @return durable responder configuration
+     */
     public Responder requireAlias(String alias) {
         Permission.requireId(alias, "OCSP alias");
         Responder indexed = aliasIndex.get(alias);
@@ -371,7 +591,13 @@ public final class OcspResponderService {
         return indexed;
     }
 
-    /** Lists one bounded deterministic responder page. */
+    /**
+     * Lists one bounded deterministic responder page.
+     *
+     * @param offset zero-based record offset
+     * @param limit positive maximum page size
+     * @return deterministic bounded responder page
+     */
     public ServerControlStore.Page<Responder> list(int offset, int limit) {
         ServerControlStore.Page<ServerControlStore.ProtocolRecord> page =
                 control.protocolRecords(ServerControlStore.OCSP_RESPONDER, offset, limit);
@@ -379,7 +605,13 @@ public final class OcspResponderService {
                 page.nextOffset(), page.hasMore());
     }
 
-    /** Atomically changes only responder activation after dependency revalidation. */
+    /**
+     * Atomically changes only responder activation after dependency revalidation.
+     *
+     * @param responderId stable responder identifier
+     * @param active desired activation state
+     * @return durably updated responder
+     */
     public Responder setActive(String responderId, boolean active) {
         Responder prior = require(responderId); validateDependencies(prior, true);
         Responder next = seal(prior, active ? State.ACTIVE : State.INACTIVE);
@@ -408,7 +640,30 @@ public final class OcspResponderService {
         }
     }
 
-    /** Creates a canonical unsealed record for callers before registration. */
+    /**
+     * Creates a canonical unsigned-only unsealed record before registration.
+     *
+     * @param responderId stable responder identifier
+     * @param alias unique public responder alias
+     * @param authorityId logical authority identifier
+     * @param issuerId exact issuer generation identifier
+     * @param signingMode issuer or delegated signing mode
+     * @param responderCredentialId exact responder certificate identifier
+     * @param signingKeyRef exact signing-key reference
+     * @param chainPathId responder certificate-chain path identifier
+     * @param signatureAlgorithm signature algorithm identifier
+     * @param signatureBindingId optional explicit signature binding
+     * @param bindingCommitment expected binding or registry commitment
+     * @param responderIdForm OCSP responder-identifier representation
+     * @param validity positive response validity
+     * @param noncePolicy request nonce policy
+     * @param maximumNonceBytes maximum accepted nonce size in bytes
+     * @param hashes accepted certificate-identifier hash algorithms
+     * @param maximumRequestBytes maximum encoded request size in bytes
+     * @param maximumEntries maximum certificate identifiers per request
+     * @param cacheLifetime positive response-cache lifetime
+     * @return canonical unsealed inactive responder draft
+     */
     public Responder create(String responderId, String alias, PkiId authorityId, PkiId issuerId,
             SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef, PkiId chainPathId,
             String signatureAlgorithm, Optional<String> signatureBindingId, String bindingCommitment,
@@ -421,7 +676,32 @@ public final class OcspResponderService {
                 maximumEntries, cacheLifetime, RequestAuthenticationMode.UNSIGNED_ONLY, Optional.empty());
     }
 
-    /** Creates a canonical unsealed record with explicit signed-request policy. */
+    /**
+     * Creates a canonical unsealed record with explicit signed-request policy.
+     *
+     * @param responderId stable responder identifier
+     * @param alias unique public responder alias
+     * @param authorityId logical authority identifier
+     * @param issuerId exact issuer generation identifier
+     * @param signingMode issuer or delegated signing mode
+     * @param responderCredentialId exact responder certificate identifier
+     * @param signingKeyRef exact signing-key reference
+     * @param chainPathId responder certificate-chain path identifier
+     * @param signatureAlgorithm signature algorithm identifier
+     * @param signatureBindingId optional explicit signature binding
+     * @param bindingCommitment expected binding or registry commitment
+     * @param responderIdForm OCSP responder-identifier representation
+     * @param validity positive response validity
+     * @param noncePolicy request nonce policy
+     * @param maximumNonceBytes maximum accepted nonce size in bytes
+     * @param hashes accepted certificate-identifier hash algorithms
+     * @param maximumRequestBytes maximum encoded request size in bytes
+     * @param maximumEntries maximum certificate identifiers per request
+     * @param cacheLifetime positive response-cache lifetime
+     * @param requestAuthenticationMode signed-request authentication policy
+     * @param requesterTrustPolicy requester trust policy required by signed modes
+     * @return canonical unsealed inactive responder draft
+     */
     public Responder create(String responderId, String alias, PkiId authorityId, PkiId issuerId,
             SigningMode signingMode, PkiId responderCredentialId, KeyRef signingKeyRef, PkiId chainPathId,
             String signatureAlgorithm, Optional<String> signatureBindingId, String bindingCommitment,
@@ -496,9 +776,11 @@ public final class OcspResponderService {
             throw new IllegalStateException("OCSP responder issuer/path binding differs");
         }
         try {
-            X509CertificateHolder issuerCertificate = certificate(issuer.credentialId());
-            X509CertificateHolder responderCertificate = certificate(value.responderCredentialId());
-            if (!responderCertificate.isValidOn(Date.from(clock.instant()))) {
+            X509Certificate issuerCertificate = certificate(issuer.credentialId());
+            X509Certificate responderCertificate = certificate(value.responderCredentialId());
+            try {
+                responderCertificate.checkValidity(Date.from(clock.instant()));
+            } catch (CertificateExpiredException | CertificateNotYetValidException failure) {
                 throw new IllegalStateException("OCSP responder certificate is outside its validity interval");
             }
             if (value.signingMode() == SigningMode.ISSUER_SIGNED) {
@@ -507,16 +789,25 @@ public final class OcspResponderService {
                     throw new IllegalStateException("Issuer-signed responder binding differs");
                 }
             } else {
-                if (!responderCertificate.isSignatureValid(new JcaContentVerifierProviderBuilder()
-                        .build(issuerCertificate)) || responderCertificate.getExtension(Extension.extendedKeyUsage) == null
-                        || !org.bouncycastle.asn1.x509.ExtendedKeyUsage.fromExtensions(
-                                responderCertificate.getExtensions()).hasKeyPurposeId(
-                                        org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_OCSPSigning)) {
+                boolean signatureValid;
+                try {
+                    responderCertificate.verify(issuerCertificate.getPublicKey());
+                    signatureValid = true;
+                } catch (GeneralSecurityException failure) {
+                    signatureValid = false;
+                }
+                List<String> extendedKeyUsage;
+                try {
+                    extendedKeyUsage = responderCertificate.getExtendedKeyUsage();
+                } catch (CertificateParsingException failure) {
+                    extendedKeyUsage = null;
+                }
+                if (!signatureValid || extendedKeyUsage == null
+                        || !extendedKeyUsage.contains(OID_KP_OCSP_SIGNING)) {
                     throw new IllegalStateException("Delegated OCSP responder certificate is unauthorized");
                 }
-                Extension usage = responderCertificate.getExtension(Extension.keyUsage);
-                if (usage != null && !KeyUsage.fromExtensions(responderCertificate.getExtensions())
-                        .hasUsages(KeyUsage.digitalSignature)) {
+                boolean[] keyUsage = responderCertificate.getKeyUsage();
+                if (keyUsage != null && (keyUsage.length == 0 || !keyUsage[0])) {
                     throw new IllegalStateException("Delegated OCSP responder key usage is invalid");
                 }
             }
@@ -538,18 +829,22 @@ public final class OcspResponderService {
         }
     }
 
-    private X509CertificateHolder certificate(PkiId credentialId) throws IOException {
+    private X509Certificate certificate(PkiId credentialId) throws IOException {
         try (zeroecho.pki.application.PkiRepositoryContent content = repository.openCredential(credentialId);
                 java.io.InputStream input = content.openStream()) {
             byte[] encoded = input.readNBytes(1_048_577);
             if (encoded.length == 1_048_577 || input.read() != -1) {
                 throw new IOException("OCSP responder certificate exceeds its finite bound");
             }
-            X509CertificateHolder certificate = new X509CertificateHolder(encoded);
-            if (!java.util.Arrays.equals(encoded, certificate.getEncoded())) {
-                throw new IOException("OCSP responder certificate is not canonical DER");
+            try {
+                X509Certificate certificate = Pkix.parseCertificate(encoded);
+                if (!java.util.Arrays.equals(encoded, certificate.getEncoded())) {
+                    throw new IOException("OCSP responder certificate is not canonical DER");
+                }
+                return certificate;
+            } catch (CertificateException | RuntimeException failure) {
+                throw new IOException("OCSP responder certificate is invalid", failure);
             }
-            return certificate;
         }
     }
 
@@ -577,7 +872,12 @@ public final class OcspResponderService {
         return sha256(encode(value, ignoreStored));
     }
 
-    /** Returns a safe deterministic commitment to one request-authentication policy. */
+    /**
+     * Returns a safe deterministic commitment to one request-authentication policy.
+     *
+     * @param value responder registration containing the policy
+     * @return lowercase SHA-256 policy commitment
+     */
     public static String requestPolicyCommitment(Registration value) {
         Objects.requireNonNull(value, "value");
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream(512);

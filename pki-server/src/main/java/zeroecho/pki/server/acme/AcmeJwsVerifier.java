@@ -65,10 +65,26 @@ import zeroecho.pki.server.http.StrictJson;
 /** Strict narrow ACME flattened-JWS verifier supporting only ES256. */
 @SuppressWarnings("PMD")
 public final class AcmeJwsVerifier {
-    /** Required protected-header account-key mode. */
-    public enum KeyMode { JWK, KID }
+    /** Creates a stateless strict ACME JWS verifier. */
+    public AcmeJwsVerifier() {
+        // Stateless.
+    }
 
-    /** Resolved durable account public key with exact revision commitment. */
+    /** Required protected-header account-key mode. */
+    public enum KeyMode {
+        /** Protected header carries a new-account JSON Web Key. */ JWK,
+        /** Protected header carries an existing-account key identifier. */ KID
+    }
+
+    /**
+     * Resolved durable account public key with exact revision commitment.
+     *
+     * @param accountId stable account identifier
+     * @param kid exact account key identifier
+     * @param keyThumbprint SHA-256 account-key thumbprint
+     * @param publicKey verified account public key
+     * @param recordCommitment expected durable account-record commitment
+     */
     public record AccountKey(String accountId, String kid, String keyThumbprint,
             PublicKey publicKey, String recordCommitment) {
         /** Validates finite account authority metadata. */
@@ -81,11 +97,23 @@ public final class AcmeJwsVerifier {
     /** Account lookup used only after strict KID framing. */
     @FunctionalInterface
     public interface AccountKeyResolver {
-        /** Resolves one exact KID or fails without revealing another account. */
+        /**
+         * Resolves one exact KID or fails without revealing another account.
+         *
+         * @param kid exact account key identifier
+         * @return resolved account key and record commitment
+         */
         AccountKey resolve(String kid);
     }
 
-    /** Verified JWS data safe to pass to one closed endpoint decoder. */
+    /**
+     * Verified JWS data safe to pass to one closed endpoint decoder.
+     *
+     * @param payload verified endpoint payload
+     * @param keyThumbprint authenticated signing-key thumbprint
+     * @param account resolved account for KID mode
+     * @param publicKey authenticated signing public key
+     */
     public record Verified(byte[] payload, String keyThumbprint, Optional<AccountKey> account,
             PublicKey publicKey) {
         /** Defensively snapshots verified payload. */
@@ -93,19 +121,61 @@ public final class AcmeJwsVerifier {
             payload = Objects.requireNonNull(payload, "payload").clone(); digest(keyThumbprint);
             account = Objects.requireNonNull(account, "account"); Objects.requireNonNull(publicKey, "publicKey");
         }
+        /**
+         * Returns the verified endpoint payload.
+         *
+         * @return defensive copy of payload bytes
+         */
         @Override public byte[] payload() { return payload.clone(); }
     }
 
     private static final Base64.Decoder URL_DECODER = Base64.getUrlDecoder();
 
     /**
+     * Extracts a strictly framed KID only as a routing hint before full JWS verification.
+     * The returned value grants no authority and must be resolved and authenticated by
+     * {@link #verify(byte[], int, URI, String, KeyMode, AcmeNonceService, AccountKeyResolver)}.
+     *
+     * @param document flattened JWS document
+     * @param maximumDocumentBytes positive encoded-document bound in bytes
+     * @param expectedUrl exact externally visible endpoint URL
+     * @return untrusted KID routing hint
+     */
+    public String kidRoutingHint(byte[] document, int maximumDocumentBytes, URI expectedUrl) {
+        Objects.requireNonNull(expectedUrl, "expectedUrl");
+        Flattened flattened = parseFlattened(document, maximumDocumentBytes);
+        byte[] protectedBytes = decodeCanonical(flattened.protectedValue(), 16_384);
+        try {
+            PkiOperationValue.ObjectValue header = object(StrictJson.parse(protectedBytes, 16_384));
+            Map<String, PkiOperationValue> fields = header.fields();
+            if (!fields.keySet().equals(SetHolder.KID_PROTECTED)
+                    || !"ES256".equals(text(fields, "alg"))
+                    || !expectedUrl.toASCIIString().equals(text(fields, "url"))) {
+                throw malformed("ACME protected header is invalid");
+            }
+            return text(fields, "kid");
+        } finally {
+            java.util.Arrays.fill(protectedBytes, (byte) 0);
+        }
+    }
+
+    /**
      * Verifies one complete flattened JWS against the exact configured external URL.
      * The admitted replay nonce is consumed before signature verification.
+     *
+     * @param document flattened JWS document
+     * @param maximumDocumentBytes positive encoded-document bound in bytes
+     * @param expectedUrl exact externally visible endpoint URL
+     * @param nonceScope canonical directory nonce scope
+     * @param keyMode required protected-header key mode
+     * @param nonces one-use replay-nonce service
+     * @param accounts exact account-key resolver
+     * @return verified payload and signing authority
      */
     public Verified verify(byte[] document, int maximumDocumentBytes, URI expectedUrl,
-            String directoryId, KeyMode keyMode, AcmeNonceService nonces,
+            String nonceScope, KeyMode keyMode, AcmeNonceService nonces,
             AccountKeyResolver accounts) {
-        Objects.requireNonNull(expectedUrl, "expectedUrl"); requireId(directoryId);
+        Objects.requireNonNull(expectedUrl, "expectedUrl"); requireId(nonceScope);
         Objects.requireNonNull(keyMode, "keyMode"); Objects.requireNonNull(nonces, "nonces");
         Objects.requireNonNull(accounts, "accounts");
         Flattened flattened = parseFlattened(document, maximumDocumentBytes);
@@ -118,7 +188,7 @@ public final class AcmeJwsVerifier {
             throw malformed("ACME protected header is invalid");
         }
         String nonce = text(fields, "nonce");
-        if (!nonces.consume(nonce, directoryId)) throw new AcmeProblem("badNonce");
+        if (!nonces.consume(nonce, nonceScope)) throw new AcmeProblem("badNonce");
 
         Optional<AccountKey> account = Optional.empty();
         PublicKey key;
@@ -137,7 +207,16 @@ public final class AcmeJwsVerifier {
         return new Verified(payload, thumbprint, account, key);
     }
 
-    /** Verifies the RFC key-change inner JWS signed by the replacement key. */
+    /**
+     * Verifies the RFC key-change inner JWS signed by the replacement key.
+     *
+     * @param document flattened inner JWS document
+     * @param maximumDocumentBytes positive encoded-document bound in bytes
+     * @param expectedUrl exact externally visible key-change URL
+     * @param expectedAccountKid exact existing-account KID
+     * @param oldKeyThumbprint authenticated old account-key thumbprint
+     * @return verified payload and replacement-key authority
+     */
     public Verified verifyKeyChange(byte[] document, int maximumDocumentBytes, URI expectedUrl,
             String expectedAccountKid, String oldKeyThumbprint) {
         Objects.requireNonNull(expectedUrl, "expectedUrl");
@@ -184,10 +263,19 @@ public final class AcmeJwsVerifier {
     /** Safe finite protocol failure, never carrying provider or parser details. */
     public static final class AcmeProblem extends IllegalArgumentException {
         private static final long serialVersionUID = 1L;
+        /** Stable RFC-style problem suffix. */
         private final String type;
-        /** Creates a safe ACME problem classification. */
+        /**
+         * Creates a safe ACME problem classification.
+         *
+         * @param type stable RFC-style problem suffix
+         */
         public AcmeProblem(String type) { super("ACME request rejected"); this.type = type; }
-        /** @return stable RFC-style problem suffix */
+        /**
+         * Returns the safe problem classification.
+         *
+         * @return stable RFC-style problem suffix
+         */
         public String type() { return type; }
     }
 

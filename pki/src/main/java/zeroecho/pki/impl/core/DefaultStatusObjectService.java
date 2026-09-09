@@ -42,7 +42,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 
-import org.bouncycastle.cert.X509CertificateHolder;
+import java.security.cert.X509Certificate;
+
+import zeroecho.pkix.Pkix;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
@@ -69,17 +71,22 @@ import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
 import zeroecho.pki.impl.framework.x509.bc.BcX509SignedObjectValidator;
+import zeroecho.pki.impl.core.async.PendingSigningOperation;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.impl.framework.x509.X509SignedObjectCompletion;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
+import zeroecho.pki.api.audit.AuditEvent;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CrlEntry;
 import zeroecho.pki.spi.framework.CrlEntrySource;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationView;
 
 /**
  * Default implementation of {@link StatusObjectService}.
@@ -129,8 +136,12 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
  * themselves safe for the intended concurrency model.
  * </p>
  */
+// Status generation deliberately keeps the closed CRL/OCSP policy branches in one cohesive service.
+@SuppressWarnings("PMD.CyclomaticComplexity")
 public final class DefaultStatusObjectService implements StatusObjectService {
     private static final String CRL_GENERATION_FAILED = "CRL_GENERATION_FAILED";
+    private static final Principal SYSTEM_PKI = new Principal("SYSTEM", "pki");
+    private static final Purpose STATUS_PURPOSE = new Purpose("STATUS_GENERATION");
 
     private final PkiStore store;
     private final CredentialFramework framework;
@@ -149,6 +160,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      *                       status object generator; must not be {@code null}
      * @param auditSink      required sink for safe trust-rejection audit events
      * @param statusResolver authoritative runtime credential-status resolver
+     * @param authority trusted X.509 algorithm authority snapshot
      * @throws NullPointerException if an argument is {@code null}
      */
     public DefaultStatusObjectService(PkiStore store, CredentialFramework framework, AuditSink auditSink,
@@ -205,14 +217,28 @@ public final class DefaultStatusObjectService implements StatusObjectService {
      *                                  generated status object fails
      */
     @Override
-    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
     public StatusObject generate(StatusObjectGenerateCommand command) {
+        return generate(command, CancellationSignal.NONE);
+    }
+
+    @Override
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.PreserveStackTrace" })
+    public StatusObject generate(StatusObjectGenerateCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation");
         if (command == null) {
             throw new IllegalArgumentException("command must not be null");
         }
-        CaRecord ca = store.getCa(command.issuerCaId()).orElseThrow(() -> new PkiException("Issuer CA not found"));
+        if (command.type() == StatusObjectType.OCSP) {
+            return generateAndPersistOcsp(command, cancellation);
+        }
+        if (command.type() != StatusObjectType.CRL && command.type() != StatusObjectType.DELTA_CRL) {
+            return generateAndPersistOther(command.type());
+        }
+        CaRecord ca = store.getCa(command.issuerCaId()).orElseThrow(() -> new PkiException("Issuer CA not found",
+                zeroecho.pki.api.PkiFailureReason.ISSUER_CA_NOT_FOUND));
         if (ca.state() != CaState.ACTIVE) {
-            throw new PkiException("Issuer CA not ACTIVE");
+            throw new PkiException("Issuer CA not ACTIVE",
+                    zeroecho.pki.api.PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
         }
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCred = selectIssuerCredential(ca, command, statusEvaluation);
@@ -226,24 +252,35 @@ public final class DefaultStatusObjectService implements StatusObjectService {
             Arrays.fill(issuerDer, (byte) 0);
         }
         b.put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(ca.issuerKeyRef().value()));
+        b.put(BcX509Attributes.CRL_NUMBER,
+                new AttributeValue.StringValue(nextCrlNumber(command.issuerCaId()).toString()));
+
+        Optional<Instant> deltaSinceExclusive = Optional.empty();
+        if (command.type() == StatusObjectType.DELTA_CRL) {
+            StatusObject base = getLatest(command.issuerCaId(), StatusObjectType.CRL).orElseThrow(
+                    () -> new PkiException("Delta CRL requires a base full CRL: code=DELTA_CRL_BASE_MISSING"));
+            b.put(BcX509Attributes.BASE_CRL_NUMBER,
+                    new AttributeValue.StringValue(requireBaseCrlNumber(base).toString()));
+            deltaSinceExclusive = Optional.of(base.thisUpdate());
+        }
 
         StatusObjectGenerateCommand wired = new StatusObjectGenerateCommand(command.issuerCaId(), command.type(),
                 command.formatId(), b.build());
-        try (CrlEntrySource entries = command.type() == StatusObjectType.CRL
-                ? openCrlEntries(command.issuerCaId(), statusEvaluation.evaluationTime())
-                : new EmptyCrlEntrySource()) {
-            if (command.type() == StatusObjectType.CRL) {
-                return generateAndPersistCrl(wired, entries, issuerCred);
-            }
-            return generateAndPersistOther();
+        try (CrlEntrySource entries = openCrlEntries(command.issuerCaId(), statusEvaluation.evaluationTime(),
+                deltaSinceExclusive)) {
+            return generateAndPersistCrl(wired, entries, issuerCred, cancellation);
+        } catch (PendingSigningOperation | zeroecho.pki.api.SigningExecutionException signingFailure) {
+            throw signingFailure;
         } catch (IOException | RuntimeException exception) {
+            // The public boundary deliberately removes hostile provider and persisted-data details.
             throw crlGenerationFailure();
         }
     }
 
     private StatusObject generateAndPersistCrl(StatusObjectGenerateCommand command, CrlEntrySource entries,
-            Credential issuer) {
-        X509SignedObjectCompletion completion = framework.statusObjectGenerator().generate(command, entries);
+            Credential issuer, CancellationSignal cancellation) {
+        X509SignedObjectCompletion completion = framework.statusObjectGenerator().generate(command, entries,
+                cancellation);
         StatusObject generated = authority.requireStatusCompletion(completion);
         X509ExecutionPlan<SignatureWorkflow> signingPlan = authority.requireStatusSigningPlan(completion);
         requirePersistableContent(generated.content());
@@ -252,14 +289,15 @@ public final class DefaultStatusObjectService implements StatusObjectService {
             requireGeneratedMetadata(command, generated);
             byte[] issuerDer = materializeValidatedCertificate(issuer);
             try (RepeatableContent content = store.stagedContent().openContent(generated.content())) {
-                X509CertificateHolder holder = new X509CertificateHolder(issuerDer);
+                X509Certificate holder = Pkix.parseCertificate(issuerDer);
                 new BcX509SignedObjectValidator(authority).validateGeneratedCrl(content, signingPlan,
-                        holder, generated.thisUpdate(), generated.nextUpdate(), CancellationSignal.NONE);
+                        holder, generated.thisUpdate(), generated.nextUpdate(), cancellation);
             } finally {
                 Arrays.fill(issuerDer, (byte) 0);
             }
             store.putStatusObject(generated);
             accepted = true;
+            auditStatusGenerated(generated);
             return generated;
         } catch (IOException exception) {
             throw new PkiException("Status postcondition validation failed: code=CONTENT_IO_FAILED", exception);
@@ -270,8 +308,222 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         }
     }
 
-    private StatusObject generateAndPersistOther() {
-        throw new PkiException("Unsupported status object type");
+    private StatusObject generateAndPersistOther(StatusObjectType type) {
+        throw new PkiException("Status object type not supported: code=STATUS_TYPE_NOT_SUPPORTED type=" + type.name());
+    }
+
+    /**
+     * Generates and persists a single-certificate, issuer-signed OCSP status
+     * object. The operator supplies the target serial via
+     * {@link BcX509Attributes#OCSP_TARGET_SERIAL}; the service resolves the target's
+     * authoritative current revocation status from one stable revocation view and
+     * conveys it to the generator, which signs the response through the durable
+     * status signing seam.
+     */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private StatusObject generateAndPersistOcsp(StatusObjectGenerateCommand command, CancellationSignal cancellation) {
+        CaRecord ca = store.getCa(command.issuerCaId()).orElseThrow(() -> new PkiException("Issuer CA not found",
+                zeroecho.pki.api.PkiFailureReason.ISSUER_CA_NOT_FOUND));
+        if (ca.state() != CaState.ACTIVE) {
+            throw new PkiException("Issuer CA not ACTIVE",
+                    zeroecho.pki.api.PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
+        }
+        EffectiveCredentialStatusResolver.Evaluation evaluation = statusResolver.beginEvaluation();
+        Credential issuerCred = selectIssuerCredential(ca, command, evaluation);
+        BigInteger serial = requireOcspTargetSerial(command.attributes());
+        Credential target = resolveOcspTarget(ca, serial);
+
+        SimpleAttributeSet.Builder b = SimpleAttributeSet.builder();
+        b.putAll(command.attributes());
+        byte[] issuerDer = materializeValidatedCertificate(issuerCred);
+        try {
+            b.put(BcX509Attributes.ISSUER_CERT_DER, new AttributeValue.BytesValue(issuerDer.clone()));
+        } finally {
+            Arrays.fill(issuerDer, (byte) 0);
+        }
+        b.put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(ca.issuerKeyRef().value()));
+        b.put(BcX509Attributes.OCSP_TARGET_SERIAL, new AttributeValue.StringValue(serial.toString()));
+        wireOcspStatus(b, target);
+
+        StatusObjectGenerateCommand wired = new StatusObjectGenerateCommand(command.issuerCaId(), command.type(),
+                command.formatId(), b.build());
+        try (CrlEntrySource empty = EmptyCrlEntrySource.INSTANCE) {
+            return generateAndPersistOcspObject(wired, issuerCred, empty, cancellation);
+        } catch (zeroecho.pki.impl.core.async.ImmediateSigningPending | PendingSigningOperation
+                | zeroecho.pki.api.SigningExecutionException signingFailure) {
+            throw signingFailure;
+        } catch (IOException | RuntimeException exception) {
+            throw ocspGenerationFailure(exception);
+        }
+    }
+
+    private StatusObject generateAndPersistOcspObject(StatusObjectGenerateCommand command, Credential issuer,
+            CrlEntrySource entries, CancellationSignal cancellation) {
+        X509SignedObjectCompletion completion = framework.statusObjectGenerator().generate(command, entries,
+                cancellation);
+        StatusObject generated = authority.requireStatusCompletion(completion);
+        X509ExecutionPlan<SignatureWorkflow> signingPlan = authority.requireStatusSigningPlan(completion);
+        requirePersistableContent(generated.content());
+        boolean accepted = false;
+        try {
+            requireGeneratedMetadata(command, generated);
+            byte[] issuerDer = materializeValidatedCertificate(issuer);
+            try (RepeatableContent content = store.stagedContent().openContent(generated.content())) {
+                X509Certificate holder = Pkix.parseCertificate(issuerDer);
+                new BcX509SignedObjectValidator(authority).validateGeneratedOcsp(content, signingPlan, holder,
+                        generated.thisUpdate(), generated.nextUpdate(), cancellation);
+            } finally {
+                Arrays.fill(issuerDer, (byte) 0);
+            }
+            store.putStatusObject(generated);
+            accepted = true;
+            auditStatusGenerated(generated);
+            return generated;
+        } catch (IOException exception) {
+            throw new PkiException("Status postcondition validation failed: code=CONTENT_IO_FAILED", exception);
+        } finally {
+            if (!accepted) {
+                releaseRejectedContent(generated.content());
+            }
+        }
+    }
+
+    private static BigInteger requireOcspTargetSerial(zeroecho.pki.api.attr.AttributeSet attributes) {
+        Optional<AttributeValue> value = attributes.get(BcX509Attributes.OCSP_TARGET_SERIAL);
+        if (value.isEmpty() || !(value.orElseThrow() instanceof AttributeValue.StringValue text)) {
+            throw new PkiException("OCSP target serial required: code=OCSP_TARGET_REQUIRED");
+        }
+        try {
+            BigInteger serial = new BigInteger(text.value());
+            if (serial.signum() <= 0) {
+                throw new PkiException("Invalid OCSP target serial: code=OCSP_TARGET_INVALID");
+            }
+            return serial;
+        } catch (NumberFormatException ex) {
+            throw new PkiException("Invalid OCSP target serial: code=OCSP_TARGET_INVALID", ex);
+        }
+    }
+
+    private Credential resolveOcspTarget(CaRecord ca, BigInteger serial) {
+        for (PkiId issuerId : ca.issuerIds()) {
+            Optional<Credential> found = store.getCredentialByIssuerAndSerial(issuerId, serial);
+            if (found.isPresent()) {
+                return found.orElseThrow();
+            }
+        }
+        throw new PkiException("OCSP target not found: code=OCSP_TARGET_UNKNOWN",
+                zeroecho.pki.api.PkiFailureReason.STATUS_TARGET_NOT_FOUND);
+    }
+
+    private void wireOcspStatus(SimpleAttributeSet.Builder b, Credential target) {
+        try (RevocationView view = store.openRevocationView()) {
+            Optional<RevocationRecord> record = view.get(target.credentialId());
+            RevocationState state = record.map(r -> r.transition().state()).orElse(RevocationState.CLEAR);
+            if (state == RevocationState.CLEAR) {
+                b.put(BcX509Attributes.OCSP_CERT_STATUS, new AttributeValue.StringValue("GOOD"));
+                return;
+            }
+            RevocationTransition transition = record.orElseThrow().transition();
+            RevocationReason reason = switch (state) {
+                case HELD -> RevocationReason.CERTIFICATE_HOLD;
+                case PERMANENTLY_REVOKED -> transition.permanentReason().orElse(RevocationReason.UNSPECIFIED);
+                case CLEAR -> RevocationReason.UNSPECIFIED;
+            };
+            b.put(BcX509Attributes.OCSP_CERT_STATUS, new AttributeValue.StringValue("REVOKED"));
+            b.put(BcX509Attributes.OCSP_REVOCATION_TIME, new AttributeValue.InstantValue(transition.time()));
+            b.put(BcX509Attributes.OCSP_REVOCATION_REASON, new AttributeValue.StringValue(reason.name()));
+        } catch (IOException ex) {
+            throw ocspGenerationFailure(ex);
+        }
+    }
+
+    private static PkiException ocspGenerationFailure(Throwable cause) {
+        return new PkiException("OCSP status generation failed: code=OCSP_GENERATION_FAILED", cause);
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private void auditStatusGenerated(StatusObject generated) {
+        try {
+            auditSink.record(new AuditEvent(generated.thisUpdate(), "STATUS", "STATUS_GENERATED",
+                    SYSTEM_PKI, STATUS_PURPOSE, Optional.of(generated.statusObjectId()),
+                    Optional.of(generated.formatId()),
+                    java.util.Map.of("type", generated.type().name(),
+                            "issuerCaId", generated.issuerCaId().value())));
+        } catch (RuntimeException ignored) {
+            // Best-effort: audit failures must not alter the persistence outcome.
+        }
+    }
+
+    /** Non-null empty CRL entry source for status types that carry no CRL entries. */
+    private enum EmptyCrlEntrySource implements CrlEntrySource {
+        INSTANCE;
+
+        @Override
+        public Cursor openCursor() {
+            return new Cursor() {
+                @Override
+                public boolean next() {
+                    return false;
+                }
+
+                @Override
+                public CrlEntry current() {
+                    throw new IllegalStateException("Empty CRL entry cursor is not positioned");
+                }
+
+                @Override
+                public long ordinal() {
+                    throw new IllegalStateException("Empty CRL entry cursor is not positioned");
+                }
+
+                @Override
+                public void close() {
+                    // No resources.
+                }
+            };
+        }
+
+        @Override
+        public OptionalLong count() {
+            return OptionalLong.of(0L);
+        }
+
+        @Override
+        public void close() {
+            // No resources.
+        }
+    }
+
+    private BigInteger nextCrlNumber(PkiId issuerCaId) {
+        BigInteger max = BigInteger.ZERO;
+        for (StatusObject object : store.listStatusObjects(issuerCaId)) {
+            if (object.type() != StatusObjectType.CRL && object.type() != StatusObjectType.DELTA_CRL) {
+                continue;
+            }
+            Optional<BigInteger> number = crlNumber(object);
+            if (number.isPresent() && number.orElseThrow().compareTo(max) > 0) {
+                max = number.orElseThrow();
+            }
+        }
+        return max.add(BigInteger.ONE);
+    }
+
+    private static BigInteger requireBaseCrlNumber(StatusObject base) {
+        return crlNumber(base).orElseThrow(
+                () -> new PkiException("Base CRL has no CRL number: code=DELTA_CRL_BASE_INVALID"));
+    }
+
+    private static Optional<BigInteger> crlNumber(StatusObject object) {
+        Optional<AttributeValue> value = object.attributes().get(BcX509Attributes.CRL_NUMBER);
+        if (value.isEmpty() || !(value.orElseThrow() instanceof AttributeValue.StringValue text)) {
+            return Optional.empty();
+        }
+        try {
+            BigInteger number = new BigInteger(text.value());
+            return number.signum() >= 0 ? Optional.of(number) : Optional.empty();
+        } catch (NumberFormatException ex) {
+            return Optional.empty();
+        }
     }
 
     private void requirePersistableContent(DurableContentReference content) {
@@ -298,8 +550,10 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         }
     }
 
-    private CrlEntrySource openCrlEntries(PkiId issuerCaId, Instant evaluationTime) {
-        return new CheckpointCrlEntrySource(store.openRevocationSnapshot(), issuerCaId, evaluationTime);
+    private CrlEntrySource openCrlEntries(PkiId issuerCaId, Instant evaluationTime,
+            Optional<Instant> sinceExclusive) {
+        return new CheckpointCrlEntrySource(store.openRevocationSnapshot(), issuerCaId, evaluationTime,
+                sinceExclusive);
     }
 
     private Optional<CrlEntry> collectCrlEntry(PkiId issuerCaId, Instant evaluationTime, RevocationRecord record) {
@@ -335,16 +589,19 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         private final RevocationSnapshot snapshot;
         private final PkiId issuerCaId;
         private final Instant evaluationTime;
+        private final Optional<Instant> sinceExclusive;
 
-        private CheckpointCrlEntrySource(RevocationSnapshot snapshot, PkiId issuerCaId, Instant evaluationTime) {
+        private CheckpointCrlEntrySource(RevocationSnapshot snapshot, PkiId issuerCaId, Instant evaluationTime,
+                Optional<Instant> sinceExclusive) {
             this.snapshot = snapshot;
             this.issuerCaId = issuerCaId;
             this.evaluationTime = evaluationTime;
+            this.sinceExclusive = sinceExclusive;
         }
 
         @Override
         public Cursor openCursor() throws IOException {
-            return new CheckpointCrlCursor(snapshot.openCursor(), issuerCaId, evaluationTime);
+            return new CheckpointCrlCursor(snapshot.openCursor(), issuerCaId, evaluationTime, sinceExclusive);
         }
 
         @Override
@@ -363,20 +620,23 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         private final RevocationSnapshot.Cursor cursor;
         private final PkiId issuerCaId;
         private final Instant evaluationTime;
+        private final Optional<Instant> sinceExclusive;
         private CrlEntry current;
         private long ordinal = -1L;
 
-        private CheckpointCrlCursor(RevocationSnapshot.Cursor cursor, PkiId issuerCaId, Instant evaluationTime) {
+        private CheckpointCrlCursor(RevocationSnapshot.Cursor cursor, PkiId issuerCaId, Instant evaluationTime,
+                Optional<Instant> sinceExclusive) {
             this.cursor = cursor;
             this.issuerCaId = issuerCaId;
             this.evaluationTime = evaluationTime;
+            this.sinceExclusive = sinceExclusive;
         }
 
         @Override
         public boolean next() throws IOException {
             while (cursor.next()) {
                 Optional<CrlEntry> candidate = collectCrlEntry(issuerCaId, evaluationTime, cursor.current());
-                if (candidate.isPresent()) {
+                if (candidate.isPresent() && includesInDelta(candidate.orElseThrow())) {
                     current = candidate.orElseThrow();
                     ordinal = Math.addExact(ordinal, 1L);
                     return true;
@@ -384,6 +644,10 @@ public final class DefaultStatusObjectService implements StatusObjectService {
             }
             current = null;
             return false;
+        }
+
+        private boolean includesInDelta(CrlEntry entry) {
+            return sinceExclusive.isEmpty() || entry.transitionTime().isAfter(sinceExclusive.orElseThrow());
         }
 
         @Override
@@ -409,47 +673,6 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         }
     }
 
-    /** Empty source used for status formats without revocation entries. */
-    private static final class EmptyCrlEntrySource implements CrlEntrySource {
-        @Override
-        public Cursor openCursor() {
-            return new EmptyCrlCursor();
-        }
-
-        @Override
-        public OptionalLong count() {
-            return OptionalLong.of(0L);
-        }
-
-        @Override
-        public void close() {
-            // No resources.
-        }
-    }
-
-    /** Resource-free cursor for an empty status-entry source. */
-    private static final class EmptyCrlCursor implements CrlEntrySource.Cursor {
-        @Override
-        public boolean next() {
-            return false;
-        }
-
-        @Override
-        public CrlEntry current() {
-            throw new IllegalStateException("Empty CRL cursor has no entry");
-        }
-
-        @Override
-        public long ordinal() {
-            throw new IllegalStateException("Empty CRL cursor has no ordinal");
-        }
-
-        @Override
-        public void close() {
-            // No resources.
-        }
-    }
-
     // Parser failures can contain persisted certificate details; the original
     // cause is intentionally removed at this public service boundary.
     @SuppressWarnings("PMD.PreserveStackTrace")
@@ -457,7 +680,7 @@ public final class DefaultStatusObjectService implements StatusObjectService {
         byte[] der = materializeValidatedCertificate(credential);
         BigInteger serial;
         try {
-            serial = new X509CertificateHolder(der).getSerialNumber();
+            serial = Pkix.parseCertificate(der).getSerialNumber();
         } catch (Exception exception) {
             throw crlGenerationFailure();
         } finally {

@@ -51,10 +51,5 @@ public enum StatusObjectType {
     /**
      * OCSP response or responder data (representation is implementation-defined).
      */
-    OCSP,
-
-    /**
-     * Generic revocation list for non-X.509 frameworks.
-     */
-    REVOCATION_LIST
+    OCSP
 }

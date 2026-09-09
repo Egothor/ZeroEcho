@@ -374,7 +374,6 @@ final class FsSnapshotExporter {
                 FilesystemRevocationLog.RecoveryTarget captured =
                         source.copyRevocationPrefix(stagedRevocationPrefix);
                 copyFile(sourceRoot.resolve("SIGNING_NAMESPACE"), targetRoot.resolve("SIGNING_NAMESPACE"));
-                copyFile(sourceRoot.resolve("SIGNING_TIME_WATERMARK"), targetRoot.resolve("SIGNING_TIME_WATERMARK"));
                 copyTreeIfExists(sourceRoot.resolve("requests"), targetRoot.resolve("requests"));
                 copyTreeIfExists(sourceRoot.resolve("policy"), targetRoot.resolve("policy"));
                 copyTreeIfExists(sourceRoot.resolve("sign-workflows"), targetRoot.resolve("sign-workflows"));
@@ -385,7 +384,8 @@ final class FsSnapshotExporter {
                         options.workflowHistoryPolicy(), options.strictSnapshotExport());
                 new AuthorityRestorer(source, options, plan.authority()).restore(targetRoot);
                 installRevocationAuthority(targetRoot, stagedRevocationPrefix);
-                try (FilesystemPkiStore target = new FilesystemPkiStore(targetRoot, options)) {
+                try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(
+                        targetRoot, options)) {
                     // Opening validates the restored authority and rebuilds its derived index.
                     restorePublicationMetadata(publications, target);
                 }
@@ -421,10 +421,7 @@ final class FsSnapshotExporter {
                     marker, java.nio.file.StandardOpenOption.WRITE)) {
                 channel.force(true);
             }
-            try (java.nio.channels.FileChannel directory = java.nio.channels.FileChannel.open(
-                    targetRoot, java.nio.file.StandardOpenOption.READ)) {
-                directory.force(true);
-            }
+            PlatformFs.forceDirectory(targetRoot);
         }
 
         private static void installRevocationAuthority(Path targetRoot, Path stagedPrefix) throws IOException {
@@ -438,10 +435,7 @@ final class FsSnapshotExporter {
             } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
                 throw new IOException("Atomic revocation snapshot restoration is unsupported", unsupported);
             }
-            try (java.nio.channels.FileChannel directory = java.nio.channels.FileChannel.open(
-                    paths.revocationTransitionLog().getParent(), java.nio.file.StandardOpenOption.READ)) {
-                directory.force(true);
-            }
+            PlatformFs.forceDirectory(paths.revocationTransitionLog().getParent());
         }
 
         private static void addCleanupFailure(Exception primary, Path temporaryRoot) {
@@ -468,6 +462,7 @@ final class FsSnapshotExporter {
 
         private void restore(Path targetRoot) throws IOException {
             Set<PkiId> transferred = new HashSet<>();
+            source.copySnapshotMetadataTo(targetRoot);
             try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(targetRoot, options)) {
                 for (Map.Entry<PkiId, Credential> entry : authority.credentials().entrySet()) {
                     if (persistCredential(target, entry.getValue())) {
@@ -684,7 +679,8 @@ final class FsSnapshotExporter {
         if (!Files.exists(srcTree)) {
             return;
         }
-        Files.walk(srcTree).filter(Files::isRegularFile).sorted(Comparator.comparing(Path::toString)).forEach(p -> {
+        try (java.util.stream.Stream<Path> tree = Files.walk(srcTree)) {
+        tree.filter(Files::isRegularFile).sorted(Comparator.comparing(Path::toString)).forEach(p -> {
             // only process current.bin; replace it based on history
             if (!FsPaths.CURRENT_FILE.equals(p.getFileName().toString())) {
                 return;
@@ -716,11 +712,12 @@ final class FsSnapshotExporter {
                 throw new IllegalStateException("snapshot reconstruction failed for " + entityDir, e);
             }
         });
+        }
     }
 
     private static Path selectHistoryEntry(final Path historyDir, final Instant at) {
-        try {
-            return Files.list(historyDir).filter(Files::isRegularFile)
+        try (java.util.stream.Stream<Path> entries = Files.list(historyDir)) {
+            return entries.filter(Files::isRegularFile)
                     .sorted(Comparator.comparing(Path::getFileName).reversed()).filter(p -> {
                         String name = p.getFileName().toString();
                         // format: <tsMicros>-<seq>.bin
@@ -749,7 +746,8 @@ final class FsSnapshotExporter {
         if (!Files.exists(src)) {
             return;
         }
-        Files.walk(src).sorted(Comparator.comparing(Path::toString)).forEach(p -> {
+        try (java.util.stream.Stream<Path> tree = Files.walk(src)) {
+        tree.sorted(Comparator.comparing(Path::toString)).forEach(p -> {
             try {
                 Path rel = src.relativize(p);
                 Path out = dst.resolve(rel);
@@ -763,6 +761,7 @@ final class FsSnapshotExporter {
                 throw new IllegalStateException("copy failed: " + p, e);
             }
         });
+        }
     }
 
     private static void copyStagedContent(Path src, Path dst, Set<String> credentialContentIds,

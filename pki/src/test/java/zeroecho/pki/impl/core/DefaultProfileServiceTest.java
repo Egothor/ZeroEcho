@@ -241,7 +241,8 @@ final class DefaultProfileServiceTest {
                 Optional.empty(), Optional.empty(), Optional.of(reference), Optional.empty());
         CertificateProfileDefinition explicit = new CertificateProfileDefinition(base.certificateType(),
                 "server-tls-private", base.profileVersion(), base.formatId(), "Private server TLS",
-                base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), policy);
+                base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), policy,
+                base.confirmationPolicy());
         try (FilesystemPkiStore store = new FilesystemPkiStore(directory.resolve("store"), FsPkiStoreOptions.defaults(),
                 CLOCK)) {
             DefaultProfileService service = service(store);
@@ -251,7 +252,8 @@ final class DefaultProfileServiceTest {
                             binding.bindingId(), binding.semanticCommitment() + "-changed")), Optional.empty());
             CertificateProfileDefinition invalid = new CertificateProfileDefinition(base.certificateType(),
                     "server-tls-changed", base.profileVersion(), base.formatId(), "Changed server TLS",
-                    base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), changed);
+                    base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), changed,
+                    base.confirmationPolicy());
             assertThrows(PkiException.class,
                     () -> service.importProfile(CertificateProfileDocumentCodec.writeCanonical(invalid)));
         }
@@ -273,7 +275,8 @@ final class DefaultProfileServiceTest {
                         binding.bindingId(), binding.semanticCommitment())), Optional.empty());
         CertificateProfileDefinition explicit = new CertificateProfileDefinition(base.certificateType(),
                 "server-tls-deployer", base.profileVersion(), base.formatId(), "Deployer server TLS",
-                base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), policy);
+                base.maximumValidity(), base.subjectPolicy(), base.certificatePolicy(), policy,
+                base.confirmationPolicy());
         Path root = directory.resolve("store");
         try (FilesystemPkiStore store = new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), CLOCK)) {
             DefaultProfileService service = service(store, deployerRegistry);

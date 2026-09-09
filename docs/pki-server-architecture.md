@@ -169,6 +169,332 @@ It MUST reuse `PkiSession` and transport-neutral typed operations from `pki`.
 
 It MUST NOT duplicate PKI business rules.
 
+Store allocation receives an immutable `PkiStoreRuntimeDependencies` object.
+Its non-null `Clock` is the same authoritative clock already selected by the
+owning `PkiSession`; the provider must use that exact instance for persisted
+expiry and lifecycle decisions. Explicit bootstrap composition propagates the
+dependency through the provider SPI, while the one-argument production path
+selects `Clock.systemUTC()`. This is request-independent composition state, not
+a second lifecycle owner, and it adds no worker, queue, cache, or handle.
+
+Pending credential-confirmation administration is a transport-neutral PKI read
+operation. The confirmation lifecycle remains authoritative; two derived
+metadata projections provide authority-wide and exact authority-profile keyset
+paging ordered by review time and credential identity. The issued credential is
+the authoritative source of authority and profile during projection creation
+and recovery. Confirmation removes both projections in the same transaction as
+the lifecycle transition. Cursors bind the store, cutoff, and exact query scope.
+The query examines at most `E = limit` scoped projections, returns their
+actionable subset, and performs bounded `O(log M + E log M)` work with `O(E)`
+result memory. It may additionally collect and delete at most thirty exact
+derived revisions for at most ten authoritative permanently-revoked
+credentials after closing the snapshot. Empty pages may therefore continue via
+the last-examined cursor; only an absent cursor denotes completion. Concurrent
+revision conflicts are benign, uncertain durability fails the read, and
+malformed or non-permanently-revoked state is never deleted. The query never
+scans an inaccessible global page before filtering. The projections add no
+lifecycle owner, worker, thread, queue, cache, or long-lived handle.
+
+Overdue pending-confirmation revocation is a separate transport-neutral typed
+mutation rather than a non-atomic composition of list and general revocation.
+The gateway reconstructs the exact credential authority/profile/object scope
+before applying `CERTIFICATE_REVOKE`; a nested approval request reconstructs the
+same target and enclosing approval scope before authorization and commitment.
+The list's `CERTIFICATE_SEARCH` permission does not authorize mutation. The
+filesystem store serializes the specialized
+transition with confirmation under the existing credential lock, reads its own
+authoritative clock, and admits only a non-public `PENDING` lifecycle strictly
+after `confirmationReviewAt`. Equality is still timely. The revocation log is
+authoritative and records fixed permanent reason `UNSPECIFIED`; lifecycle state
+remains historically `PENDING`.
+
+After the revocation append is known committed, derived review projections and
+the outstanding challenge are removed. Reads and startup recovery define an
+actionable review as `PENDING` with no revocation history, so interrupted cleanup
+cannot restore confirmation or return a revoked credential. Exact retry evidence
+may finish cleanup; startup also removes stale derived records without resident
+retry machinery. One revocation is a constant number of `O(log M)` point
+operations plus bounded append/fsync and bounded metadata cleanup with `O(1)`
+auxiliary memory. No new index, lifecycle state, worker, queue, cache, handle, or
+requester identity is introduced.
+
+Administrative proof-challenge issuance is a transport-neutral mutating PKI
+operation with only a credential identity as its typed argument. The server
+gateway uses the committed credential to reconstruct authority, frozen profile,
+and object scope before authorization, while treating the mandatory outer
+authority only as a cross-check. After exact
+`CERTIFICATE_PUBLICATION_CHANGE` authorization, the PKI executor loads the
+authoritative pending lifecycle, constructs the internal revision-and-record
+commitment expectation, and delegates once to the existing confirmation
+service. This keeps replay, expiry replacement, concurrency, proof-provider
+selection, and challenge persistence in their existing authority and introduces
+no duplicate lifecycle state or resident request object. After authorization,
+challenge construction uses `O(D + K + T)` CPU, bounded credential-content I/O,
+and a constant number of `O(log M)` metadata point operations; memory is bounded
+by 1 MiB DER and the 2048-byte pre-Base64 presentation bound. Whole-request cost
+also includes existing grant/role scans and audit/transport I/O.
+
+Administrative proof completion is a second transport-neutral adapter over the
+same confirmation service. The strict operation supplies only the credential
+identity, exact lifecycle/challenge CAS coordinates, and a bounded proof
+response. The gateway reuses the same one-lookup authoritative scope
+reconstruction as challenge issuance before applying exact
+`CERTIFICATE_CONFIRM` authorization. The operation commitment contains the CAS
+coordinates and a SHA-256 response digest, never the response. The executor
+delegates once; `REJECTED` is a successful non-mutating proof outcome and exact
+terminal replay remains the core service's idempotent `CONFIRMED` result. The
+pending path uses `O(D + T + R + V(K))` post-authorization CPU plus a constant
+number of `O(log M)` metadata point operations; exact terminal replay uses
+`O(R + log M)` without provider, DER, or proof verification. Memory is bounded
+by 1 MiB credential content, 2 KiB presentation, and 16 KiB response. Existing
+grant/role scans and audit/transport I/O remain separate whole-request costs.
+
+Signing submission, status, result consumption, reconciliation, restart, and
+retirement derive from `SignWorkflowStore`. A signing-backed CA, issuance, or
+status operation additionally owns one bounded, versioned domain continuation
+in the same segmented metadata ledger, keyed by the same private `PkiId`. The
+signing record owns signing only; the domain record owns the exact command,
+frozen commitments and content references required to publish that domain
+result. Where signing may yield, both records and their staged-content ownership
+are created by one ledger transaction. Signing MUST NOT synchronously project
+operations into the generic workflow-state store or append-only async-bus log.
+Those generic APIs remain available for unrelated asynchronous consumers.
+
+### Signing operation identity and execution model
+
+At operation start, the client and server establish one private, unambiguous
+submission identifier. Every later submit, status, cancellation, reconciliation,
+result, retirement, and audit action refers to that identifier. The authoritative
+record stores the state-machine position and the durable context needed for the
+next transition. A process may reconstruct that context from the identifier and
+record at any time; a workflow is not represented by a long-lived in-memory
+handle.
+
+The signing provider and its security-relevant configuration are selected when
+the operation first applies that configuration. The durable namespace identifies
+the selected workflow/provider and the configuration commitment detects whether
+its exact configuration still matches; the commitment is not a copy of endpoint
+credentials or other secrets. A later administrative configuration change MUST
+NOT reroute an already-started operation. The active session continues using its
+already-applied provider configuration. The administrator is responsible for
+keeping that configuration available when completion is required. If it is
+removed, is unavailable after reload or restart, no longer responds, or no
+longer recognizes the identifier, the operation remains durably unresolved and
+is never submitted to the replacement provider. Until the original operation
+deadline, status and reconciliation may address only that original provider
+when its configuration is available. Without an authoritative terminal result
+from that provider, the deadline atomically ends the operation in the existing
+`EXPIRED` state. A cancellation request may remain durably `CANCELLING`, but the
+system MUST NOT claim `CANCELLED` without the provider's authoritative
+acknowledgement; absent that acknowledgement, the same deadline produces
+`EXPIRED`. The deadline transaction also removes the live continuation and its
+staged-content owner edge, clears lease, retry, result, and provider evidence,
+and then safely reclaims the staged payload. The record remains `EXPIRED`;
+payload cleanup never rewrites it to `RETIRED` or `CANCELLED`. No new failure
+classification or reason code is implied by this rule.
+An authoritative signature durably recorded before that deadline is different:
+its domain continuation must publish the exact certificate, CA, or status
+object even if publication recovery continues past the deadline or retention
+horizon. `PUBLISHING` remains durable and is retried with the existing bounded
+2, 4, 8, 16, then 30 second schedule; it is never discarded merely because
+time advanced. Exact publication completes the continuation, retires the
+signing record, and reclaims its operation-lifecycle staging.
+The core
+MUST NOT silently archive old provider credentials or invent a configuration
+version repository for this purpose. Configuration changed before an operation
+applied or persisted its provider selection may be used by that not-yet-started
+operation.
+
+Each execution unit is one short state-machine step: load by identifier, validate
+the expected durable state and fence, perform the bounded step, and atomically
+publish the resulting transition and audit evidence. A state-transition lock
+covers only the short validation/publication critical section and is not held
+while waiting for remote or cryptographic work. Scheduler lanes bound only the
+provider step that is currently executing. Neither remains allocated merely
+because the durable workflow is pending. A remote or approval wait therefore
+consumes durable record capacity but no
+per-operation thread, scheduler slot, lease, activity root, callback ownership,
+or resident workflow object. Provider callbacks carry identifiers and are only
+advisories to advance lookup/reconciliation; the persisted state remains
+authoritative.
+
+Configured lane and ready-queue limits bound simultaneously executable blocking
+provider steps and short waiting-to-run steps. They are not a limit on the
+number of durable signing workflows. Durable capacity is a separate explicit
+storage and recovery safety bound sized for the supported population.
+
+For example, operation `op-123` started under CA configuration selecting remote
+provider A. An administrator later changes that CA to provider B. While A's
+applied configuration remains available, `op-123` continues to address A. If the
+administrator removes A or A cannot complete it, `op-123` remains unresolved and
+reaches its original deadline in `EXPIRED` unless A first reports an
+authoritative terminal result. The
+system MUST NOT add dynamic routing, archive provider credentials, share or move
+a non-exportable key, or keep a namespace-wide activity handle in order to
+redirect `op-123` to B.
+
+This persistence boundary does not constrain provider topology. Local, remote,
+multi-hop, and human-approval providers use the same transport-neutral
+`SignatureWorkflow` SPI. Provider endpoint, authentication, and transport
+settings belong to the selected signing workflow's `ProviderConfig`; they are
+not signing-bus persistence paths. Provider notifications remain bounded
+advisories that accelerate reconciliation, while fenced status reconciliation remains
+authoritative after missed callbacks, ambiguous calls, and process restart.
+The server never owns a second signing pool. Every transport enters the
+session-owned fixed-lane runtime configured beneath `realm.pkiSession.signing`.
+`laneCount` and `queueCapacity` default to 16 and 64; `gracefulDrainMillis` and
+`forcedCancellationMillis` default to 30,000 and 10,000. A new arrival reserves
+one transient initial-step slot and one store-owned durable-work slot before
+content staging; exhaustion is mapped without message parsing to admin HTTP 429,
+ACME `rateLimited`, and OCSP HTTP 429. Durable work is independently bounded at
+`W = 100,000`. Remote and approval waits retain durable ownership but no scheduler
+slot between provider calls. Callback identifiers enter a bounded asynchronous
+notifier that coalesces reconciliation wakes; authoritative state lookup and the
+durable due index remain the recovery authority.
+Natural success or failure is published through its `Future` only after scheduler
+ownership and capacity are released and any FIFO ready-step handoff is established.
+`Future` cancellation retains its standard semantics; a cancelled running action
+may retain its lane and slot until the callable physically exits.
+Session composition passes an empty runtime-dependency object when no local
+keyring unlock is configured; the selected provider alone decides whether that
+is valid. Local software-keyring providers MUST reject an absent unlock
+capability, while remote providers MUST NOT require one merely to satisfy core
+composition.
+
+The shared signing ledger uses the independently versioned segmented
+WAL, manifest, and immutable checkpoint formats described in
+`pki-signing-performance.md`. The package-private production metadata adapter
+owns the bounded active writer, MVCC and due indexes, retained transaction
+outcomes, manifest-directed recovery, and maintenance lifecycle. Recovery requires an
+explicit clean-format marker, treats the manifest target as sole authority,
+validates self-contained checkpoint data, replays checkpoint state followed by
+post-boundary sealed and active suffixes, then repairs only a proven uncommitted
+active-WAL suffix. Maintenance seals closed active WALs through a same-filesystem
+hard link without reading or copying their bytes, publishes
+checkpoints and manifests in crash-safe order, conditionally relocates unchanged
+current pointers, and reclaims superseded generations only after current
+references and snapshot pins reach zero. Unreferenced artifacts
+receive bounded metadata/header classification and are returned as a deferred
+cleanup plan rather than scanned or deleted during recovery. The built-in
+ZeroEcho-lib workflow borrows a narrow process-local participant from the opened
+filesystem store. Provider intent and orchestrator dispatch share one commit, as
+do provider terminal state and the orchestrator-visible result. The store remains
+the only owner of the segmented writer, force, recovery, maintenance, and index
+budget. These local composites are self-describing direct commits: each is one
+WAL frame covered by one grouped force and creates no separate issuance or
+acknowledgement frames. Observed monotonic signing time remains in memory until a
+state-changing commit folds it into that same frame; status and time reads append
+and force nothing. Remote workflows continue to use the transport-neutral
+`SignatureWorkflow` boundary and do not require this local participant.
+
+Signing requests carry a canonical `content-sha256:v1` commitment containing the
+exact byte length and SHA-256 digest. `signfp:v2` binds this commitment and the
+semantic request fields but excludes the mutable fence and storage-specific
+content identifier. The local cryptographic path verifies length and digest in
+the same single sequential stream consumed by signing. The filesystem content
+source opens once and does not pre-hash or rewind the file. A mismatch durably
+fails the operation and cannot expose or retry a signature. The former
+`operationRoot` configuration is rejected; there is no provider-root reader or
+migration path.
+
+Transactions admit at most 31 caller mutations and a 2 MiB encoded payload,
+which preserves the exact 1 MiB signature-result contract plus its authoritative
+record envelope. The active writer additionally caps queued payload ownership at
+64 MiB and each force group at 32 frames, 8 MiB encoded, or 2 ms. A lifecycle
+maintenance coordinator proactively rotates at 64 MiB, checkpoints after eight
+sealed segments, and performs bounded reclamation. The coordinator reserves both
+encoded and detached caller bytes before encoding. Rotation drains durable
+projection, publishes the new active generation, and reopens admission before
+the longer checkpoint-copy and relocation phase.
+
+Correction Package 1 contains and attributes the currently reproduced online
+relocation/publication race but does not yet repair it. Generation ownership is
+partitioned into fixed MVCC, due, owner, and recovery-temporary counters, and a
+typed underflow fails at the offending component without consuming another
+component's references. Prepared plus admitted-but-not-projected ledger work is
+also bounded by the active-WAL queue capacity. Packages 2–4 must correct and
+verify stale prepared publication while preserving the online-admission contract;
+the signing performance benchmark is prohibited until those packages complete.
+
+Correction Package 2 adds the internal committed-prefix boundary used by the
+future online correction. The writer publishes its forced endpoint only after
+force; the bounded reader accepts only complete commitment- and continuity-
+validated groups whose revisions are already visible in MVCC. A partially
+projected forced group leaves the accepted boundary unchanged for a later
+exact-once reread. This package does not create or publish a detached candidate
+and does not alter the maintenance cutover.
+
+Correction Package 3 adds an internal MVCC-only relocation candidate built from
+an immutable boundary snapshot. It pre-reserves the complete conservative
+candidate footprint before constructing its detached root directly in one pass,
+without a second record-sized staging list. Its authoritative accepted-prefix
+cursor requires every scan to start at the prior accepted endpoint and advances
+only after one validated WAL group is applied as one detached batch. The prepared
+swap rejects any live prepared publication and any
+expected-endpoint mismatch before its allocation-free, I/O-free `O(1)` root
+assignment; displaced MVCC ownership is released outside that publication
+critical section. DUE and OWNER state is never copied or changed. Maintenance,
+manifest/cutover ordering, generation supersession, and reclamation remain
+unchanged until Package 4, and benchmark execution remains prohibited.
+Build is `O(M)` time and `O(M)` candidate memory after pre-reservation. Catch-up
+is `O(B_new + U log M + groups*G)` time with at most one bounded incomplete-group
+reread; `G` is the detached generation-count map size copied once per accepted
+group. Publication remains `O(1)`, allocation-free, and I/O-free.
+
+Correction Package 4 integrates that candidate into maintenance. Rotation captures
+the immutable boundary and new active-WAL baseline, then reopens ordinary admission
+while the unreferenced checkpoint and detached MVCC candidate are built. Incremental
+catch-up reduces the tail to the existing queue capacity. The existing admission
+gate then drains all lifecycle slots, enforces a final tail of at most twice that
+capacity, and performs final replay. The forced manifest is the durable
+linearization point; only afterward does the allocation- and I/O-free MVCC root
+swap occur, followed by generation supersession. DUE and OWNER remain untouched,
+and reclamation remains a later typed-reference/pin-gated maintenance action.
+Concurrent catch-up is incremental, final gate work is `O(Q)` bounded groups/frames,
+and root publication is `O(1)`. Benchmark execution remains separately prohibited
+until independent verification authorizes it.
+
+Each ledger has two independent, configurable resident-byte envelopes. The
+steady envelope owns live MVCC, DUE, OWNER, retention, projection, and snapshot
+state; ordinary request processing uses only this envelope. The transient
+envelope is exclusive to the detached compaction candidate and catch-up. Both
+default to 512 MiB, giving a checked default combined envelope of 1 GiB.
+Candidate construction reserves its complete initial transient footprint before
+rotation or candidate-specific checkpoint, generation, artifact, or manifest effects;
+canonical key bytes shared from the source are not charged twice, while new
+catch-up keys are charged to the transient envelope.
+
+The A1-G final-cutover reservation-capture gate is separately owned by the
+engine, package-private, and short-lived. It does not block readers during
+candidate construction or catch-up. Immediately before manifest publication,
+snapshot, current-range, due-page, and owner-page capture waits at the gate;
+signing admission remains nonblocking and returns the existing retryable
+capacity result. A capture token is released once its reservations and
+generation pins are installed rather than at returned-resource close. The gate
+holds no mutex across I/O and permits releases and non-reserving reads to
+continue. The distinct capacity cutover permit does not gate admission; it owns
+only atomic accounting validation and the `O(1)` transfer of candidate ownership
+from transient to steady under the fixed steady-then-transient budget-lock order.
+Capacity exhaustion or an external live snapshot produces a typed controlled
+deferral: candidate resources are closed exactly once, any already successful
+rotation remains authoritative, recovery is not required, and an unrelated
+commit cannot re-arm the pass. A budget release epoch atomically covers the
+failure-to-registration interval; only a release from the blocking budget or a
+last-snapshot-close signal delivers the one-shot wake. Outside
+that short final-cutover interval, the request path has no transient-budget branch or
+allocation. Internal and benchmark diagnostics report separate steady and
+transient current/high-water/maximum values plus checked combined values.
+
+WAL-headroom Packages H1–H2 reserve, under the existing admission lock and before
+sequence/revision assignment, each outstanding encoded frame plus one conservative
+singleton batch marker. Consequently every admitted group fits the configured
+active segment even when emitted as singleton groups. A distinct internal
+headroom condition maps to the existing retryable `LIMIT_EXCEEDED` admission
+result and raises sticky maintenance pressure rather than recovery-required.
+Pressure bypasses the ordinary 64 MiB rotation threshold, is cleared only after
+successful rotation/compaction, and preserves a concurrent signal for the next
+pass. This adds no public contract, polling loop, or persistent state.
+
 ### 5.3 `app`
 
 The `app` module owns the CLI and batch-plan adapter.
@@ -228,20 +554,44 @@ bus begins, the bus owns disposition of the completed reference: it deletes the
 reference only after proving that no durable intent exists, and retains it when a
 commit is present or durability is uncertain.
 
-Operation retirement separates live payload from durable evidence. After an
+Terminal outcome and payload ownership are independent. At the exact original
+deadline, every active `INTENT` (claimed or unclaimed), `DISPATCHED`, and
+`CANCELLING` record atomically becomes content-free `EXPIRED`. No provider call
+may begin after that boundary, and a call already in progress may return but
+cannot publish. A `CANCELLED` acknowledgement committed before the deadline
+remains `CANCELLED`.
+
+Operation retirement likewise separates live payload from durable evidence. After an
 immutable provider terminal state is observed, retirement removes staged
 to-be-signed content and workflow continuation state. The authoritative signing
 record remains through the signing horizon with content-free commitment metadata
 and, for a trustworthy on-time success, the signature result. A provider that is
 not yet terminal remains `CANCELLING`; it is not falsely retired.
 
-If staged-content deletion fails after the content-free `RETIRED` record commits,
+For a trustworthy signature recorded before the original deadline, retirement
+follows exact domain publication rather than wall-clock expiry. A transient
+publication failure keeps the continuation in `PUBLISHING` and schedules a
+future retry capped at 30 seconds, including beyond the normal signing horizon.
+The record continues to consume bounded durable-work capacity because its
+payload is still required. Completion makes the outer continuation and signing
+record content-free before staged reclamation.
+
+If staged-content deletion fails after a content-free `EXPIRED` or `RETIRED`
+record commits,
 the store retirement boundary reports only the stable redacted cleanup marker
 `SIGNING_CONTENT_CLEANUP_FAILED`; higher-level adapters may map it to their stable
 cleanup marker. Logical retirement still deletes workflow continuation state and
 retires advisory state before reporting that marker. The retained record does not
 regain a live content reference. Store restart recovery uses authoritative live
 references to reclaim the orphaned staged file safely.
+
+An active local cancellation first commits `CANCELLING` and signals the exact
+in-process execution. `CANCELLED` is committed only after cryptographic execution
+acknowledges the signal; a racing completed signature is instead reconciled as
+its actual terminal result. The live signing owner therefore prevents staged
+content retirement while the signer can still read it. Restart converts a local
+`DISPATCHED` or `CANCELLING` record to durable `RECOVERY_INCOMPLETE` without
+re-running cryptography.
 
 Each fully opened realm owns exactly one signing-reconciliation worker. The
 worker starts immediately before the server becomes ready, runs one synchronous
@@ -250,19 +600,94 @@ pass returns. It has no queue of missed ticks and creates no active-active lease
 the existing realm, provider, and filesystem ownership locks remain the
 single-active authority.
 
-The reconciliation cursor is an advisory exclusive key into a metadata snapshot
-ordered by canonical submission identifier. A pass examines no more than its
+The same worker thread runs one revocation-audit projection phase after each
+signing-reconciliation phase. Each phase independently receives the configured
+`maximumRecords` and `maximumProviderCalls` limits, and failure in either phase
+does not suppress the other phase or later scheduling. Reconciliation scheduling
+therefore cannot be disabled while enterprise revocation projection is required;
+such a server configuration is rejected before startup. Revocations appended
+after a projection phase captures its feed head remain for a later pass, so
+signing progress and audit delivery may interleave without reordering the
+authoritative revocation log.
+
+Scheduling is work-conserving without adding another thread or queue. One
+realm-scoped payload-free signal holds at most the worker's single lifecycle
+listener; administrative and ACME paths signal it only after a revocation reports
+`Completed`, and callback failure cannot alter that committed foreground outcome.
+Signals are coalesced, while the periodic idle interval remains the convergence
+fallback. An active signing continuation or an unblocked audit pass that did not
+reach its captured head schedules an immediate follow-up. A blocked audit pass is
+deferred until its reported eligibility time; a zero-delay signing backlog skips
+that not-yet-due audit work but continues to give both phases their independent
+bounded budgets once it is due. Clock or duration overflow falls back to the idle
+interval.
+
+Projection is at least once, not exactly once. The durable projection cursor
+advances only after the audit sink returns normally. A crash or uncertain state
+commit after sink acknowledgement can replay the same transition, whose stable
+lowercase SHA-256 `eventId` lets consumers deduplicate it. Immediate gateway and
+ACME telemetry remains best effort and cannot change a committed revocation
+outcome. Projection checks shutdown cancellation between feed entries, before
+sink calls, and around safe cursor commits. Cancellation observed after sink
+acknowledgement but before cursor commit preserves the old cursor and may replay
+the same stable event ID; it never skips that transition.
+
+The shared worker has three synchronous audit-sink call sites: the signing-pass
+aggregate before projection, each raw projector delivery, and the projection-pass
+aggregate after projection. Runtime failures are isolated, but any one of these
+calls can block the sole worker and delay projection, the next signing pass, and
+shutdown. Cooperative cancellation does not interrupt a currently blocking sink
+call. There is deliberately no second worker, timeout lane, queue, or
+audit-specific scheduler setting.
+
+Content-free `EXPIRED` records leave the due-work projection immediately and
+enter the horizon-retention projection directly, so idle passes do not rescan
+them as active work. Each admitted scheduled reconciliation pass also runs exactly one bounded
+retention purge of at most 31 records and at most one force. This occurs even
+when there is no due signing work, so successive idle worker passes reclaim
+expired retained capacity without request traffic; cancellation or an expired
+pass deadline prevents admission, and no pass loops to purge exhaustion.
+
+Normal periodic sweep selects bounded due work from the identity-ordered,
+minimum-eligibility-augmented projection. For nonempty indexed work `W` and `R`
+returned due records, effective `D = max(1, R)`, so `1 <= D <= W`; the page-bound
+worst case uses `D = min(record bound, W)`. Selection takes worst-case
+`Theta(log W + D + D log(W / D))` time, returns `O(D)` immutable memory, and uses
+`O(D + log W)` total auxiliary memory. An empty index returns an empty page in
+constant time and memory. The reconciliation cursor remains an advisory
+exclusive key into a metadata snapshot ordered by canonical submission
+identifier. A pass examines no more than its
 record bound, makes no more than its independent provider-call budget, and wraps
 to the beginning after reaching the end so deferred records cannot starve other
-records. Per-record failures are isolated and persisted separately from the
+records. A returned cursor identifies the last metadata candidate actually
+dispositioned; a provider-call, deadline, or cancellation stop never publishes a
+prefetched page-end key. Malformed candidates advance individually without
+skipping a later valid candidate and contribute to both aggregate `unresolved`
+and `retryable` counts. A cycle retains the greatest key from its first stable
+snapshot as a high-watermark and the cycle-start cursor as the inclusive upper
+bound of its wrapped prefix. Both boundaries remain stable across worker passes.
+After crossing the high-watermark, the cycle scans only through its captured
+prefix bound before accepting a new high-watermark, so continuous inserts above
+the boundary cannot starve lower keys or cause the completed tail to be revisited.
+A cycle that starts without a cursor completes at its high-watermark without a
+wrapped phase. Per-record failures are isolated and persisted separately from the
 provider detail code with a store-time retry schedule of 2, 4, 8, 16, then 30
 seconds. Terminal and retired records carry no retry metadata.
 
+The reconciliation API carries the cursor, high-watermark, wrapped-prefix bound,
+and phase as one validated `SigningReconciliationContinuation`. A scheduler must
+pass that value unchanged between passes; `SigningReconciliationRequest.continueFrom`
+copies it while replacing only the next pass's record, provider-call, deadline,
+timeout, and cancellation bounds. This prevents a partial cursor-only resume from
+silently discarding the cycle's frozen fairness boundaries.
+
 Shutdown first stops reconciliation admission and scheduling, then cooperatively
-cancels and drains the active pass before closing the realm session, providers,
-or store. If a provider ignores cancellation beyond the forced-shutdown period,
-the server reports `SIGNING_RECONCILIATION_SHUTDOWN_TIMEOUT` and leaves those
-dependencies open so close can be retried without use-after-close behavior.
+cancels both phases and drains the active pass before closing the realm session,
+providers, or store. Projection observes cancellation only between its bounded
+feed, sink, and control-store operations. If a provider or any synchronous audit
+sink call ignores cancellation beyond the forced-shutdown period, the server
+reports `SIGNING_RECONCILIATION_SHUTDOWN_TIMEOUT` and leaves those dependencies
+open so close can be retried without use-after-close behavior.
 
 `SignatureWorkflow` implementations are trusted in-process components and every
 submit, status, verify, and cancel call now requires a `CallControl` carrying an
@@ -275,11 +700,16 @@ need enforcement against untrusted or non-cooperative code require a future
 out-of-process provider boundary with process or RPC isolation.
 
 Payload staging remains streaming `O(n)` time and `O(1)` aggregate auxiliary heap
-excluding the signature. Synchronous waiting performs
-`O(TTL / polling interval)` status observations. For `M` metadata keys and a
-bound `B`, an ordered reconciliation page is `O(log M + B)` traversal and each
-candidate point access is `O(log M)`, for `O(B log M)` candidate access in the
-worst case. Normal pass auxiliary memory is `O(B)`. A concurrent metadata commit
+excluding the signature. The synchronous BC adapter performs at most one bounded
+initial provider step and one authoritative point observation; pending work
+returns its durable private `PkiId` without sleeping or retaining a caller thread.
+Ordinary active-record point lookup is expected `O(1)`. Identity-ordered
+selection and processing of up to `D` due records has worst-case
+`Theta(log W + D + D log(W / D))` selection time plus the bounded provider and
+persistence work for those records. Normal pass total auxiliary memory is
+`O(D + log W)`; the returned immutable page is `O(D)`. The primary
+metadata index plus workflow/domain-continuation projections retain `O(M + W)`
+state, where `M` is the current metadata-key population. A concurrent metadata commit
 may detach the currently pinned index generation once in `O(M)` time and memory;
 later commits do not copy again merely because an older generation remains
 pinned. A pass uses at most `maximumProviderCalls` external calls, and each realm
@@ -421,6 +851,11 @@ May:
 - inspect its own requests;
 - download its own resulting credentials;
 - request renewal, rekey, or revocation when policy permits.
+
+The requester template may also submit `CERTIFICATE_CONFIRM` for an exact
+authority/profile credential scope. That action deliberately uses relationship
+`ANY`: possession is established by the cryptographic proof and is not inferred
+from stored requester ownership.
 
 ### 8.8 Revocation Officer
 
@@ -581,6 +1016,7 @@ CERTIFICATE_SEARCH
 CERTIFICATE_READ_PII
 CERTIFICATE_DOWNLOAD
 CERTIFICATE_PUBLICATION_CHANGE
+CERTIFICATE_CONFIRM
 ```
 
 ### 10.6 Revocation and status
@@ -915,6 +1351,50 @@ valid ACME account
 ACME MUST NOT invoke a generic arbitrary `credential.issue` operation using only ACME account authorization.
 
 ACME issuance MUST pass through the ACME order, authorization, challenge, directory, profile, and authority constraints.
+
+### 15.6 Credential confirmation and frozen-directory routing
+
+Only a valid account-owned order for a non-public credential with a pending
+confirmation lifecycle exposes the version-1 `credentialConfirmation`
+extension. Challenge issuance and completion are account-KID JWS operations on
+separate, versioned URLs beneath the order's exact directory alias. The server
+derives the credential identity from that order and delegates once to the
+authoritative transport-neutral confirmation service. It MUST NOT accept a
+client-selected credential identity, create parallel confirmation state, or
+route through the administrative gateway.
+
+Challenge payload is exactly `{}`. Completion has a strict schema containing
+only exact lifecycle/challenge compare-and-set coordinates and one canonical
+unpadded Base64url proof response. Proof possession supplements rather than
+replaces ACME account authority. Current account-key commitment, exact URL and
+nonce, order ownership and validity, frozen directory/order/credential
+correlation, publication binding, and confirmation policy MUST all validate
+before the confirmation service is invoked. Stale account keys, including
+after rollover or deactivation, do not retain authority. Raw proof,
+presentation, JWS, compare-and-set cryptographic material, and provider details
+MUST NOT enter audit, exceptions, or diagnostics.
+
+Directory activation is an admission property. Discovery, new-account, and
+new-order require the currently active revision; authenticated access to an
+existing owned resource resolves the exact directory identity, revision, and
+immutable policy commitment persisted with that resource, even after
+deactivation. Directory status remains part of the directory's mutable
+whole-record compare-and-set commitment and is deliberately not copied into
+accounts or orders. Frozen validation checks the original realm, exposure,
+profile, confirmation policy, issuer, and chain path without requiring that
+issuer/path to remain the authority's globally current selection. New
+admission or issuance additionally requires an active directory and authority
+whose current selection still equals the frozen one; it never reroutes to a
+replacement. This permits deterministic completion of already-issued work
+without silently redirecting it to later configuration and without weakening
+cross-directory or cross-account isolation.
+
+Replay nonces bind to the listener and canonical directory alias. A known alias
+may use its existing `new-nonce` URL while all revisions are inactive, enabling
+a fresh process or client to authenticate continuation of an existing owned
+resource. The nonce remains one-time and process-local; unknown aliases do not
+receive one. Exact URL, current account-key commitment, frozen revision, and
+resource ownership remain the authority checks.
 
 ## 16. Public retrieval rules
 

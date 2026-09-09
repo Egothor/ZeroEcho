@@ -43,7 +43,11 @@ import zeroecho.pki.spi.ProviderConfig;
  */
 @SuppressWarnings("PMD.SignatureDeclareThrowsException")
 public interface PkiServerClientTrustProvider {
-    /** @return stable explicitly configured provider identity */
+    /**
+     * Returns the stable, explicitly configured provider identity.
+     *
+     * @return provider identity used in configuration
+     */
     String id();
 
     /**

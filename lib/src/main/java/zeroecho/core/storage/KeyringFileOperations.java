@@ -41,9 +41,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.FileAttribute;
-import java.nio.file.attribute.PosixFilePermission;
-import java.util.Set;
 
 /**
  * Narrow package-local boundary for atomic keyring persistence operations.
@@ -57,8 +54,7 @@ interface KeyringFileOperations {
     }
 
     /** Creates one owner-only temporary file beside its destination. */
-    Path createTemporary(Target target, Path parent, String prefix, String suffix,
-            FileAttribute<Set<PosixFilePermission>> permissions) throws IOException;
+    Path createTemporary(Target target, Path parent, String prefix, String suffix) throws IOException;
 
     /** Writes the complete encrypted image to its temporary file. */
     void writeTemporary(Target target, Path temporary, byte[] image) throws IOException;
@@ -79,9 +75,11 @@ interface KeyringFileOperations {
 /** Production NIO implementation of the atomic persistence boundary. */
 final class NioKeyringFileOperations implements KeyringFileOperations {
     @Override
-    public Path createTemporary(Target target, Path parent, String prefix, String suffix,
-            FileAttribute<Set<PosixFilePermission>> permissions) throws IOException {
-        return Files.createTempFile(parent, prefix, suffix, permissions);
+    public Path createTemporary(Target target, Path parent, String prefix, String suffix) throws IOException {
+        // Owner-only protection comes from the create-time attributes on POSIX and
+        // from inheritance of the secured parent directory's ACL on Windows.
+        return Files.createTempFile(parent, prefix, suffix,
+                KeyringPlatformPolicy.INSTANCE.fileCreateAttributes());
     }
 
     @Override
@@ -108,9 +106,7 @@ final class NioKeyringFileOperations implements KeyringFileOperations {
 
     @Override
     public void forceDirectory(Target target, Path parent) throws IOException {
-        try (FileChannel directory = FileChannel.open(parent, StandardOpenOption.READ)) {
-            directory.force(true);
-        }
+        KeyringPlatformPolicy.INSTANCE.forceDirectory(parent);
     }
 
     @Override

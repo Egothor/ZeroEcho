@@ -102,6 +102,13 @@ public final class ChaChaSpec implements ChaChaBaseSpec, Describable {
         private SymmetricHeaderCodec header; // = null;
 
         /**
+         * Creates a builder with counter {@code 1} and stream headers disabled.
+         */
+        public Builder() {
+            // Field initializers establish the documented defaults.
+        }
+
+        /**
          * Sets the initial counter value.
          *
          * @param c non-negative counter value

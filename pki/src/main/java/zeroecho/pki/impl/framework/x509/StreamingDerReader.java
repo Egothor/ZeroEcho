@@ -76,6 +76,11 @@ public final class StreamingDerReader {
     private static final int CONTINUATION_BIT = 0x80;
     private static final long SHORT_LENGTH_LIMIT = 128L;
 
+    /** Creates a stateless canonical-DER reader. */
+    public StreamingDerReader() {
+        // Stateless.
+    }
+
     /**
      * Validates one complete canonical DER object held in an explicitly bounded
      * byte array.

@@ -92,7 +92,11 @@ public record X509AlgorithmBindingPolicy(Mode mode, Optional<BindingReference> s
         }
     }
 
-    /** @return standard-only policy with no private fallback */
+    /**
+     * Creates a standard-only policy with no private fallback.
+     *
+     * @return standard-only policy with no private fallback
+     */
     public static X509AlgorithmBindingPolicy standardOnly() {
         return new X509AlgorithmBindingPolicy(Mode.STANDARD_ONLY, Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty());

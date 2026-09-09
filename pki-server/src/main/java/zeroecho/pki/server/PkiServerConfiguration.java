@@ -42,7 +42,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
+import zeroecho.pki.api.confirmation.CredentialConfirmationReview;
+import zeroecho.pki.server.acme.AcmeWireBounds;
 import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
 
 /**
  * Strict immutable configuration for one administrative HTTPS server instance.
@@ -70,7 +74,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         SigningReconciliation signingReconciliation) {
 
     /** Current server configuration schema. */
-    public static final int CURRENT_VERSION = 6;
+    public static final int CURRENT_VERSION = 7;
 
     /** Validates all security-sensitive fields before resource allocation. */
     public PkiServerConfiguration {
@@ -84,6 +88,10 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         publicListener = Objects.requireNonNull(publicListener, "publicListener");
         acmeListener = Objects.requireNonNull(acmeListener, "acmeListener");
         Objects.requireNonNull(signingReconciliation, "signingReconciliation");
+        if (!signingReconciliation.enabled()) {
+            throw new IllegalArgumentException(
+                    "Revocation audit projection requires signing reconciliation scheduling");
+        }
         if (!listener.clientCertificateRequired()) {
             throw new IllegalArgumentException("Administrative HTTPS requires client certificates");
         }
@@ -108,7 +116,18 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         });
     }
 
-    /** Creates a configuration with ACME disabled. */
+    /**
+     * Creates a configuration with ACME disabled.
+     *
+     * @param version configuration schema version
+     * @param serverName nonblank server name
+     * @param realm realm configuration
+     * @param listener administrative HTTPS listener
+     * @param authentication administrative authentication policy
+     * @param execution bounded request-execution policy
+     * @param runtime explicit process-local runtime capabilities
+     * @param publicListener optional public repository listener
+     */
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
             Optional<PublicListener> publicListener) {
@@ -116,7 +135,19 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
                 Optional.empty(), SigningReconciliation.defaults());
     }
 
-    /** Creates a configuration with default signing reconciliation. */
+    /**
+     * Creates a configuration with default signing reconciliation.
+     *
+     * @param version configuration schema version
+     * @param serverName nonblank server name
+     * @param realm realm configuration
+     * @param listener administrative HTTPS listener
+     * @param authentication administrative authentication policy
+     * @param execution bounded request-execution policy
+     * @param runtime explicit process-local runtime capabilities
+     * @param publicListener optional public repository listener
+     * @param acmeListener optional ACME protocol listener
+     */
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
             Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener) {
@@ -124,7 +155,17 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
                 SigningReconciliation.defaults());
     }
 
-    /** Creates a configuration with the public repository listener disabled. */
+    /**
+     * Creates a configuration with the public repository and ACME listeners disabled.
+     *
+     * @param version configuration schema version
+     * @param serverName nonblank server name
+     * @param realm realm configuration
+     * @param listener administrative HTTPS listener
+     * @param authentication administrative authentication policy
+     * @param execution bounded request-execution policy
+     * @param runtime explicit process-local runtime capabilities
+     */
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
         this(version, serverName, realm, listener, authentication, execution, runtime, Optional.empty(),
@@ -134,7 +175,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     /**
      * Bounded recovered-signing reconciliation policy.
      *
-     * @param enabled whether the realm owns a reconciliation scheduler
+     * @param enabled must be {@code true}; revocation audit projection shares this scheduler
      * @param maximumRecords maximum records examined per pass
      * @param maximumProviderCalls maximum provider calls per pass
      * @param passTimeout positive complete-pass timeout
@@ -155,7 +196,11 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             }
         }
 
-        /** @return version-6 production defaults */
+        /**
+         * Returns the current production defaults.
+         *
+         * @return current production defaults
+         */
         public static SigningReconciliation defaults() {
             return new SigningReconciliation(true, 256, 64, Duration.ofSeconds(30), Duration.ofSeconds(10),
                     Duration.ofSeconds(2));
@@ -174,6 +219,29 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
      */
     public record Listener(InetAddress address, int port, ProviderConfig tlsProvider,
             boolean clientCertificateRequired, int maximumHeaderBytes, int maximumBodyBytes) {
+        /** Exact canonical unpadded Base64url character bound for one proof response. */
+        public static final int MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS =
+                (KeyPossessionProofResponse.MAXIMUM_BYTES / 3) * 4
+                + (KeyPossessionProofResponse.MAXIMUM_BYTES % 3 == 0
+                        ? 0 : KeyPossessionProofResponse.MAXIMUM_BYTES % 3 + 1);
+        private static final int MAXIMUM_JSON_ESCAPE_BYTES_PER_INPUT_BYTE = 6;
+        private static final int SHA_256_HEX_CHARACTERS = 64;
+        private static final String COMPLETION_REQUEST_FRAMING =
+                "{\"version\":1,\"authorityId\":\"\",\"arguments\":{"
+                + "\"credentialId\":\"\",\"expectedLifecycleRevision\":1,"
+                + "\"expectedLifecycleRecordCommitment\":\"\","
+                + "\"expectedChallengeRecordCommitment\":\"\",\"response\":\"\"}}";
+        /**
+         * Minimum administrative body bound that can carry the canonical maximum
+         * proof-completion request, including worst-case JSON escaping of both IDs.
+         */
+        public static final int MINIMUM_BODY_BYTES = COMPLETION_REQUEST_FRAMING.length()
+                + MAXIMUM_JSON_ESCAPE_BYTES_PER_INPUT_BYTE
+                        * (CredentialConfirmationReview.MAXIMUM_AUTHORITY_ID_UTF8_BYTES
+                                + CredentialConfirmationInitialization.MAXIMUM_CREDENTIAL_ID_UTF8_BYTES)
+                + 2 * SHA_256_HEX_CHARACTERS
+                + MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS;
+
         /** Validates listener bounds and explicit TLS selection. */
         public Listener {
             Objects.requireNonNull(address, "address");
@@ -182,12 +250,16 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             if (maximumHeaderBytes < 1_024 || maximumHeaderBytes > 1_048_576) {
                 throw new IllegalArgumentException("Header bound is invalid");
             }
-            if (maximumBodyBytes < 1_024 || maximumBodyBytes > 16_777_216) {
+            if (maximumBodyBytes < MINIMUM_BODY_BYTES || maximumBodyBytes > 16_777_216) {
                 throw new IllegalArgumentException("Body bound is invalid");
             }
         }
 
-        /** @return exact socket address without DNS resolution */
+        /**
+         * Returns the listener socket address without DNS resolution.
+         *
+         * @return exact socket address
+         */
         public InetSocketAddress socketAddress() {
             return new InetSocketAddress(address, port);
         }
@@ -451,14 +523,21 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             }
         }
 
-        /** @return exact public socket address without DNS resolution */
+        /**
+         * Returns the public listener socket address without DNS resolution.
+         *
+         * @return exact public socket address
+         */
         public InetSocketAddress socketAddress() {
             return new InetSocketAddress(address, port);
         }
     }
 
     /** Closed ACME listener transport topologies. */
-    public enum AcmeTransportMode { DIRECT_TLS, TRUSTED_REVERSE_PROXY }
+    public enum AcmeTransportMode {
+        /** Client connects directly through server-authenticated TLS. */ DIRECT_TLS,
+        /** An authenticated trusted proxy terminates the external connection. */ TRUSTED_REVERSE_PROXY
+    }
 
     /**
      * Separately bounded ACME listener and protocol-security configuration.
@@ -515,7 +594,8 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
                 throw new IllegalArgumentException("ACME external base URI is invalid");
             }
             bounded(maximumHeaderBytes, 1_024, 1_048_576, "ACME header bound");
-            bounded(maximumBodyBytes, 1_024, StrictBounds.MAXIMUM_ACME_BODY, "ACME body bound");
+            bounded(maximumBodyBytes, AcmeWireBounds.minimumCompletionDocumentBytes(externalBaseUri),
+                    StrictBounds.MAXIMUM_ACME_BODY, "ACME body bound");
             Objects.requireNonNull(execution, "execution"); Objects.requireNonNull(validationExecution, "validationExecution");
             positive(nonceLifetime, Duration.ofHours(1), "ACME nonce lifetime");
             bounded(maximumOutstandingNonces, 16, 1_000_000, "ACME nonce capacity");
@@ -548,7 +628,11 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             }
         }
 
-        /** @return exact listener socket address */
+        /**
+         * Returns the listener socket address.
+         *
+         * @return exact listener socket address
+         */
         public InetSocketAddress socketAddress() { return new InetSocketAddress(address, port); }
 
         private static List<ProviderConfig> providers(List<ProviderConfig> source, String name) {

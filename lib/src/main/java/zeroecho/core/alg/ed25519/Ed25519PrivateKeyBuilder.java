@@ -68,6 +68,12 @@ import zeroecho.core.alg.common.eddsa.AbstractEncodedPrivateKeyBuilder;
  * @since 1.0
  */
 public final class Ed25519PrivateKeyBuilder extends AbstractEncodedPrivateKeyBuilder<Ed25519PrivateKeySpec> {
+    /** Creates a stateless Ed25519 private-key importer. */
+    public Ed25519PrivateKeyBuilder() {
+        super();
+        // Stateless importer.
+    }
+
     /**
      * Returns the canonical JCA algorithm name for Ed25519 key factories.
      *

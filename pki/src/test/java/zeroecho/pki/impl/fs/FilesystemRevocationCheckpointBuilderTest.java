@@ -57,11 +57,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.attr.AttributeId;
-import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
+import zeroecho.pki.application.RevocationExecutionEvidence;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.spi.store.MetadataStoreId;
@@ -410,7 +409,10 @@ final class FilesystemRevocationCheckpointBuilderTest {
                     assertEquals(revokedRecord.commitment(), entries.get(1).transitionCommitment());
                     assertEquals(revokedRecord.recordOffset(), entries.get(1).frameStart());
                     assertEquals(revokedRecord.recordEnd(), entries.get(1).frameEnd());
-                    assertEquals(1, entries.get(1).transition().attributes().ids().size());
+                    assertEquals(RevocationExecutionEvidence.administrative("operator-a", "realm-a", "request-a",
+                            RevocationExecutionEvidence.Authentication.DIRECT_MTLS,
+                            RevocationExecutionEvidence.AuthorizationPath.ORDINARY_GRANT, "a".repeat(64),
+                            Optional.empty()).attributes().ids(), entries.get(1).transition().attributes().ids());
                 }
             }
         }
@@ -718,10 +720,10 @@ final class FilesystemRevocationCheckpointBuilderTest {
     }
 
     private static RevocationTransition permanentWithAttributes(long revision, long second) {
-        SimpleAttributeSet attributes = new SimpleAttributeSet(List.of(
-                new SimpleAttributeSet.Entry(
-                        new AttributeId("audit.example"),
-                        List.of(new AttributeValue.StringValue("retained")))));
+        zeroecho.pki.api.attr.AttributeSet attributes = RevocationExecutionEvidence.administrative("operator-a",
+                "realm-a", "request-a", RevocationExecutionEvidence.Authentication.DIRECT_MTLS,
+                RevocationExecutionEvidence.AuthorizationPath.ORDINARY_GRANT, "a".repeat(64), Optional.empty())
+                .attributes();
         return new RevocationTransition(
                 revision, RevocationState.PERMANENTLY_REVOKED,
                 Instant.ofEpochSecond(second), Optional.of(RevocationReason.KEY_COMPROMISE),

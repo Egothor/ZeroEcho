@@ -37,25 +37,22 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigInteger;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.security.MessageDigest;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
-import java.util.Date;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.DEROctetString;
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x509.BasicConstraints;
-import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.GeneralName;
-import org.bouncycastle.asn1.x509.GeneralNames;
-import org.bouncycastle.asn1.x509.KeyPurposeId;
-import org.bouncycastle.asn1.x509.KeyUsage;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.X509v3CertificateBuilder;
+import zeroecho.pkix.BasicConstraints;
+import zeroecho.pkix.ExtendedKeyUsage;
+import zeroecho.pkix.GeneralName;
+import zeroecho.pkix.KeyUsage;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.cert.CertificateBuilder;
 
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.io.CancellationSignal;
@@ -75,11 +72,16 @@ import zeroecho.pki.api.credential.CredentialBundle;
 import zeroecho.pki.api.credential.CredentialStatus;
 import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.profile.ExtendedKeyUsageId;
 import zeroecho.pki.api.profile.LeafKeyUsage;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.impl.core.ValidatedCaCertificateRequest;
 import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.core.async.DomainCommandEncoding;
+import zeroecho.pki.impl.core.async.DomainContinuationTemplate;
+import zeroecho.pki.impl.core.async.PendingSigningOperation;
+import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
@@ -168,7 +170,14 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         this(signingBus, signatureIdentity, Optional.empty(), signingTtl);
     }
 
-    /** Creates an issuance backend with an optional explicit certificate binding. */
+    /**
+     * Creates an issuance backend with an optional explicit certificate binding.
+     *
+     * @param signingBus signing bus used to delegate certificate signing
+     * @param signatureIdentity exact provider-independent signature identity
+     * @param signatureBindingId optional explicit certificate-signature binding identifier
+     * @param signingTtl positive maximum duration allowed for delegated signing
+     */
     public BcX509CredentialIssuerBackend(PkiSigningBus signingBus, AlgorithmIdentity signatureIdentity,
             Optional<String> signatureBindingId, Duration signingTtl) {
         if (signingBus == null) {
@@ -210,29 +219,41 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
     public CredentialBundle issueEndEntity(ValidatedCertificateRequest request,
             DurableContentReference issuerCertificate,
             KeyRef issuerKeyRef, BigInteger serial) {
+        return issueEndEntity(request, issuerCertificate, issuerKeyRef, serial, CancellationSignal.NONE);
+    }
+
+    @Override
+    public CredentialBundle issueEndEntity(ValidatedCertificateRequest request,
+            DurableContentReference issuerCertificate,
+            KeyRef issuerKeyRef, BigInteger serial, CancellationSignal cancellation) {
         if (request == null || issuerCertificate == null || issuerKeyRef == null || serial == null
                 || serial.signum() <= 0 || serial.toByteArray().length > 20) {
             throw new IllegalArgumentException("Invalid validated end-entity issuance input");
         }
         byte[] issuerDer = materialize(issuerCertificate);
-        X509CertificateHolder issuer;
+        X509Certificate issuer;
         try {
             issuer = parseIssuerCertificateOrThrow(issuerDer);
         } finally {
             java.util.Arrays.fill(issuerDer, (byte) 0);
         }
-        X500Name issuerDn = issuer.getSubject();
-        X500Name subjectDn = BcX509ProfileSupport.subject(request.subjectRdns());
-        SubjectPublicKeyInfo spki = parseSubjectPublicKeyInfo(request.exactPublicKey());
+        javax.security.auth.x500.X500Principal issuerDn = issuer.getSubjectX500Principal();
+        javax.security.auth.x500.X500Principal subjectDn = BcX509ProfileSupport.subject(request.subjectRdns());
+        byte[] spki = parseSubjectPublicKeyInfo(request.exactPublicKey());
 
-        X509v3CertificateBuilder builder = new X509v3CertificateBuilder(issuerDn, serial,
-                Date.from(request.validity().notBefore()), Date.from(request.validity().notAfter()), subjectDn, spki);
+        CertificateBuilder builder = Pkix.certificateBuilder().issuer(issuerDn).serialNumber(serial)
+                .validity(request.validity().notBefore(), request.validity().notAfter()).subject(subjectDn)
+                .publicKeyInfo(spki);
         addLeafExtensions(builder, request);
 
-        try (PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy())) {
-            X509CertificateHolder leaf;
+        DomainContinuationTemplate domain = leafContinuation(request, issuerCertificate, issuerKeyRef, serial);
+        try (PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy(), cancellation,
+                domain)) {
+            X509Certificate leaf;
             try {
                 leaf = builder.build(signer);
+            } catch (PendingSigningOperation | zeroecho.pki.api.SigningExecutionException signingFailure) {
+                throw signingFailure;
             } catch (Exception ex) {
                 throw new PkiException("Certificate signing failed: code=CERTIFICATE_SIGN_FAILED");
             }
@@ -254,74 +275,127 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
                         new IssuerRef(request.issuerCaId()), request.subjectRef(), request.validity(), serial.toString(),
                         publicKeyId, new EndEntityProfileBinding(request.profileReference()), CredentialStatus.ISSUED,
                         content, SimpleAttributeSet.builder().build());
-                return new CredentialBundle(credential, java.util.List.of(issuerCertificate));
+                return new CredentialBundle(credential, List.of(issuerCertificate));
             } finally {
                 java.util.Arrays.fill(certDer, (byte) 0);
             }
         }
     }
 
-    private static void addLeafExtensions(X509v3CertificateBuilder builder, ValidatedCertificateRequest request) {
+    private static void addLeafExtensions(CertificateBuilder builder, ValidatedCertificateRequest request) {
         try {
-            builder.addExtension(Extension.basicConstraints, request.basicConstraintsCritical(),
-                    new BasicConstraints(false));
+            builder.basicConstraints(BasicConstraints.endEntity(), request.basicConstraintsCritical());
             if (!request.keyUsages().isEmpty()) {
-                builder.addExtension(Extension.keyUsage, request.keyUsageCritical(),
-                        new KeyUsage(toKeyUsageBits(request.keyUsages())));
+                builder.keyUsage(toKeyUsages(request.keyUsages()), request.keyUsageCritical());
             }
             if (!request.extendedKeyUsages().isEmpty()) {
-                KeyPurposeId[] purposes = request.extendedKeyUsages().stream()
-                        .map(value -> KeyPurposeId.getInstance(new ASN1ObjectIdentifier(value.oid())))
-                        .toArray(KeyPurposeId[]::new);
-                builder.addExtension(Extension.extendedKeyUsage, request.extendedKeyUsageCritical(),
-                        new ExtendedKeyUsage(purposes));
+                List<String> purposes = request.extendedKeyUsages().stream().map(ExtendedKeyUsageId::oid).toList();
+                builder.extendedKeyUsage(new ExtendedKeyUsage(purposes), request.extendedKeyUsageCritical());
             }
             if (!request.subjectAlternativeNames().isEmpty()) {
-                GeneralName[] names = request.subjectAlternativeNames().stream()
-                        .map(BcX509CredentialIssuerBackend::toGeneralName).toArray(GeneralName[]::new);
-                builder.addExtension(Extension.subjectAlternativeName, request.subjectAlternativeNameCritical(),
-                        new GeneralNames(names));
+                builder.subjectAlternativeNames(toGeneralNames(request.subjectAlternativeNames()),
+                        request.subjectAlternativeNameCritical());
             }
         } catch (Exception exception) {
             throw new PkiException("X.509 extension construction failed: code=EXTENSION_BUILD_FAILED");
         }
     }
 
+    private static List<GeneralName> toGeneralNames(List<SubjectAlternativeName> names) {
+        List<GeneralName> result = new ArrayList<>(names.size());
+        for (SubjectAlternativeName name : names) {
+            result.add(toGeneralName(name));
+        }
+        return result;
+    }
+
     private PkiBusContentSigner signer(KeyRef keyRef,
-            zeroecho.pki.api.profile.X509AlgorithmBindingPolicy bindingPolicy) {
+            zeroecho.pki.api.profile.X509AlgorithmBindingPolicy bindingPolicy,
+            CancellationSignal cancellation, DomainContinuationTemplate domainContinuation) {
         Optional<String> bindingId = bindingPolicy.certificateSignature()
                 .map(zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.BindingReference::bindingId);
         return bindingId.isPresent()
                 ? new PkiBusContentSigner(signingBus, keyRef, signatureIdentity,
-                        bindingId.orElseThrow(), signingTtl)
-                : new PkiBusContentSigner(signingBus, keyRef, signatureIdentity, signingTtl);
+                        bindingId.orElseThrow(), signingTtl, cancellation, domainContinuation)
+                : new PkiBusContentSigner(signingBus, keyRef, signatureIdentity, signingTtl, cancellation,
+                        domainContinuation);
     }
 
-    private static int toKeyUsageBits(java.util.Set<LeafKeyUsage> usages) {
-        int bits = 0;
+    private static DomainContinuationTemplate leafContinuation(ValidatedCertificateRequest request,
+            DurableContentReference issuerCertificate, KeyRef issuerKeyRef, BigInteger serial) {
+        ValidatedCertificateRequest.FrozenIssuance frozen = request.frozenIssuance()
+                .orElseThrow(() -> new PkiException("Frozen issuance selection is unavailable: "
+                        + "code=ISSUANCE_CONTINUATION_UNAVAILABLE"));
+        zeroecho.pki.api.issuance.IssuanceIntent intent = frozen.intent().orElse(null);
+        String[] fields = {
+                request.issuerCaId().value(), frozen.issuerId().value(), frozen.chainPathId().value(),
+                frozen.chainPathCommitment(), request.profileReference().profileId(),
+                Long.toString(request.profileReference().profileVersion()),
+                HexFormat.of().formatHex(request.profileReference().canonicalSha256()),
+                request.subjectRef().value(), request.validity().notBefore().toString(),
+                request.validity().notAfter().toString(), serial.toString(), issuerKeyRef.value(),
+                issuerCertificate.contentId(), issuerCertificate.sha256(),
+                fingerprintEncoded(request.exactPublicKey()), intent == null ? "" : intent.issuanceId(),
+                intent == null ? "" : intent.commandCommitment(), request.subjectRdns().toString(),
+                request.subjectAlternativeNames().toString(), request.keyUsages().toString(),
+                request.extendedKeyUsages().toString(), request.algorithmBindingPolicy().toString(),
+                zeroecho.pki.impl.core.async.DomainAttributeEncoding.encode(request.executionEvidence()) };
+        return intent == null
+                ? DomainCommandEncoding.template(DomainContinuationStore.Kind.ISSUANCE,
+                        "ISSUE_END_ENTITY", fields)
+                : DomainCommandEncoding.correlatedTemplate(DomainContinuationStore.Kind.ISSUANCE,
+                        intent.issuanceId(), "ISSUE_END_ENTITY", fields);
+    }
+
+    private static DomainContinuationTemplate caContinuation(ValidatedCaCertificateRequest request,
+            DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
+        ValidatedCaCertificateRequest.FrozenPublication frozen = request.frozenPublication()
+                .orElseThrow(() -> new PkiException("Frozen CA publication selection is unavailable: "
+                        + "code=CA_CONTINUATION_UNAVAILABLE"));
+        return DomainCommandEncoding.template(DomainContinuationStore.Kind.CA, request.operation().name(),
+                request.formatId().value(), request.issuerCaId().value(), request.subjectCaId().value(),
+                frozen.parentIssuerId().value(), frozen.parentPathId().value(), frozen.parentPathCommitment(),
+                frozen.subjectKeyRef().value(),
+                request.profileReference().profileId(), Long.toString(request.profileReference().profileVersion()),
+                HexFormat.of().formatHex(request.profileReference().canonicalSha256()),
+                request.subjectRef().value(), request.validity().notBefore().toString(),
+                request.validity().notAfter().toString(), request.serial().toString(), issuerKeyRef.value(),
+                issuerCertificate.contentId(), issuerCertificate.sha256(),
+                fingerprintEncoded(request.exactPublicKey()), request.subjectRdns().toString(),
+                request.policy().toString(), request.algorithmBindingPolicy().toString());
+    }
+
+    private static java.util.Set<KeyUsage> toKeyUsages(java.util.Set<LeafKeyUsage> usages) {
+        java.util.Set<KeyUsage> result = java.util.EnumSet.noneOf(KeyUsage.class);
         for (LeafKeyUsage usage : usages) {
-            bits |= switch (usage) {
-                case DIGITAL_SIGNATURE -> KeyUsage.digitalSignature;
-                case CONTENT_COMMITMENT -> KeyUsage.nonRepudiation;
-                case KEY_ENCIPHERMENT -> KeyUsage.keyEncipherment;
-                case DATA_ENCIPHERMENT -> KeyUsage.dataEncipherment;
-                case KEY_AGREEMENT -> KeyUsage.keyAgreement;
-                case ENCIPHER_ONLY -> KeyUsage.encipherOnly;
-                case DECIPHER_ONLY -> KeyUsage.decipherOnly;
-            };
+            result.add(switch (usage) {
+                case DIGITAL_SIGNATURE -> KeyUsage.DIGITAL_SIGNATURE;
+                case CONTENT_COMMITMENT -> KeyUsage.NON_REPUDIATION;
+                case KEY_ENCIPHERMENT -> KeyUsage.KEY_ENCIPHERMENT;
+                case DATA_ENCIPHERMENT -> KeyUsage.DATA_ENCIPHERMENT;
+                case KEY_AGREEMENT -> KeyUsage.KEY_AGREEMENT;
+                case ENCIPHER_ONLY -> KeyUsage.ENCIPHER_ONLY;
+                case DECIPHER_ONLY -> KeyUsage.DECIPHER_ONLY;
+            });
         }
-        return bits;
+        return result;
     }
 
     private static GeneralName toGeneralName(SubjectAlternativeName name) {
         return switch (name) {
-            case SubjectAlternativeName.DnsName dns -> new GeneralName(GeneralName.dNSName, dns.value());
-            case SubjectAlternativeName.IpAddress ip ->
-                new GeneralName(GeneralName.iPAddress, new DEROctetString(ip.bytes()));
-            case SubjectAlternativeName.UriName uri ->
-                new GeneralName(GeneralName.uniformResourceIdentifier, uri.value());
-            case SubjectAlternativeName.Rfc822Name email -> new GeneralName(GeneralName.rfc822Name, email.value());
+            case SubjectAlternativeName.DnsName dns -> new GeneralName.DnsName(dns.value());
+            case SubjectAlternativeName.IpAddress ip -> new GeneralName.IpAddress(ipLiteral(ip.bytes()));
+            case SubjectAlternativeName.UriName uri -> new GeneralName.UniformResourceIdentifier(uri.value());
+            case SubjectAlternativeName.Rfc822Name email -> new GeneralName.Rfc822Name(email.value());
         };
+    }
+
+    private static String ipLiteral(byte[] octets) {
+        try {
+            return InetAddress.getByAddress(octets).getHostAddress();
+        } catch (UnknownHostException exception) {
+            throw new PkiException("Invalid IP subject alternative name: code=EXTENSION_BUILD_FAILED");
+        }
     }
 
     /**
@@ -350,6 +424,12 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
     @Override
     public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
             DurableContentReference issuerCertificate, KeyRef issuerKeyRef) {
+        return issueIntermediateCertificate(request, issuerCertificate, issuerKeyRef, CancellationSignal.NONE);
+    }
+
+    @Override
+    public Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
+            DurableContentReference issuerCertificate, KeyRef issuerKeyRef, CancellationSignal cancellation) {
         if (request == null || issuerCertificate == null || issuerKeyRef == null) {
             throw new IllegalArgumentException("validated CA issuance inputs must not be null");
         }
@@ -358,14 +438,14 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         }
 
         byte[] issuerDer = materialize(issuerCertificate);
-        X509CertificateHolder issuer;
+        X509Certificate issuer;
         try {
             issuer = parseIssuerCertificateOrThrow(issuerDer);
         } finally {
             java.util.Arrays.fill(issuerDer, (byte) 0);
         }
         byte[] subjectSpki = request.exactPublicKey().bytes();
-        SubjectPublicKeyInfo spki;
+        byte[] spki;
         PkiId publicKeyId;
         try {
             spki = parseSubjectPublicKeyInfo(subjectSpki);
@@ -377,23 +457,27 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         Validity validity = request.validity();
         BigInteger serial = request.serial();
 
-        X500Name issuerDn = issuer.getSubject();
-        X500Name subjectDn = BcX509ProfileSupport.subject(request.subjectRdns());
-        X509v3CertificateBuilder builder = new X509v3CertificateBuilder(issuerDn, serial,
-                Date.from(validity.notBefore()), Date.from(validity.notAfter()), subjectDn, spki);
+        javax.security.auth.x500.X500Principal issuerDn = issuer.getSubjectX500Principal();
+        javax.security.auth.x500.X500Principal subjectDn = BcX509ProfileSupport.subject(request.subjectRdns());
+        CertificateBuilder builder = Pkix.certificateBuilder().issuer(issuerDn).serialNumber(serial)
+                .validity(validity.notBefore(), validity.notAfter()).subject(subjectDn).publicKeyInfo(spki);
         try {
-            builder.addExtension(Extension.basicConstraints, request.policy().basicConstraintsCritical(),
-                    new BasicConstraints(request.policy().pathLengthConstraint()));
-            builder.addExtension(Extension.keyUsage, request.policy().keyUsageCritical(),
-                    new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+            builder.basicConstraints(BasicConstraints.ca(request.policy().pathLengthConstraint()),
+                    request.policy().basicConstraintsCritical());
+            builder.keyUsage(java.util.EnumSet.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN),
+                    request.policy().keyUsageCritical());
         } catch (Exception ex) {
             throw new PkiException("X.509 extension construction failed: code=EXTENSION_BUILD_FAILED");
         }
 
-        try (PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy())) {
-            X509CertificateHolder certificate;
+        DomainContinuationTemplate domain = caContinuation(request, issuerCertificate, issuerKeyRef);
+        try (PkiBusContentSigner signer = signer(issuerKeyRef, request.algorithmBindingPolicy(), cancellation,
+                domain)) {
+            X509Certificate certificate;
             try {
                 certificate = builder.build(signer);
+            } catch (PendingSigningOperation | zeroecho.pki.api.SigningExecutionException signingFailure) {
+                throw signingFailure;
             } catch (Exception ex) {
                 throw new PkiException("Certificate signing failed: code=CERTIFICATE_SIGN_FAILED");
             }
@@ -472,11 +556,11 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         }
     }
 
-    private X509CertificateHolder parseIssuerCertificateOrThrow(byte[] issuerCertDer) {
+    private X509Certificate parseIssuerCertificateOrThrow(byte[] issuerCertDer) {
         try {
             new BcX509SignedObjectValidator(signingBus.authority()).validateCertificate(
                     new ImmutableByteContent(issuerCertDer), Optional.empty(), CancellationSignal.NONE);
-            return new X509CertificateHolder(issuerCertDer);
+            return Pkix.parseCertificate(issuerCertDer);
         } catch (IOException | IllegalArgumentException ex) {
             throw new PkiException("Invalid issuer certificate: code=ISSUER_CERTIFICATE_INVALID");
         }
@@ -505,7 +589,7 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         }
     }
 
-    private SubjectPublicKeyInfo parseSubjectPublicKeyInfo(EncodedObject encoded) {
+    private byte[] parseSubjectPublicKeyInfo(EncodedObject encoded) {
         byte[] bytes = encoded.bytes();
         try {
             return parseSubjectPublicKeyInfo(bytes);
@@ -514,13 +598,12 @@ public final class BcX509CredentialIssuerBackend implements CredentialIssuerBack
         }
     }
 
-    private SubjectPublicKeyInfo parseSubjectPublicKeyInfo(byte[] bytes) {
+    private byte[] parseSubjectPublicKeyInfo(byte[] bytes) {
         try {
             new StreamingDerReader().validateSubjectPublicKeyInfo(bytes, MAXIMUM_SPKI_BYTES);
-            SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(bytes);
-            new BcX509AlgorithmAdapter(signingBus.authority().bindings()).decode(spki.getAlgorithm(),
-                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
-            return spki;
+            new BcX509AlgorithmAdapter(signingBus.authority().bindings()).decode(
+                    Pkix.subjectPublicKeyAlgorithm(bytes), X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+            return bytes.clone();
         } catch (IOException | IllegalArgumentException exception) {
             throw new PkiException("Invalid subject public key: code=SUBJECT_KEY_UNSUPPORTED");
         }

@@ -107,6 +107,11 @@ public interface ThrowingBiPredicate<T, U, E extends Exception> {
      * @param <T> the type of the first value being verified
      */
     abstract class VerificationBiPredicate<T> implements ThrowingBiPredicate<T, byte[], VerificationException> {
+        /** Creates a verification predicate base with no mutable state. */
+        public VerificationBiPredicate() {
+            // Stateless base class.
+        }
+
         /**
          * Verifies that {@code t} matches {@code u} according to the implementation
          * contract.

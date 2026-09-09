@@ -65,7 +65,17 @@ public final class AcmeNonceService {
     private final Map<String, Instant> byCommitment = new HashMap<>();
     private final NavigableMap<Instant, java.util.Set<String>> byExpiry = new TreeMap<>();
 
-    /** Creates a bounded nonce service for one exact ACME listener. */
+    /**
+     * Creates a bounded nonce service for one exact ACME listener.
+     *
+     * @param listenerId stable listener identity included in nonce commitments
+     * @param lifetime positive nonce lifetime, no greater than one hour
+     * @param maximumOutstanding maximum retained nonces, from 16 through 1,000,000
+     * @param clock authoritative time source
+     * @param random cryptographically secure entropy source
+     * @throws IllegalArgumentException if the listener identity, lifetime, or capacity is invalid
+     * @throws NullPointerException if {@code clock} or {@code random} is {@code null}
+     */
     public AcmeNonceService(String listenerId, Duration lifetime, int maximumOutstanding,
             Clock clock, SecureRandom random) {
         if (listenerId == null || !listenerId.matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
@@ -85,9 +95,16 @@ public final class AcmeNonceService {
         this.random = Objects.requireNonNull(random, "random");
     }
 
-    /** Issues one canonical unpadded Base64url nonce with 256 bits of entropy. */
-    public synchronized String issue(String directoryId) {
-        requireDirectory(directoryId);
+    /**
+     * Issues one canonical unpadded Base64url nonce with 256 bits of entropy.
+     *
+     * @param nonceScope canonical listener alias scope to bind into the commitment
+     * @return the newly issued one-time nonce
+     * @throws IllegalArgumentException if {@code nonceScope} is not a canonical DNS label
+     * @throws IllegalStateException if nonce capacity is exhausted
+     */
+    public synchronized String issue(String nonceScope) {
+        requireNonceScope(nonceScope);
         expire(clock.instant());
         if (byCommitment.size() >= maximumOutstanding) {
             throw new IllegalStateException("ACME nonce capacity is exhausted");
@@ -98,7 +115,7 @@ public final class AcmeNonceService {
         do {
             random.nextBytes(raw);
             nonce = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
-            commitment = commitment(nonce, directoryId);
+            commitment = commitment(nonce, nonceScope);
         } while (byCommitment.containsKey(commitment));
         java.util.Arrays.fill(raw, (byte) 0);
         Instant expiry = clock.instant().plus(lifetime);
@@ -107,13 +124,19 @@ public final class AcmeNonceService {
         return nonce;
     }
 
-    /** Consumes one nonce exactly once for the bound listener and directory. */
-    public synchronized boolean consume(String nonce, String directoryId) {
+    /**
+     * Consumes one nonce exactly once for the bound listener and canonical alias scope.
+     *
+     * @param nonce canonical unpadded Base64url nonce, or malformed input to reject
+     * @param nonceScope listener alias scope expected by the request
+     * @return {@code true} only for a live nonce bound to the supplied scope
+     */
+    public synchronized boolean consume(String nonce, String nonceScope) {
         Instant now = clock.instant();
         expire(now);
         if (nonce == null || !nonce.matches("[A-Za-z0-9_-]{43}")
-                || directoryId == null || directoryId.isBlank()) return false;
-        String key = commitment(nonce, directoryId);
+                || nonceScope == null || nonceScope.isBlank()) return false;
+        String key = commitment(nonce, nonceScope);
         Instant expiry = byCommitment.remove(key);
         if (expiry == null) return false;
         java.util.Set<String> bucket = byExpiry.get(expiry);
@@ -121,7 +144,11 @@ public final class AcmeNonceService {
         return expiry.isAfter(now);
     }
 
-    /** @return current bounded outstanding nonce count for diagnostics */
+    /**
+     * Returns the current bounded outstanding nonce count for diagnostics.
+     *
+     * @return the count after expired entries have been removed
+     */
     public synchronized int outstanding() { expire(clock.instant()); return byCommitment.size(); }
 
     private void expire(Instant now) {
@@ -130,12 +157,12 @@ public final class AcmeNonceService {
         }
     }
 
-    private String commitment(String nonce, String directoryId) {
+    private String commitment(String nonce, String nonceScope) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(listenerId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             digest.update((byte) 0);
-            digest.update(directoryId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            digest.update(nonceScope.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             digest.update((byte) 0);
             digest.update(nonce.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             return java.util.HexFormat.of().formatHex(digest.digest());
@@ -144,9 +171,9 @@ public final class AcmeNonceService {
         }
     }
 
-    private static void requireDirectory(String directoryId) {
-        if (directoryId == null || !directoryId.matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
-            throw new IllegalArgumentException("ACME directory identity is invalid");
+    private static void requireNonceScope(String nonceScope) {
+        if (nonceScope == null || !nonceScope.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) {
+            throw new IllegalArgumentException("ACME nonce scope is invalid");
         }
     }
 }

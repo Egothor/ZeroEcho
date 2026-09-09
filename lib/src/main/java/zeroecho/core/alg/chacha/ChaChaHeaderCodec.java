@@ -82,6 +82,13 @@ public final class ChaChaHeaderCodec implements SymmetricHeaderCodec {
     private static final int NONCE_LEN = 12;
 
     /**
+     * Creates a stateless ChaCha20 stream-header codec.
+     */
+    public ChaChaHeaderCodec() {
+        // Stateless codec.
+    }
+
+    /**
      * Writes the ChaCha20 header to the provided output.
      *
      * <p>

@@ -30,7 +30,7 @@
  * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *******************************************************************************/
+ ******************************************************************************/
 package zeroecho.pki.server.acme;
 
 import java.time.Clock;
@@ -55,7 +55,13 @@ public final class AcmeRateAdmission {
     private final Map<String, Counter> counters = new HashMap<>();
     private final Semaphore finalizations;
 
-    /** Creates admission limits from one exact ACME listener configuration. */
+    /**
+     * Creates admission limits from one exact ACME listener configuration.
+     *
+     * @param configuration validated listener limits
+     * @param clock authoritative window time source
+     * @throws NullPointerException if {@code clock} is {@code null}
+     */
     public AcmeRateAdmission(PkiServerConfiguration.AcmeListener configuration, Clock clock) {
         this.window = configuration.admissionWindow();
         this.accountLimit = configuration.maximumNewAccountsPerWindow();
@@ -66,26 +72,49 @@ public final class AcmeRateAdmission {
         this.finalizations = new Semaphore(configuration.maximumConcurrentFinalizations(), true);
     }
 
-    /** Admits one new-account request within the directory-wide window. */
+    /**
+     * Admits one new-account request within the directory-wide window.
+     *
+     * @param directoryId stable directory identity
+     * @return {@code true} if the request consumed an available window allowance
+     */
     public synchronized boolean admitAccount(String directoryId) {
         return admit("account:" + directoryId, accountLimit);
     }
 
-    /** Admits one new-order request within the exact account window. */
+    /**
+     * Admits one new-order request within the exact account window.
+     *
+     * @param accountId stable account identity
+     * @return {@code true} if the request consumed an available window allowance
+     */
     public synchronized boolean admitOrder(String accountId) { return admit("order:" + accountId, orderLimit); }
 
-    /** Admits one explicit challenge-validation attempt. */
+    /**
+     * Admits one explicit challenge-validation attempt.
+     *
+     * @param accountId stable account identity
+     * @return {@code true} if the attempt consumed an available window allowance
+     */
     public synchronized boolean admitValidation(String accountId) {
         return admit("validation:" + accountId, validationLimit);
     }
 
-    /** Acquires one listener-wide finalization permit without waiting. */
+    /**
+     * Acquires one listener-wide finalization permit without waiting.
+     *
+     * @return {@code true} if a permit was acquired
+     */
     public boolean tryAcquireFinalization() { return finalizations.tryAcquire(); }
 
     /** Releases one previously acquired finalization permit. */
     public void releaseFinalization() { finalizations.release(); }
 
-    /** @return bounded live counter population */
+    /**
+     * Returns the bounded live counter population.
+     *
+     * @return live counter-key count after expired windows are removed
+     */
     public synchronized int trackedKeys() { expire(clock.instant()); return counters.size(); }
 
     private boolean admit(String key, int limit) {

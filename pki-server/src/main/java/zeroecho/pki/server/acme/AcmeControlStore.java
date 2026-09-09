@@ -48,19 +48,36 @@ public final class AcmeControlStore {
     private final ServerControlStore control;
     private final AcmeStateCodec codec = new AcmeStateCodec();
 
-    /** Binds ACME state to the lifecycle-owned realm control store. */
+    /**
+     * Binds ACME state to the lifecycle-owned realm control store.
+     *
+     * @param control lifecycle-owned realm control store
+     */
     public AcmeControlStore(ServerControlStore control) {
         this.control = Objects.requireNonNull(control, "control");
     }
 
-    /** Creates one record after canonical sealing. */
+    /**
+     * Creates one record after canonical sealing.
+     *
+     * @param <T> ACME record type
+     * @param unsealed validated unsealed domain record
+     * @return canonically sealed and durably created record
+     */
     public <T> T create(T unsealed) {
         T sealed = seal(unsealed);
         control.mutateProtocol(List.of(new ServerControlStore.ProtocolMutation(record(sealed), Optional.empty())));
         return sealed;
     }
 
-    /** Atomically creates an order and its complete authorization/challenge graph. */
+    /**
+     * Atomically creates an order and its complete authorization/challenge graph.
+     *
+     * @param order unsealed order record
+     * @param authorizations complete unsealed authorization set
+     * @param challenges complete unsealed challenge set
+     * @return atomically committed sealed order graph
+     */
     public Graph createOrderGraph(AcmeState.Order order, List<AcmeState.Authorization> authorizations,
             List<AcmeState.Challenge> challenges) {
         AcmeState.Order sealedOrder = seal(order);
@@ -76,12 +93,23 @@ public final class AcmeControlStore {
         return new Graph(sealedOrder, sealedAuthorizations, sealedChallenges);
     }
 
-    /** Atomically compare-and-replaces a finite related record set. */
+    /**
+     * Atomically compare-and-replaces a finite related record set.
+     *
+     * @param replacements finite compare-and-set replacements
+     * @return durably replaced records in request order
+     */
     public List<Object> replace(List<Replacement> replacements) {
         return transition(replacements, List.of()).replaced();
     }
 
-    /** Atomically creates immutable records and replaces their related owners. */
+    /**
+     * Atomically creates immutable records and replaces their related owners.
+     *
+     * @param replacements finite compare-and-set replacements
+     * @param creations finite related records to create
+     * @return atomically committed transition result
+     */
     public Transition transition(List<Replacement> replacements, List<?> creations) {
         List<Object> sealed = replacements.stream().map(Replacement::next).map(this::sealObject).toList();
         List<Object> created = creations.stream().map(this::sealObject).toList();
@@ -94,13 +122,23 @@ public final class AcmeControlStore {
         control.mutateProtocol(changes); return new Transition(sealed, created);
     }
 
-    /** Results of one atomic ACME graph transition. */
+    /**
+     * Results of one atomic ACME graph transition.
+     *
+     * @param replaced durably replaced records in request order
+     * @param created durably created records in request order
+     */
     public record Transition(List<Object> replaced, List<Object> created) {
         /** Defensively snapshots transition results. */
         public Transition { replaced = List.copyOf(replaced); created = List.copyOf(created); }
     }
 
-    /** One exact prior-to-next ACME compare-and-set transition. */
+    /**
+     * One exact prior-to-next ACME compare-and-set transition.
+     *
+     * @param prior caller-observed current record
+     * @param next replacement record with the same type and identity
+     */
     public record Replacement(Object prior, Object next) {
         /** Validates stable type and identity before persistence. */
         public Replacement {
@@ -111,7 +149,14 @@ public final class AcmeControlStore {
         }
     }
 
-    /** Reads one exact typed record and cross-checks its identity. */
+    /**
+     * Reads one exact typed record and cross-checks its identity.
+     *
+     * @param <T> ACME record type
+     * @param type exact ACME record class
+     * @param recordId stable record identifier
+     * @return validated record or empty when absent
+     */
     public <T> Optional<T> get(Class<T> type, String recordId) {
         String namespace = namespace(type);
         return control.protocolRecord(namespace, recordId).map(value -> {
@@ -124,7 +169,15 @@ public final class AcmeControlStore {
         });
     }
 
-    /** Returns one bounded typed page without aggregating the namespace. */
+    /**
+     * Returns one bounded typed page without aggregating the namespace.
+     *
+     * @param <T> ACME record type
+     * @param type exact ACME record class
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded validated record page
+     */
     public <T> ServerControlStore.Page<T> page(Class<T> type, int offset, int limit) {
         ServerControlStore.Page<ServerControlStore.ProtocolRecord> page =
                 control.protocolRecords(namespace(type), offset, limit);
@@ -142,6 +195,8 @@ public final class AcmeControlStore {
     /**
      * Strictly decodes, cross-checks, expires, and safely recovers every ACME
      * control record without re-running validation or issuance.
+     *
+     * @param clock authoritative recovery clock
      */
     public void validateAndRecover(Clock clock) {
         Instant now = Objects.requireNonNull(clock, "clock").instant();
@@ -149,7 +204,7 @@ public final class AcmeControlStore {
         visit(AcmeState.Account.class, account -> {
             AcmeState.Directory directory = get(AcmeState.Directory.class, account.directoryId()).orElseThrow();
             if (account.directoryRevision() != directory.revision()
-                    || !account.directoryCommitment().equals(directory.commitment())) {
+                    || !account.directoryPolicyCommitment().equals(directory.policyCommitment())) {
                 throw new IllegalStateException("ACME account directory binding mismatch");
             }
         });
@@ -169,7 +224,7 @@ public final class AcmeControlStore {
         AcmeState.Account account = get(AcmeState.Account.class, order.accountId()).orElseThrow();
         AcmeState.Directory directory = get(AcmeState.Directory.class, order.directoryId()).orElseThrow();
         if (!account.directoryId().equals(order.directoryId()) || order.directoryRevision() != directory.revision()
-                || !order.directoryCommitment().equals(directory.commitment())) {
+                || !order.directoryPolicyCommitment().equals(directory.policyCommitment())) {
             throw new IllegalStateException("ACME order authority binding mismatch");
         }
         for (String authorizationId : order.authorizationIds()) {
@@ -182,10 +237,12 @@ public final class AcmeControlStore {
         if (!order.expiresAt().isAfter(now) && order.status() != AcmeState.OrderStatus.VALID
                 && order.status() != AcmeState.OrderStatus.INVALID) {
             replace(List.of(new Replacement(order, new AcmeState.Order(order.orderId(), order.accountId(),
-                    order.directoryId(), order.directoryRevision(), order.directoryCommitment(), order.authorityId(),
+                    order.directoryId(), order.directoryRevision(), order.directoryPolicyCommitment(), order.authorityId(),
                     order.profile(), order.issuerId(), order.issuancePathId(), order.issuancePathCommitment(),
                     order.identifiers(), order.notBefore(), order.notAfter(), AcmeState.OrderStatus.INVALID,
-                    order.authorizationIds(), Optional.empty(), order.createdAt(), order.expiresAt(), ZERO))));
+                    order.authorizationIds(), Optional.empty(), order.issuanceCommitment(),
+                    order.signingOperationId(),
+                    order.createdAt(), order.expiresAt(), ZERO))));
         }
     }
 
@@ -238,7 +295,13 @@ public final class AcmeControlStore {
 
     private static final String ZERO = "0".repeat(64);
 
-    /** Immutable atomically committed order graph. */
+    /**
+     * Immutable atomically committed order graph.
+     *
+     * @param order sealed order record
+     * @param authorizations sealed order authorizations
+     * @param challenges sealed authorization challenges
+     */
     public record Graph(AcmeState.Order order, List<AcmeState.Authorization> authorizations,
             List<AcmeState.Challenge> challenges) {
         /** Defensively snapshots the graph. */

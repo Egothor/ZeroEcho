@@ -64,6 +64,7 @@ public final class KeyPairKey implements Key, Serializable {
     @Serial
     private static final long serialVersionUID = 1L;
 
+    /** Wrapped key pair retained for capability dispatch. */
     private final KeyPair keyPair;
 
     /**

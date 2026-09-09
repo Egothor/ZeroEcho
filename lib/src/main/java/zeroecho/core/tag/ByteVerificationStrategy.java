@@ -59,6 +59,14 @@ public class ByteVerificationStrategy extends VerificationBiPredicate<byte[]> {
     private static final Logger LOG = Logger.getLogger(ByteVerificationStrategy.class.getName());
 
     /**
+     * Creates a stateless constant-time byte-array verifier.
+     */
+    public ByteVerificationStrategy() {
+        super();
+        // Stateless verifier.
+    }
+
+    /**
      * Verifies that two byte arrays are equal using a constant-time comparison.
      * 
      * <p>

@@ -55,9 +55,15 @@ final class SafeAudit {
         this.sink = Objects.requireNonNull(sink, "sink");
     }
 
+    @SuppressWarnings("PMD.AvoidCatchingGenericException") // AuditSink defines RuntimeException as its failure boundary.
     void record(String action, String principalId, Optional<PkiId> objectId, Map<String, String> details) {
-        sink.record(new AuditEvent(clock.instant(), "SERVER_SECURITY", action,
-                new Principal("SERVER_PRINCIPAL", principalId), new Purpose("SERVER_CONTROL"),
-                Objects.requireNonNull(objectId, "objectId"), Optional.empty(), Map.copyOf(details)));
+        try {
+            AuditEvent event = new AuditEvent(clock.instant(), "SERVER_SECURITY", action,
+                    new Principal("SERVER_PRINCIPAL", principalId), new Purpose("SERVER_CONTROL"),
+                    Objects.requireNonNull(objectId, "objectId"), Optional.empty(), Map.copyOf(details));
+            sink.record(event);
+        } catch (RuntimeException ignored) {
+            // Immediate server telemetry is best effort; authoritative state remains the source of truth.
+        }
     }
 }

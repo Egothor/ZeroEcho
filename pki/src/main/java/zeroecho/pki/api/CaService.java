@@ -35,6 +35,8 @@ package zeroecho.pki.api;
 
 import java.util.List;
 
+import zeroecho.core.io.CancellationSignal;
+
 import zeroecho.pki.api.ca.CaCreateCommand;
 import zeroecho.pki.api.ca.CaImportCommand;
 import zeroecho.pki.api.ca.CaKeyRotationCommand;
@@ -64,6 +66,11 @@ import zeroecho.pki.api.credential.Credential;
  */
 public interface CaService {
 
+    /** Returns the stable cancellation argument name used by default overloads. */
+    private static String cancellationParameter() {
+        return "cancellation";
+    }
+
     /**
      * Creates a new root CA entity and issues its initial CA credential.
      *
@@ -75,6 +82,18 @@ public interface CaService {
      *                                  framework backend error
      */
     PkiId createRoot(CaCreateCommand command);
+
+    /**
+     * Creates a root while carrying the originating cancellation signal.
+     *
+     * @param command validated root-authority creation command
+     * @param cancellation originating cooperative cancellation signal
+     * @return created authority identifier
+     */
+    default PkiId createRoot(CaCreateCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, cancellationParameter());
+        return createRoot(command);
+    }
 
     /**
      * Imports an existing root CA into the PKI inventory.
@@ -95,6 +114,18 @@ public interface CaService {
     PkiId importRoot(CaImportCommand command);
 
     /**
+     * Imports a root while carrying cancellation through managed-key proof.
+     *
+     * @param command validated root-authority import command
+     * @param cancellation originating cooperative cancellation signal
+     * @return imported authority identifier
+     */
+    default PkiId importRoot(CaImportCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, cancellationParameter());
+        return importRoot(command);
+    }
+
+    /**
      * Creates a new intermediate CA entity and issues its initial intermediate CA
      * credential.
      *
@@ -104,6 +135,18 @@ public interface CaService {
      * @throws PkiException             if creation fails
      */
     PkiId createIntermediate(IntermediateCreateCommand command);
+
+    /**
+     * Creates an intermediate while carrying originating cancellation.
+     *
+     * @param command validated intermediate-authority creation command
+     * @param cancellation originating cooperative cancellation signal
+     * @return created intermediate-authority identifier
+     */
+    default PkiId createIntermediate(IntermediateCreateCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, cancellationParameter());
+        return createIntermediate(command);
+    }
 
     /**
      * Issues a new CA credential for an existing intermediate CA entity.
@@ -121,6 +164,19 @@ public interface CaService {
     Credential issueIntermediateCertificate(IntermediateCertIssueCommand command);
 
     /**
+     * Issues an intermediate credential with originating cancellation.
+     *
+     * @param command validated intermediate credential issuance command
+     * @param cancellation originating cooperative cancellation signal
+     * @return newly issued CA credential
+     */
+    default Credential issueIntermediateCertificate(IntermediateCertIssueCommand command,
+            CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, cancellationParameter());
+        return issueIntermediateCertificate(command);
+    }
+
+    /**
      * Performs a CA credential rollover while keeping the same key reference.
      *
      * @param command rollover command
@@ -131,6 +187,18 @@ public interface CaService {
     PkiId rolloverCaCertificate(CaRolloverCommand command);
 
     /**
+     * Rolls over a CA credential while carrying originating cancellation.
+     *
+     * @param command validated CA rollover command
+     * @param cancellation originating cooperative cancellation signal
+     * @return unchanged authority identifier after successful rollover
+     */
+    default PkiId rolloverCaCertificate(CaRolloverCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, cancellationParameter());
+        return rolloverCaCertificate(command);
+    }
+
+    /**
      * Rotates the CA key reference and issues new corresponding CA credentials.
      *
      * @param command key rotation command
@@ -139,6 +207,18 @@ public interface CaService {
      * @throws PkiException             if rotation fails
      */
     PkiId rotateCaKey(CaKeyRotationCommand command);
+
+    /**
+     * Rotates a CA key while carrying originating cancellation.
+     *
+     * @param command validated CA key-rotation command
+     * @param cancellation originating cooperative cancellation signal
+     * @return unchanged authority identifier after successful rotation
+     */
+    default PkiId rotateCaKey(CaKeyRotationCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, cancellationParameter());
+        return rotateCaKey(command);
+    }
 
     /**
      * Updates CA operational state.
@@ -182,18 +262,38 @@ public interface CaService {
      */
     List<CaRecord> listCas(CaQuery query);
 
-    /** Returns one exact issuer generation owned by this PKI authority. */
+    /**
+     * Returns one exact issuer generation owned by this PKI authority.
+     *
+     * @param issuerId exact issuer-generation identifier
+     * @return immutable issuer generation
+     */
     IssuerGeneration getIssuerGeneration(PkiId issuerId);
 
-    /** Returns one exact immutable issuer chain path. */
+    /**
+     * Returns one exact immutable issuer chain path.
+     *
+     * @param pathId exact chain-path identifier
+     * @return immutable explicit chain path
+     */
     IssuerChainPath getIssuerChainPath(PkiId pathId);
 
-    /** Lists all explicit paths for an exact issuer generation. */
+    /**
+     * Lists all explicit paths for an exact issuer generation.
+     *
+     * @param issuerId exact issuer-generation identifier
+     * @return immutable finite list of explicit chain paths
+     */
     List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId);
 
     /**
      * Atomically selects the exact issuer generation and path used for future
      * issuance and bundle construction.
+     *
+     * @param caId authority whose current issuance selection changes
+     * @param issuerId exact issuer generation to select
+     * @param pathId exact path rooted at the selected issuer generation
+     * @param reason nonblank auditable operator reason
      */
     void selectIssuancePath(PkiId caId, PkiId issuerId, PkiId pathId, String reason);
 
@@ -201,6 +301,9 @@ public interface CaService {
      * Registers an additional explicit path for an existing issuer generation by
      * appending one already-authoritative parent path.
      *
+     * @param caId authority that owns the issuer generation
+     * @param issuerId exact issuer generation to extend
+     * @param parentPathId exact authoritative parent path
      * @return immutable registered path
      */
     IssuerChainPath registerIssuerChainPath(PkiId caId, PkiId issuerId, PkiId parentPathId);

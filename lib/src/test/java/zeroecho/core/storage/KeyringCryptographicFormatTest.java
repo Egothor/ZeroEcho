@@ -976,8 +976,23 @@ class KeyringCryptographicFormatTest {
     }
 
     private static void ownerOnly(Path path) throws Exception {
-        Files.setPosixFilePermissions(path, Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-                java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
+        if (java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            Files.setPosixFilePermissions(path, Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
+            return;
+        }
+        // Windows: express owner-only as an NTFS ACL with a single owner-full-control
+        // entry, mirroring the production Windows keyring policy so the crypto tamper
+        // matrices (which are platform-neutral) can be exercised here too.
+        java.nio.file.attribute.AclFileAttributeView view = Files.getFileAttributeView(path,
+                java.nio.file.attribute.AclFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        java.nio.file.attribute.UserPrincipal owner = view.getOwner();
+        java.nio.file.attribute.AclEntry entry = java.nio.file.attribute.AclEntry.newBuilder()
+                .setType(java.nio.file.attribute.AclEntryType.ALLOW)
+                .setPrincipal(owner)
+                .setPermissions(java.util.EnumSet.allOf(java.nio.file.attribute.AclEntryPermission.class))
+                .build();
+        view.setAcl(java.util.List.of(entry));
     }
 
     private static Path sidecar(Path keyring) {

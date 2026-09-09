@@ -83,6 +83,7 @@ public record WorkflowStateRecord(PkiId opId, String type, Principal owner,
         OrchestrationDurabilityPolicy durabilityPolicy, Instant createdAt, Instant updatedAt, Instant expiresAt,
         Encoding payloadEncoding, Optional<EncodedObject> payload) {
 
+    /** Validates the complete persisted workflow snapshot. */
     public WorkflowStateRecord {
         Objects.requireNonNull(opId, "opId");
         Objects.requireNonNull(type, "type");

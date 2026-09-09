@@ -59,6 +59,10 @@ public final class Http01ChallengeProvider implements AcmeChallengeProvider {
     /** Stable built-in provider identity. */
     public static final String ID = "zeroecho.http-01.v1";
 
+    /** Creates the stateless built-in HTTP-01 challenge provider. */
+    public Http01ChallengeProvider() {
+    }
+
     @Override public String id() { return ID; }
     @Override public Set<AcmeState.ChallengeType> challengeTypes() { return Set.of(AcmeState.ChallengeType.HTTP_01); }
 

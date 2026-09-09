@@ -73,25 +73,260 @@ GET  /health/ready
 GET  /admin/v1/realm
 GET  /admin/v1/operations
 GET  /admin/v1/operations/{operationId}
+GET  /admin/v1/signing-operations/{privatePkiId}
 POST /admin/v1/operations/{operationId}
 ```
 
 No ACME or public certificate repository routes are registered on the administrative listener. Optional ACME and public repository listeners are independently configured and bounded; see [pki-server-acme.md](pki-server-acme.md) and [pki-server-public-repository.md](pki-server-public-repository.md). Administrative POST bodies are strict UTF-8 JSON containing version, optional authority and approval identities, an optional shortening deadline, and the closed argument object for one typed operation. Batch execution, file paths, raw DER, polymorphic class metadata, unknown keys, duplicate keys, and trailing JSON are rejected.
 
-Responses are deterministic version-one JSON. They carry only safe typed results or stable failure codes. `RECOVERY_REQUIRED` and `EXTERNAL_OUTCOME_UNKNOWN` remain distinct; deadlines never claim rollback and never trigger automatic retry.
+Responses are deterministic version-one JSON. They carry only safe typed results
+or stable failure codes. A signing-backed operation that has yielded returns
+HTTP 202 with a `Location` under the authenticated
+`/admin/v1/signing-operations/{privatePkiId}` route. That route reports the
+explicit `SUCCEEDED`, `PENDING`, or `FAILED` application outcome without exposing
+the signed payload. The private `PkiId` is never a bearer capability: every
+lookup applies current RBAC to the exact original action and authority,
+issuer/profile, certificate, or status resource reconstructed from the durable
+domain continuation. Any currently authorized administrator may inspect it;
+denied, cross-realm, leaked, and absent identifiers all return the same 404.
+Status responses are `no-store` and carry `Referrer-Policy: no-referrer`.
+`RECOVERY_REQUIRED` and `EXTERNAL_OUTCOME_UNKNOWN` remain
+distinct; deadlines never claim rollback and never trigger automatic retry.
+
+### Pending credential-confirmation review
+
+`credential.confirmation.pending.list` is the read-only administrative review
+operation for credentials whose persisted confirmation lifecycle is still
+`PENDING`. It requires `CERTIFICATE_SEARCH` on a `CERTIFICATE` resource with an
+exact mandatory `authorityId`; `profileId` is an optional narrower scope. The
+operation uses `METADATA_REDACTED`, never requires approval, and is authorized
+and audited by the ordinary `ServerOperationGateway` path.
+
+```json
+{
+  "version": 1,
+  "authorityId": "ca:internal",
+  "arguments": {
+    "profileId": "server-tls",
+    "cutoffInclusive": "2026-08-30T12:00:00Z",
+    "limit": 100
+  }
+}
+```
+
+Results are ordered by `confirmationReviewAt` and then the canonical credential
+identity. Each item contains only `credentialId`, `authorityId`, `profileId`,
+`confirmationReviewAt`, and `initialDisclosurePolicy`. The result never exposes
+certificate DER, public keys, requester or owner identity, proof suites,
+commitments, challenges, nonces, presentations, or proof responses. A page may
+include an opaque `nextCursor`; it is bounded and valid only for the same store,
+cutoff, authority, and optional profile. The administrative transport accepts
+1 through 1000 items per page; the underlying application/store contract is
+bounded at 4096. A page can contain zero items and still carry `nextCursor`;
+clients must continue exclusively while the cursor is present and must not use
+item count as an end condition.
+
+The store maintains separate derived authority and authority-profile review
+projections so an authorized page never scans and subsequently filters another
+scope. Both projections are created atomically with a new pending lifecycle and
+removed atomically when confirmation succeeds. A review is actionable only
+while the lifecycle is `PENDING` and the credential has no revocation history.
+Authoritative revocation therefore suppresses a stale projection immediately;
+startup omits or deletes revoked projections while rebuilding from the lifecycle
+and immutable issued credential. Each list call examines at most `limit`
+projection entries and opportunistically repairs at most ten distinct
+permanently-revoked credentials (at most thirty exact-revision deletes covering
+both review projections and the proof challenge). Repair occurs after the read
+snapshot closes; a concurrent revision conflict is benign, while an uncertain
+or failed durable commit fails the read safely. The cursor advances from the
+last examined projection, including an anchor deleted by repair, so empty
+continuation pages make bounded progress. Non-permanent history is suppressed
+but not repaired, and malformed derived state fails closed. No worker, queue,
+cache, resident workflow object, or additional lifecycle state is introduced.
+
+### Overdue pending-confirmation revocation
+
+`credential.confirmation.pending.revoke` is the transport-neutral conditional
+mutation for one non-public credential returned by the review workflow. Its
+strict arguments contain only `credentialId` and an optional operator
+justification of at most 1024 characters. The standard outer `authorityId` is
+mandatory. A client cannot supply a cutoff, clock value, lifecycle or CAS field,
+profile, owner, issuer, responder, or revocation reason.
+
+```json
+{
+  "version": 1,
+  "authorityId": "ca:internal",
+  "arguments": {
+    "credentialId": "x509:0123456789abcdef",
+    "justification": "ticket-200"
+  }
+}
+```
+
+Before RBAC, the gateway performs one authoritative credential-scope lookup and
+reconstructs the exact realm, authority, frozen profile, and credential object.
+Authorization requires `CERTIFICATE_REVOKE` on that `CERTIFICATE` scope with
+relationship `ANY` and `METADATA_REDACTED`. `CERTIFICATE_SEARCH`, required by
+the separate list operation, does not authorize this mutation. An existing
+grant may require the ordinary durable approval flow; execution after approval
+re-evaluates all lifecycle and time conditions rather than trusting the earlier
+list result.
+
+Under the exact credential lock, the store requires an existing credential, a
+still-`PENDING` non-public lifecycle, no permanent revocation, and its own
+authoritative time to be strictly after `confirmationReviewAt`. Equality remains
+timely and is rejected. The operation always records the permanent PKIX reason
+`UNSPECIFIED`; the specialized operation identity and committed justification
+retain the more precise administrative meaning without publishing an unsupported
+claim about key compromise or affiliation.
+
+The authoritative revocation log is committed first. Derived authority/profile
+review projections and any outstanding proof challenge are then removed. A
+cleanup interruption returns `RECOVERY_REQUIRED`; it never claims rollback,
+returns the credential to the actionable list, or permits later proof completion.
+An exact evidence-bound retry completes cleanup, and startup independently omits
+and deletes stale derived state from the authoritative revocation history. The
+confirmation lifecycle remains historically `PENDING`; revocation history owns
+the terminal credential status. Certificate storage and download retention are
+unchanged, and existing OCSP, CRL, and status paths consume the same revocation
+authority.
+
+The operation commitment binds the specialized operation name, exact credential,
+fixed `UNSPECIFIED` reason, exact resource scope, and the optional justification
+commitment. Plaintext justification and confirmation proof material do not enter
+revocation evidence, audit, or diagnostics. One mutation performs a constant
+number of `O(log M)` point operations plus one bounded revocation append/fsync and
+bounded derived-metadata cleanup, using `O(1)` auxiliary memory. It adds no scan,
+index, worker, retry loop, queue, cache, handle, or new lifecycle state.
+
+### Credential-confirmation proof challenge issuance
+
+`credential.confirmation.challenge.issue` is the authenticated administrative
+operation that issues or replays the proof challenge for one persisted
+`PENDING` lifecycle. The strict argument object contains only `credentialId`;
+the standard outer `authorityId` is mandatory. Before RBAC, the gateway loads
+the committed credential and reconstructs its exact realm, issuer authority,
+frozen end-entity profile, and credential object identity. A missing credential
+or an outer-authority mismatch is denied without backend execution or existence
+disclosure. Authorization uses relationship `ANY`, `METADATA_REDACTED`, and the
+existing `CERTIFICATE_PUBLICATION_CHANGE` action on `CERTIFICATE`; the operation
+is mutating, Admin-only, and approval-free.
+
+```json
+{
+  "version": 1,
+  "authorityId": "ca:internal",
+  "arguments": {
+    "credentialId": "x509:0123456789abcdef"
+  }
+}
+```
+
+After authorization, the executor loads the authoritative lifecycle and builds
+the internal challenge request from its current revision and record commitment.
+The existing confirmation service owns live replay, concurrent convergence,
+expired replacement, frozen audience and suite settings, provider selection,
+and store mutation. The response contains exactly `credentialId`, the expected
+lifecycle revision and lifecycle/challenge commitments, proof-suite ID and
+configuration commitment, RSA maximum modulus bits, expiry, maximum response
+bytes, and the canonical unpadded Base64url presentation. It never returns DER,
+keys, nonce, audience, suite payload, owner/requester data, challenge internals,
+or proof data. Administrative responses retain the listener's existing
+`no-store` behavior.
+
+After authorization, issuance uses `O(D + K + T)` CPU, bounded
+credential-content I/O, and a constant number of `O(log M)` metadata point
+operations. `D` is bounded certificate DER (at most 1 MiB), `K` is public-key
+processing, `T` is bounded suite-presentation work (at most 2048 bytes before
+Base64url), and per-request memory is bounded by those inputs. Whole-request
+cost additionally includes the existing grant/role scans and audit/transport
+I/O. No handle, worker, queue, cache, registry, thread, or request state is
+retained.
+
+### Credential-confirmation proof completion
+
+`credential.confirmation.proof.complete` is the authenticated administrative
+adapter over the shared credential-confirmation proof service. Its strict
+argument object contains exactly the credential identity, both lifecycle CAS
+coordinates, and one canonical unpadded Base64url response. The standard outer
+`authorityId` is mandatory. The gateway reconstructs the exact committed
+authority, frozen profile, and credential object scope before RBAC, performs
+exactly one credential-scope lookup, and denies missing or mismatched scope
+without proof-service execution or existence disclosure.
+
+```json
+{
+  "version": 1,
+  "authorityId": "ca:internal",
+  "arguments": {
+    "credentialId": "x509:0123456789abcdef",
+    "expectedLifecycleRevision": 1,
+    "expectedLifecycleRecordCommitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "expectedChallengeRecordCommitment": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "response": "canonical-unpadded-base64url"
+  }
+}
+```
+
+Authorization requires `CERTIFICATE_CONFIRM` on the exact `CERTIFICATE`
+authority/profile/object scope with relationship `ANY` and
+`METADATA_REDACTED`; the operation is mutating, Admin-only, and approval-free.
+The built-in requester role receives this action with relationship `ANY`
+because possession is proven cryptographically rather than inferred from a
+persisted requester or owner. Authentication, scoped RBAC, and valid proof of
+possession must all succeed.
+
+The response decodes to 1 through 16384 bytes. Empty, padded, whitespace,
+standard-Base64, non-round-tripping, and oversized encodings are rejected. The
+maximum canonical unpadded Base64url representation is therefore 21846
+characters. The configurable Admin `maximumBodyBytes` must be at least 25230:
+this is the exact compact request framing plus worst-case JSON escaping of the
+bounded authority and credential identifiers, two commitments, and the maximum
+response. Startup rejects a smaller value; the existing upper bound remains in
+force and public/ACME listener limits are independent.
+
+The executor delegates exactly once to the shared proof service and returns
+only `confirmationResult`, with value `CONFIRMED` or `REJECTED`. A rejected
+proof is a successful operation with no confirmation mutation. An exact
+terminal replay returns `CONFIRMED` without re-running provider verification.
+Operation commitments bind both CAS coordinates and a SHA-256 digest of the
+response; raw proof bytes never enter operation text, audit, or diagnostics.
+Responses retain the listener's existing `no-store` behavior.
+
+For a pending lifecycle, post-authorization work uses
+`O(D + T + R + V(K))` CPU and a constant number of `O(log M)` metadata point
+operations. Exact terminal replay uses `O(R + log M)` and performs no provider,
+DER, or cryptographic verification work. `D` is bounded credential content (at
+most 1 MiB), `T` is the bounded challenge presentation (at most 2 KiB), `R` is
+the proof response (at most 16 KiB), and `V(K)` is the suite verification cost
+for the credential public key. Per-request memory is bounded by those inputs;
+whole-request work additionally includes existing grant/role scans and
+audit/transport I/O. No state, worker, queue, cache, handle, or retry mechanism
+is added.
 
 ## Capacity and shutdown
 
 Transport workers, transport backlog, concurrent operation workers, waiting operation capacity, admitted requests, request body size, deadlines, and both shutdown periods are finite configuration values. Saturation never runs a request on the caller thread and a rejected request never invokes the gateway.
 
-Configuration schema version 6 adds `signingReconciliation`. Its production
-defaults are enabled, 256 examined records, 64 provider calls, a 30-second pass
-timeout, a 10-second provider-call timeout, and a fixed 2-second idle interval.
+Configuration schema version 7 is the only accepted server schema. Every realm
+has a mandatory `confirmationProof` object. Its `audience` is a public,
+non-secret deployment or cluster identifier expressed as an exact lowercase
+UUID-v4 URN. Operators provision the same audience mapping into participating
+clients and keep it unique across independently administered deployments. The
+value is never accepted from a request or generated at startup. Omitting
+`challengeTtlMillis` or `rsaMaximumModulusBits` selects decoder defaults of five
+minutes and 8192 bits. Rotating proof policy applies only to confirmation
+lifecycles without a persisted challenge. Any existing challenge, including an
+expired challenge replacement, retains its frozen audience and settings.
+
+The `signingReconciliation` production values are enabled, 256 examined
+records, 64 provider calls, a 30-second pass timeout, a 10-second provider-call
+timeout, and a fixed 2-second idle interval.
 `maxRecords` is 1 through 4096, `maxCalls` is 1 through the record
 bound, all durations are positive, and the provider timeout cannot exceed the
-pass timeout. Version 5 configurations migrate to these defaults. Set `enabled`
-to `false` only when an external owner deliberately invokes the transport-neutral
-session reconciliation API.
+pass timeout. Set `enabled` to `false` only when an external owner deliberately
+invokes the transport-neutral session reconciliation API.
 
 Shutdown first removes readiness and admission, stops listener acceptance, drains for the configured graceful period, cooperatively cancels remaining work, waits only for the forced period, then closes the one realm context. Already committed PKI changes remain committed.
 

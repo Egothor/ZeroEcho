@@ -114,6 +114,13 @@ public final class KemMessageAgreementAdapter implements MessageAgreementContext
         private Role role;
 
         /**
+         * Creates an unbound adapter builder; KEM context and role must be selected before building.
+         */
+        public Builder() {
+            // Configuration is supplied through the fluent methods.
+        }
+
+        /**
          * Binds this adapter to a KEM context.
          *
          * @param kem underlying KEM context

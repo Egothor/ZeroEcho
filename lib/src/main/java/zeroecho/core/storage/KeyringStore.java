@@ -52,7 +52,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
-import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.file.attribute.UserPrincipal;
@@ -61,6 +60,7 @@ import java.security.Key;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -156,7 +156,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
             PosixFilePermission.OWNER_WRITE);
     /* default */ static final FileAttribute<Set<PosixFilePermission>> DIRECTORY_ATTRIBUTE = PosixFilePermissions
             .asFileAttribute(DIRECTORY_PERMISSIONS);
-    private static final FileAttribute<Set<PosixFilePermission>> FILE_ATTRIBUTE = PosixFilePermissions
+    /* default */ static final FileAttribute<Set<PosixFilePermission>> FILE_ATTRIBUTE = PosixFilePermissions
             .asFileAttribute(FILE_PERMISSIONS);
     private static final KeyringRandomBytes SYSTEM_RANDOM = destination -> RandomSupport.getRandom()
             .nextBytes(destination);
@@ -185,7 +185,12 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
      * Standard encoded key forms supported by the encrypted store.
      */
     public enum Encoding {
-        X509(1), PKCS8(2), RAW(3);
+        /** X.509 SubjectPublicKeyInfo public-key encoding. */
+        X509(1),
+        /** PKCS#8 PrivateKeyInfo private-key encoding. */
+        PKCS8(2),
+        /** Raw secret-key bytes. */
+        RAW(3);
 
         private final int code;
 
@@ -207,7 +212,12 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
      * Key classifications supported by the encrypted store.
      */
     public enum Kind {
-        PUBLIC_KEY(1), PRIVATE_KEY(2), SECRET_KEY(3);
+        /** Public asymmetric key. */
+        PUBLIC_KEY(1),
+        /** Private asymmetric key. */
+        PRIVATE_KEY(2),
+        /** Symmetric secret key. */
+        SECRET_KEY(3);
 
         private final int code;
 
@@ -502,6 +512,43 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
                 result.add(SecuritySupport.stripKnownSuffix(alias));
             }
             return result;
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Computes the stable ZeroEcho signing-configuration tag for this keyring.
+     *
+     * <p>The tag is HMAC-SHA-256 under a store-specific key derived from the
+     * keyring master key and store UUID. Its canonical transcript binds the
+     * resolved workflow identifier, operation horizon, key-reference prefix,
+     * component-suffix policy, and the ordered identities, metadata, ciphertext
+     * lengths, and ciphertext digests of all effective keyring entries. Paths,
+     * passwords, salts, nonces, counters, timestamps, plaintext keys, and raw
+     * ciphertext are excluded.</p>
+     *
+     * <p>The returned 32-byte array is newly owned by the caller. This method is
+     * thread-safe, runs in O(n + b) time for {@code n} entries and {@code b}
+     * bytes of included metadata, and uses O(b) temporary memory. All temporary
+     * transcript and derived-key bytes are cleared before return.</p>
+     *
+     * @param workflowId stable resolved workflow identifier; never blank
+     * @param operationHorizon resolved positive operation horizon
+     * @param keyRefPrefix resolved non-blank key-reference prefix
+     * @param requireComponentSuffix resolved component-suffix policy
+     * @return newly owned 32-byte signing-configuration tag
+     * @throws IllegalArgumentException if an effective configuration value is invalid
+     * @throws IllegalStateException if the keyring is closed or poisoned
+     * @throws GeneralSecurityException if HMAC-SHA-256 is unavailable
+     */
+    public byte[] zeroEchoSigningConfigurationTag(String workflowId, Duration operationHorizon,
+            String keyRefPrefix, boolean requireComponentSuffix) throws GeneralSecurityException {
+        lifecycleLock.readLock().lock();
+        try {
+            ensureOpenUnchecked();
+            return KeyringSigningConfigurationKdf.tag(masterKey, storeId, workflowId, operationHorizon,
+                    keyRefPrefix, requireComponentSuffix, entries.values());
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -856,8 +903,8 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
             boolean moved = false;
             IOException primary = null;
             try {
-                temporary = fileOperations.createTemporary(target, parent, "." + destination.getFileName() + ".", ".tmp",
-                        FILE_ATTRIBUTE);
+                temporary = fileOperations.createTemporary(target, parent, "." + destination.getFileName() + ".",
+                        ".tmp");
                 KeyringSecuritySupport.validateOwnerOnly(temporary, false);
                 fileOperations.writeTemporary(target, temporary, image);
                 fileOperations.forceTemporary(target, temporary);
@@ -1494,7 +1541,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
     }
 
     /** Immutable encrypted entry retained while the store is open. */
-    private static final class EncryptedEntry {
+    private static final class EncryptedEntry implements KeyringSigningConfigurationKdf.EntryView {
         private final byte[] entryId;
         private final int position;
         private final String alias;
@@ -1519,6 +1566,21 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
             this.nonce = nonce.clone();
             this.ciphertext = ciphertext.clone();
             this.digest = digest.clone();
+        }
+
+        @Override public int position() { return position; }
+
+        @Override
+        public void writeSigningConfigurationIdentity(DataOutputStream output) throws IOException {
+            KeyringSigningConfigurationKdf.writeBytes(output, entryId);
+            KeyringSigningConfigurationKdf.writeInt(output, position);
+            KeyringSigningConfigurationKdf.writeString(output, alias);
+            KeyringSigningConfigurationKdf.writeString(output, algorithm);
+            KeyringSigningConfigurationKdf.writeInt(output, kind.code);
+            KeyringSigningConfigurationKdf.writeInt(output, encoding.code);
+            KeyringSigningConfigurationKdf.writeInt(output, hmacVariant.code());
+            KeyringSigningConfigurationKdf.writeInt(output, ciphertext.length);
+            KeyringSigningConfigurationKdf.writeBytes(output, digest);
         }
     }
 
@@ -1553,6 +1615,15 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
 
     /** Process-lifetime ownership of the sibling lock file. */
     private static final class Ownership implements AutoCloseable {
+        /**
+         * The single sentinel byte the ownership fence locks. Locking a byte beyond
+         * any file content keeps the exclusive single-writer fence (two openers
+         * contend on the same byte) while leaving content bytes unlocked, so a
+         * concurrent content read is not blocked by Windows mandatory file locking
+         * (POSIX locks are advisory and were never affected).
+         */
+        private static final long FENCE_POSITION = Long.MAX_VALUE - 1L;
+
         private final FileChannel channel;
         private final FileLock lock;
         private final UserPrincipal owner;
@@ -1569,12 +1640,10 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
         /* default */ static Ownership acquire(Path keyring) throws IOException {
             Path lockPath = keyring.resolveSibling(keyring.getFileName() + ".lock");
             try {
-                UserPrincipal expectedOwner = Files
-                        .readAttributes(lockPath.getParent(), PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS)
-                        .owner();
+                UserPrincipal expectedOwner = Files.getOwner(lockPath.getParent(), LinkOption.NOFOLLOW_LINKS);
                 if (!Files.exists(lockPath, LinkOption.NOFOLLOW_LINKS)) {
                     try {
-                        Files.createFile(lockPath, FILE_ATTRIBUTE);
+                        Files.createFile(lockPath, KeyringPlatformPolicy.INSTANCE.fileCreateAttributes());
                     } catch (java.nio.file.FileAlreadyExistsException ignored) {
                         // A concurrent creator won; validate the existing file below.
                     }
@@ -1584,7 +1653,7 @@ public final class KeyringStore implements AutoCloseable, Destroyable {
                 try {
                     FileLock lock;
                     try {
-                        lock = channel.tryLock();
+                        lock = channel.tryLock(FENCE_POSITION, 1L, false);
                     } catch (OverlappingFileLockException exception) {
                         lock = null;
                     }

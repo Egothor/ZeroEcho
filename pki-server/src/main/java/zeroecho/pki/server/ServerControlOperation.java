@@ -38,6 +38,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.server.acme.AcmeService;
 
 /** Closed transport-neutral server-control administration operation hierarchy. */
@@ -56,7 +57,8 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.ActivateBreakGlass,
         ServerControlOperation.InspectBreakGlass, ServerControlOperation.ListBreakGlass,
         ServerControlOperation.RevokeBreakGlass, ServerControlOperation.InspectDisclosure,
-        ServerControlOperation.SetDisclosure, ServerControlOperation.IssueCapability,
+        ServerControlOperation.SetDisclosure, ServerControlOperation.EnrollCredentialPublication,
+        ServerControlOperation.IssueCapability,
         ServerControlOperation.RevokeCapability, ServerControlOperation.InspectAuditView,
         ServerControlOperation.InspectRepositoryAlias, ServerControlOperation.ListRepositoryAliases,
         ServerControlOperation.SetRepositoryAlias, ServerControlOperation.RemoveRepositoryAlias,
@@ -65,240 +67,527 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.InspectAcmeAccount, ServerControlOperation.ListAcmeAccounts,
         ServerControlOperation.DeactivateAcmeAccount, ServerControlOperation.RegisterOcspResponder,
         ServerControlOperation.InspectOcspResponder, ServerControlOperation.ListOcspResponders,
-        ServerControlOperation.SetOcspResponderActive {
+        ServerControlOperation.SetOcspResponderActive, ServerControlOperation.SearchAudit,
+        ServerControlOperation.VerifyAuditIntegrity {
 
-    /** @return stable operation identity */
+    /**
+     * Returns the stable operation identity used for authorization and dispatch.
+     *
+     * @return stable operation identity
+     */
     String name();
 
-    /** Principal registration. */
+    /**
+     * Principal registration.
+     *
+     * @param principal principal to register
+     */
     record RegisterPrincipal(SecurityPrincipal principal) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.principal.register";
+        /** Validates the operation's immutable input. */
         public RegisterPrincipal { Objects.requireNonNull(principal, "principal"); }
         @Override public String name() { return NAME; }
     }
-    /** Principal lookup. */
+    /**
+     * Principal lookup.
+     *
+     * @param principalId stable principal identifier
+     */
     record InspectPrincipal(String principalId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.principal.inspect";
+        /** Validates the operation's immutable input. */
         public InspectPrincipal { Permission.requirePrincipal(principalId); }
         @Override public String name() { return NAME; }
     }
-    /** Bounded principal page. */
+    /**
+     * Bounded principal page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
     record ListPrincipals(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.principal.list";
+        /** Validates the operation's immutable input. */
         public ListPrincipals { page(offset, limit); }
         @Override public String name() { return NAME; }
     }
-    /** Principal enablement transition. */
+    /**
+     * Principal enablement transition.
+     *
+     * @param principalId stable principal identifier
+     * @param enabled desired enabled state
+     */
     record SetPrincipalEnabled(String principalId, boolean enabled) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String ENABLE = "security.principal.enable";
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String DISABLE = "security.principal.disable";
+        /** Validates the operation's immutable input. */
         public SetPrincipalEnabled { Permission.requirePrincipal(principalId); }
         @Override public String name() { return enabled ? ENABLE : DISABLE; }
     }
     /** Immutable role-template list. */
     record ListRoleTemplates() implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.role-template.list";
         @Override public String name() { return NAME; }
     }
-    /** Immutable role-template lookup. */
+    /**
+     * Immutable role-template lookup.
+     *
+     * @param templateId stable role-template identifier
+     * @param version positive template version
+     */
     record InspectRoleTemplate(String templateId, int version) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.role-template.inspect";
+        /** Validates the operation's immutable input. */
         public InspectRoleTemplate { Permission.requireId(templateId, "role template"); if (version <= 0) throw invalid(); }
         @Override public String name() { return NAME; }
     }
-    /** Scoped assignment creation. */
+    /**
+     * Scoped assignment creation.
+     *
+     * @param assignment validated scoped role assignment
+     */
     record CreateRoleAssignment(RoleTemplateCatalog.Assignment assignment) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.role-assignment.create";
+        /** Validates the operation's immutable input. */
         public CreateRoleAssignment { Objects.requireNonNull(assignment, "assignment"); }
         @Override public String name() { return NAME; }
     }
-    /** Scoped assignment lookup. */
+    /**
+     * Scoped assignment lookup.
+     *
+     * @param assignmentId stable assignment identifier
+     */
     record InspectRoleAssignment(String assignmentId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.role-assignment.inspect";
+        /** Validates the operation's immutable input. */
         public InspectRoleAssignment { Permission.requireId(assignmentId, "assignment"); }
         @Override public String name() { return NAME; }
     }
-    /** Bounded assignment page. */
+    /**
+     * Bounded assignment page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
     record ListRoleAssignments(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.role-assignment.list";
+        /** Validates the operation's immutable input. */
         public ListRoleAssignments { page(offset, limit); }
         @Override public String name() { return NAME; }
     }
-    /** Durable assignment revocation. */
+    /**
+     * Durable assignment revocation.
+     *
+     * @param assignmentId stable assignment identifier
+     */
     record RevokeRoleAssignment(String assignmentId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.role-assignment.revoke";
+        /** Validates the operation's immutable input. */
         public RevokeRoleAssignment { Permission.requireId(assignmentId, "assignment"); }
         @Override public String name() { return NAME; }
     }
-    /** Direct grant creation. */
+    /**
+     * Direct grant creation.
+     *
+     * @param grant validated permission grant
+     */
     record CreateGrant(Permission.Grant grant) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.grant.create";
+        /** Validates the operation's immutable input. */
         public CreateGrant { Objects.requireNonNull(grant, "grant"); }
         @Override public String name() { return NAME; }
     }
-    /** Direct grant lookup. */
+    /**
+     * Direct grant lookup.
+     *
+     * @param grantId stable grant identifier
+     */
     record InspectGrant(String grantId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.grant.inspect";
+        /** Validates the operation's immutable input. */
         public InspectGrant { Permission.requireId(grantId, "grant"); }
         @Override public String name() { return NAME; }
     }
-    /** Bounded direct-grant page. */
+    /**
+     * Bounded direct-grant page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
     record ListGrants(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.grant.list";
+        /** Validates the operation's immutable input. */
         public ListGrants { page(offset, limit); }
         @Override public String name() { return NAME; }
     }
-    /** Durable direct-grant revocation. */
+    /**
+     * Durable direct-grant revocation.
+     *
+     * @param grantId stable grant identifier
+     */
     record RevokeGrant(String grantId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.grant.revoke";
+        /** Validates the operation's immutable input. */
         public RevokeGrant { Permission.requireId(grantId, "grant"); }
         @Override public String name() { return NAME; }
     }
-    /** Side-effect-free authorization simulation. */
+    /**
+     * Side-effect-free authorization simulation.
+     *
+     * @param principalId stable principal identifier
+     * @param action permission action to evaluate
+     * @param resource exact target resource
+     * @param relationship requester-to-resource relationship
+     * @param dataView requested data view
+     * @param context closed authorization context
+     */
     record EvaluateAuthorization(String principalId, Permission.Action action, Permission.Resource resource,
             Permission.Relationship relationship, Permission.DataView dataView,
             Permission.Context context) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.authorization.evaluate";
+        /** Validates the operation's immutable input. */
         public EvaluateAuthorization { Permission.requirePrincipal(principalId); Objects.requireNonNull(action);
             Objects.requireNonNull(resource); Objects.requireNonNull(relationship); Objects.requireNonNull(dataView);
             Objects.requireNonNull(context); }
         @Override public String name() { return NAME; }
     }
-    /** Exact future-operation approval request. */
+    /**
+     * Exact future-operation approval request.
+     *
+     * @param approvalId stable approval identifier
+     * @param targetOperation exact future administrative operation
+     * @param targetResource exact future target resource
+     */
     record RequestApproval(String approvalId, AdministrativeOperation targetOperation,
             Permission.Resource targetResource) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.approval.request";
+        /** Validates the operation's immutable input. */
         public RequestApproval { Permission.requireId(approvalId, "approval");
             Objects.requireNonNull(targetOperation); Objects.requireNonNull(targetResource);
             if (targetOperation instanceof AdministrativeOperation.Control control
                     && control.operation() instanceof RequestApproval) throw invalid(); }
         @Override public String name() { return NAME; }
     }
-    /** Approval lookup. */
+    /**
+     * Approval lookup.
+     *
+     * @param approvalId stable approval identifier
+     */
     record InspectApproval(String approvalId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.approval.inspect";
+        /** Validates the operation's immutable input. */
         public InspectApproval { Permission.requireId(approvalId, "approval"); }
         @Override public String name() { return NAME; }
     }
-    /** Bounded approval page. */
+    /**
+     * Bounded approval page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @param state optional approval-state filter
+     * @param requesterPrincipalId optional requester-principal filter
+     * @param targetOperationId optional target-operation filter
+     */
     record ListApprovals(int offset, int limit, Optional<ApprovalService.State> state,
             Optional<String> requesterPrincipalId, Optional<String> targetOperationId)
             implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.approval.list";
+        /** Validates the operation's immutable input. */
         public ListApprovals { page(offset, limit); state = Objects.requireNonNull(state);
             requesterPrincipalId = Objects.requireNonNull(requesterPrincipalId)
                     .map(Permission::requirePrincipal);
             targetOperationId = Objects.requireNonNull(targetOperationId)
                     .map(value -> Permission.requireBounded(value, 256, "target operation")); }
-        /** Creates an unfiltered bounded approval page. */
+        /**
+         * Creates an unfiltered bounded approval page.
+         *
+         * @param offset zero-based page offset
+         * @param limit positive page-size limit
+         */
         public ListApprovals(int offset, int limit) {
             this(offset, limit, Optional.empty(), Optional.empty(), Optional.empty());
         }
         @Override public String name() { return NAME; }
     }
-    /** Approval or rejection decision. */
+    /**
+     * Approval or rejection decision.
+     *
+     * @param approvalId stable approval identifier
+     * @param choice approval or rejection decision
+     * @param justification bounded operator justification
+     */
     record DecideApproval(String approvalId, ApprovalService.Choice choice,
             String justification) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String APPROVE = "security.approval.approve";
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String REJECT = "security.approval.reject";
+        /** Validates the operation's immutable input. */
         public DecideApproval { Permission.requireId(approvalId, "approval"); Objects.requireNonNull(choice);
             Permission.requireBounded(justification, 2048, "justification"); }
         @Override public String name() { return choice == ApprovalService.Choice.APPROVE ? APPROVE : REJECT; }
     }
-    /** Approval cancellation. */
+    /**
+     * Approval cancellation.
+     *
+     * @param approvalId stable approval identifier
+     */
     record CancelApproval(String approvalId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.approval.cancel";
+        /** Validates the operation's immutable input. */
         public CancelApproval { Permission.requireId(approvalId, "approval"); }
         @Override public String name() { return NAME; }
     }
-    /** Independently approved emergency grant creation. */
+    /**
+     * Independently approved emergency grant creation.
+     *
+     * @param breakGlassId stable break-glass identifier
+     * @param principalId stable principal identifier
+     * @param grant validated permission grant
+     * @param reason bounded operator reason
+     * @param expiresAt mandatory capability or grant expiry
+     */
     record CreateBreakGlass(String breakGlassId, String principalId, Permission.Grant grant,
             String reason, Instant expiresAt) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String CREATE = "security.break-glass.create";
+        /** Validates the operation's immutable input. */
         public CreateBreakGlass { Permission.requireId(breakGlassId, "break-glass");
             Permission.requirePrincipal(principalId); Objects.requireNonNull(grant);
             Permission.requireBounded(reason, 2048, "reason"); Objects.requireNonNull(expiresAt); }
         @Override public String name() { return CREATE; }
     }
-    /** Activation of one already-created approved emergency grant. */
+    /**
+     * Activation of one already-created approved emergency grant.
+     *
+     * @param breakGlassId stable break-glass identifier
+     */
     record ActivateBreakGlass(String breakGlassId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String ACTIVATE = "security.break-glass.activate";
+        /** Validates the operation's immutable input. */
         public ActivateBreakGlass { Permission.requireId(breakGlassId, "break-glass"); }
         @Override public String name() { return ACTIVATE; }
     }
-    /** Break-glass lookup. */
+    /**
+     * Break-glass lookup.
+     *
+     * @param breakGlassId stable break-glass identifier
+     */
     record InspectBreakGlass(String breakGlassId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.break-glass.inspect";
+        /** Validates the operation's immutable input. */
         public InspectBreakGlass { Permission.requireId(breakGlassId, "break-glass"); }
         @Override public String name() { return NAME; }
     }
-    /** Bounded break-glass page. */
+    /**
+     * Bounded break-glass page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
     record ListBreakGlass(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.break-glass.list";
+        /** Validates the operation's immutable input. */
         public ListBreakGlass { page(offset, limit); }
         @Override public String name() { return NAME; }
     }
-    /** Break-glass revocation. */
+    /**
+     * Break-glass revocation.
+     *
+     * @param breakGlassId stable break-glass identifier
+     */
     record RevokeBreakGlass(String breakGlassId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.break-glass.revoke";
+        /** Validates the operation's immutable input. */
         public RevokeBreakGlass { Permission.requireId(breakGlassId, "break-glass"); }
         @Override public String name() { return NAME; }
     }
-    /** Disclosure metadata lookup. */
+    /**
+     * Disclosure metadata lookup.
+     *
+     * @param objectId exact target object identifier
+     */
     record InspectDisclosure(PkiId objectId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.disclosure.inspect";
+        /** Validates the operation's immutable input. */
         public InspectDisclosure { Objects.requireNonNull(objectId); }
         @Override public String name() { return NAME; }
     }
-    /** Disclosure-only state transition. */
+    /**
+     * Disclosure-only state transition.
+     *
+     * @param objectId exact target object identifier
+     * @param policy replacement disclosure policy
+     */
     record SetDisclosure(PkiId objectId, DisclosureService.Policy policy) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.disclosure.set";
+        /** Validates the operation's immutable input. */
         public SetDisclosure { Objects.requireNonNull(objectId); Objects.requireNonNull(policy); }
         @Override public String name() { return NAME; }
     }
-    /** One-time unlisted retrieval capability issuance. */
+    /**
+     * Explicit post-issuance enrollment into confirmation and disclosure.
+     *
+     * @param credentialId exact credential identifier
+     * @param ownerPrincipalId optional owning principal identifier
+     */
+    record EnrollCredentialPublication(PkiId credentialId, Optional<String> ownerPrincipalId)
+            implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
+        public static final String NAME = "certificate.publication.enroll";
+        /** Validates the operation's immutable input. */
+        public EnrollCredentialPublication {
+            Objects.requireNonNull(credentialId, "credentialId");
+            ownerPrincipalId = Objects.requireNonNull(ownerPrincipalId, "ownerPrincipalId")
+                    .map(Permission::requirePrincipal);
+        }
+        @Override public String name() { return NAME; }
+    }
+    /**
+     * One-time unlisted retrieval capability issuance.
+     *
+     * @param objectId exact target object identifier
+     * @param expiresAt mandatory capability or grant expiry
+     */
     record IssueCapability(PkiId objectId, Instant expiresAt) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.disclosure.capability.issue";
+        /** Validates the operation's immutable input. */
         public IssueCapability { Objects.requireNonNull(objectId); Objects.requireNonNull(expiresAt); }
         @Override public String name() { return NAME; }
     }
-    /** Capability revocation by non-bearer record identity. */
+    /**
+     * Capability revocation by non-bearer record identity.
+     *
+     * @param capabilityId stable non-bearer capability identifier
+     */
     record RevokeCapability(String capabilityId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "security.disclosure.capability.revoke";
+        /** Validates the operation's immutable input. */
         public RevokeCapability { Permission.requireId(capabilityId, "capability"); }
         @Override public String name() { return NAME; }
     }
-    /** Existing safe auditor projection over one server-control object. */
+    /**
+     * Existing safe auditor projection over one server-control object.
+     *
+     * @param objectId exact target object identifier
+     * @param view requested audit data view
+     * @param reasonReference optional audit reason reference
+     */
     record InspectAuditView(PkiId objectId, Permission.DataView view,
             Optional<String> reasonReference) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String REDACTED = "security.audit-view.inspect-redacted";
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String FULL = "security.audit-view.inspect-full";
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String PII = "security.audit-view.inspect-pii";
+        /** Validates the operation's immutable input. */
         public InspectAuditView { Objects.requireNonNull(objectId); Objects.requireNonNull(view);
             reasonReference = Objects.requireNonNull(reasonReference); }
         @Override public String name() { return switch (view) { case METADATA_REDACTED -> REDACTED;
             case METADATA_FULL, CONTENT_FULL -> FULL; case PII_FULL -> PII; }; }
     }
 
-    /** Exact repository alias inspection. */
+    /**
+     * Bounded audit-log search over the packaged admin API; preserves tamper-evidence (read-only).
+     *
+     * @param query bounded audit query
+     */
+    record SearchAudit(zeroecho.pki.api.audit.AuditQuery query) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
+        public static final String NAME = "security.audit.search";
+        /** Validates the operation's immutable input. */
+        public SearchAudit { Objects.requireNonNull(query, "query"); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Verifies the audit-log hash chain, optionally against a trusted head anchor.
+     *
+     * @param expectedHead optional trusted audit-chain head
+     */
+    record VerifyAuditIntegrity(Optional<zeroecho.pki.api.audit.AuditChainHead> expectedHead)
+            implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
+        public static final String NAME = "security.audit.verify-integrity";
+        /** Validates the operation's immutable input. */
+        public VerifyAuditIntegrity {
+            expectedHead = Objects.requireNonNull(expectedHead, "expectedHead");
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Exact repository alias inspection.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param type repository alias type
+     */
     record InspectRepositoryAlias(PkiId authorityId, RepositoryAliasService.Type type)
             implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "repository.alias.inspect";
+        /** Validates the operation's immutable input. */
         public InspectRepositoryAlias { Objects.requireNonNull(authorityId); Objects.requireNonNull(type); }
         @Override public String name() { return NAME; }
     }
 
-    /** Bounded repository alias page. */
+    /**
+     * Bounded repository alias page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
     record ListRepositoryAliases(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "repository.alias.list";
+        /** Validates the operation's immutable input. */
         public ListRepositoryAliases { page(offset, limit); }
         @Override public String name() { return NAME; }
     }
 
-    /** Exact CRL or chain alias publication with expected-current protection. */
+    /**
+     * Exact CRL or chain alias publication with expected-current protection.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param type repository alias type
+     * @param targetObjectId exact alias target identifier
+     * @param issuerId optional exact issuer generation
+     * @param expectedCurrentCommitment expected current alias commitment
+     */
     record SetRepositoryAlias(PkiId authorityId, RepositoryAliasService.Type type, PkiId targetObjectId,
             Optional<PkiId> issuerId, Optional<String> expectedCurrentCommitment) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "repository.alias.set";
+        /** Validates the operation's immutable input. */
         public SetRepositoryAlias {
             Objects.requireNonNull(authorityId); Objects.requireNonNull(type); Objects.requireNonNull(targetObjectId);
             issuerId = Objects.requireNonNull(issuerId); expectedCurrentCommitment = Objects.requireNonNull(expectedCurrentCommitment);
@@ -306,81 +595,199 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         @Override public String name() { return NAME; }
     }
 
-    /** Durable repository alias removal without target mutation. */
+    /**
+     * Durable repository alias removal without target mutation.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param type repository alias type
+     * @param expectedCurrentCommitment expected current alias commitment
+     */
     record RemoveRepositoryAlias(PkiId authorityId, RepositoryAliasService.Type type,
             String expectedCurrentCommitment) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "repository.alias.remove";
+        /** Validates the operation's immutable input. */
         public RemoveRepositoryAlias { Objects.requireNonNull(authorityId); Objects.requireNonNull(type);
             if (expectedCurrentCommitment == null || !expectedCurrentCommitment.matches("[0-9a-f]{64}")) throw invalid(); }
         @Override public String name() { return NAME; }
     }
 
-    /** Registers one immutable inactive ACME directory revision. */
-    record RegisterAcmeDirectory(AcmeService.DirectoryRegistration registration) implements ServerControlOperation {
+    /**
+     * Server-resolved exact profile precondition bound into approval canonicalization.
+     *
+     * @param expectedProfile authoritative certificate-profile reference
+     * @param expectedPolicyCommitment expected policy commitment
+     */
+    record AcmeDirectoryProfilePrecondition(CertificateProfileRef expectedProfile,
+            String expectedPolicyCommitment) {
+        /** Validates the authoritative exact profile and confirmation-policy identities. */
+        /** Validates the operation's immutable input. */
+        public AcmeDirectoryProfilePrecondition {
+            Objects.requireNonNull(expectedProfile, "expectedProfile");
+            if (expectedPolicyCommitment == null
+                    || !expectedPolicyCommitment.matches("[0-9a-f]{64}")) {
+                throw invalid();
+            }
+        }
+    }
+
+    /**
+     * Registers one immutable inactive ACME directory revision.
+     *
+     * @param registration validated protocol registration
+     * @param profilePrecondition optional authoritative profile precondition
+     */
+    record RegisterAcmeDirectory(AcmeService.DirectoryRegistration registration,
+            Optional<AcmeDirectoryProfilePrecondition> profilePrecondition) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "acme.directory.register";
-        public RegisterAcmeDirectory { Objects.requireNonNull(registration, "registration"); }
+        /** Validates the operation's immutable input. */
+        public RegisterAcmeDirectory {
+            Objects.requireNonNull(registration, "registration");
+            profilePrecondition = Objects.requireNonNull(profilePrecondition, "profilePrecondition");
+            profilePrecondition.ifPresent(value -> {
+                if (!value.expectedProfile().profileId().equals(registration.profileId())) {
+                    throw invalid();
+                }
+            });
+        }
+        /**
+         * Creates an unbound transport input; the gateway supplies the authoritative precondition.
+         *
+         * @param registration validated directory registration
+         */
+        public RegisterAcmeDirectory(AcmeService.DirectoryRegistration registration) {
+            this(registration, Optional.empty());
+        }
         @Override public String name() { return NAME; }
     }
-    /** Inspects one exact ACME directory revision. */
+    /**
+     * Inspects one exact ACME directory revision.
+     *
+     * @param directoryId stable ACME directory identifier
+     */
     record InspectAcmeDirectory(String directoryId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "acme.directory.inspect";
+        /** Validates the operation's immutable input. */
         public InspectAcmeDirectory { Permission.requireId(directoryId, "ACME directory"); }
         @Override public String name() { return NAME; }
     }
-    /** Lists a bounded page of ACME directory revisions. */
+    /**
+     * Lists a bounded page of ACME directory revisions.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
     record ListAcmeDirectories(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "acme.directory.list";
+        /** Validates the operation's immutable input. */
         public ListAcmeDirectories { page(offset, limit); }
         @Override public String name() { return NAME; }
     }
-    /** Activates or deactivates one exact ACME directory revision. */
+    /**
+     * Activates or deactivates one exact ACME directory revision.
+     *
+     * @param directoryId stable ACME directory identifier
+     * @param active desired activation state
+     */
     record SetAcmeDirectoryActive(String directoryId, boolean active) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String ACTIVATE = "acme.directory.activate";
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String DEACTIVATE = "acme.directory.deactivate";
+        /** Validates the operation's immutable input. */
         public SetAcmeDirectoryActive { Permission.requireId(directoryId, "ACME directory"); }
         @Override public String name() { return active ? ACTIVATE : DEACTIVATE; }
     }
-    /** Inspects one protocol-scoped ACME account. */
+    /**
+     * Inspects one protocol-scoped ACME account.
+     *
+     * @param accountId stable ACME account identifier
+     */
     record InspectAcmeAccount(String accountId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "acme.account.inspect";
+        /** Validates the operation's immutable input. */
         public InspectAcmeAccount { Permission.requireId(accountId, "ACME account"); }
         @Override public String name() { return NAME; }
     }
-    /** Lists a bounded account page without contact PII. */
+    /**
+     * Lists a bounded account page without contact PII.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
     record ListAcmeAccounts(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "acme.account.list";
+        /** Validates the operation's immutable input. */
         public ListAcmeAccounts { page(offset, limit); }
         @Override public String name() { return NAME; }
     }
-    /** Durably deactivates one ACME account without deleting history. */
+    /**
+     * Durably deactivates one ACME account without deleting history.
+     *
+     * @param accountId stable ACME account identifier
+     */
     record DeactivateAcmeAccount(String accountId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "acme.account.deactivate";
+        /** Validates the operation's immutable input. */
         public DeactivateAcmeAccount { Permission.requireId(accountId, "ACME account"); }
         @Override public String name() { return NAME; }
     }
 
-    /** Registers one exact inactive OCSP responder binding. */
+    /**
+     * Registers one exact inactive OCSP responder binding.
+     *
+     * @param registration validated protocol registration
+     */
     record RegisterOcspResponder(OcspResponderService.Registration registration) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "ocsp.responder.register";
+        /** Validates the operation's immutable input. */
         public RegisterOcspResponder { Objects.requireNonNull(registration, "registration"); }
         @Override public String name() { return NAME; }
     }
-    /** Inspects one exact OCSP responder binding. */
+    /**
+     * Inspects one exact OCSP responder binding.
+     *
+     * @param responderId stable OCSP responder identifier
+     */
     record InspectOcspResponder(String responderId) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "ocsp.responder.inspect";
+        /** Validates the operation's immutable input. */
         public InspectOcspResponder { Permission.requireId(responderId, "OCSP responder"); }
         @Override public String name() { return NAME; }
     }
-    /** Lists a bounded OCSP responder page. */
+    /**
+     * Lists a bounded OCSP responder page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     */
     record ListOcspResponders(int offset, int limit) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String NAME = "ocsp.responder.list";
+        /** Validates the operation's immutable input. */
         public ListOcspResponders { page(offset, limit); }
         @Override public String name() { return NAME; }
     }
-    /** Activates or deactivates one exact responder. */
+    /**
+     * Activates or deactivates one exact responder.
+     *
+     * @param responderId stable OCSP responder identifier
+     * @param active desired activation state
+     */
     record SetOcspResponderActive(String responderId, boolean active) implements ServerControlOperation {
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String ACTIVATE = "ocsp.responder.activate";
+        /** Stable operation identity used for authorization and dispatch. */
         public static final String DEACTIVATE = "ocsp.responder.deactivate";
+        /** Validates the operation's immutable input. */
         public SetOcspResponderActive { Permission.requireId(responderId, "OCSP responder"); }
         @Override public String name() { return active ? ACTIVATE : DEACTIVATE; }
     }

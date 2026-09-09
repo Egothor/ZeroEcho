@@ -41,11 +41,25 @@ import zeroecho.pki.api.revocation.RevocationRecord;
 
 /** Stable direct-lookup view of one authoritative revocation log revision. */
 public interface RevocationView extends AutoCloseable {
-    /** @return captured global revision */
+    /**
+     * Returns the captured global revision.
+     *
+     * @return captured global revision
+     */
     long revision();
-    /** @return captured global commitment */
+    /**
+     * Returns the captured global commitment.
+     *
+     * @return captured global commitment
+     */
     String commitment();
-    /** Returns one current state without scanning the revocation population. */
+    /**
+     * Returns one current state without scanning the revocation population.
+     *
+     * @param credentialId exact credential identifier
+     * @return captured state, or empty when the credential has no revocation state
+     * @throws IOException if the captured view cannot be read
+     */
     Optional<RevocationRecord> get(PkiId credentialId) throws IOException;
     /** Releases the stable view. */
     @Override void close() throws IOException;

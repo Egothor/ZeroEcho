@@ -171,6 +171,7 @@ public final class ChaChaDataContentBuilder implements DataContentBuilder<DataCo
      *     .build(true);
      * }</pre>
      *
+     * @param session active session used to create cryptographic contexts
      * @return a new {@code ChaChaDataContentBuilder}
      */
     public static ChaChaDataContentBuilder builder(ZeroEchoSession session) {

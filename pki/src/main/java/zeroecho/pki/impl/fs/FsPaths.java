@@ -63,7 +63,7 @@ final class FsPaths {
     private static final String REVOCATIONS_DIRECTORY = "revocations";
 
     /* default */ static final String VERSION_FILE = "VERSION";
-    /* default */ static final String REVOCATION_SNAPSHOT_BOUNDARY_FILE = ".revocation-snapshot-boundary";
+    /* default */ static final String REVOCATION_BOUNDARY_FILE = ".revocation-snapshot-boundary";
     /* default */ static final String LOCK_DIR = ".lock";
     /* default */ static final String STORE_LOCK = "store.lock";
 
@@ -85,7 +85,7 @@ final class FsPaths {
     }
 
     /* default */ Path revocationSnapshotBoundary() {
-        return this.root.resolve(REVOCATION_SNAPSHOT_BOUNDARY_FILE);
+        return this.root.resolve(REVOCATION_BOUNDARY_FILE);
     }
 
     /* default */ Path signingNamespaceFile() {
@@ -102,6 +102,10 @@ final class FsPaths {
 
     /* default */ Path transactionalMetadataLog() {
         return this.root.resolve("metadata").resolve("transactions.log");
+    }
+
+    /* default */ Path transactionalMetadataRoot() {
+        return this.root.resolve("metadata");
     }
 
     /* default */ Path lockFile() {
@@ -174,6 +178,10 @@ final class FsPaths {
     /* default */ Path requestPath(final PkiId requestId) {
         Objects.requireNonNull(requestId, "requestId");
         return this.root.resolve("requests").resolve(BY_ID).resolve(FsUtil.safeId(requestId) + BINARY_EXTENSION);
+    }
+
+    /* default */ Path requestsById() {
+        return this.root.resolve("requests").resolve(BY_ID);
     }
 
     // -------------------------------------------------------------------------

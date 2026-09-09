@@ -1,0 +1,143 @@
+###############################################################################
+# ZeroEcho PKI server — StatefulSet + headless Service.
+#
+# StatefulSet (not Deployment) because the store is a single-writer, durable,
+# stateful backend with per-instance PersistentVolumeClaims. Run a SINGLE
+# replica per realm store: the filesystem store takes an exclusive advisory lock;
+# two pods on the same volume would contend. YAML parse-checked only.
+###############################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: pki-server
+  namespace: zeroecho-pki
+  labels: {app: pki-server}
+spec:
+  clusterIP: None            # headless; nginx reaches pods via the DNS name
+  selector: {app: pki-server}
+  ports:
+    - name: admin-mtls
+      port: 8443
+      targetPort: 8443
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pki-server
+  namespace: zeroecho-pki
+spec:
+  serviceName: pki-server
+  replicas: 1
+  selector:
+    matchLabels: {app: pki-server}
+  template:
+    metadata:
+      labels: {app: pki-server}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001         # makes the mounted PVCs group-owned by the runtime user
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: pki-server
+          image: zeroecho/pki-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: admin-mtls
+              containerPort: 8443
+          env:
+            - name: ZEROECHO_SERVER_CONFIG
+              value: /etc/zeroecho/server-config.json
+            - name: ZEROECHO_PROFILES_DIR
+              value: /etc/zeroecho/profiles
+            - name: ZEROECHO_STORE_DIR
+              value: /var/lib/zeroecho/store
+            - name: ZEROECHO_AUDIT_DIR
+              value: /var/lib/zeroecho/audit
+            - name: ZEROECHO_ADMIN_PORT
+              value: "8443"
+          envFrom:
+            - secretRef: {name: pki-server-secrets}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: server-config, mountPath: /etc/zeroecho/server-config.json, subPath: server-config.json, readOnly: true}
+            - {name: profiles, mountPath: /etc/zeroecho/profiles, readOnly: true}
+            - {name: tls, mountPath: /etc/zeroecho/tls, readOnly: true}
+            - {name: health, mountPath: /etc/zeroecho/health, readOnly: true}
+            - {name: store, mountPath: /var/lib/zeroecho/store}
+            - {name: keyring, mountPath: /var/lib/zeroecho/keyring}
+            - {name: artifacts, mountPath: /var/lib/zeroecho/artifacts}
+            - {name: audit, mountPath: /var/lib/zeroecho/audit}
+            - {name: tmp, mountPath: /tmp}
+          # /health/ready is behind the mandatory mTLS handshake, so the probe
+          # uses exec+curl with the health-probe client identity.
+          readinessProbe:
+            exec:
+              command:
+                - curl
+                - -fsS
+                - --max-time
+                - "4"
+                - --cert
+                - /etc/zeroecho/health/health-client.pem
+                - --key
+                - /etc/zeroecho/health/health-client-key.pem
+                - --cacert
+                - /etc/zeroecho/health/health-ca.pem
+                - https://127.0.0.1:8443/health/ready
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - curl
+                - -fsS
+                - --max-time
+                - "4"
+                - --cert
+                - /etc/zeroecho/health/health-client.pem
+                - --key
+                - /etc/zeroecho/health/health-client-key.pem
+                - --cacert
+                - /etc/zeroecho/health/health-ca.pem
+                - https://127.0.0.1:8443/health/live
+            initialDelaySeconds: 40
+            periodSeconds: 20
+            failureThreshold: 3
+      volumes:
+        - name: server-config
+          configMap: {name: pki-server-config}
+        - name: profiles
+          configMap: {name: pki-server-profiles}
+        - name: tls
+          secret: {secretName: pki-server-tls}
+        - name: health
+          secret: {secretName: pki-server-health, defaultMode: 0400}
+        - name: tmp
+          emptyDir: {}
+  # Per-instance durable storage. Use POSIX filesystem StorageClasses. Keep the
+  # keyring on a SEPARATE claim (private-key material) from the main store.
+  volumeClaimTemplates:
+    - metadata: {name: store}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 20Gi}}
+        # storageClassName: <posix-block-or-fs-class>
+    - metadata: {name: keyring}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 1Gi}}
+    - metadata: {name: artifacts}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 5Gi}}
+    - metadata: {name: audit}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 10Gi}}

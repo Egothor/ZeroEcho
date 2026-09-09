@@ -164,6 +164,10 @@ public final class KeyStoreManagement {
     private static final Option OVERWRITE_OPTION = Option.builder().longOpt("overwrite")
             .desc("Overwrite existing aliases on conflict").get();
 
+    private static final Option KEYSTORE_PASSWORD_ENV_OPTION = Option.builder().longOpt("keystore-password-env")
+            .hasArg().argName("VAR").desc("Read the keyring password from the named environment variable "
+                    + "instead of prompting (non-interactive/scripted use)").get();
+
     /** Prevents instantiation. */
     private KeyStoreManagement() {
     }
@@ -181,8 +185,9 @@ public final class KeyStoreManagement {
      * @param dispatcherOptions an existing {@code Options} instance used by the
      *                          dispatcher; this method only adds its own options
      * @return process exit code (0 for success; non-zero for semantic errors)
-     * @throws ParseException if the parser fails
-     * @throws IOException    if I/O fails
+     * @throws ParseException           if the parser fails
+     * @throws IOException              if keyring or console I/O fails
+     * @throws GeneralSecurityException if cryptographic provider setup or command processing fails
      */
     public static int main(final String[] args, final Options dispatcherOptions)
             throws ParseException, IOException, GeneralSecurityException {
@@ -207,6 +212,10 @@ public final class KeyStoreManagement {
         CommandLineParser parser = new DefaultParser();
         CommandLine cmd = parser.parse(dispatcherOptions, args);
 
+        KeyringUnlockProvider unlock = cmd.hasOption(KEYSTORE_PASSWORD_ENV_OPTION.getLongOpt())
+                ? KeyringUnlocks.environment(cmd.getOptionValue(KEYSTORE_PASSWORD_ENV_OPTION.getLongOpt()))
+                : unlockProvider;
+
         if (cmd.hasOption(LIST_ALGORITHMS_OPTION.getLongOpt())) {
             listAlgorithms();
             return 0;
@@ -217,8 +226,8 @@ public final class KeyStoreManagement {
         }
 
         Path keyringPath = Path.of(cmd.getOptionValue(KEYSTORE_OPTION.getLongOpt()));
-        try (KeyringStore store = Files.exists(keyringPath) ? KeyringUnlocks.open(keyringPath, unlockProvider)
-                : KeyringUnlocks.create(keyringPath, unlockProvider)) {
+        try (KeyringStore store = Files.exists(keyringPath) ? KeyringUnlocks.open(keyringPath, unlock)
+                : KeyringUnlocks.create(keyringPath, unlock)) {
             if (cmd.hasOption(LIST_ALIASES_OPTION.getLongOpt())) {
                 listAliases(store);
                 return 0;
@@ -254,6 +263,7 @@ public final class KeyStoreManagement {
         options.addOption(PUB_SUFFIX_OPTION);
         options.addOption(PRV_SUFFIX_OPTION);
         options.addOption(OVERWRITE_OPTION);
+        options.addOption(KEYSTORE_PASSWORD_ENV_OPTION);
 
     }
 
@@ -305,8 +315,11 @@ public final class KeyStoreManagement {
      * SPKI/PKCS8/RAW bytes.
      * </p>
      *
-     * @param store keyring store to mutate
-     * @param cmd   parsed command line
+     * @param session active cryptographic session used to generate key material
+     * @param store   open keyring store to mutate
+     * @param cmd     parsed command line containing generation options
+     * @throws IOException              if generated material cannot be written to the keyring
+     * @throws GeneralSecurityException if the requested key generation operation fails
      */
     public static void doGenerate(final ZeroEchoSession session, final KeyringStore store, final CommandLine cmd)
             throws IOException, GeneralSecurityException {

@@ -1,9 +1,14 @@
 {
-  "version": 6,
+  "version": 7,
   "serverName": "zeroecho-admin-proxy",
   "realm": {
     "realmId": "production",
     "displayName": "ZeroEcho Production",
+    "confirmationProof": {
+      "audience": "urn:uuid:44444444-4444-4444-b444-444444444444",
+      "challengeTtlMillis": 300000,
+      "rsaMaximumModulusBits": 8192
+    },
     "authorityExposure": {"mode":"ALL_REALM_AUTHORITIES","authorityIds":[],"creationPermitted":false},
     "authorizationCommitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "approvalCommitment": "96f85d99cb556b16af9b963833a832f905010681f437a757d94aab4a22e4c29c",

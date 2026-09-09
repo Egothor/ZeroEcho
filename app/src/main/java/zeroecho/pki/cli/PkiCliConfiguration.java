@@ -50,16 +50,21 @@ final class PkiCliConfiguration {
     private static final int VERSION_ONE = 1;
     private static final int VERSION_TWO = 2;
     private static final int VERSION_THREE = 3;
+    private static final int VERSION_FOUR = 4;
     private static final Set<String> ROOT_FIELDS_V1 = Set.of("version", "store", "audit");
     private static final Set<String> ROOT_FIELDS_V2 = Set.of("version", "store", "audit", "signing", "publishers");
     private static final Set<String> ROOT_FIELDS_V3 = Set.of("version", "store", "audit", "signing", "publishers",
             "bindingProviders");
+    private static final Set<String> ROOT_FIELDS_V4 = ROOT_FIELDS_V3;
     private static final Set<String> PROVIDER_FIELDS = Set.of("provider", "properties");
-    private static final Set<String> SIGNING_FIELDS = Set.of("workflow", "framework", "busPath",
+    private static final Set<String> SIGNING_FIELDS = Set.of("workflow", "framework",
             "signatureAlgorithm", "signingTtlSeconds", "unlockEnvironmentVariable",
-            "certificateSignatureBinding", "crlSignatureBinding", "subjectPublicKeyBinding");
-    private static final Set<String> SIGNING_REQUIRED_FIELDS = Set.of("workflow", "framework", "busPath",
-            "signatureAlgorithm", "signingTtlSeconds", "unlockEnvironmentVariable");
+            "certificateSignatureBinding", "crlSignatureBinding", "subjectPublicKeyBinding",
+            "laneCount", "queueCapacity", "gracefulDrainSeconds", "forcedCancellationSeconds",
+            "signingServices", "caRouting");
+    private static final Set<String> SIGNING_SERVICE_FIELDS = Set.of("serviceId", "workflow");
+    private static final Set<String> SIGNING_REQUIRED_FIELDS = Set.of("workflow", "framework",
+            "signatureAlgorithm", "signingTtlSeconds");
     private static final String STDOUT_PROVIDER = "stdout";
 
     private PkiCliConfiguration() {
@@ -75,6 +80,8 @@ final class PkiCliConfiguration {
             requireFields(root.fields(), ROOT_FIELDS_V2);
         } else if (version == VERSION_THREE) {
             requireFields(root.fields(), ROOT_FIELDS_V3);
+        } else if (version == VERSION_FOUR) {
+            requireFields(root.fields(), ROOT_FIELDS_V4);
         } else {
             throw new IllegalArgumentException("Unsupported CLI configuration version");
         }
@@ -124,13 +131,48 @@ final class PkiCliConfiguration {
                 || !SIGNING_FIELDS.containsAll(object.fields().keySet())) {
             throw new IllegalArgumentException("Signing configuration fields are invalid");
         }
+        PkiOperationValue servicesValue = object.fields().get("signingServices");
+        List<PkiSessionConfiguration.SigningServiceConfiguration> signingServices = servicesValue == null
+                ? List.of()
+                : list(servicesValue).values().stream().map(PkiCliConfiguration::signingService).toList();
+        PkiOperationValue routingValue = object.fields().get("caRouting");
+        Map<String, String> caRouting = new LinkedHashMap<>();
+        if (routingValue != null) {
+            for (Map.Entry<String, PkiOperationValue> entry : object(routingValue).fields().entrySet()) {
+                caRouting.put(entry.getKey(), text(entry.getValue()));
+            }
+        }
         return new PkiSessionConfiguration.SigningConfiguration(provider(required(object, "workflow")),
-                provider(required(object, "framework")), text(required(object, "busPath")),
-                text(required(object, "signatureAlgorithm")),
+                provider(required(object, "framework")), text(required(object, "signatureAlgorithm")),
                 Duration.ofSeconds(integer(required(object, "signingTtlSeconds"))),
-                java.util.Optional.of(text(required(object, "unlockEnvironmentVariable"))),
+                optionalText(object, "unlockEnvironmentVariable"),
                 optionalText(object, "certificateSignatureBinding"), optionalText(object, "crlSignatureBinding"),
-                optionalText(object, "subjectPublicKeyBinding"));
+                optionalText(object, "subjectPublicKeyBinding"),
+                optionalInteger(object, "laneCount",
+                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_LANE_COUNT),
+                optionalInteger(object, "queueCapacity",
+                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_QUEUE_CAPACITY),
+                Duration.ofSeconds(optionalLong(object, "gracefulDrainSeconds",
+                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_GRACEFUL_DRAIN.toSeconds())),
+                Duration.ofSeconds(optionalLong(object, "forcedCancellationSeconds",
+                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_FORCED_CANCELLATION.toSeconds())),
+                List.copyOf(signingServices), Map.copyOf(caRouting));
+    }
+
+    private static PkiSessionConfiguration.SigningServiceConfiguration signingService(PkiOperationValue value) {
+        PkiOperationValue.ObjectValue object = object(value);
+        requireExactFields(object.fields(), SIGNING_SERVICE_FIELDS);
+        return new PkiSessionConfiguration.SigningServiceConfiguration(text(required(object, "serviceId")),
+                provider(required(object, "workflow")));
+    }
+
+    private static int optionalInteger(PkiOperationValue.ObjectValue object, String name, int defaultValue) {
+        return Math.toIntExact(optionalLong(object, name, defaultValue));
+    }
+
+    private static long optionalLong(PkiOperationValue.ObjectValue object, String name, long defaultValue) {
+        PkiOperationValue value = object.fields().get(name);
+        return value == null ? defaultValue : integer(value);
     }
 
     private static ProviderConfig provider(PkiOperationValue value) {

@@ -71,10 +71,19 @@ only `FAIL_FAST` and `CONTINUE_INDEPENDENT`; they have no scripts, expressions,
 loops, implicit retries, or rollback across already committed operations. Binary
 artifacts and secrets are never emitted in terminal JSON.
 
-Version-three session configuration enables capabilities explicitly. A signing
+Version-four session configuration enables capabilities explicitly. A signing
 section selects one signature-workflow provider, one X.509 framework, a durable
-signing-bus location, an algorithm, a finite signing deadline, and the name of an
-environment variable supplying the process-local keyring unlock capability.
+signing algorithm and a finite signing deadline. It also configures the shared
+bounded execution runtime with `laneCount`, `queueCapacity`,
+`gracefulDrainSeconds`, and `forcedCancellationSeconds`; defaults are 16 lanes,
+64 ready steps, 30 seconds of graceful drain, and 10 seconds of forced
+cancellation. Providers that use a local
+software keyring additionally select an environment variable supplying the
+process-local unlock capability; remote providers need no local unlock. The lane
+and queue values bound transient provider steps, not durable workflow lifetime;
+pending durable operations retain no scheduler slot. The filesystem due-work
+index separately bounds active signing workflows at 100,000; content-free
+`EXPIRED` and `RETIRED` records remain in the bounded horizon-retention index.
 Publisher entries select configured destinations independently, so publication
 can be administered without enabling signing. Values of unlock variables,
 private keys, and publisher credentials are never operation arguments or output.
@@ -113,8 +122,8 @@ The core cryptographic engine, context model, and CLI tools are production-ready
 ## Documentation
 
 - [API is documented via Javadoc](https://www.egothor.org/javadoc/zeroecho/lib/) and complemented by [CLI usage examples](https://www.egothor.org/javadoc/zeroecho/app/).
-- Some Javadoc sections are still being updated after recent structural changes.  
-  If you encounter **discrepancies in examples or descriptions**, we welcome feedback and contributions to ensure clarity and correctness.
+- Public and protected Java APIs are checked with strict doclint. If you encounter
+  **discrepancies in examples or descriptions**, we welcome focused corrections.
 
 
 ## Ideal Use Cases

@@ -62,7 +62,16 @@ public record CertificateProfile(String profileId, FormatId formatId, String dis
         SubjectPolicy subjectPolicy, LeafCertificatePolicy leafPolicy,
         X509AlgorithmBindingPolicy algorithmBindingPolicy) {
 
-    /** Creates a standard-only runtime profile. */
+    /**
+     * Creates a runtime profile that permits only standard algorithm bindings.
+     *
+     * @param profileId stable, nonblank profile identifier
+     * @param formatId credential framework and format
+     * @param displayName nonblank human-readable name
+     * @param maximumValidity positive maximum credential validity
+     * @param subjectPolicy complete end-entity subject policy
+     * @param leafPolicy complete end-entity extension policy
+     */
     public CertificateProfile(String profileId, FormatId formatId, String displayName, Duration maximumValidity,
             SubjectPolicy subjectPolicy, LeafCertificatePolicy leafPolicy) {
         this(profileId, formatId, displayName, maximumValidity, subjectPolicy, leafPolicy,

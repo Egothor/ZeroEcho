@@ -55,6 +55,10 @@ public final class Pkcs12ClientTrustProvider implements PkiServerClientTrustProv
     public static final String ID = "jsse-pkcs12-client-trust";
     private static final Set<String> KEYS = Set.of("trustStore", "trustStorePasswordEnvironment");
 
+    /** Creates the stateless PKCS#12 client-trust provider. */
+    public Pkcs12ClientTrustProvider() {
+    }
+
     @Override
     public String id() {
         return ID;

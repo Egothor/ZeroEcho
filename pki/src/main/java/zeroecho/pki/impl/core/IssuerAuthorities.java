@@ -57,7 +57,8 @@ final class IssuerAuthorities {
 
     /* default */ static IssuerGeneration current(PkiStore store, CaRecord authority) {
         IssuerGeneration generation = store.getIssuerGeneration(authority.currentIssuanceIssuerId())
-                .orElseThrow(() -> new PkiException("Current issuer generation not found"));
+                .orElseThrow(() -> new PkiException("Current issuer generation not found",
+                        zeroecho.pki.api.PkiFailureReason.ISSUER_GENERATION_NOT_FOUND));
         if (!authority.caId().equals(generation.authorityId()) || generation.state() != IssuerGenerationState.ACTIVE) {
             throw new PkiException("Current issuer generation unavailable");
         }
@@ -66,7 +67,8 @@ final class IssuerAuthorities {
 
     /* default */ static IssuerChainPath issuancePath(PkiStore store, CaRecord authority) {
         IssuerChainPath path = store.getIssuerChainPath(authority.issuanceChainPathId())
-                .orElseThrow(() -> new PkiException("Issuance chain path not found"));
+                .orElseThrow(() -> new PkiException("Issuance chain path not found",
+                        zeroecho.pki.api.PkiFailureReason.ISSUER_CHAIN_PATH_NOT_FOUND));
         if (!authority.caId().equals(path.authorityId())
                 || !authority.currentIssuanceIssuerId().equals(path.issuerId())) {
             throw new PkiException("Issuance chain selection mismatch");
@@ -77,7 +79,8 @@ final class IssuerAuthorities {
     /* default */ static Credential currentCredential(PkiStore store, CaRecord authority) {
         IssuerGeneration generation = current(store, authority);
         return store.getCredential(generation.credentialId())
-                .orElseThrow(() -> new PkiException("Current issuer credential not found"));
+                .orElseThrow(() -> new PkiException("Current issuer credential not found",
+                        zeroecho.pki.api.PkiFailureReason.ISSUER_CREDENTIAL_NOT_FOUND));
     }
 
     /* default */ static IssuerGeneration generation(PkiId authorityId, zeroecho.pki.api.KeyRef keyRef,

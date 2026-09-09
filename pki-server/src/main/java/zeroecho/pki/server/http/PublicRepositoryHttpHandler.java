@@ -253,6 +253,11 @@ final class PublicRepositoryHttpHandler implements HttpHandler {
                     deadline);
             return;
         }
+        if (part.length == 6 && prefix(part, "authorities") && "delta-crl".equals(part[5])) {
+            content(exchange, realm.publicRepository().currentDeltaCrl(id(part[4]), access), requestId, head, true,
+                    deadline);
+            return;
+        }
         if (part.length == 5 && "".equals(part[0]) && "public".equals(part[1])
                 && "v1".equals(part[2]) && "certificates".equals(part[3])) {
             content(exchange, realm.publicRepository().credential(id(part[4]), access), requestId, head, false,

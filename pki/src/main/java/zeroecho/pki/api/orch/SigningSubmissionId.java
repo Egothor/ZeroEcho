@@ -60,6 +60,7 @@ public record SigningSubmissionId(PkiId id, String namespace, Instant createdAt)
     private static final String PREFIX = "zsign:v1:";
     private static final int RANDOM_BYTES = 16;
 
+    /** Validates and preserves the exact submission identity components. */
     public SigningSubmissionId {
         Objects.requireNonNull(id, "id");
         requireNamespace(namespace);

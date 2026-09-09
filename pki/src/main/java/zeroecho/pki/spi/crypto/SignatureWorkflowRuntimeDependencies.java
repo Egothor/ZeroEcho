@@ -37,7 +37,6 @@ import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.core.spi.KeyringUnlockProvider;
-
 /**
  * Immutable runtime dependencies supplied when opening a signature workflow.
  *
@@ -54,12 +53,16 @@ import zeroecho.core.spi.KeyringUnlockProvider;
  * </p>
  */
 public final class SignatureWorkflowRuntimeDependencies {
-    private static final SignatureWorkflowRuntimeDependencies NONE = new SignatureWorkflowRuntimeDependencies(null);
+    private static final SignatureWorkflowRuntimeDependencies NONE = new SignatureWorkflowRuntimeDependencies(null,
+            null);
 
     private final KeyringUnlockProvider keyringUnlockProvider;
+    private final LocalSigningLedgerParticipant localLedgerParticipant;
 
-    private SignatureWorkflowRuntimeDependencies(KeyringUnlockProvider keyringUnlockProvider) {
+    private SignatureWorkflowRuntimeDependencies(KeyringUnlockProvider keyringUnlockProvider,
+            LocalSigningLedgerParticipant localLedgerParticipant) {
         this.keyringUnlockProvider = keyringUnlockProvider;
+        this.localLedgerParticipant = localLedgerParticipant;
     }
 
     /**
@@ -80,7 +83,22 @@ public final class SignatureWorkflowRuntimeDependencies {
      * @throws NullPointerException if {@code provider} is {@code null}
      */
     public static SignatureWorkflowRuntimeDependencies withKeyringUnlockProvider(KeyringUnlockProvider provider) {
-        return new SignatureWorkflowRuntimeDependencies(Objects.requireNonNull(provider, "provider must not be null"));
+        return new SignatureWorkflowRuntimeDependencies(Objects.requireNonNull(provider, "provider must not be null"),
+                null);
+    }
+
+    /**
+     * Creates dependencies for a built-in workflow borrowing its owning store's
+     * local signing ledger participant.
+     *
+     * @param provider keyring unlock provider
+     * @param participant store-owned local signing ledger participant
+     * @return immutable dependencies
+     */
+    public static SignatureWorkflowRuntimeDependencies local(KeyringUnlockProvider provider,
+            LocalSigningLedgerParticipant participant) {
+        return new SignatureWorkflowRuntimeDependencies(Objects.requireNonNull(provider, "provider must not be null"),
+                Objects.requireNonNull(participant, "participant must not be null"));
     }
 
     /**
@@ -90,5 +108,14 @@ public final class SignatureWorkflowRuntimeDependencies {
      */
     public Optional<KeyringUnlockProvider> keyringUnlockProvider() {
         return Optional.ofNullable(keyringUnlockProvider);
+    }
+
+    /**
+     * Returns the borrowed store-owned local signing ledger participant.
+     *
+     * @return participant when one was supplied, otherwise an empty optional
+     */
+    public Optional<LocalSigningLedgerParticipant> localSigningLedgerParticipant() {
+        return Optional.ofNullable(localLedgerParticipant);
     }
 }

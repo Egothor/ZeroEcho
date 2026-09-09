@@ -204,8 +204,13 @@ public record AuditEvent(Instant time, String category, String action, Principal
         if (query.objectId().isPresent() && !query.objectId().get().equals(objectId().orElse(null))) {
             return false;
         }
-        if (query.principalName().isPresent() && !query.principalName().get().equals(principal().name())) { // NOPMD
+        if (query.principalName().isPresent() && !query.principalName().get().equals(principal().name())) {
             return false;
+        }
+        for (Map.Entry<String, String> required : query.requiredDetails().entrySet()) {
+            if (!required.getValue().equals(details().get(required.getKey()))) {
+                return false;
+            }
         }
         return true;
     }

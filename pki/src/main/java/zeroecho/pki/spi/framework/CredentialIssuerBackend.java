@@ -35,6 +35,8 @@ package zeroecho.pki.spi.framework;
 
 import java.math.BigInteger;
 
+import zeroecho.core.io.CancellationSignal;
+
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
@@ -144,6 +146,22 @@ public interface CredentialIssuerBackend {
             KeyRef issuerKeyRef, BigInteger serial);
 
     /**
+     * Issues a leaf while carrying originating cancellation to signing.
+     * @param request gate-produced validated request
+     * @param issuerCertificate trusted encoded issuer certificate
+     * @param issuerKeyRef trusted issuer signing-key reference
+     * @param serial positive issuer-controlled serial
+     * @param cancellation originating cooperative cancellation signal
+     * @return issued credential bundle
+     */
+    default CredentialBundle issueEndEntity(ValidatedCertificateRequest request,
+            DurableContentReference issuerCertificate, KeyRef issuerKeyRef, BigInteger serial,
+            CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, "cancellation");
+        return issueEndEntity(request, issuerCertificate, issuerKeyRef, serial);
+    }
+
+    /**
      * Issues a CA credential for an existing CA subject entity.
      *
      * <p>
@@ -174,4 +192,18 @@ public interface CredentialIssuerBackend {
     Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
             DurableContentReference issuerCertificate,
             KeyRef issuerKeyRef);
+
+    /**
+     * Issues an intermediate while carrying originating cancellation to signing.
+     * @param request gate-produced validated CA request
+     * @param issuerCertificate trusted encoded issuer certificate
+     * @param issuerKeyRef trusted issuer signing-key reference
+     * @param cancellation originating cooperative cancellation signal
+     * @return issued CA credential
+     */
+    default Credential issueIntermediateCertificate(ValidatedCaCertificateRequest request,
+            DurableContentReference issuerCertificate, KeyRef issuerKeyRef, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, "cancellation");
+        return issueIntermediateCertificate(request, issuerCertificate, issuerKeyRef);
+    }
 }

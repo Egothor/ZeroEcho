@@ -97,6 +97,7 @@ public final class KeyringSignatureExecutor {
      */
     public static final class Failure extends GeneralSecurityException {
         private static final long serialVersionUID = 1L;
+        /** Stable redacted failure category. */
         private final FailureCode code;
 
         private Failure(FailureCode code) {

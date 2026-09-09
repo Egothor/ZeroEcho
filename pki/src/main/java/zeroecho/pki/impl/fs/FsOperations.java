@@ -40,8 +40,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.OpenOption;
@@ -49,11 +47,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
-import java.util.EnumSet;
 import java.util.Objects;
-import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -80,12 +74,6 @@ import java.util.logging.Logger;
 final class FsOperations {
 
     private static final Logger LOG = Logger.getLogger(FsOperations.class.getName());
-
-    private static final Set<PosixFilePermission> DIR_0700 = EnumSet.of(PosixFilePermission.OWNER_READ,
-            PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
-
-    private static final Set<PosixFilePermission> FILE_0600 = EnumSet.of(PosixFilePermission.OWNER_READ,
-            PosixFilePermission.OWNER_WRITE);
 
     private FsOperations() {
         // utility class
@@ -251,8 +239,8 @@ final class FsOperations {
             }
             Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             moved = true;
-            try (FileChannel directory = FileChannel.open(parent, StandardOpenOption.READ)) {
-                directory.force(true);
+            try {
+                PlatformFs.forceDirectory(parent);
             } catch (IOException failure) {
                 throw new DurabilityUncertainException();
             }
@@ -292,8 +280,8 @@ final class FsOperations {
             }
             Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
             moved = true;
-            try (FileChannel directory = FileChannel.open(parent, StandardOpenOption.READ)) {
-                directory.force(true);
+            try {
+                PlatformFs.forceDirectory(parent);
             } catch (IOException failure) {
                 throw new DurabilityUncertainException();
             }
@@ -432,9 +420,11 @@ final class FsOperations {
     }
 
     private static void forceDirectoryBestEffort(final Path dir) {
-        // Not all platforms allow opening directories for fsync; best-effort only.
-        try (FileChannel ch = FileChannel.open(dir, StandardOpenOption.READ)) {
-            ch.force(true);
+        // Delegates to the platform strategy: a genuine fsync on POSIX, a correct
+        // no-op on platforms that carry directory durability through the
+        // write-through atomic publish. Best-effort: never fail a write here.
+        try {
+            PlatformFs.forceDirectory(dir);
         } catch (IOException e) {
             if (LOG.isLoggable(Level.FINE)) {
                 LOG.log(Level.FINE, "fsync directory failed (best-effort): {0}", dir);
@@ -457,21 +447,10 @@ final class FsOperations {
     }
 
     private static FileAttribute<?>[] dirAttributesIfSupported() {
-        if (supportsPosix()) {
-            return new FileAttribute<?>[] { PosixFilePermissions.asFileAttribute(DIR_0700) };
-        }
-        return new FileAttribute<?>[0];
+        return PlatformFs.ops().directoryCreateAttributes();
     }
 
     private static FileAttribute<?>[] fileAttributesIfSupported() {
-        if (supportsPosix()) {
-            return new FileAttribute<?>[] { PosixFilePermissions.asFileAttribute(FILE_0600) };
-        }
-        return new FileAttribute<?>[0];
-    }
-
-    private static boolean supportsPosix() {
-        final FileSystem fs = FileSystems.getDefault();
-        return fs.supportedFileAttributeViews().contains("posix");
+        return PlatformFs.ops().fileCreateAttributes();
     }
 }

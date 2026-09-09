@@ -62,6 +62,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpsExchange;
 
 import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.application.SigningOperationAuthorization;
 import zeroecho.pki.server.AuthorizationEngine;
 import zeroecho.pki.server.OperationSecurityDescriptors;
 import zeroecho.pki.server.Permission;
@@ -173,6 +174,15 @@ final class AdminHttpHandler implements HttpHandler {
                         Optional.of(principalId), "ACCEPTED"));
         if ("/admin/v1/realm".equals(path)) return realm(exchange, requestId, principalId);
         if ("/admin/v1/operations".equals(path)) return operations(exchange, requestId, principalId);
+        String signingPrefix = "/admin/v1/signing-operations/";
+        if (path.startsWith(signingPrefix) && path.length() > signingPrefix.length()) {
+            if (!requireMethod(exchange, "GET")) return method(requestId, "signing.operation");
+            String signingId = path.substring(signingPrefix.length());
+            if (signingId.length() > 512 || signingId.indexOf('/') >= 0) {
+                return HttpResponses.signingNotFound(requestId);
+            }
+            return signingOperation(requestId, principalId, signingId);
+        }
         String prefix = "/admin/v1/operations/";
         if (!path.startsWith(prefix) || path.length() == prefix.length()) return notFound(requestId);
         String operationId = path.substring(prefix.length());
@@ -184,6 +194,48 @@ final class AdminHttpHandler implements HttpHandler {
         if (requireMethod(exchange, "GET")) return descriptor(requestId, descriptor.orElseThrow());
         if (!requireMethod(exchange, "POST")) return method(requestId, operationId);
         return execute(exchange, requestId, authenticated, operationId);
+    }
+
+    /* default */ HttpResponses.Response signingOperation(String requestId, String principalId, String signingId) {
+        try {
+            zeroecho.pki.api.PkiId operationId = new zeroecho.pki.api.PkiId(signingId);
+            Optional<SigningOperationAuthorization> authorization = realm.session()
+                    .signingOperationAuthorization(operationId);
+            if (authorization.isEmpty()) {
+                return HttpResponses.signingNotFound(requestId);
+            }
+            SigningOperationAuthorization exact = authorization.orElseThrow();
+            Permission.Resource resource = new Permission.Resource(resourceType(exact.resourceType()),
+                    new Permission.Scope(configuration.realm().realmId(), exact.authorityId(), Optional.empty(),
+                            exact.profileId()), exact.objectId(), Optional.empty());
+            AuthorizationEngine.Decision decision = realm.gateway().authorizeControl(principalId,
+                    action(exact.action()), resource, Permission.Context.empty(), requestId);
+            if (!decision.allowed()) {
+                return HttpResponses.signingNotFound(requestId);
+            }
+            return HttpResponses.signingOperation(requestId, realm.session().signingOperation(operationId));
+        } catch (IllegalArgumentException unavailable) {
+            return HttpResponses.signingNotFound(requestId);
+        }
+    }
+
+    private static Permission.Action action(SigningOperationAuthorization.Action action) {
+        return switch (action) {
+            case AUTHORITY_CREATE -> Permission.Action.AUTHORITY_CREATE;
+            case ISSUER_CREATE -> Permission.Action.ISSUER_CREATE;
+            case CERTIFICATE_ISSUE -> Permission.Action.CERTIFICATE_ISSUE;
+            case STATUS_GENERATE -> Permission.Action.CRL_GENERATE;
+        };
+    }
+
+    private static Permission.ResourceType resourceType(
+            SigningOperationAuthorization.ResourceType resourceType) {
+        return switch (resourceType) {
+            case AUTHORITY -> Permission.ResourceType.AUTHORITY;
+            case ISSUER -> Permission.ResourceType.ISSUER;
+            case CERTIFICATE -> Permission.ResourceType.CERTIFICATE;
+            case STATUS_OBJECT -> Permission.ResourceType.STATUS_OBJECT;
+        };
     }
 
     private HttpResponses.Response realm(HttpsExchange exchange, String requestId, String principalId) {
@@ -264,7 +316,7 @@ final class AdminHttpHandler implements HttpHandler {
                         configuration.realm().realmId(), principalId, authenticated.mode(),
                         authenticated.transportPrincipalId(), decoded.operation(), decoded.resource(),
                         Permission.Relationship.ANY, decoded.context(), decoded.approvalId(), requestId);
-                return realm.gateway().execute(gateway, cancellation);
+                return TransportCancellationGateway.executeAdmin(realm.gateway(), gateway, cancellation);
             });
         } catch (RejectedExecutionException overloaded) {
             realm.auditTransport("REQUEST_OVERLOAD", principalId, Map.of("request", requestId,
@@ -434,6 +486,7 @@ final class AdminHttpHandler implements HttpHandler {
             exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
         }
         exchange.getResponseHeaders().set(RequestIds.HEADER, requestId);
+        response.statusLocation().ifPresent(value -> exchange.getResponseHeaders().set("Location", value));
         exchange.sendResponseHeaders(response.statusCode(), body.length);
         try (java.io.OutputStream output = exchange.getResponseBody()) {
             output.write(body);

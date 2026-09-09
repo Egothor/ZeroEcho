@@ -1,0 +1,137 @@
+###############################################################################
+# ZeroEcho PKI on Kubernetes — namespace, configuration, and secrets.
+#
+# Minimal but correct. POSIX-only: the store/keyring PVCs MUST be backed by a
+# POSIX filesystem StorageClass (see deploy/README.md and
+# docs/windows-portability-analysis.md). YAML parse-checked only (no cluster,
+# no container engine available here).
+###############################################################################
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zeroecho-pki
+---
+# Strict versioned server configuration (schema version 7), trusted-proxy /
+# RFC 9440 topology. Replace commitments and mappings with your realm's values;
+# this is the shape, sourced from docs/pki-server-trusted-proxy-rfc9440-example.json.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pki-server-config
+  namespace: zeroecho-pki
+data:
+  server-config.json: |
+    {
+      "version": 7,
+      "serverName": "zeroecho-admin",
+      "realm": {
+        "realmId": "production",
+        "displayName": "ZeroEcho Production",
+        "confirmationProof": {"audience": "urn:uuid:44444444-4444-4444-b444-444444444444", "challengeTtlMillis": 300000, "rsaMaximumModulusBits": 8192},
+        "authorityExposure": {"mode": "ALL_REALM_AUTHORITIES", "authorityIds": [], "creationPermitted": true},
+        "authorizationCommitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "approvalCommitment": "96f85d99cb556b16af9b963833a832f905010681f437a757d94aab4a22e4c29c",
+        "disclosureCommitment": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "disclosureDefaults": {"rootCa": "PUBLIC", "intermediateCa": "PUBLIC", "caChain": "PUBLIC", "crl": "PUBLIC", "leaf": "OWNER_ONLY", "sensitiveLeaf": "RESTRICTED"},
+        "controlLog": "/var/lib/zeroecho/store/server-control.log",
+        "controlStoreId": "0123456789abcdef0123456789abcdef",
+        "approvalPolicy": {"policyId": "high-risk", "threshold": 1, "eligibleApprovers": ["bootstrap-approver"], "requiredRoleTemplateIds": [], "requesterSeparation": true, "lifetimeMillis": 3600000, "justificationRequired": true},
+        "pkiSession": {
+          "version": 1,
+          "store": {"id": "fs", "properties": {"root": "/var/lib/zeroecho/store"}},
+          "audit": {"id": "file", "properties": {"root": "/var/lib/zeroecho/audit"}},
+          "signing": {
+            "workflow": {"id": "zeroecho-lib", "properties": {"keyringPath": "/var/lib/zeroecho/keyring/ca-keyring.zek"}},
+            "framework": {"id": "x509-bc", "properties": {}},
+            "signatureAlgorithm": "SHA256withRSA",
+            "signingTtlMillis": 30000,
+            "unlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"
+          },
+          "publishers": [{"id": "filesystem", "properties": {"root": "/var/lib/zeroecho/artifacts", "targetId": "local"}}],
+          "bindingProviders": []
+        }
+      },
+      "listener": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "tlsProvider": {"id": "jsse-pkcs12", "properties": {"keyStore": "/etc/zeroecho/tls/server-identity.p12", "keyStorePasswordEnvironment": "ZEROECHO_TLS_KEYSTORE_PASSWORD", "trustStore": "/etc/zeroecho/tls/proxy-transport-trust.p12", "trustStorePasswordEnvironment": "ZEROECHO_PROXY_TRUSTSTORE_PASSWORD"}},
+        "clientCertificateRequired": true,
+        "maximumHeaderBytes": 65536,
+        "maximumBodyBytes": 1048576
+      },
+      "authentication": {
+        "mode": "TRUSTED_REVERSE_PROXY",
+        "proxyTransportMappings": [{"mappingId": "proxy-transport", "principalId": "trusted-proxy", "certificateSha256": "1111111111111111111111111111111111111111111111111111111111111111"}],
+        "forwardedClientMappings": [{"mappingId": "forwarded-admin", "principalId": "bootstrap-admin", "subjectPublicKeyInfoSha256": "2222222222222222222222222222222222222222222222222222222222222222"}],
+        "trustedProxyPrincipalIds": ["trusted-proxy"],
+        "forwardedCertificateFormat": "RFC9440",
+        "forwardedCertificateHeaderName": "Client-Cert",
+        "forwardedCertificateChainHeaderName": "Client-Cert-Chain",
+        "administrativeClientTrust": {"id": "jsse-pkcs12-client-trust", "properties": {"trustStore": "/etc/zeroecho/tls/administrators-trust.p12", "trustStorePasswordEnvironment": "ZEROECHO_ADMIN_TRUSTSTORE_PASSWORD"}},
+        "maximumForwardedCertificateBytes": 65536,
+        "maximumForwardedChainBytes": 524288
+      },
+      "execution": {"transportWorkers": 8, "transportQueueCapacity": 64, "operationWorkers": 4, "operationQueueCapacity": 32, "maximumAdmittedRequests": 96, "defaultDeadlineMillis": 30000, "maximumDeadlineMillis": 120000, "gracefulShutdownMillis": 30000, "forcedShutdownMillis": 10000},
+      "signingReconciliation": {"enabled": true, "maxRecords": 256, "maxCalls": 64, "passTimeoutMillis": 30000, "providerCallTimeoutMillis": 10000, "idleIntervalMillis": 2000},
+      "publicListener": {"enabled": false},
+      "acmeListener": {"enabled": false},
+      "runtime": {"keyUnlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"}
+    }
+---
+# Certificate profiles reconciled at start-up (one key per profile file).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pki-server-profiles
+  namespace: zeroecho-pki
+data:
+  # Replace with your real profile documents (schemaVersion 5). Keys become file
+  # names under /etc/zeroecho/profiles.
+  root-ca.json: |
+    { "schemaVersion": 5, "profileId": "root-ca", "certificateType": "CA" }
+  server-tls.json: |
+    { "schemaVersion": 5, "profileId": "server-tls", "certificateType": "END_ENTITY" }
+---
+# Secrets (passwords-by-env). Create from literals; DO NOT commit real values.
+#   kubectl -n zeroecho-pki create secret generic pki-server-secrets \
+#     --from-literal=ZEROECHO_KEYRING_PASSWORD=... \
+#     --from-literal=ZEROECHO_TLS_KEYSTORE_PASSWORD=... \
+#     --from-literal=ZEROECHO_PROXY_TRUSTSTORE_PASSWORD=... \
+#     --from-literal=ZEROECHO_ADMIN_TRUSTSTORE_PASSWORD=...
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pki-server-secrets
+  namespace: zeroecho-pki
+type: Opaque
+stringData:
+  ZEROECHO_KEYRING_PASSWORD: "change-me-keyring"
+  ZEROECHO_TLS_KEYSTORE_PASSWORD: "change-me-tls-keystore"
+  ZEROECHO_PROXY_TRUSTSTORE_PASSWORD: "change-me-proxy-truststore"
+  ZEROECHO_ADMIN_TRUSTSTORE_PASSWORD: "change-me-admin-truststore"
+---
+# TLS material as a Secret (PKCS#12 stores + the CA keyring blob). Populate from
+# files:
+#   kubectl -n zeroecho-pki create secret generic pki-server-tls \
+#     --from-file=server-identity.p12 --from-file=proxy-transport-trust.p12 \
+#     --from-file=administrators-trust.p12
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pki-server-tls
+  namespace: zeroecho-pki
+type: Opaque
+stringData:
+  placeholder: "replace this Secret with --from-file of your .p12 stores"
+---
+# Health-probe client identity (PEM) for the exec readiness/liveness probes.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pki-server-health
+  namespace: zeroecho-pki
+type: Opaque
+stringData:
+  health-client.pem: "replace with PEM client cert trusted by the admin listener"
+  health-client-key.pem: "replace with the PEM private key (mode enforced by projection)"
+  health-ca.pem: "replace with the PEM CA bundle for the admin listener server cert"

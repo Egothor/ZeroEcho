@@ -295,15 +295,13 @@ public final class RsaSignatureContext implements SignatureContext {
      */
     @Override
     public void close() {
-        LOG.log(Level.INFO, "close");
-
         if (autoCloseActiveStream) {
             try {
                 if (activeStream != null) {
                     activeStream.close();
                 }
             } catch (IOException ignore) {
-                LOG.log(Level.INFO, "exception ignored on close", ignore);
+                LOG.log(Level.WARNING, "RSA signature stream close failed; failure suppressed", ignore);
             }
         }
     }

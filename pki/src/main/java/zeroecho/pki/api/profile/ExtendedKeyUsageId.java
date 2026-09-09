@@ -33,7 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.api.profile;
 
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import java.util.regex.Pattern;
 
 /**
  * Validated exact X.509 extended-key-usage object identifier.
@@ -42,13 +42,27 @@ import org.bouncycastle.asn1.ASN1ObjectIdentifier;
  */
 public record ExtendedKeyUsageId(String oid) {
 
+    private static final Pattern OID = Pattern.compile("^[0-2](\\.(0|[1-9][0-9]*))+$");
+
     /**
      * Validates and constructs the identifier.
      */
     public ExtendedKeyUsageId {
-        if (oid == null) {
+        if (oid == null || !OID.matcher(oid).matches() || !secondArcInRange(oid)) {
             throw new IllegalArgumentException("Invalid extended key usage identifier");
         }
-        oid = new ASN1ObjectIdentifier(oid).getId();
+    }
+
+    private static boolean secondArcInRange(String oid) {
+        String[] arcs = oid.split("\\.");
+        // When the first arc is 0 or 1, the second arc is restricted to 0..39 (X.660).
+        if (!"2".equals(arcs[0]) && arcs.length > 1) {
+            try {
+                return Long.parseLong(arcs[1]) <= 39;
+            } catch (NumberFormatException overflow) {
+                return false;
+            }
+        }
+        return true;
     }
 }

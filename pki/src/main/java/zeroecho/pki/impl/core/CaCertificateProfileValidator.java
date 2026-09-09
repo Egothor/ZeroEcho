@@ -43,9 +43,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.x500.AttributeTypeAndValue;
-import org.bouncycastle.asn1.x500.RDN;
-import org.bouncycastle.asn1.x500.X500Name;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.RelativeDistinguishedName;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;
@@ -71,7 +70,6 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport;
         "PMD.AvoidRethrowingException" })
 final class CaCertificateProfileValidator {
     private static final int MAXIMUM_SUBJECT_DER_BYTES = 16 * 1024;
-    private static final int SINGLE_VALUE = 1;
 
     private CaCertificateProfileValidator() {
     }
@@ -106,7 +104,7 @@ final class CaCertificateProfileValidator {
                 definition.caPolicy().allowedSubjectKeyAlgorithmIds(), authority);
         Validity validity = approvedValidity(requestedValidity, definition, evaluationTime, issuerNotAfter,
                 operation == ValidatedCaCertificateRequest.Operation.IMPORT_ROOT);
-        SubjectRef canonicalSubject = new SubjectRef(BcX509ProfileSupport.subject(subjectSnapshot).toString());
+        SubjectRef canonicalSubject = new SubjectRef(BcX509ProfileSupport.subjectRefString(subjectSnapshot));
         return new ValidatedCaCertificateRequest(operation, formatId, issuerCaId, subjectCaId,
                 activeProfile.reference(), expectedKind, canonicalSubject, subjectSnapshot, exactPublicKey, validity,
                 serial, definition.caPolicy(), definition.algorithmBindingPolicy());
@@ -165,12 +163,8 @@ final class CaCertificateProfileValidator {
         if (approved.isEmpty() || approved.size() > zeroecho.pki.api.profile.SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
             throw reject("CA_SUBJECT_INVALID");
         }
-        try {
-            if (BcX509ProfileSupport.subject(approved).getEncoded().length > MAXIMUM_SUBJECT_DER_BYTES) {
-                throw reject("CA_SUBJECT_TOO_LARGE");
-            }
-        } catch (java.io.IOException exception) {
-            throw reject("CA_SUBJECT_INVALID");
+        if (BcX509ProfileSupport.subject(approved).getEncoded().length > MAXIMUM_SUBJECT_DER_BYTES) {
+            throw reject("CA_SUBJECT_TOO_LARGE");
         }
         return List.copyOf(approved);
     }
@@ -229,27 +223,17 @@ final class CaCertificateProfileValidator {
         if (snapshot.isEmpty() || snapshot.size() > zeroecho.pki.api.profile.SubjectPolicy.HARD_MAXIMUM_RDN_COUNT) {
             throw reject("CA_SUBJECT_INVALID");
         }
-        try {
-            if (BcX509ProfileSupport.subject(snapshot).getEncoded().length > MAXIMUM_SUBJECT_DER_BYTES) {
-                throw reject("CA_SUBJECT_TOO_LARGE");
-            }
-        } catch (java.io.IOException exception) {
-            throw reject("CA_SUBJECT_INVALID");
+        if (BcX509ProfileSupport.subject(snapshot).getEncoded().length > MAXIMUM_SUBJECT_DER_BYTES) {
+            throw reject("CA_SUBJECT_TOO_LARGE");
         }
         return snapshot;
     }
 
     private static List<SubjectRdn> parseSubject(SubjectRef subjectRef) {
         try {
-            X500Name name = new X500Name(subjectRef.value());
             List<SubjectRdn> result = new ArrayList<>();
-            for (RDN rdn : name.getRDNs()) {
-                AttributeTypeAndValue[] values = rdn.getTypesAndValues();
-                if (values.length != SINGLE_VALUE) {
-                    throw reject("CA_SUBJECT_MULTIVALUED_RDN");
-                }
-                result.add(new SubjectRdn(SubjectRdnType.fromOid(values[0].getType().getId()),
-                        values[0].getValue().toString()));
+            for (RelativeDistinguishedName rdn : Pkix.parseDistinguishedNameString(subjectRef.value())) {
+                result.add(new SubjectRdn(SubjectRdnType.fromOid(rdn.attributeTypeOid()), rdn.value()));
             }
             return List.copyOf(result);
         } catch (PkiException exception) {

@@ -34,16 +34,29 @@
 package zeroecho.pki.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+
+import zeroecho.pki.api.audit.AuditChainHead;
+import zeroecho.pki.api.audit.AuditEvent;
+import zeroecho.pki.api.audit.AuditIntegrityReport;
+import zeroecho.pki.api.audit.AuditIntegrityService;
+import zeroecho.pki.api.audit.AuditQuery;
+import zeroecho.pki.api.audit.AuditService;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -52,26 +65,29 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.SubjectRef;
+import zeroecho.pki.api.confirmation.CredentialConfirmationService;
 import zeroecho.pki.application.PkiOperation;
+import zeroecho.pki.application.PkiRepository;
 
 /** Durable closed control-operation, approval and one-time-result coverage. */
 class ServerControlOperationExecutorTest {
     @TempDir Path temporaryDirectory;
 
     @Test
-    void catalogContainsOneExplicitPairOfOperationFamilies() {
-        System.out.println("catalogContainsOneExplicitPairOfOperationFamilies");
+    void catalogContainsAllExplicitOperationFamilies() {
+        System.out.println("catalogContainsAllExplicitOperationFamilies");
         OperationSecurityDescriptors catalog = new OperationSecurityDescriptors();
-        assertEquals(67, catalog.descriptors().size());
-        assertEquals(16, catalog.descriptors().values().stream()
+        assertEquals(101, catalog.descriptors().size());
+        assertEquals(47, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
-        assertEquals(51, catalog.descriptors().values().stream()
+        assertEquals(54, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION)
                 .count());
         assertEquals(OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION,
                 catalog.require(ServerControlOperation.IssueCapability.NAME).family());
-        System.out.println("...control-operations=51");
+        System.out.println("...control-operations=52");
         System.out.println("...ok");
     }
 
@@ -115,8 +131,10 @@ class ServerControlOperationExecutorTest {
             Permission.Resource targetResource = resource(Permission.ResourceType.AUTHORITY, realmScope());
             ServerControlOperation.RequestApproval request = new ServerControlOperation.RequestApproval(
                     "approval-a", new AdministrativeOperation.Pki(target), targetResource);
-            ordinary(executor.execute(request, "requester-a", resource(Permission.ResourceType.APPROVAL,
-                    realmScope()), Optional.empty(), CancellationSignal.NONE));
+            ordinary(executor.executeAuthorized(request, "requester-a", resource(Permission.ResourceType.APPROVAL,
+                    realmScope()), Optional.empty(),
+                    Optional.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK),
+                    CancellationSignal.NONE));
             ApprovalService.Request persisted = opened.store().requireApproval("approval-a");
             assertEquals(ApprovalService.State.PENDING, persisted.state());
             assertEquals("high-risk", persisted.policy().policyId());
@@ -196,6 +214,87 @@ class ServerControlOperationExecutorTest {
         System.out.println("...ok");
     }
 
+    @Test
+    void auditSearchProjectsSafeMetadataAndVerifyReportsStatus() throws Exception {
+        System.out.println("auditSearchProjectsSafeMetadataAndVerifyReportsStatus");
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
+            ServerControlOperationExecutor executor = executor(opened);
+            AuditEvent event = new AuditEvent(Instant.parse("2026-08-04T12:00:00Z"), "AUTHORIZATION_DENY",
+                    "code", new Principal("USER", "operator-a"), new Purpose("review"),
+                    Optional.of(new PkiId("credential-a")), Optional.empty(), Map.of("sensitive", "value"));
+            AuditIntegrityReport report = new AuditIntegrityReport(AuditIntegrityReport.Status.INTACT, 1L,
+                    Optional.empty(), new AuditChainHead(0L, "a".repeat(64)));
+            AuditService searchStub = new AuditService() {
+                @Override public void record(AuditEvent ignored) { }
+                @Override public List<AuditEvent> search(AuditQuery query) { return List.of(event); }
+                @Override public Optional<AuditEvent> get(PkiId ignored) { return Optional.empty(); }
+            };
+            AuditIntegrityService integrityStub = new AuditIntegrityService() {
+                @Override public AuditIntegrityReport verifyIntegrity(Optional<AuditChainHead> expectedHead) {
+                    return report;
+                }
+                @Override public AuditIntegrityReport verifyAnchoredPrefix(AuditChainHead anchor) {
+                    return report;
+                }
+            };
+            executor.installAudit(searchStub, integrityStub);
+
+            AuditQuery query = new AuditQuery(Optional.empty(), Optional.empty(), Optional.empty(),
+                    Optional.empty(), Optional.empty(), Optional.empty(), Map.of(), 100);
+            ServerControlOperationOutcome searchOutcome = executor.execute(
+                    new ServerControlOperation.SearchAudit(query), "operator-a",
+                    resource(Permission.ResourceType.AUDIT, realmScope()), Optional.empty(), CancellationSignal.NONE);
+            zeroecho.pki.application.PkiOperationValue.ObjectValue searchValue =
+                    (zeroecho.pki.application.PkiOperationValue.ObjectValue) completedValue(searchOutcome);
+            zeroecho.pki.application.PkiOperationValue.ListValue events =
+                    (zeroecho.pki.application.PkiOperationValue.ListValue) searchValue.fields().get("events");
+            assertEquals(1, events.values().size());
+            zeroecho.pki.application.PkiOperationValue.ObjectValue first =
+                    (zeroecho.pki.application.PkiOperationValue.ObjectValue) events.values().get(0);
+            assertEquals(new zeroecho.pki.application.PkiOperationValue.Text("operator-a"),
+                    first.fields().get("principalName"));
+            assertEquals(new zeroecho.pki.application.PkiOperationValue.Text("credential-a"),
+                    first.fields().get("objectId"));
+            assertFalse(first.fields().containsKey("details"), "raw audit details must not be exported");
+            assertFalse(first.fields().containsKey("sensitive"), "audit detail values must not leak");
+
+            ServerControlOperationOutcome verifyOutcome = executor.execute(
+                    new ServerControlOperation.VerifyAuditIntegrity(Optional.empty()), "operator-a",
+                    resource(Permission.ResourceType.AUDIT, realmScope()), Optional.empty(), CancellationSignal.NONE);
+            zeroecho.pki.application.PkiOperationValue.ObjectValue verifyValue =
+                    (zeroecho.pki.application.PkiOperationValue.ObjectValue) completedValue(verifyOutcome);
+            assertEquals(new zeroecho.pki.application.PkiOperationValue.Text("INTACT"),
+                    verifyValue.fields().get("status"));
+            System.out.println("...ok");
+        }
+    }
+
+    @Test
+    void auditOperationsFailClosedWhenSinkIsNotQueryable() throws Exception {
+        System.out.println("auditOperationsFailClosedWhenSinkIsNotQueryable");
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(temporaryDirectory)) {
+            ServerControlOperationExecutor executor = executor(opened);
+            AuditQuery query = new AuditQuery(Optional.empty(), Optional.empty(), Optional.empty(),
+                    Optional.empty(), Optional.empty(), Optional.empty(), Map.of(), 100);
+            ServerControlOperationOutcome outcome = executor.execute(
+                    new ServerControlOperation.SearchAudit(query), "operator-a",
+                    resource(Permission.ResourceType.AUDIT, realmScope()), Optional.empty(), CancellationSignal.NONE);
+            assertInstanceOf(ServerControlOperationOutcome.Ordinary.class, outcome);
+            assertInstanceOf(zeroecho.pki.application.PkiOperationOutcome.Failed.class,
+                    ((ServerControlOperationOutcome.Ordinary) outcome).outcome());
+        }
+        System.out.println("...ok");
+    }
+
+    private static zeroecho.pki.application.PkiOperationValue completedValue(
+            ServerControlOperationOutcome outcome) {
+        ServerControlOperationOutcome.Ordinary ordinary = assertInstanceOf(
+                ServerControlOperationOutcome.Ordinary.class, outcome);
+        zeroecho.pki.application.PkiOperationOutcome.Completed completed = assertInstanceOf(
+                zeroecho.pki.application.PkiOperationOutcome.Completed.class, ordinary.outcome());
+        return completed.result().field("value").orElseThrow();
+    }
+
     private ServerControlOperationExecutor executor(ServerTestSupport.OpenedStore opened) throws Exception {
         return executor(opened, disclosure(opened));
     }
@@ -205,13 +304,17 @@ class ServerControlOperationExecutorTest {
         ApprovalService.Policy policy = new ApprovalService.Policy("high-risk", 1, Set.of("approver-a"),
                 Set.of(), true, Duration.ofHours(1), true);
         OperationSecurityDescriptors descriptors = new OperationSecurityDescriptors();
+        AuditorViews auditorViews = new AuditorViews(ServerTestSupport.CLOCK, opened.audit());
+        CredentialPublicationGate publication = new CredentialPublicationGate(mock(PkiRepository.class),
+                mock(ProfileService.class), mock(CredentialConfirmationService.class), disclosure,
+                ServerTestSupport.CLOCK, () -> { });
         return new ServerControlOperationExecutor(ServerTestSupport.REALM,
                 new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true),
                 opened.store(), RoleTemplateCatalog.load(getClass().getClassLoader()),
                 new AuthorizationEngine(ServerTestSupport.CLOCK),
                 new ApprovalService(opened.store(), ServerTestSupport.CLOCK, opened.audit()),
                 new BreakGlassService(opened.store(), ServerTestSupport.CLOCK, opened.audit()), disclosure,
-                new AuditorViews(ServerTestSupport.CLOCK, opened.audit()), Optional.empty(), descriptors,
+                publication, auditorViews, Optional.empty(), descriptors,
                 Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, policy));
     }
 
@@ -233,6 +336,6 @@ class ServerControlOperationExecutorTest {
     private static void ordinary(ServerControlOperationOutcome outcome) {
         ServerControlOperationOutcome.Ordinary ordinary = assertInstanceOf(
                 ServerControlOperationOutcome.Ordinary.class, outcome);
-        assertInstanceOf(zeroecho.pki.application.PkiOperationOutcome.Success.class, ordinary.outcome());
+        assertInstanceOf(zeroecho.pki.application.PkiOperationOutcome.Completed.class, ordinary.outcome());
     }
 }

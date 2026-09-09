@@ -42,6 +42,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -203,17 +204,63 @@ class PkiCliTest {
                 {"version":2,
                  "store":{"provider":"fs","properties":{"root":"store"}},
                  "audit":{"provider":"memory","properties":{"size":"16"}},
-                 "signing":{"workflow":{"provider":"zeroecho-lib","properties":{"keyringPath":"keys.zek","operationRoot":"signing-operations"}},
+                 "signing":{"workflow":{"provider":"zeroecho-lib","properties":{"keyringPath":"keys.zek"}},
                             "framework":{"provider":"x509-bc","properties":{}},
-                            "busPath":"signing-bus","signatureAlgorithm":"SHA256withRSA","signingTtlSeconds":30,
-                            "unlockEnvironmentVariable":"ZEROECHO_TEST_UNLOCK"},
+                            "signatureAlgorithm":"SHA256withRSA","signingTtlSeconds":30},
                  "publishers":[{"provider":"filesystem","properties":{"root":"published","targetId":"local"}}]}
                 """);
         PkiSessionConfiguration parsed = PkiCliConfiguration.read(configuration);
         System.out.println("...publishers=" + parsed.publishers().size());
         assertTrue(parsed.signing().isPresent());
+        assertTrue(parsed.signing().orElseThrow().unlockEnvironmentVariable().isEmpty());
         assertEquals(1, parsed.publishers().size());
         System.out.println("...ok");
+    }
+
+    @Test
+    void versionFourConfigurationReadsBoundedSigningRuntime() throws IOException {
+        Path configuration = temporaryDirectory.resolve("bounded-signing.json");
+        Files.writeString(configuration, """
+                {"version":4,
+                 "store":{"provider":"fs","properties":{"root":"store"}},
+                 "audit":{"provider":"memory","properties":{"size":"16"}},
+                 "signing":{"workflow":{"provider":"zeroecho-lib","properties":{"keyringPath":"keys.zek"}},
+                            "framework":{"provider":"x509-bc","properties":{}},
+                            "signatureAlgorithm":"SHA256withRSA","signingTtlSeconds":30,
+                            "laneCount":2,"queueCapacity":3,
+                            "gracefulDrainSeconds":4,"forcedCancellationSeconds":5},
+                 "publishers":[],"bindingProviders":[]}
+                """);
+        PkiSessionConfiguration.SigningConfiguration signing = PkiCliConfiguration.read(configuration)
+                .signing().orElseThrow();
+        assertEquals(2, signing.laneCount());
+        assertEquals(3, signing.queueCapacity());
+        assertEquals(Duration.ofSeconds(4), signing.gracefulDrain());
+        assertEquals(Duration.ofSeconds(5), signing.forcedCancellation());
+    }
+
+    @Test
+    void configurationReadsPerCaSigningServicesAndRouting() throws IOException {
+        System.out.println("configurationReadsPerCaSigningServicesAndRouting");
+        Path configuration = temporaryDirectory.resolve("routed-signing.json");
+        Files.writeString(configuration, """
+                {"version":4,
+                 "store":{"provider":"fs","properties":{"root":"store"}},
+                 "audit":{"provider":"memory","properties":{"size":"16"}},
+                 "signing":{"workflow":{"provider":"zeroecho-lib","properties":{"keyringPath":"keys.zek"}},
+                            "framework":{"provider":"x509-bc","properties":{}},
+                            "signatureAlgorithm":"SHA256withRSA","signingTtlSeconds":30,
+                            "signingServices":[{"serviceId":"hsm-a","workflow":{"provider":"zeroecho-remote",\
+                            "properties":{"endpoint":"https://hsm-a.example:8443/v1/sign"}}}],
+                            "caRouting":{"kref:issuer:ca-a":"hsm-a"}},
+                 "publishers":[],"bindingProviders":[]}
+                """);
+        PkiSessionConfiguration.SigningConfiguration signing = PkiCliConfiguration.read(configuration)
+                .signing().orElseThrow();
+        assertEquals(1, signing.signingServices().size());
+        assertEquals("hsm-a", signing.signingServices().get(0).serviceId());
+        assertEquals("zeroecho-remote", signing.signingServices().get(0).workflow().backendId());
+        assertEquals(java.util.Map.of("kref:issuer:ca-a", "hsm-a"), signing.caRouting());
     }
 
     @Test
@@ -249,12 +296,15 @@ class PkiCliTest {
         RecordingOpener opener = new RecordingOpener();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         int code = PkiCli.execute(new String[] { "credential.revoke", "--credential-id", "credential-1",
-                "--reason", "KEY_COMPROMISE", "--config", configuration.toString(), "--output", "json" },
+                "--reason", "KEY_COMPROMISE", "--justification", "ticket-100", "--config",
+                configuration.toString(), "--output", "json" },
                 output, opener, () -> false);
         String rendered = output.toString(StandardCharsets.UTF_8);
         System.out.println("...exit=" + code);
         assertEquals(PkiExitCodes.SUCCESS, code);
         assertEquals(List.of(PkiOperation.RevokeCredential.class), opener.operationTypes);
+        assertEquals(java.util.Optional.of("ticket-100"),
+                ((PkiOperation.RevokeCredential) opener.operations.get(0)).operatorJustification());
         assertTrue(rendered.contains("\"state\":\"PERMANENTLY_REVOKED\""));
         assertEquals(1, opener.closes.get());
         System.out.println("...ok");
@@ -400,10 +450,83 @@ class PkiCliTest {
         return path;
     }
 
+    @Test
+    void pendingOperationResolvesWithinBoundedWait() throws IOException {
+        System.out.println("pendingOperationResolvesWithinBoundedWait");
+        Path configuration = configuration("pending-resolve");
+        PendingOpener opener = new PendingOpener(2);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { "configuration.validate", "--config", configuration.toString(),
+                "--pending-wait", "5", "--output", "json" }, output, opener, () -> false);
+        System.out.println("...executions=" + opener.executions.get() + " code=" + code);
+        assertEquals(PkiExitCodes.SUCCESS, code);
+        assertTrue(opener.executions.get() >= 3);
+        System.out.println("...ok");
+    }
+
+    @Test
+    void pendingOperationExitsCleanlyForResumeWhenWaitElapses() throws IOException {
+        System.out.println("pendingOperationExitsCleanlyForResumeWhenWaitElapses");
+        Path configuration = configuration("pending-exit");
+        PendingOpener opener = new PendingOpener(Integer.MAX_VALUE);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { "configuration.validate", "--config", configuration.toString(),
+                "--pending-wait", "0", "--output", "json" }, output, opener, () -> false);
+        System.out.println("...executions=" + opener.executions.get() + " code=" + code);
+        // Clean, distinct exit for operator resume; no bounded re-execution when the wait is zero.
+        assertEquals(PkiExitCodes.EXTERNAL_OUTCOME_UNKNOWN, code);
+        assertEquals(1, opener.executions.get());
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("OPERATION_PENDING"));
+        System.out.println("...ok");
+    }
+
+    /** Opener whose session returns Pending for the first N operation executions, then Completed. */
+    private static final class PendingOpener implements PkiCli.SessionOpener {
+        private final int pendingExecutions;
+        private final AtomicInteger executions = new AtomicInteger();
+
+        private PendingOpener(int pendingExecutions) {
+            this.pendingExecutions = pendingExecutions;
+        }
+
+        @Override
+        public PkiSession open(PkiSessionConfiguration configuration) {
+            return new PkiSession() {
+                @Override public ProfileService profiles() { throw new UnsupportedOperationException(); }
+                @Override public RevocationService revocations() { throw new UnsupportedOperationException(); }
+                @Override public zeroecho.pki.api.confirmation.CredentialConfirmationService confirmations() {
+                    throw new UnsupportedOperationException();
+                }
+                @Override public zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry algorithmBindings() {
+                    throw new UnsupportedOperationException();
+                }
+                @Override public zeroecho.pki.application.PkiOperationExecutor operations() {
+                    return (operation, cancellation) -> {
+                        if (executions.incrementAndGet() <= pendingExecutions) {
+                            return new PkiOperationOutcome.Pending(operation.name(),
+                                    new zeroecho.pki.api.PkiId("signing:pending-1"));
+                        }
+                        return new PkiOperationOutcome.Completed(new PkiOperationResult(operation.name(),
+                                new LinkedHashMap<>()));
+                    };
+                }
+                @Override public zeroecho.pki.application.PkiRepository repository() {
+                    throw new UnsupportedOperationException();
+                }
+                @Override public zeroecho.pki.application.SigningReconciliationResult reconcileSigning(
+                        zeroecho.pki.application.SigningReconciliationRequest request) {
+                    throw new UnsupportedOperationException();
+                }
+                @Override public void close() { }
+            };
+        }
+    }
+
     private static final class RecordingOpener implements PkiCli.SessionOpener {
         private final AtomicInteger sessions = new AtomicInteger();
         private final AtomicInteger closes = new AtomicInteger();
         private final List<Class<?>> operationTypes = new java.util.ArrayList<>();
+        private final List<PkiOperation> operations = new java.util.ArrayList<>();
         private boolean failClose;
 
         @Override
@@ -417,6 +540,11 @@ class PkiCliTest {
 
                 @Override
                 public RevocationService revocations() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public zeroecho.pki.api.confirmation.CredentialConfirmationService confirmations() {
                     throw new UnsupportedOperationException();
                 }
 
@@ -465,6 +593,12 @@ class PkiCliTest {
                 }
 
                 @Override
+                public zeroecho.pki.application.SigningReconciliationResult reconcileSigning(
+                        zeroecho.pki.application.SigningReconciliationRequest request) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
                 public void close() throws Exception {
                     closes.incrementAndGet();
                     if (failClose) {
@@ -476,8 +610,9 @@ class PkiCliTest {
 
         private PkiOperationOutcome outcome(PkiOperation operation) {
             operationTypes.add(operation.getClass());
+            operations.add(operation);
             if (operation instanceof PkiOperation.InspectPublication) {
-                return new PkiOperationOutcome.Failure(operation.name(), PkiOperationFailure.NOT_FOUND,
+                return new PkiOperationOutcome.Failed(operation.name(), PkiOperationFailure.NOT_FOUND,
                         "OBJECT_NOT_FOUND");
             }
             LinkedHashMap<String, PkiOperationValue> fields = new LinkedHashMap<>();
@@ -503,7 +638,7 @@ class PkiCliTest {
             } else {
                 fields.put("status", new PkiOperationValue.Text("OK"));
             }
-            return new PkiOperationOutcome.Success(new PkiOperationResult(operation.name(), fields));
+            return new PkiOperationOutcome.Completed(new PkiOperationResult(operation.name(), fields));
         }
     }
 }

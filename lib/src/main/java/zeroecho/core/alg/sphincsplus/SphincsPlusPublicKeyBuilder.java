@@ -69,6 +69,11 @@ import zeroecho.core.spi.PublicKeyImporter;
  */
 public final class SphincsPlusPublicKeyBuilder implements PublicKeyImporter<SphincsPlusPublicKeySpec> {
 
+    /** Creates a stateless SPHINCS+ public-key importer. */
+    public SphincsPlusPublicKeyBuilder() {
+        // Stateless importer.
+    }
+
     /**
      * Imports a SPHINCS+ public key from X.509 encoding.
      *

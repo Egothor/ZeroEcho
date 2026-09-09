@@ -53,7 +53,14 @@ import zeroecho.pki.api.request.ParsedCertificationRequest;
 public record IssueEndEntityCommand(PkiId issuerCaId, ParsedCertificationRequest request, String profileId,
         Optional<Validity> validityOverride, Optional<IssuanceIntent> issuanceIntent) {
 
-    /** Creates an ordinary non-correlated administrative issuance command. */
+    /**
+     * Creates an ordinary non-correlated administrative issuance command.
+     *
+     * @param issuerCaId issuer CA entity identifier
+     * @param request parsed certification request
+     * @param profileId profile identifier governing issuance
+     * @param validityOverride optional policy-validated validity override
+     */
     public IssueEndEntityCommand(PkiId issuerCaId, ParsedCertificationRequest request, String profileId,
             Optional<Validity> validityOverride) {
         this(issuerCaId, request, profileId, validityOverride, Optional.empty());

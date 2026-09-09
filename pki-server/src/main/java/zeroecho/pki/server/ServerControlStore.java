@@ -105,6 +105,13 @@ public final class ServerControlStore implements AutoCloseable {
     public static final String ACME_EVIDENCE = "io.zeroecho.server.acme-evidence";
     /** Stable namespace for durable OCSP responder bindings. */
     public static final String OCSP_RESPONDER = "io.zeroecho.server.ocsp-responder";
+    /** Stable namespace for non-authoritative revocation-audit projection state. */
+    public static final String REVOCATION_AUDIT_PROJECTION =
+            "io.zeroecho.server.revocation-audit-projection";
+    /** Stable namespace for the durable cross-store audit-log integrity anchor. */
+    public static final String AUDIT_ANCHOR = "io.zeroecho.server.audit-anchor";
+    /** Stable namespace for per-family success-evidence audit-projection cursors. */
+    public static final String AUDIT_EVIDENCE_PROJECTION = "io.zeroecho.server.audit-evidence-projection";
 
     private static final int MAGIC = 0x5a455331;
     private static final int SCHEMA = 6;
@@ -148,11 +155,17 @@ public final class ServerControlStore implements AutoCloseable {
             }
         }
 
+        /**
+         * Returns the protocol payload.
+         *
+         * @return defensive copy of the bounded payload
+         */
         @Override public byte[] payload() { return payload.clone(); }
     }
 
     private static final Set<String> PROTOCOL_NAMESPACES = Set.of(ACME_DIRECTORY, ACME_ACCOUNT, ACME_ORDER,
-            ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE, OCSP_RESPONDER);
+            ACME_AUTHORIZATION, ACME_CHALLENGE, ACME_EVIDENCE, OCSP_RESPONDER,
+            REVOCATION_AUDIT_PROJECTION, AUDIT_ANCHOR, AUDIT_EVIDENCE_PROJECTION);
 
     /**
      * Durable realm-control identity and commitments.
@@ -161,13 +174,15 @@ public final class ServerControlStore implements AutoCloseable {
      * @param displayName safe administrative display name
      * @param exposure authority exposure policy
      * @param authorizationCommitment authorization configuration commitment
-     * @param approvalCommitment approval-policy commitment
+     * @param approvalCommitment HIGH_RISK approval-policy commitment
+     * @param extendedApprovalCommitment commitment over all non-HIGH_RISK approval policies
+     *        (canonical digest of the category-sorted map; the empty-map digest when none are configured)
      * @param disclosureCommitment disclosure-default commitment
      * @param controlStoreId exact metadata-store identity
      */
     public record RealmRecord(RealmId realmId, String displayName, AuthorityExposurePolicy exposure,
-            String authorizationCommitment, String approvalCommitment, String disclosureCommitment,
-            MetadataStoreId controlStoreId) {
+            String authorizationCommitment, String approvalCommitment, String extendedApprovalCommitment,
+            String disclosureCommitment, MetadataStoreId controlStoreId) {
         /** Validates finite realm control metadata. */
         public RealmRecord {
             Objects.requireNonNull(realmId, "realmId");
@@ -175,6 +190,7 @@ public final class ServerControlStore implements AutoCloseable {
             Objects.requireNonNull(exposure, "exposure");
             requireDigest(authorizationCommitment);
             requireDigest(approvalCommitment);
+            requireDigest(extendedApprovalCommitment);
             requireDigest(disclosureCommitment);
             Objects.requireNonNull(controlStoreId, "controlStoreId");
         }
@@ -192,13 +208,23 @@ public final class ServerControlStore implements AutoCloseable {
         this.metadata = Objects.requireNonNull(metadata, "metadata");
     }
 
-    /** @return durable server-control metadata-store identity */
+    /**
+     * Returns the durable server-control metadata-store identity.
+     *
+     * @return durable metadata-store identity
+     * @throws IllegalStateException if this adapter is closed
+     */
     public synchronized MetadataStoreId id() {
         requireOpen();
         return metadata.id();
     }
 
-    /** Creates or validates the sole realm identity record. */
+    /**
+     * Creates or validates the sole realm identity record.
+     *
+     * @param expected expected immutable realm record
+     * @return existing or newly created exact realm record
+     */
     public synchronized RealmRecord ensureRealm(RealmRecord expected) {
         Objects.requireNonNull(expected, "expected");
         List<RealmRecord> existing = scan(REALM, KIND_REALM, ServerControlStore::readRealm);
@@ -212,181 +238,342 @@ public final class ServerControlStore implements AutoCloseable {
         return existing.getFirst();
     }
 
-    /** Creates one principal. */
+    /**
+     * Creates one principal.
+     *
+     * @param value validated record to create
+     */
     public synchronized void createPrincipal(SecurityPrincipal value) {
         create(PRINCIPAL, value.principalId(), output -> writePrincipal(output, value));
     }
 
-    /** Replaces one exact principal. */
+    /**
+     * Replaces one exact principal.
+     *
+     * @param current caller-observed current record
+     * @param updated replacement record with the same identity
+     */
     public synchronized void replacePrincipal(SecurityPrincipal current, SecurityPrincipal updated) {
         requireSame(current.principalId(), updated.principalId());
         replace(PRINCIPAL, current.principalId(), output -> writePrincipal(output, updated));
     }
 
-    /** Returns one principal or fails without revealing storage details. */
+    /**
+     * Returns one principal or fails without revealing storage details.
+     *
+     * @param principalId stable principal identifier
+     * @return exact principal
+     */
     public synchronized SecurityPrincipal requirePrincipal(String principalId) {
         return read(PRINCIPAL, principalId, KIND_PRINCIPAL, ServerControlStore::readPrincipal)
                 .orElseThrow(() -> new IllegalArgumentException("Principal is unavailable"));
     }
 
-    /** Returns a bounded stable page of principals in metadata-key order. */
+    /**
+     * Returns a bounded stable page of principals in metadata-key order.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded principal page
+     */
     public synchronized Page<SecurityPrincipal> principals(int offset, int limit) {
         return scanPage(PRINCIPAL, KIND_PRINCIPAL, ServerControlStore::readPrincipal, offset, limit);
     }
 
-    /** Creates one scoped role assignment. */
+    /**
+     * Creates one scoped role assignment.
+     *
+     * @param value validated record to create
+     */
     public synchronized void createAssignment(RoleTemplateCatalog.Assignment value) {
         create(ASSIGNMENT, value.assignmentId(), output -> writeAssignment(output, value));
     }
 
-    /** Returns one role assignment. */
+    /**
+     * Returns one role assignment.
+     *
+     * @param assignmentId stable role-assignment identifier
+     * @return exact role assignment
+     */
     public synchronized RoleTemplateCatalog.Assignment requireAssignment(String assignmentId) {
         return read(ASSIGNMENT, assignmentId, KIND_ASSIGNMENT, ServerControlStore::readAssignment)
                 .orElseThrow(() -> new IllegalArgumentException("Role assignment is unavailable"));
     }
 
-    /** Replaces one exact role assignment. */
+    /**
+     * Replaces one exact role assignment.
+     *
+     * @param current caller-observed current record
+     * @param updated replacement record with the same identity
+     */
     public synchronized void replaceAssignment(RoleTemplateCatalog.Assignment current,
             RoleTemplateCatalog.Assignment updated) {
         requireSame(current.assignmentId(), updated.assignmentId());
         replace(ASSIGNMENT, current.assignmentId(), output -> writeAssignment(output, updated));
     }
 
-    /** Returns a bounded stable page of role assignments. */
+    /**
+     * Returns a bounded stable page of role assignments.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded role-assignment page
+     */
     public synchronized Page<RoleTemplateCatalog.Assignment> assignments(int offset, int limit) {
         return scanPage(ASSIGNMENT, KIND_ASSIGNMENT, ServerControlStore::readAssignment, offset, limit);
     }
 
-    /** Lists assignments for one principal from one stable metadata snapshot. */
+    /**
+     * Lists assignments for one principal from one stable metadata snapshot.
+     *
+     * @param principalId stable principal identifier
+     * @return immutable assignments for the principal
+     */
     public synchronized List<RoleTemplateCatalog.Assignment> assignmentsFor(String principalId) {
         return scan(ASSIGNMENT, KIND_ASSIGNMENT, ServerControlStore::readAssignment).stream()
                 .filter(item -> item.principalId().equals(principalId)).toList();
     }
 
-    /** Creates one direct grant. */
+    /**
+     * Creates one direct grant.
+     *
+     * @param value validated record to create
+     */
     public synchronized void createGrant(Permission.Grant value) {
         create(GRANT, value.grantId(), output -> writeGrant(output, value));
     }
 
-    /** Returns one direct grant. */
+    /**
+     * Returns one direct grant.
+     *
+     * @param grantId stable grant identifier
+     * @return exact permission grant
+     */
     public synchronized Permission.Grant requireGrant(String grantId) {
         return read(GRANT, grantId, KIND_GRANT, ServerControlStore::readGrant)
                 .orElseThrow(() -> new IllegalArgumentException("Permission grant is unavailable"));
     }
 
-    /** Returns a bounded stable page of direct grants. */
+    /**
+     * Returns a bounded stable page of direct grants.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded grant page
+     */
     public synchronized Page<Permission.Grant> grants(int offset, int limit) {
         return scanPage(GRANT, KIND_GRANT, ServerControlStore::readGrant, offset, limit);
     }
 
-    /** Replaces one direct grant. */
+    /**
+     * Replaces one direct grant.
+     *
+     * @param current caller-observed current record
+     * @param updated replacement record with the same identity
+     */
     public synchronized void replaceGrant(Permission.Grant current, Permission.Grant updated) {
         requireSame(current.grantId(), updated.grantId());
         replace(GRANT, current.grantId(), output -> writeGrant(output, updated));
     }
 
-    /** Lists direct grants for one principal from one stable snapshot. */
+    /**
+     * Lists direct grants for one principal from one stable snapshot.
+     *
+     * @param principalId stable principal identifier
+     * @return immutable direct grants for the principal
+     */
     public synchronized List<Permission.Grant> grantsFor(String principalId) {
         return scan(GRANT, KIND_GRANT, ServerControlStore::readGrant).stream()
                 .filter(item -> item.principalId().equals(principalId)).toList();
     }
 
-    /** Creates one approval request. */
+    /**
+     * Creates one approval request.
+     *
+     * @param value validated record to create
+     */
     public synchronized void createApproval(ApprovalService.Request value) {
         create(APPROVAL, value.approvalId(), output -> writeApproval(output, value));
     }
 
-    /** Replaces one approval request through compare-and-replace. */
+    /**
+     * Replaces one approval request through compare-and-replace.
+     *
+     * @param current caller-observed current record
+     * @param updated replacement record with the same identity
+     */
     public synchronized void replaceApproval(ApprovalService.Request current, ApprovalService.Request updated) {
         requireSame(current.approvalId(), updated.approvalId());
         replace(APPROVAL, current.approvalId(), output -> writeApproval(output, updated));
     }
 
-    /** Returns one approval request. */
+    /**
+     * Returns one approval request.
+     *
+     * @param approvalId stable approval identifier
+     * @return exact approval request
+     */
     public synchronized ApprovalService.Request requireApproval(String approvalId) {
         return read(APPROVAL, approvalId, KIND_APPROVAL, ServerControlStore::readApproval)
                 .orElseThrow(() -> new IllegalArgumentException("Approval is unavailable"));
     }
 
-    /** Returns a bounded stable page of approval records. */
+    /**
+     * Returns a bounded stable page of approval records.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded approval page
+     */
     public synchronized Page<ApprovalService.Request> approvals(int offset, int limit) {
         return scanPage(APPROVAL, KIND_APPROVAL, ServerControlStore::readApproval, offset, limit);
     }
 
-    /** Creates one break-glass record. */
+    /**
+     * Creates one break-glass record.
+     *
+     * @param value validated record to create
+     */
     public synchronized void createBreakGlass(BreakGlassService.Record value) {
         create(BREAK_GLASS, value.breakGlassId(), output -> writeBreakGlass(output, value));
     }
 
-    /** Replaces one break-glass record. */
+    /**
+     * Replaces one break-glass record.
+     *
+     * @param current caller-observed current record
+     * @param updated replacement record with the same identity
+     */
     public synchronized void replaceBreakGlass(BreakGlassService.Record current, BreakGlassService.Record updated) {
         requireSame(current.breakGlassId(), updated.breakGlassId());
         replace(BREAK_GLASS, current.breakGlassId(), output -> writeBreakGlass(output, updated));
     }
 
-    /** Returns one break-glass record. */
+    /**
+     * Returns one break-glass record.
+     *
+     * @param breakGlassId stable break-glass identifier
+     * @return exact break-glass record
+     */
     public synchronized BreakGlassService.Record requireBreakGlass(String breakGlassId) {
         return read(BREAK_GLASS, breakGlassId, KIND_BREAK_GLASS, ServerControlStore::readBreakGlass)
                 .orElseThrow(() -> new IllegalArgumentException("Break-glass record is unavailable"));
     }
 
-    /** Lists break-glass records for one principal. */
+    /**
+     * Lists break-glass records for one principal.
+     *
+     * @param principalId stable principal identifier
+     * @return immutable break-glass records for the principal
+     */
     public synchronized List<BreakGlassService.Record> breakGlassFor(String principalId) {
         return scan(BREAK_GLASS, KIND_BREAK_GLASS, ServerControlStore::readBreakGlass).stream()
                 .filter(item -> item.principalId().equals(principalId)).toList();
     }
 
-    /** Returns a bounded stable page of break-glass records. */
+    /**
+     * Returns a bounded stable page of break-glass records.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded break-glass page
+     */
     public synchronized Page<BreakGlassService.Record> breakGlass(int offset, int limit) {
         return scanPage(BREAK_GLASS, KIND_BREAK_GLASS, ServerControlStore::readBreakGlass, offset, limit);
     }
 
-    /** Creates one disclosure record. */
+    /**
+     * Creates one disclosure record.
+     *
+     * @param value validated record to create
+     */
     public synchronized void createDisclosure(DisclosureService.Record value) {
         create(DISCLOSURE, value.objectId().value(), output -> writeDisclosure(output, value));
     }
 
-    /** Replaces one disclosure record. */
+    /**
+     * Replaces one disclosure record.
+     *
+     * @param current caller-observed current record
+     * @param updated replacement record with the same identity
+     */
     public synchronized void replaceDisclosure(DisclosureService.Record current, DisclosureService.Record updated) {
         requireSame(current.objectId().value(), updated.objectId().value());
         replace(DISCLOSURE, current.objectId().value(), output -> writeDisclosure(output, updated));
     }
 
-    /** Returns one disclosure record. */
+    /**
+     * Returns one disclosure record.
+     *
+     * @param objectId exact protected object identifier
+     * @return exact disclosure record
+     */
     public synchronized DisclosureService.Record requireDisclosure(PkiId objectId) {
         return read(DISCLOSURE, objectId.value(), KIND_DISCLOSURE, ServerControlStore::readDisclosure)
                 .orElseThrow(() -> new IllegalArgumentException("Disclosure record is unavailable"));
     }
 
-    /** Finds one disclosure record without converting absence into an error. */
+    /**
+     * Finds one disclosure record without converting absence into an error.
+     *
+     * @param objectId exact protected object identifier
+     * @return matching record or empty
+     */
     public synchronized Optional<DisclosureService.Record> findDisclosure(PkiId objectId) {
         return read(DISCLOSURE, objectId.value(), KIND_DISCLOSURE, ServerControlStore::readDisclosure);
     }
 
-    /** Returns a bounded stable page of disclosure records. */
+    /**
+     * Returns a bounded stable page of disclosure records.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded disclosure page
+     */
     public synchronized Page<DisclosureService.Record> disclosures(int offset, int limit) {
         return scanPage(DISCLOSURE, KIND_DISCLOSURE, ServerControlStore::readDisclosure, offset, limit);
     }
 
-    /** Creates one commitment-only capability record. */
+    /**
+     * Creates one commitment-only capability record.
+     *
+     * @param value validated record to create
+     */
     public synchronized void createCapability(DisclosureService.Capability value) {
         create(CAPABILITY, value.capabilityId(), output -> writeCapability(output, value));
     }
 
-    /** Replaces one capability record. */
+    /**
+     * Replaces one capability record.
+     *
+     * @param current caller-observed current record
+     * @param updated replacement record with the same identity
+     */
     public synchronized void replaceCapability(DisclosureService.Capability current,
             DisclosureService.Capability updated) {
         requireSame(current.capabilityId(), updated.capabilityId());
         replace(CAPABILITY, current.capabilityId(), output -> writeCapability(output, updated));
     }
 
-    /** Returns one capability record. */
+    /**
+     * Returns one capability record.
+     *
+     * @param capabilityId stable capability identifier
+     * @return exact capability metadata
+     */
     public synchronized DisclosureService.Capability requireCapability(String capabilityId) {
         return read(CAPABILITY, capabilityId, KIND_CAPABILITY, ServerControlStore::readCapability)
                 .orElseThrow(() -> new IllegalArgumentException("Capability is unavailable"));
     }
 
-    /** Finite page returned without materializing the complete namespace. */
+    /**
+     * Finite page returned without materializing the complete namespace.
+     *
+     * @param <T> record type
+     * @param values immutable page values
+     * @param nextOffset offset for the next page
+     * @param hasMore whether another page may contain values
+     */
     public record Page<T>(List<T> values, int nextOffset, boolean hasMore) {
         /** Snapshots the bounded page. */
         public Page {
@@ -395,7 +582,12 @@ public final class ServerControlStore implements AutoCloseable {
         }
     }
 
-    /** One compare-and-set mutation participating in an atomic protocol-state change. */
+    /**
+     * One compare-and-set mutation participating in an atomic protocol-state change.
+     *
+     * @param record replacement protocol record
+     * @param expectedCommitment empty for create-only, otherwise the required current commitment
+     */
     public record ProtocolMutation(ProtocolRecord record, Optional<String> expectedCommitment) {
         /** Validates the immutable mutation request. */
         public ProtocolMutation {
@@ -405,13 +597,26 @@ public final class ServerControlStore implements AutoCloseable {
         }
     }
 
-    /** Reads one exact protocol record from its closed namespace. */
+    /**
+     * Reads one exact protocol record from its closed namespace.
+     *
+     * @param namespace closed protocol namespace
+     * @param recordId canonical protocol record identifier
+     * @return matching protocol record or empty
+     */
     public synchronized Optional<ProtocolRecord> protocolRecord(String namespace, String recordId) {
         requireProtocolNamespace(namespace);
         return read(namespace, recordId, KIND_PROTOCOL, input -> readProtocol(input, namespace));
     }
 
-    /** Returns one bounded deterministic page of protocol records. */
+    /**
+     * Returns one bounded deterministic page of protocol records.
+     *
+     * @param namespace closed protocol namespace
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded protocol-record page
+     */
     public synchronized Page<ProtocolRecord> protocolRecords(String namespace, int offset, int limit) {
         requireProtocolNamespace(namespace);
         return scanPage(namespace, KIND_PROTOCOL, input -> readProtocol(input, namespace), offset, limit);
@@ -422,6 +627,8 @@ public final class ServerControlStore implements AutoCloseable {
      * Empty expected commitments mean create-only; present commitments mean exact
      * compare-and-replace. Provider I/O and PKI operations must occur outside this
      * method.
+     *
+     * @param requested finite nonempty atomic mutation set
      */
     public synchronized void mutateProtocol(List<ProtocolMutation> requested) {
         requireOpen();
@@ -465,29 +672,54 @@ public final class ServerControlStore implements AutoCloseable {
         }
     }
 
-    /** Lists capability commitments bound to one object. */
+    /**
+     * Lists capability commitments bound to one object.
+     *
+     * @param objectId exact protected object identifier
+     * @return immutable capability metadata for the object
+     */
     public synchronized List<DisclosureService.Capability> capabilitiesFor(PkiId objectId) {
         return scan(CAPABILITY, KIND_CAPABILITY, ServerControlStore::readCapability).stream()
                 .filter(item -> item.objectId().equals(objectId)).toList();
     }
 
-    /** Creates one exact repository alias record. */
+    /**
+     * Creates one exact repository alias record.
+     *
+     * @param value validated record to create
+     */
     public synchronized void createRepositoryAlias(RepositoryAliasService.Record value) {
         create(REPOSITORY_ALIAS, value.aliasId(), output -> writeRepositoryAlias(output, value));
     }
 
-    /** Finds one exact repository alias record. */
+    /**
+     * Finds one exact repository alias record.
+     *
+     * @param aliasId stable repository-alias identifier
+     * @return matching alias or empty
+     */
     public synchronized Optional<RepositoryAliasService.Record> findRepositoryAlias(String aliasId) {
         return read(REPOSITORY_ALIAS, aliasId, KIND_REPOSITORY_ALIAS, ServerControlStore::readRepositoryAlias);
     }
 
-    /** Returns one exact repository alias record. */
+    /**
+     * Returns one exact repository alias record.
+     *
+     * @param aliasId stable repository-alias identifier
+     * @return exact alias record
+     */
     public synchronized RepositoryAliasService.Record requireRepositoryAlias(String aliasId) {
         return findRepositoryAlias(aliasId)
                 .orElseThrow(() -> new IllegalArgumentException("Repository alias is unavailable"));
     }
 
-    /** Atomically replaces an alias after exact expected-current validation. */
+    /**
+     * Atomically replaces an alias after exact expected-current validation.
+     *
+     * @param current caller-observed current record
+     * @param updated replacement record with the same identity
+     * @param expectedCurrentCommitment optional expected current record commitment
+     */
     public synchronized void replaceRepositoryAlias(RepositoryAliasService.Record current,
             RepositoryAliasService.Record updated, Optional<String> expectedCurrentCommitment) {
         requireSame(current.aliasId(), updated.aliasId());
@@ -502,7 +734,13 @@ public final class ServerControlStore implements AutoCloseable {
         replace(REPOSITORY_ALIAS, current.aliasId(), output -> writeRepositoryAlias(output, updated));
     }
 
-    /** Returns a bounded repository alias page. */
+    /**
+     * Returns a bounded repository alias page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded repository-alias page
+     */
     public synchronized Page<RepositoryAliasService.Record> repositoryAliases(int offset, int limit) {
         return scanPage(REPOSITORY_ALIAS, KIND_REPOSITORY_ALIAS, ServerControlStore::readRepositoryAlias,
                 offset, limit);
@@ -527,7 +765,11 @@ public final class ServerControlStore implements AutoCloseable {
         }
     }
 
-    /** Validates durable relationships against the active strict role catalog. */
+    /**
+     * Validates durable relationships against the active strict role catalog.
+     *
+     * @param roles active strict role-template catalog
+     */
     public synchronized void validateReferences(RoleTemplateCatalog roles) {
         Objects.requireNonNull(roles, "roles");
         Set<String> principals = scan(PRINCIPAL, KIND_PRINCIPAL, ServerControlStore::readPrincipal).stream()
@@ -755,7 +997,8 @@ public final class ServerControlStore implements AutoCloseable {
         out.writeInt(KIND_REALM); writeString(out, value.realmId().value()); writeString(out, value.displayName());
         out.writeInt(value.exposure().mode().code()); out.writeBoolean(value.exposure().authorityCreationPermitted());
         writePkiSet(out, value.exposure().authorityIds()); writeString(out, value.authorizationCommitment());
-        writeString(out, value.approvalCommitment()); writeString(out, value.disclosureCommitment());
+        writeString(out, value.approvalCommitment()); writeString(out, value.extendedApprovalCommitment());
+        writeString(out, value.disclosureCommitment());
         writeString(out, value.controlStoreId().value());
     }
 
@@ -764,7 +1007,7 @@ public final class ServerControlStore implements AutoCloseable {
         AuthorityExposurePolicy.Mode mode = AuthorityExposurePolicy.Mode.fromCode(in.readInt());
         boolean creation = in.readBoolean(); Set<PkiId> ids = readPkiSet(in);
         return new RealmRecord(realm, displayName, new AuthorityExposurePolicy(mode, ids, creation),
-                readString(in), readString(in), readString(in), new MetadataStoreId(readString(in)));
+                readString(in), readString(in), readString(in), readString(in), new MetadataStoreId(readString(in)));
     }
 
     private static void writeProtocol(DataOutputStream out, ProtocolRecord value) throws IOException {

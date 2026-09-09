@@ -69,6 +69,11 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  * @since 1.0
  */
 public final class EcdhKeyGenBuilder implements AsymmetricKeyPairGenerator<EcdhCurveSpec> {
+    /** Creates a stateless ECDH key-pair generator. */
+    public EcdhKeyGenBuilder() {
+        // Stateless generator.
+    }
+
     /**
      * Generates a new elliptic curve key pair for use in ECDH key agreement.
      *

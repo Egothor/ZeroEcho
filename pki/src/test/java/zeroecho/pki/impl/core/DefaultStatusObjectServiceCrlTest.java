@@ -161,7 +161,11 @@ final class DefaultStatusObjectServiceCrlTest {
         Path snapshot = root.resolve("crl-service-restored");
         FsHistoryPolicy history = FsHistoryPolicy.onWrite(Optional.of(Duration.ofDays(90)));
         FsPkiStoreOptions snapshotOptions = new FsPkiStoreOptions(
-                history, history, history, history, false, Duration.ofDays(90), Duration.ZERO);
+                history, history, history, history, false, Duration.ofDays(90), Duration.ZERO,
+                FsPkiStoreOptions.defaults().signingMaximumGroupSize(),
+                FsPkiStoreOptions.defaults().signingResidentIndexBudgetBytes(),
+                FsPkiStoreOptions.defaults().signingCompactionTransientBudgetBytes(),
+                FsPkiStoreOptions.defaults().signingEvidenceAudit());
         PkiId caId;
         BigInteger heldSerial;
         BigInteger permanentSerial;
@@ -212,6 +216,138 @@ final class DefaultStatusObjectServiceCrlTest {
             assertTrue(restoredCrl.getRevokedCertificate(heldSerial) != null);
             assertTrue(restoredCrl.getRevokedCertificate(permanentSerial) != null);
         }
+    }
+
+    @Test
+    void assignsMonotonicCrlNumberAcrossGenerationsAndRestart(@TempDir Path root) throws Exception {
+        KeyPair rootKey = generateRsa();
+        KeyPair subjectKey = generateRsa();
+        KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:crl-number");
+        Path snapshot = root.resolve("crl-number-restored");
+        FsPkiStoreOptions options = restartOptions();
+        PkiId caId;
+        try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
+                Map.of(rootKeyRef, rootKey), options)) {
+            caId = createRoot(runtime, rootKeyRef, "CRL Number Root");
+            Credential subject = issue(runtime, caId, subjectKey, "Numbered");
+            runtime.revocationService().revokePermanently(new RevocationCommand.RevokePermanently(
+                    subject.credentialId(), RevocationReason.KEY_COMPROMISE, emptyAttributes()));
+
+            assertEquals(BigInteger.ONE, crlNumberOf(runtime, generateFullCrl(runtime, caId)));
+            assertEquals(BigInteger.TWO, crlNumberOf(runtime, generateFullCrl(runtime, caId)));
+
+            exportRestartSnapshot(runtime, root, snapshot);
+        }
+        try (PkiTestRuntime restored = PkiTestRuntime.create(snapshot, snapshot.resolve("restored-bus.log"),
+                Map.of(rootKeyRef, rootKey), options)) {
+            assertEquals(BigInteger.valueOf(3L), crlNumberOf(restored, generateFullCrl(restored, caId)),
+                    "CRL number must remain monotonic across restart");
+        }
+    }
+
+    @Test
+    void deltaCrlCarriesDeltaIndicatorAndOnlyChangesSinceBase(@TempDir Path root) throws Exception {
+        KeyPair rootKey = generateRsa();
+        KeyPair baseKey = generateRsa();
+        KeyPair deltaKey = generateRsa();
+        KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:delta-crl");
+        try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
+                Map.of(rootKeyRef, rootKey))) {
+            PkiId caId = createRoot(runtime, rootKeyRef, "Delta CRL Root");
+            Credential inBase = issue(runtime, caId, baseKey, "InBase");
+            Credential afterBase = issue(runtime, caId, deltaKey, "AfterBase");
+
+            runtime.revocationService().revokePermanently(new RevocationCommand.RevokePermanently(
+                    inBase.credentialId(), RevocationReason.KEY_COMPROMISE, emptyAttributes()));
+            // The base CRL's thisUpdate is truncated to seconds; force a full-second boundary so the
+            // pre-base revocation lands strictly before the base and is excluded from the delta.
+            Thread.sleep(1_100L);
+            StatusObject base = generateFullCrl(runtime, caId);
+            BigInteger baseNumber = crlNumberOf(runtime, base);
+
+            runtime.revocationService().revokePermanently(new RevocationCommand.RevokePermanently(
+                    afterBase.credentialId(), RevocationReason.AA_COMPROMISE, emptyAttributes()));
+            StatusObject delta = runtime.statusObjectService().generate(new StatusObjectGenerateCommand(
+                    caId, StatusObjectType.DELTA_CRL, runtime.framework().formatId(), emptyAttributes()));
+
+            X509CRLHolder deltaCrl = parseCrl(runtime, delta);
+            BigInteger inBaseSerial = certificate(runtime, inBase).serial();
+            BigInteger afterBaseSerial = certificate(runtime, afterBase).serial();
+
+            assertEquals(StatusObjectType.DELTA_CRL, delta.type());
+            assertEquals(baseNumber.add(BigInteger.ONE), crlNumberOf(runtime, delta));
+            assertEquals(baseNumber, extensionInteger(deltaCrl, Extension.deltaCRLIndicator));
+            assertNull(deltaCrl.getRevokedCertificate(inBaseSerial), "base-era entry must not appear in the delta");
+            assertTrue(deltaCrl.getRevokedCertificate(afterBaseSerial) != null,
+                    "post-base revocation must appear in the delta");
+        }
+    }
+
+    @Test
+    void deltaCrlWithoutBaseFullCrlIsRejected(@TempDir Path root) throws Exception {
+        KeyPair rootKey = generateRsa();
+        KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:delta-no-base");
+        try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
+                Map.of(rootKeyRef, rootKey))) {
+            PkiId caId = createRoot(runtime, rootKeyRef, "Delta No Base Root");
+            PkiException failure = assertThrows(PkiException.class,
+                    () -> runtime.statusObjectService().generate(new StatusObjectGenerateCommand(
+                            caId, StatusObjectType.DELTA_CRL, runtime.framework().formatId(), emptyAttributes())));
+            assertTrue(failure.getMessage().contains("DELTA_CRL_BASE_MISSING"));
+        }
+    }
+
+    @Test
+    void ocspWithoutTargetSerialIsRejected(@TempDir Path root) throws Exception {
+        KeyPair rootKey = generateRsa();
+        KeyRef rootKeyRef = new KeyRef("kref:v1:keyring:test:ocsp-no-target");
+        try (PkiTestRuntime runtime = PkiTestRuntime.create(root, root.resolve("bus.log"),
+                Map.of(rootKeyRef, rootKey))) {
+            PkiId caId = createRoot(runtime, rootKeyRef, "OCSP No Target Root");
+            PkiException failure = assertThrows(PkiException.class,
+                    () -> runtime.statusObjectService().generate(new StatusObjectGenerateCommand(
+                            caId, StatusObjectType.OCSP, runtime.framework().formatId(), emptyAttributes())));
+            assertTrue(failure.getMessage().contains("OCSP_TARGET_REQUIRED"));
+        }
+    }
+
+    private static StatusObject generateFullCrl(PkiTestRuntime runtime, PkiId caId) {
+        return runtime.statusObjectService().generate(new StatusObjectGenerateCommand(caId,
+                StatusObjectType.CRL, runtime.framework().formatId(), emptyAttributes()));
+    }
+
+    private static X509CRLHolder parseCrl(PkiTestRuntime runtime, StatusObject status) throws Exception {
+        return new X509CRLHolder(PkiTestRuntime.readContent(runtime.signingBus(), status.content()));
+    }
+
+    private static BigInteger crlNumberOf(PkiTestRuntime runtime, StatusObject status) throws Exception {
+        return extensionInteger(parseCrl(runtime, status), Extension.cRLNumber);
+    }
+
+    private static BigInteger extensionInteger(X509CRLHolder crl, org.bouncycastle.asn1.ASN1ObjectIdentifier oid) {
+        Extension extension = crl.getExtension(oid);
+        assertTrue(extension != null, () -> "missing CRL extension " + oid);
+        return org.bouncycastle.asn1.ASN1Integer.getInstance(extension.getParsedValue()).getValue();
+    }
+
+    private static FsPkiStoreOptions restartOptions() {
+        FsHistoryPolicy history = FsHistoryPolicy.onWrite(Optional.of(Duration.ofDays(90)));
+        return new FsPkiStoreOptions(history, history, history, history, false, Duration.ofDays(90), Duration.ZERO,
+                FsPkiStoreOptions.defaults().signingMaximumGroupSize(),
+                FsPkiStoreOptions.defaults().signingResidentIndexBudgetBytes(),
+                FsPkiStoreOptions.defaults().signingCompactionTransientBudgetBytes(),
+                FsPkiStoreOptions.defaults().signingEvidenceAudit());
+    }
+
+    private static void exportRestartSnapshot(PkiTestRuntime runtime, Path storeRoot, Path snapshot) throws Exception {
+        try (java.util.stream.Stream<Path> files = java.nio.file.Files.walk(
+                storeRoot.resolve("store").resolve("profiles"))) {
+            for (Path active : files.filter(path -> "active.bin".equals(path.getFileName().toString())).toList()) {
+                java.nio.file.Files.delete(active);
+            }
+        }
+        java.nio.file.Files.createDirectories(snapshot);
+        ((FilesystemPkiStore) runtime.store()).exportSnapshot(snapshot.resolve("store"), Instant.now());
     }
 
     @Test
@@ -602,7 +738,8 @@ final class DefaultStatusObjectServiceCrlTest {
         AttributeSet attributes = SimpleAttributeSet.builder()
                 .put(BcX509Attributes.ISSUER_CERT_DER,
                         new AttributeValue.BytesValue(runtime.credentialBytes(issuer)))
-                .put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(keyRef.value())).build();
+                .put(BcX509Attributes.ISSUER_KEYREF, new AttributeValue.StringValue(keyRef.value()))
+                .put(BcX509Attributes.CRL_NUMBER, new AttributeValue.StringValue("1")).build();
         return new StatusObjectGenerateCommand(caId, StatusObjectType.CRL, BcX509CredentialFramework.FORMAT_ID,
                 attributes);
     }

@@ -50,7 +50,11 @@ import java.util.Objects;
 public sealed interface PkiOperationValue permits PkiOperationValue.Text, PkiOperationValue.IntegerValue,
         PkiOperationValue.BooleanValue, PkiOperationValue.ObjectValue, PkiOperationValue.ListValue {
 
-    /** Text scalar. */
+    /**
+     * Text scalar.
+     *
+     * @param value nonnull text
+     */
     record Text(String value) implements PkiOperationValue {
         /** Validates the value. */
         public Text {
@@ -58,15 +62,27 @@ public sealed interface PkiOperationValue permits PkiOperationValue.Text, PkiOpe
         }
     }
 
-    /** Signed 64-bit integer scalar. */
+    /**
+     * Signed 64-bit integer scalar.
+     *
+     * @param value scalar value
+     */
     record IntegerValue(long value) implements PkiOperationValue {
     }
 
-    /** Boolean scalar. */
+    /**
+     * Boolean scalar.
+     *
+     * @param value scalar value
+     */
     record BooleanValue(boolean value) implements PkiOperationValue {
     }
 
-    /** Deterministically ordered object value. */
+    /**
+     * Deterministically ordered object value.
+     *
+     * @param fields immutable named fields in insertion order
+     */
     record ObjectValue(Map<String, PkiOperationValue> fields) implements PkiOperationValue {
         /** Validates names and snapshots insertion order. */
         public ObjectValue {
@@ -83,7 +99,11 @@ public sealed interface PkiOperationValue permits PkiOperationValue.Text, PkiOpe
         }
     }
 
-    /** Immutable ordered list value. */
+    /**
+     * Immutable ordered list value.
+     *
+     * @param values immutable ordered values
+     */
     record ListValue(List<PkiOperationValue> values) implements PkiOperationValue {
         /** Snapshots the list and rejects null entries. */
         public ListValue {

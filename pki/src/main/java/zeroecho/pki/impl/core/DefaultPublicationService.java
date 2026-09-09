@@ -50,6 +50,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.PkiFailureReason;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.content.DurableContentReference;
@@ -155,13 +156,15 @@ public final class DefaultPublicationService implements PublicationService {
         try {
             attemptNumber = Math.addExact(pending.attemptNumber(), 1L);
         } catch (ArithmeticException overflow) {
-            throw new PkiException("Publication attempt counter is exhausted: code=PUBLICATION_ATTEMPT_EXHAUSTED");
+            throw new PkiException("Publication attempt counter is exhausted: code=PUBLICATION_ATTEMPT_EXHAUSTED",
+                    PkiFailureReason.PUBLICATION_ATTEMPT_EXHAUSTED);
         }
         String token = attemptToken(pending, attemptNumber);
         PublicationRecord prepared = copy(pending, PublicationStatus.DISPATCH_PREPARED, attemptNumber,
                 Optional.of(token), Optional.empty(), Optional.empty());
         if (!store.replacePublicationRecord(pending, prepared)) {
-            throw new IllegalStateException("Publication operation changed concurrently");
+            throw new PkiException("Publication operation changed concurrently: code=PUBLICATION_CONCURRENT_MODIFICATION",
+                    PkiFailureReason.PUBLICATION_CONCURRENT_MODIFICATION);
         }
         return dispatchPrepared(prepared, PublicationEvidence.DIRECT_RESPONSE, false);
     }
@@ -176,7 +179,8 @@ public final class DefaultPublicationService implements PublicationService {
         PublicationRecord pending = copy(failed, PublicationStatus.PENDING, failed.attemptNumber(),
                 Optional.empty(), Optional.empty(), Optional.empty());
         if (!store.replacePublicationRecord(failed, pending)) {
-            throw new IllegalStateException("Publication operation changed concurrently");
+            throw new PkiException("Publication operation changed concurrently: code=PUBLICATION_CONCURRENT_MODIFICATION",
+                    PkiFailureReason.PUBLICATION_CONCURRENT_MODIFICATION);
         }
         return process(publicationId);
     }
@@ -191,7 +195,8 @@ public final class DefaultPublicationService implements PublicationService {
         PublicationRecord prepared = copy(unknown, PublicationStatus.DISPATCH_PREPARED, unknown.attemptNumber(),
                 unknown.attemptToken(), Optional.empty(), Optional.empty());
         if (!store.replacePublicationRecord(unknown, prepared)) {
-            throw new IllegalStateException("Publication operation changed concurrently");
+            throw new PkiException("Publication operation changed concurrently: code=PUBLICATION_CONCURRENT_MODIFICATION",
+                    PkiFailureReason.PUBLICATION_CONCURRENT_MODIFICATION);
         }
         return dispatchPrepared(prepared, PublicationEvidence.RECONCILIATION_RESPONSE, true);
     }
@@ -291,7 +296,8 @@ public final class DefaultPublicationService implements PublicationService {
             // to OUTCOME_UNKNOWN during the next service recovery.
         }
         throw new PkiException(
-                "Publication result persistence requires reconciliation: code=PUBLICATION_RESULT_UNCONFIRMED");
+                "Publication result persistence requires reconciliation: code=PUBLICATION_RESULT_UNCONFIRMED",
+                PkiFailureReason.PUBLICATION_RESULT_UNCONFIRMED);
     }
 
     private Optional<PublicationRecord> safeFind(PkiId publicationId) {
@@ -339,7 +345,8 @@ public final class DefaultPublicationService implements PublicationService {
                 // integrity check before any publisher callback can run.
             }
         } catch (IOException | RuntimeException failure) {
-            throw new PkiException("Publication content is invalid: code=PUBLICATION_CONTENT_INVALID");
+            throw new PkiException("Publication content is invalid: code=PUBLICATION_CONTENT_INVALID",
+                PkiFailureReason.PUBLICATION_CONTENT_INVALID);
         }
     }
 
@@ -353,7 +360,8 @@ public final class DefaultPublicationService implements PublicationService {
 
     private PublicationRecord requireRecord(PkiId publicationId) {
         return store.getPublicationRecord(Objects.requireNonNull(publicationId, "publicationId"))
-                .orElseThrow(() -> new IllegalArgumentException("Publication operation does not exist"));
+                .orElseThrow(() -> new PkiException("Publication operation does not exist: code=PUBLICATION_NOT_FOUND",
+                        PkiFailureReason.PUBLICATION_NOT_FOUND));
     }
 
     private PublicationRecord copy(PublicationRecord current, PublicationStatus status, long attemptNumber,
@@ -433,7 +441,8 @@ public final class DefaultPublicationService implements PublicationService {
     }
 
     private static PkiException publicationRecoveryFailure() {
-        return new PkiException("Publication recovery failed: code=PUBLICATION_RECOVERY_FAILED");
+        return new PkiException("Publication recovery failed: code=PUBLICATION_RECOVERY_FAILED",
+                PkiFailureReason.PUBLICATION_RECOVERY_FAILED);
     }
 
     /** Lazy query wrapper retaining the stable store cursor. */

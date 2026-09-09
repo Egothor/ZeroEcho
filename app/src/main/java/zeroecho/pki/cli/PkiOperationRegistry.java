@@ -56,7 +56,8 @@ import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationValue;
 
 /** Explicit stable operation-name to typed-request binding registry. */
-@SuppressWarnings("PMD.UnusedFormalParameter")
+// A single closed registry keeps every stable external operation name visibly bound to its typed parser.
+@SuppressWarnings({"PMD.CyclomaticComplexity", "PMD.TooManyMethods", "PMD.UnusedFormalParameter"})
 final class PkiOperationRegistry {
 
     private static final String CREDENTIAL_ID = "credentialId";
@@ -69,6 +70,10 @@ final class PkiOperationRegistry {
     private static final String PROFILE_VERSION = "profileVersion";
     private static final String REQUEST_ID = "requestId";
     private static final String BINDING_ID = "bindingId";
+    private static final String AUTHORITY_ID = "caId";
+    private static final String FAILURE_REASON = "reason";
+    private static final String ISSUER_ID = "issuerId";
+    private static final String INVALID_ARGUMENTS = "PKI operation arguments are invalid";
     private static final int MAXIMUM_REQUEST_BYTES = 1024 * 1024;
 
     private final Map<String, Binding> bindings;
@@ -93,6 +98,18 @@ final class PkiOperationRegistry {
         add(configured, PkiOperation.VerifyRequest.NAME, this::verifyRequest);
         add(configured, PkiOperation.InspectCredential.NAME, this::credential);
         add(configured, PkiOperation.IssueCredential.NAME, this::issueCredential);
+        add(configured, PkiOperation.RenewCredential.NAME, this::renewCredential);
+        add(configured, PkiOperation.ReplaceCredential.NAME, this::replaceCredential);
+        add(configured, PkiOperation.ReissueCredential.NAME, this::reissueCredential);
+        add(configured, PkiOperation.CreateIntermediate.NAME, this::createIntermediate);
+        add(configured, PkiOperation.IssueIntermediateCertificate.NAME, this::issueIntermediate);
+        add(configured, PkiOperation.RolloverCaCertificate.NAME, this::rolloverCa);
+        add(configured, PkiOperation.RotateCaKey.NAME, this::rotateCaKey);
+        add(configured, PkiOperation.InspectIssuerGeneration.NAME, this::inspectIssuerGeneration);
+        add(configured, PkiOperation.InspectIssuerChainPath.NAME, this::inspectIssuerChainPath);
+        add(configured, PkiOperation.ListIssuerChainPaths.NAME, this::listIssuerChainPaths);
+        add(configured, PkiOperation.RegisterIssuerChainPath.NAME, this::registerIssuerChainPath);
+        add(configured, PkiOperation.SelectIssuancePath.NAME, this::selectIssuancePath);
         add(configured, PkiOperation.RevokeCredential.NAME, this::revoke);
         add(configured, PkiOperation.InspectRevocation.NAME, this::inspectRevocation);
         add(configured, PkiOperation.ReadRevocationHistory.NAME, this::history);
@@ -130,7 +147,7 @@ final class PkiOperationRegistry {
     private PkiOperation listAlgorithmBindings(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         Set<String> supplied = arguments.fields().keySet();
         if (!supplied.contains(LIMIT) || !Set.of(LIMIT, "origin", "role").containsAll(supplied)) {
-            throw new IllegalArgumentException("PKI operation arguments are invalid");
+            throw new IllegalArgumentException(INVALID_ARGUMENTS);
         }
         return new PkiOperation.ListAlgorithmBindings(optionalText(arguments, "origin"),
                 optionalText(arguments, "role"), limit(arguments));
@@ -144,7 +161,7 @@ final class PkiOperationRegistry {
     private PkiOperation validateAlgorithmBindings(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
         Set<String> supplied = arguments.fields().keySet();
         if (!(supplied.isEmpty() || supplied.equals(Set.of(BINDING_ID, "bindingCommitment")))) {
-            throw new IllegalArgumentException("PKI operation arguments are invalid");
+            throw new IllegalArgumentException(INVALID_ARGUMENTS);
         }
         return new PkiOperation.ValidateAlgorithmBindings(optionalText(arguments, BINDING_ID),
                 optionalText(arguments, "bindingCommitment"));
@@ -181,8 +198,8 @@ final class PkiOperationRegistry {
     }
 
     private PkiOperation inspectAuthority(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        requireFields(arguments, Set.of("caId"));
-        return new PkiOperation.InspectAuthority(new PkiId(text(arguments, "caId")));
+        requireFields(arguments, Set.of(AUTHORITY_ID));
+        return new PkiOperation.InspectAuthority(new PkiId(text(arguments, AUTHORITY_ID)));
     }
 
     private PkiOperation listAuthorities(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
@@ -198,9 +215,9 @@ final class PkiOperationRegistry {
     }
 
     private PkiOperation transitionAuthority(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        requireFields(arguments, Set.of("caId", "state", "reason"));
-        return new PkiOperation.TransitionAuthority(new PkiId(text(arguments, "caId")),
-                CaState.valueOf(text(arguments, "state")), text(arguments, "reason"));
+        requireFields(arguments, Set.of(AUTHORITY_ID, "state", FAILURE_REASON));
+        return new PkiOperation.TransitionAuthority(new PkiId(text(arguments, AUTHORITY_ID)),
+                CaState.valueOf(text(arguments, "state")), text(arguments, FAILURE_REASON));
     }
 
     private PkiOperation inspectRequest(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
@@ -233,10 +250,96 @@ final class PkiOperationRegistry {
                 new PkiId(text(arguments, REQUEST_ID)), text(arguments, PROFILE_ID));
     }
 
+    private PkiOperation renewCredential(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(CREDENTIAL_ID));
+        return new PkiOperation.RenewCredential(new PkiId(text(arguments, CREDENTIAL_ID)));
+    }
+
+    private PkiOperation replaceCredential(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of("existingCredentialId", REQUEST_ID, PROFILE_ID));
+        return new PkiOperation.ReplaceCredential(new PkiId(text(arguments, "existingCredentialId")),
+                new PkiId(text(arguments, REQUEST_ID)), text(arguments, PROFILE_ID));
+    }
+
+    private PkiOperation reissueCredential(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(CREDENTIAL_ID));
+        return new PkiOperation.ReissueCredential(new PkiId(text(arguments, CREDENTIAL_ID)));
+    }
+
+    private PkiOperation createIntermediate(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        Set<String> supplied = arguments.fields().keySet();
+        if (!supplied.containsAll(Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectRef", PROFILE_ID))
+                || !Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectRef", PROFILE_ID, "keyRef").containsAll(supplied)) {
+            throw new IllegalArgumentException(INVALID_ARGUMENTS);
+        }
+        return new PkiOperation.CreateIntermediate(new FormatId(text(arguments, FORMAT_ID)),
+                new PkiId(text(arguments, ISSUER_CA_ID)), new SubjectRef(text(arguments, "subjectRef")),
+                text(arguments, PROFILE_ID), optionalText(arguments, "keyRef").map(KeyRef::new));
+    }
+
+    private PkiOperation issueIntermediate(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(FORMAT_ID, ISSUER_CA_ID, "subjectCaId", PROFILE_ID));
+        return new PkiOperation.IssueIntermediateCertificate(new FormatId(text(arguments, FORMAT_ID)),
+                new PkiId(text(arguments, ISSUER_CA_ID)), new PkiId(text(arguments, "subjectCaId")),
+                text(arguments, PROFILE_ID), java.util.Optional.empty());
+    }
+
+    private PkiOperation rolloverCa(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        Set<String> supplied = arguments.fields().keySet();
+        if (!supplied.contains(AUTHORITY_ID) || !Set.of(AUTHORITY_ID, ISSUER_CA_ID).containsAll(supplied)) {
+            throw new IllegalArgumentException(INVALID_ARGUMENTS);
+        }
+        return new PkiOperation.RolloverCaCertificate(new PkiId(text(arguments, AUTHORITY_ID)),
+                optionalText(arguments, ISSUER_CA_ID).map(PkiId::new));
+    }
+
+    private PkiOperation rotateCaKey(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        Set<String> supplied = arguments.fields().keySet();
+        if (!supplied.contains(AUTHORITY_ID) || !Set.of(AUTHORITY_ID, "newKeyRef", ISSUER_CA_ID).containsAll(supplied)) {
+            throw new IllegalArgumentException(INVALID_ARGUMENTS);
+        }
+        return new PkiOperation.RotateCaKey(new PkiId(text(arguments, AUTHORITY_ID)),
+                optionalText(arguments, "newKeyRef").map(KeyRef::new),
+                optionalText(arguments, ISSUER_CA_ID).map(PkiId::new));
+    }
+
+    private PkiOperation inspectIssuerGeneration(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(ISSUER_ID));
+        return new PkiOperation.InspectIssuerGeneration(new PkiId(text(arguments, ISSUER_ID)));
+    }
+
+    private PkiOperation inspectIssuerChainPath(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of("pathId"));
+        return new PkiOperation.InspectIssuerChainPath(new PkiId(text(arguments, "pathId")));
+    }
+
+    private PkiOperation listIssuerChainPaths(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(ISSUER_ID));
+        return new PkiOperation.ListIssuerChainPaths(new PkiId(text(arguments, ISSUER_ID)));
+    }
+
+    private PkiOperation registerIssuerChainPath(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(AUTHORITY_ID, ISSUER_ID, "parentPathId"));
+        return new PkiOperation.RegisterIssuerChainPath(new PkiId(text(arguments, AUTHORITY_ID)),
+                new PkiId(text(arguments, ISSUER_ID)), new PkiId(text(arguments, "parentPathId")));
+    }
+
+    private PkiOperation selectIssuancePath(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
+        requireFields(arguments, Set.of(AUTHORITY_ID, ISSUER_ID, "pathId", FAILURE_REASON));
+        return new PkiOperation.SelectIssuancePath(new PkiId(text(arguments, AUTHORITY_ID)),
+                new PkiId(text(arguments, ISSUER_ID)), new PkiId(text(arguments, "pathId")),
+                text(arguments, FAILURE_REASON));
+    }
+
     private PkiOperation revoke(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
-        requireFields(arguments, Set.of(CREDENTIAL_ID, "reason"));
-        RevocationReason reason = RevocationReason.valueOf(text(arguments, "reason"));
-        return new PkiOperation.RevokeCredential(new PkiId(text(arguments, CREDENTIAL_ID)), reason);
+        Set<String> supplied = arguments.fields().keySet();
+        if (!supplied.containsAll(Set.of(CREDENTIAL_ID, FAILURE_REASON))
+                || !Set.of(CREDENTIAL_ID, FAILURE_REASON, "justification").containsAll(supplied)) {
+            throw new IllegalArgumentException(INVALID_ARGUMENTS);
+        }
+        RevocationReason reason = RevocationReason.valueOf(text(arguments, FAILURE_REASON));
+        return new PkiOperation.RevokeCredential(new PkiId(text(arguments, CREDENTIAL_ID)), reason,
+                optionalText(arguments, "justification"));
     }
 
     private PkiOperation history(PkiOperationValue.ObjectValue arguments, Path baseDirectory) {
@@ -315,7 +418,7 @@ final class PkiOperationRegistry {
 
     private static void requireFields(PkiOperationValue.ObjectValue arguments, Set<String> expected) {
         if (!arguments.fields().keySet().equals(expected)) {
-            throw new IllegalArgumentException("PKI operation arguments are invalid");
+            throw new IllegalArgumentException(INVALID_ARGUMENTS);
         }
     }
 

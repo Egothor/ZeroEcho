@@ -54,4 +54,23 @@ public interface PkiOperationExecutor {
      * @throws IllegalStateException if the owning session is closed
      */
     PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation);
+
+    /**
+     * Executes one typed operation synchronously, co-committing server-derived issuance evidence into
+     * the durable record of issuance-family operations.
+     *
+     * <p>The evidence is written atomically with the issued credential (see
+     * {@code IssuanceExecutionEvidence}); operations that are not issuance-family ignore it. The
+     * default drops the evidence for executors that do not co-commit it, preserving compatibility.</p>
+     *
+     * @param operation validated typed operation
+     * @param issuanceEvidence closed issuance-evidence attribute set (may be empty but not null)
+     * @param cancellation cooperative cancellation signal
+     * @return successful result or safely classified failure
+     */
+    default PkiOperationOutcome execute(PkiOperation operation,
+            zeroecho.pki.api.attr.AttributeSet issuanceEvidence, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(issuanceEvidence, "issuanceEvidence");
+        return execute(operation, cancellation);
+    }
 }

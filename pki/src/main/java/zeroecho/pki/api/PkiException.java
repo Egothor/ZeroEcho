@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.api;
 
+import java.util.Optional;
+
 /**
  * Base runtime exception for PKI domain failures.
  *
@@ -40,6 +42,13 @@ package zeroecho.pki.api;
  * This exception is used to report policy violations, storage failures,
  * framework backend errors, and other domain-level problems not representable
  * as {@link IllegalArgumentException}.
+ * </p>
+ *
+ * <p>
+ * A failure may additionally carry a typed {@link PkiFailureReason} so that
+ * application logic and trust boundaries classify it from that structural value
+ * rather than by parsing the human-readable message. The message remains for
+ * diagnostics only; callers must never branch on its text.
  * </p>
  *
  * <p>
@@ -51,6 +60,9 @@ public class PkiException extends RuntimeException {
 
     private static final long serialVersionUID = 759504279718537161L;
 
+    /** Optional stable machine-readable failure reason. */
+    private final PkiFailureReason failureReason;
+
     /**
      * Creates a PKI exception with a message.
      *
@@ -58,7 +70,7 @@ public class PkiException extends RuntimeException {
      *                manner
      */
     public PkiException(String message) {
-        super(requireNonBlank(message, "message"));
+        this(message, (PkiFailureReason) null);
     }
 
     /**
@@ -69,7 +81,42 @@ public class PkiException extends RuntimeException {
      * @param cause   underlying cause
      */
     public PkiException(String message, Throwable cause) {
+        this(message, null, cause);
+    }
+
+    /**
+     * Creates a PKI exception carrying a typed failure reason.
+     *
+     * @param message       non-empty message describing the failure in a
+     *                      non-sensitive manner
+     * @param failureReason typed machine reason, or {@code null} if unclassified
+     */
+    public PkiException(String message, PkiFailureReason failureReason) {
+        super(requireNonBlank(message, "message"));
+        this.failureReason = failureReason;
+    }
+
+    /**
+     * Creates a PKI exception carrying a typed failure reason and cause.
+     *
+     * @param message       non-empty message describing the failure in a
+     *                      non-sensitive manner
+     * @param failureReason typed machine reason, or {@code null} if unclassified
+     * @param cause         underlying cause
+     */
+    public PkiException(String message, PkiFailureReason failureReason, Throwable cause) {
         super(requireNonBlank(message, "message"), cause);
+        this.failureReason = failureReason;
+    }
+
+    /**
+     * Returns the typed machine reason for this failure, when one was recorded.
+     *
+     * @return the structural failure reason, or empty if the failure is
+     *         unclassified
+     */
+    public Optional<PkiFailureReason> failureReason() {
+        return Optional.ofNullable(failureReason);
     }
 
     private static String requireNonBlank(String value, String name) {

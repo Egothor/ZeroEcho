@@ -36,49 +36,40 @@ package zeroecho.pki.application;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.DEROctetString;
-import org.bouncycastle.asn1.ocsp.OCSPObjectIdentifiers;
-import org.bouncycastle.asn1.x509.CRLReason;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.Extensions;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.ocsp.BasicOCSPResp;
-import org.bouncycastle.cert.ocsp.BasicOCSPRespBuilder;
-import org.bouncycastle.cert.ocsp.CertificateID;
-import org.bouncycastle.cert.ocsp.CertificateStatus;
-import org.bouncycastle.cert.ocsp.OCSPResp;
-import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
-import org.bouncycastle.cert.ocsp.SingleResp;
-import org.bouncycastle.cert.ocsp.RevokedStatus;
-import org.bouncycastle.cert.ocsp.RespID;
-import org.bouncycastle.cert.ocsp.UnknownStatus;
-import org.bouncycastle.operator.DigestCalculator;
-import org.bouncycastle.operator.DigestCalculatorProvider;
-import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.crl.CrlReason;
+import zeroecho.pkix.sign.ContentVerifier;
+import zeroecho.pkix.ocsp.CertStatus;
+import zeroecho.pkix.ocsp.OcspResponse;
 
+import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.core.async.ImmediateSigningPending;
 import zeroecho.pki.impl.framework.x509.bc.PkiBusContentSigner;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.RevocationView;
 
 /** Store-backed, signing-bus-confined OCSP response application service. */
-@SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops", "PMD.CyclomaticComplexity",
+@SuppressWarnings({ "PMD.CyclomaticComplexity",
         "PMD.PreserveStackTrace", "PMD.ExceptionAsFlowControl", "PMD.SignatureDeclareThrowsException",
-        "PMD.NPathComplexity", "PMD.ControlStatementBraces", "PMD.UseVarargs" })
+        "PMD.ControlStatementBraces" })
 final class DefaultOcspResponseService implements OcspResponseService {
+    private static final String SHA1_OID = "1.3.14.3.2.26";
+    private static final String SHA256_OID = "2.16.840.1.101.3.4.2.1";
+
     private final PkiStore store;
     private final PkiSigningBus bus;
     private final Duration signingTtl;
@@ -93,11 +84,16 @@ final class DefaultOcspResponseService implements OcspResponseService {
     }
 
     @Override public Response respond(Command command) {
+        return respond(command, CancellationSignal.NONE);
+    }
+
+    @Override public Response respond(Command command, CancellationSignal cancellation) {
         requireOpen.run();
         Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(cancellation, "cancellation");
         try {
-            X509CertificateHolder issuer = certificate(command.issuerCredentialId());
-            X509CertificateHolder responder = certificate(command.responderCredentialId());
+            X509Certificate issuer = certificate(command.issuerCredentialId());
+            X509Certificate responder = certificate(command.responderCredentialId());
             validateAuthority(command, issuer, responder);
             List<Resolved> resolved;
             long revision;
@@ -107,13 +103,17 @@ final class DefaultOcspResponseService implements OcspResponseService {
                 commitment = view.commitment();
                 resolved = resolve(command, issuer, view);
             }
-            int good = Math.toIntExact(resolved.stream().filter(value -> value.status() == CertificateStatus.GOOD)
+            int good = Math.toIntExact(resolved.stream().filter(value -> value.status() instanceof CertStatus.Good)
                     .count());
-            int revoked = Math.toIntExact(resolved.stream().filter(value -> value.status() instanceof RevokedStatus)
-                    .count());
+            int revoked = Math.toIntExact(resolved.stream()
+                    .filter(value -> value.status() instanceof CertStatus.Revoked).count());
             int unknown = Math.subtractExact(resolved.size(), Math.addExact(good, revoked));
-            return new Response(sign(command, responder, resolved), revision, commitment, good, revoked, unknown);
+            return new Response(sign(command, responder, resolved, cancellation), revision, commitment,
+                    good, revoked, unknown);
+        } catch (zeroecho.pki.api.SigningExecutionException | ImmediateSigningPending signingFailure) {
+            throw signingFailure;
         } catch (Exception failure) {
+            rethrowSigningBoundaryFailure(failure);
             throw new PkiException("OCSP response generation failed: code=OCSP_RESPONSE_FAILED");
         }
     }
@@ -121,101 +121,114 @@ final class DefaultOcspResponseService implements OcspResponseService {
     @Override public void validateSigningBinding(zeroecho.pki.api.PkiId responderCredentialId,
             zeroecho.pki.api.KeyRef signingKeyRef, String signatureAlgorithm,
             Optional<String> signatureBindingId) {
+        validateSigningBinding(responderCredentialId, signingKeyRef, signatureAlgorithm, signatureBindingId,
+                CancellationSignal.NONE);
+    }
+
+    @Override public void validateSigningBinding(zeroecho.pki.api.PkiId responderCredentialId,
+            zeroecho.pki.api.KeyRef signingKeyRef, String signatureAlgorithm,
+            Optional<String> signatureBindingId, CancellationSignal cancellation) {
         requireOpen.run();
         Objects.requireNonNull(responderCredentialId, "responderCredentialId");
         Objects.requireNonNull(signingKeyRef, "signingKeyRef");
         Objects.requireNonNull(signatureBindingId, "signatureBindingId");
+        Objects.requireNonNull(cancellation, "cancellation");
         byte[] challenge = "ZeroEcho OCSP signing binding v1".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         try {
-            X509CertificateHolder responder = certificate(responderCredentialId);
+            X509Certificate responder = certificate(responderCredentialId);
             AlgorithmIdentity identity = bus.authority().resolveIdentity(signatureAlgorithm);
             try (PkiBusContentSigner signer = signatureBindingId.isPresent()
                     ? new PkiBusContentSigner(bus, signingKeyRef, identity, signatureBindingId.orElseThrow(),
-                            signingTtl)
-                    : new PkiBusContentSigner(bus, signingKeyRef, identity, signingTtl)) {
-                try (java.io.OutputStream output = signer.getOutputStream()) { output.write(challenge); }
-                org.bouncycastle.operator.ContentVerifier verifier =
-                        new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder().build(responder)
-                                .get(signer.getAlgorithmIdentifier());
-                try (java.io.OutputStream output = verifier.getOutputStream()) { output.write(challenge); }
-                if (!verifier.verify(signer.getSignature())) {
+                            signingTtl, cancellation)
+                    : new PkiBusContentSigner(bus, signingKeyRef, identity, signingTtl, cancellation)) {
+                try (java.io.OutputStream output = signer.contentStream()) {
+                    output.write(challenge);
+                }
+                ContentVerifier verifier = Pkix.verifier(Pkix.subjectPublicKeyInfo(responder), signer.algorithm());
+                try (java.io.OutputStream output = verifier.contentStream()) {
+                    output.write(challenge);
+                }
+                if (!verifier.verify(signer.signature())) {
                     throw new IOException("OCSP signing binding differs");
                 }
             }
+        } catch (zeroecho.pki.api.SigningExecutionException | ImmediateSigningPending signingFailure) {
+            throw signingFailure;
         } catch (Exception failure) {
+            rethrowSigningBoundaryFailure(failure);
             throw new PkiException("OCSP signing binding validation failed: code=OCSP_SIGNING_BINDING_FAILED");
         }
     }
 
-    private List<Resolved> resolve(Command command, X509CertificateHolder issuer, RevocationView view)
-            throws Exception {
-        List<Resolved> result = new ArrayList<>(command.requests().size());
-        DigestCalculatorProvider digests = new JcaDigestCalculatorProviderBuilder().build();
-        for (CertId request : command.requests()) {
-            DigestCalculator digest = digests.get(CertificateID.HASH_SHA1);
-            if (request.hash() == CertIdHash.SHA256) {
-                digest = digests.get(new org.bouncycastle.asn1.x509.AlgorithmIdentifier(
-                        org.bouncycastle.asn1.nist.NISTObjectIdentifiers.id_sha256));
+    private static void rethrowSigningBoundaryFailure(Exception failure) {
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < 16; depth++) {
+            if (current instanceof zeroecho.pki.api.SigningExecutionException executionFailure) {
+                throw executionFailure;
             }
-            CertificateID id = new CertificateID(digest, issuer, request.serial());
-            if (!MessageDigest.isEqual(id.getIssuerNameHash(), request.issuerNameHash())
-                    || !MessageDigest.isEqual(id.getIssuerKeyHash(), request.issuerKeyHash())) {
-                result.add(new Resolved(id, new UnknownStatus()));
+            if (current instanceof ImmediateSigningPending pending) {
+                throw pending;
+            }
+            Throwable cause = current.getCause();
+            if (cause == current) return; // NOPMD - identity detects a malformed cyclic cause chain.
+            current = cause;
+        }
+    }
+
+    private List<Resolved> resolve(Command command, X509Certificate issuer, RevocationView view) throws IOException {
+        List<Resolved> result = new ArrayList<>(command.requests().size());
+        for (CertId request : command.requests()) {
+            String digestOid = request.hash() == CertIdHash.SHA256 ? SHA256_OID : SHA1_OID;
+            zeroecho.pkix.ocsp.CertId id = Pkix.computeCertId(issuer, request.serial(), digestOid);
+            if (!MessageDigest.isEqual(id.issuerNameHash(), request.issuerNameHash())
+                    || !MessageDigest.isEqual(id.issuerKeyHash(), request.issuerKeyHash())) {
+                result.add(new Resolved(id, CertStatus.unknown()));
                 continue;
             }
             Credential credential = store.getCredentialByIssuerAndSerial(command.issuerId(), request.serial())
                     .orElse(null);
             if (credential == null) {
-                result.add(new Resolved(id, new UnknownStatus()));
+                result.add(new Resolved(id, CertStatus.unknown()));
                 continue;
             }
-            CertificateStatus status = view.get(credential.credentialId())
+            CertStatus status = view.get(credential.credentialId())
                     .map(record -> status(record.transition().state(), record.transition().time(),
                             record.transition().permanentReason().orElse(RevocationReason.UNSPECIFIED)))
-                    .orElse(CertificateStatus.GOOD);
+                    .orElse(CertStatus.good());
             result.add(new Resolved(id, status));
         }
         return List.copyOf(result);
     }
 
-    private byte[] sign(Command command, X509CertificateHolder responder, List<Resolved> resolved)
-            throws Exception {
-        DigestCalculatorProvider digests = new JcaDigestCalculatorProviderBuilder().build();
-        BasicOCSPRespBuilder builder = command.responderId() == ResponderId.BY_NAME
-                ? new BasicOCSPRespBuilder(new RespID(responder.getSubject()))
-                : new BasicOCSPRespBuilder(new RespID(responder.getSubjectPublicKeyInfo(),
-                        digests.get(CertificateID.HASH_SHA1)));
+    private byte[] sign(Command command, X509Certificate responder, List<Resolved> resolved,
+            CancellationSignal cancellation) throws Exception {
+        zeroecho.pkix.ocsp.ResponderId responderId = command.responderId() == ResponderId.BY_NAME
+                ? zeroecho.pkix.ocsp.ResponderId.byName(responder.getSubjectX500Principal())
+                : zeroecho.pkix.ocsp.ResponderId.byKey(Pkix.subjectKeyIdentifier(responder.getPublicKey()));
+        zeroecho.pkix.ocsp.OcspResponseBuilder builder = Pkix.ocspResponseBuilder().responderId(responderId)
+                .producedAt(command.producedAt());
         for (Resolved item : resolved) {
-            builder.addResponse(item.id(), item.status(), Date.from(command.thisUpdate()),
-                    Date.from(command.nextUpdate()), null);
+            builder.addResponse(item.id(), item.status(), command.thisUpdate(), command.nextUpdate());
         }
-        if (command.nonce().isPresent()) {
-            builder.setResponseExtensions(new Extensions(new Extension(OCSPObjectIdentifiers.id_pkix_ocsp_nonce,
-                    false, new DEROctetString(new DEROctetString(command.nonce().orElseThrow()).getEncoded()))));
-        }
+        command.nonce().ifPresent(builder::nonce);
         AlgorithmIdentity identity = bus.authority().resolveIdentity(command.signatureAlgorithm());
         try (PkiBusContentSigner signer = command.signatureBindingId().isPresent()
                 ? new PkiBusContentSigner(bus, command.signingKeyRef(), identity,
-                        command.signatureBindingId().orElseThrow(), signingTtl)
-                : new PkiBusContentSigner(bus, command.signingKeyRef(), identity, signingTtl)) {
-            X509CertificateHolder[] chain = new X509CertificateHolder[command.responseChain().size()];
-            for (int index = 0; index < chain.length; index++) {
-                chain[index] = certificate(command.responseChain().get(index));
+                        command.signatureBindingId().orElseThrow(), signingTtl, cancellation)
+                : new PkiBusContentSigner(bus, command.signingKeyRef(), identity, signingTtl, cancellation)) {
+            List<X509Certificate> chain = new ArrayList<>(command.responseChain().size());
+            for (zeroecho.pki.api.PkiId credentialId : command.responseChain()) {
+                chain.add(certificate(credentialId));
             }
-            BasicOCSPResp basic = builder.build(signer, chain, Date.from(command.producedAt()));
-            OCSPResp outer = new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic);
-            byte[] encoded = outer.getEncoded();
-            OCSPResp decodedOuter = new OCSPResp(encoded);
-            BasicOCSPResp decoded = (BasicOCSPResp) decodedOuter.getResponseObject();
-            if (!Arrays.equals(encoded, decodedOuter.getEncoded())
-                    || decodedOuter.getStatus() != OCSPRespBuilder.SUCCESSFUL
-                    || decoded == null || !decoded.getProducedAt().equals(Date.from(command.producedAt()))
-                    || !decoded.getResponderId().equals(basic.getResponderId())
-                    || !decoded.getSignatureAlgorithmID().equals(signer.getAlgorithmIdentifier())
-                    || !decoded.isSignatureValid(
-                            new org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder().build(responder))
-                    || !matchesResponses(decoded.getResponses(), resolved, command)
-                    || !matchesCertificates(decoded.getCerts(), chain)
+            byte[] encoded = builder.build(signer, chain);
+            OcspResponse decoded = Pkix.parseOcspResponse(encoded);
+            if (!decoded.isSuccessful()
+                    || !decoded.producedAt().equals(command.producedAt())
+                    || !decoded.responderId().equals(responderId)
+                    || !decoded.signatureAlgorithm().equals(signer.algorithm())
+                    || !decoded.verifySignature(responder.getPublicKey())
+                    || !matchesResponses(decoded.responses(), resolved, command)
+                    || !matchesCertificates(decoded.certificates(), chain)
                     || !matchesNonce(decoded, command.nonce())) {
                 throw new IOException("Generated OCSP response validation failed");
             }
@@ -223,50 +236,56 @@ final class DefaultOcspResponseService implements OcspResponseService {
         }
     }
 
-    private static boolean matchesResponses(SingleResp[] decoded, List<Resolved> expected, Command command) {
-        if (decoded.length != expected.size()) return false;
-        for (int index = 0; index < decoded.length; index++) {
-            SingleResp actual = decoded[index]; Resolved wanted = expected.get(index);
-            if (!actual.getCertID().equals(wanted.id())
-                    || !actual.getThisUpdate().equals(Date.from(command.thisUpdate()))
-                    || !actual.getNextUpdate().equals(Date.from(command.nextUpdate()))
-                    || !sameStatus(actual.getCertStatus(), wanted.status())) return false;
+    private static boolean matchesResponses(List<OcspResponse.SingleResponse> decoded, List<Resolved> expected,
+            Command command) {
+        if (decoded.size() != expected.size()) return false;
+        for (int index = 0; index < decoded.size(); index++) {
+            OcspResponse.SingleResponse actual = decoded.get(index);
+            Resolved wanted = expected.get(index);
+            if (!actual.certId().equals(wanted.id())
+                    || !actual.thisUpdate().equals(command.thisUpdate())
+                    || actual.nextUpdate().isEmpty()
+                    || !actual.nextUpdate().orElseThrow().equals(command.nextUpdate())
+                    || !statusMatches(actual.status(), wanted.status())) return false;
         }
         return true;
     }
 
-    private static boolean sameStatus(CertificateStatus actual, CertificateStatus expected) {
-        if (actual == CertificateStatus.GOOD || expected == CertificateStatus.GOOD) {
-            return actual == CertificateStatus.GOOD && expected == CertificateStatus.GOOD;
+    // Compares certificate statuses tolerating the OCSP GeneralizedTime encoding precision: the revocation
+    // time is round-tripped through the DER encoding, so it is compared at whole-second granularity.
+    private static boolean statusMatches(CertStatus actual, CertStatus expected) {
+        if (expected instanceof CertStatus.Good) {
+            return actual instanceof CertStatus.Good;
         }
-        if (actual instanceof UnknownStatus && expected instanceof UnknownStatus) return true;
-        if (actual instanceof RevokedStatus left && expected instanceof RevokedStatus right) {
-            return left.getRevocationTime().equals(right.getRevocationTime())
-                    && left.hasRevocationReason() == right.hasRevocationReason()
-                    && (!left.hasRevocationReason() || left.getRevocationReason() == right.getRevocationReason());
+        if (expected instanceof CertStatus.Unknown) {
+            return actual instanceof CertStatus.Unknown;
+        }
+        if (expected instanceof CertStatus.Revoked expectedRevoked
+                && actual instanceof CertStatus.Revoked actualRevoked) {
+            return actualRevoked.reason().equals(expectedRevoked.reason())
+                    && actualRevoked.revocationTime().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                            .equals(expectedRevoked.revocationTime()
+                                    .truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
         }
         return false;
     }
 
-    private static boolean matchesCertificates(X509CertificateHolder[] decoded, X509CertificateHolder[] expected)
-            throws IOException {
-        if (decoded.length != expected.length) return false;
-        for (int index = 0; index < decoded.length; index++) {
-            if (!Arrays.equals(decoded[index].getEncoded(), expected[index].getEncoded())) return false;
+    private static boolean matchesCertificates(List<X509Certificate> decoded, List<X509Certificate> expected)
+            throws java.security.cert.CertificateEncodingException {
+        if (decoded.size() != expected.size()) return false;
+        for (int index = 0; index < decoded.size(); index++) {
+            if (!Arrays.equals(decoded.get(index).getEncoded(), expected.get(index).getEncoded())) return false;
         }
         return true;
     }
 
-    private static boolean matchesNonce(BasicOCSPResp decoded, Optional<byte[]> expected) {
-        Extension extension = decoded.getExtension(OCSPObjectIdentifiers.id_pkix_ocsp_nonce);
-        if (expected.isEmpty()) return extension == null;
-        if (extension == null || extension.isCritical()) return false;
-        byte[] actual = org.bouncycastle.asn1.ASN1OctetString.getInstance(extension.getParsedValue()).getOctets();
-        return MessageDigest.isEqual(actual, expected.orElseThrow());
+    private static boolean matchesNonce(OcspResponse decoded, Optional<byte[]> expected) {
+        Optional<byte[]> actual = decoded.nonce();
+        if (expected.isEmpty()) return actual.isEmpty();
+        return actual.isPresent() && MessageDigest.isEqual(actual.orElseThrow(), expected.orElseThrow());
     }
 
-    private void validateAuthority(Command command, X509CertificateHolder issuer,
-            X509CertificateHolder responder) {
+    private void validateAuthority(Command command, X509Certificate issuer, X509Certificate responder) {
         zeroecho.pki.api.ca.IssuerGeneration generation = store.getIssuerGeneration(command.issuerId())
                 .orElseThrow(() -> new IllegalArgumentException("OCSP issuer is unavailable"));
         if (!generation.authorityId().equals(command.authorityId())
@@ -278,46 +297,52 @@ final class DefaultOcspResponseService implements OcspResponseService {
         if (issuer.getSerialNumber().signum() <= 0 || responder.getSerialNumber().signum() <= 0) {
             throw new IllegalArgumentException("OCSP responder certificate is invalid");
         }
-        if (!responder.isValidOn(Date.from(command.producedAt()))
-                || command.nextUpdate().isAfter(responder.getNotAfter().toInstant())) {
+        boolean validOn;
+        try {
+            responder.checkValidity(java.util.Date.from(command.producedAt()));
+            validOn = true;
+        } catch (java.security.cert.CertificateExpiredException
+                | java.security.cert.CertificateNotYetValidException expired) {
+            validOn = false;
+        }
+        if (!validOn || command.nextUpdate().isAfter(responder.getNotAfter().toInstant())) {
             throw new IllegalArgumentException("OCSP response exceeds responder signing validity");
         }
     }
 
-    private X509CertificateHolder certificate(zeroecho.pki.api.PkiId credentialId) throws IOException {
+    private X509Certificate certificate(zeroecho.pki.api.PkiId credentialId) throws IOException {
         try (PkiRepositoryContent content = new DefaultPkiRepository(store, requireOpen)
                 .openCredential(credentialId); InputStream input = content.openStream()) {
             byte[] encoded = input.readNBytes(1_048_577);
             if (encoded.length > 1_048_576 || input.read() != -1) {
                 throw new IOException("OCSP certificate exceeds its finite bound");
             }
-            return new X509CertificateHolder(encoded);
+            return Pkix.parseCertificate(encoded);
         }
     }
 
-    private static CertificateStatus status(RevocationState state, java.time.Instant time,
-            RevocationReason reason) {
+    private static CertStatus status(RevocationState state, java.time.Instant time, RevocationReason reason) {
         return switch (state) {
-            case CLEAR -> CertificateStatus.GOOD;
-            case HELD -> new RevokedStatus(Date.from(time), CRLReason.certificateHold);
-            case PERMANENTLY_REVOKED -> new RevokedStatus(Date.from(time), reason(reason));
+            case CLEAR -> CertStatus.good();
+            case HELD -> CertStatus.revoked(time, CrlReason.CERTIFICATE_HOLD);
+            case PERMANENTLY_REVOKED -> CertStatus.revoked(time, reason(reason));
         };
     }
 
-    private static int reason(RevocationReason reason) {
+    private static CrlReason reason(RevocationReason reason) {
         return switch (reason) {
-            case KEY_COMPROMISE -> CRLReason.keyCompromise;
-            case CA_COMPROMISE -> CRLReason.cACompromise;
-            case AFFILIATION_CHANGED -> CRLReason.affiliationChanged;
-            case SUPERSEDED -> CRLReason.superseded;
-            case CESSATION_OF_OPERATION -> CRLReason.cessationOfOperation;
-            case CERTIFICATE_HOLD -> CRLReason.certificateHold;
-            case REMOVE_FROM_CRL -> CRLReason.removeFromCRL;
-            case PRIVILEGE_WITHDRAWN -> CRLReason.privilegeWithdrawn;
-            case AA_COMPROMISE -> CRLReason.aACompromise;
-            case UNSPECIFIED -> CRLReason.unspecified;
+            case KEY_COMPROMISE -> CrlReason.KEY_COMPROMISE;
+            case CA_COMPROMISE -> CrlReason.CA_COMPROMISE;
+            case AFFILIATION_CHANGED -> CrlReason.AFFILIATION_CHANGED;
+            case SUPERSEDED -> CrlReason.SUPERSEDED;
+            case CESSATION_OF_OPERATION -> CrlReason.CESSATION_OF_OPERATION;
+            case CERTIFICATE_HOLD -> CrlReason.CERTIFICATE_HOLD;
+            case REMOVE_FROM_CRL -> CrlReason.REMOVE_FROM_CRL;
+            case PRIVILEGE_WITHDRAWN -> CrlReason.PRIVILEGE_WITHDRAWN;
+            case AA_COMPROMISE -> CrlReason.AA_COMPROMISE;
+            case UNSPECIFIED -> CrlReason.UNSPECIFIED;
         };
     }
 
-    private record Resolved(CertificateID id, CertificateStatus status) { }
+    private record Resolved(zeroecho.pkix.ocsp.CertId id, CertStatus status) { }
 }

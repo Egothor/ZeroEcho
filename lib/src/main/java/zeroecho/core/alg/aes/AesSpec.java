@@ -179,6 +179,13 @@ public final class AesSpec implements ContextSpec, Describable {
         private SymmetricHeaderCodec header;
 
         /**
+         * Creates a builder initialized for AES-GCM with a 128-bit tag.
+         */
+        public Builder() {
+            // Field initializers establish the documented defaults.
+        }
+
+        /**
          * Selects the AES mode.
          *
          * @param m the block mode ({@link Mode#CBC}, {@link Mode#GCM}, or

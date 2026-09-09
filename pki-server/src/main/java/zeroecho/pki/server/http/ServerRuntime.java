@@ -34,10 +34,13 @@
 package zeroecho.pki.server.http;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
@@ -62,6 +65,7 @@ final class ServerRuntime implements AutoCloseable {
     static final String OCSP_TRANSPORT_PREFIX = "zeroecho-pki-ocsp-https-";
     static final String OCSP_OPERATION_PREFIX = "zeroecho-pki-ocsp-response-";
     static final String SHUTDOWN_NAME = "zeroecho-pki-shutdown";
+    private static final ThreadLocal<WorkerType> WORKER_MARKER = new ThreadLocal<>();
 
     private final ThreadPoolExecutor transport;
     private final ThreadPoolExecutor operations;
@@ -84,11 +88,13 @@ final class ServerRuntime implements AutoCloseable {
         transport = pool(configuration.transportWorkers(), configuration.transportQueueCapacity(),
                 new NamedThreadFactory(lane == Lane.PUBLIC ? PUBLIC_TRANSPORT_PREFIX
                         : lane == Lane.ACME ? ACME_TRANSPORT_PREFIX
-                                : lane == Lane.OCSP ? OCSP_TRANSPORT_PREFIX : TRANSPORT_PREFIX));
+                                : lane == Lane.OCSP ? OCSP_TRANSPORT_PREFIX : TRANSPORT_PREFIX,
+                        WorkerType.TRANSPORT));
         operations = pool(configuration.operationWorkers(), configuration.operationQueueCapacity(),
                 new NamedThreadFactory(lane == Lane.PUBLIC ? PUBLIC_STREAM_PREFIX
                         : lane == Lane.ACME ? ACME_PROTOCOL_PREFIX
-                                : lane == Lane.OCSP ? OCSP_OPERATION_PREFIX : OPERATION_PREFIX));
+                                : lane == Lane.OCSP ? OCSP_OPERATION_PREFIX : OPERATION_PREFIX,
+                        WorkerType.OPERATION));
         admitted = new Semaphore(configuration.maximumAdmittedRequests(), true);
     }
 
@@ -107,23 +113,19 @@ final class ServerRuntime implements AutoCloseable {
     <T> Submitted<T> submit(CancellableCallable<T> task) {
         if (!accepting.get()) throw new RejectedExecutionException("Server is not accepting operations");
         CancellationToken cancellation = new CancellationToken();
+        TrackedFutureTask<T> future = new TrackedFutureTask<>(operations, () -> {
+            cancellation.throwIfCancelled();
+            return task.call(cancellation);
+        }, futures, () -> cancellations.remove(cancellation));
         cancellations.add(cancellation);
-        Future<T> future;
+        futures.add(future);
         try {
-            future = operations.submit(() -> {
-                try {
-                    cancellation.throwIfCancelled();
-                    return task.call(cancellation);
-                } finally {
-                    cancellations.remove(cancellation);
-                }
-            });
+            operations.execute(future);
         } catch (RejectedExecutionException failure) {
-            cancellations.remove(cancellation);
+            future.cancel(false);
             throw failure;
         }
-        futures.add(future);
-        return new Submitted<>(future, cancellation, () -> futures.remove(future));
+        return new Submitted<>(future, cancellation, future::cleanupIfComplete);
     }
 
     void quiesce() {
@@ -142,6 +144,18 @@ final class ServerRuntime implements AutoCloseable {
         return operations.getActiveCount();
     }
 
+    int trackedOperationFutures() {
+        return futures.size();
+    }
+
+    int trackedCancellationTokens() {
+        return cancellations.size();
+    }
+
+    static boolean isWorkerThread() {
+        return WORKER_MARKER.get() != null;
+    }
+
     static Thread shutdownHook(Runnable task) {
         return new Thread(task, SHUTDOWN_NAME);
     }
@@ -151,14 +165,8 @@ final class ServerRuntime implements AutoCloseable {
         quiesce();
         transport.shutdown();
         operations.shutdown();
-        boolean transportWorker = Thread.currentThread().getName().startsWith(TRANSPORT_PREFIX)
-                || Thread.currentThread().getName().startsWith(PUBLIC_TRANSPORT_PREFIX)
-                || Thread.currentThread().getName().startsWith(ACME_TRANSPORT_PREFIX);
-        transportWorker = transportWorker || Thread.currentThread().getName().startsWith(OCSP_TRANSPORT_PREFIX);
-        boolean operationWorker = Thread.currentThread().getName().startsWith(OPERATION_PREFIX)
-                || Thread.currentThread().getName().startsWith(PUBLIC_STREAM_PREFIX)
-                || Thread.currentThread().getName().startsWith(ACME_PROTOCOL_PREFIX);
-        operationWorker = operationWorker || Thread.currentThread().getName().startsWith(OCSP_OPERATION_PREFIX);
+        boolean transportWorker = WORKER_MARKER.get() == WorkerType.TRANSPORT;
+        boolean operationWorker = WORKER_MARKER.get() == WorkerType.OPERATION;
         if (!operationWorker) {
             await(operations, configuration.gracefulShutdown());
         }
@@ -167,7 +175,7 @@ final class ServerRuntime implements AutoCloseable {
             if (!operationWorker) {
                 for (Future<?> future : futures) future.cancel(true);
             }
-            operations.shutdownNow();
+            cancelNeverStarted(operations.shutdownNow());
             if (!operationWorker) {
                 await(operations, configuration.forcedShutdown());
             }
@@ -176,6 +184,9 @@ final class ServerRuntime implements AutoCloseable {
         if (!transport.isTerminated()) {
             transport.shutdownNow();
             if (!transportWorker) await(transport, configuration.forcedShutdown());
+        }
+        if (!operations.isTerminated() || !transport.isTerminated()) {
+            throw shutdownTimeout();
         }
     }
 
@@ -192,7 +203,7 @@ final class ServerRuntime implements AutoCloseable {
 
         ChallengeRuntime(PkiServerConfiguration.Execution configuration) {
             executor = pool(configuration.operationWorkers(), configuration.operationQueueCapacity(),
-                    new NamedThreadFactory(ACME_VALIDATION_PREFIX));
+                    new NamedThreadFactory(ACME_VALIDATION_PREFIX, WorkerType.VALIDATION));
             admitted = new Semaphore(configuration.maximumAdmittedRequests(), true);
             graceful = configuration.gracefulShutdown(); forced = configuration.forcedShutdown();
         }
@@ -201,17 +212,28 @@ final class ServerRuntime implements AutoCloseable {
         void release() { admitted.release(); }
         <T> Future<T> submit(java.util.concurrent.Callable<T> work) {
             if (!accepting.get()) throw new RejectedExecutionException("ACME validation is not accepting work");
-            Future<T> future = executor.submit(work); futures.add(future); return future;
+            TrackedFutureTask<T> future = new TrackedFutureTask<>(executor, work, futures, () -> { });
+            futures.add(future);
+            try {
+                executor.execute(future);
+                return future;
+            } catch (RejectedExecutionException failure) {
+                future.cancel(false);
+                throw failure;
+            }
         }
+        int trackedFutures() { return futures.size(); }
         void quiesce() { accepting.set(false); }
         @Override public void close() {
             quiesce(); executor.shutdown();
-            boolean worker = Thread.currentThread().getName().startsWith(ACME_VALIDATION_PREFIX);
+            boolean worker = WORKER_MARKER.get() == WorkerType.VALIDATION;
             if (!worker) await(executor, graceful);
             if (!executor.isTerminated()) {
-                futures.forEach(value -> value.cancel(true)); executor.shutdownNow();
+                futures.forEach(value -> value.cancel(true));
+                cancelNeverStarted(executor.shutdownNow());
                 if (!worker) await(executor, forced);
             }
+            if (!executor.isTerminated()) throw shutdownTimeout();
         }
     }
 
@@ -222,12 +244,25 @@ final class ServerRuntime implements AutoCloseable {
         return result;
     }
 
+    private static void cancelNeverStarted(List<Runnable> work) {
+        for (Runnable task : work) {
+            if (task instanceof Future<?> future) {
+                future.cancel(false);
+            }
+        }
+    }
+
     private static void await(ThreadPoolExecutor executor, Duration duration) {
         try {
             if (!executor.awaitTermination(duration.toMillis(), TimeUnit.MILLISECONDS)) return;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private static IllegalStateException shutdownTimeout() {
+        return new IllegalStateException(
+                "Server execution shutdown timed out: code=SERVER_EXECUTION_SHUTDOWN_TIMEOUT");
     }
 
     record Submitted<T>(Future<T> future, CancellationToken cancellation, Runnable completed) {
@@ -237,6 +272,54 @@ final class ServerRuntime implements AutoCloseable {
             }
         }
         void finish() { completed.run(); }
+    }
+
+    /** Future whose exact task and optional companion state retire at execution completion. */
+    private static final class TrackedFutureTask<T> extends FutureTask<T> {
+        private final ThreadPoolExecutor executor;
+        private final Set<Future<?>> futures;
+        private final Runnable additionalCleanup;
+        private final AtomicBoolean started = new AtomicBoolean();
+        private final AtomicBoolean executionComplete = new AtomicBoolean();
+        private final AtomicBoolean cleaned = new AtomicBoolean();
+
+        private TrackedFutureTask(ThreadPoolExecutor executor, Callable<T> callable,
+                Set<Future<?>> futures, Runnable additionalCleanup) {
+            super(callable);
+            this.executor = executor;
+            this.futures = futures;
+            this.additionalCleanup = additionalCleanup;
+        }
+
+        @Override public void run() {
+            started.set(true);
+            try {
+                super.run();
+            } finally {
+                executionComplete.set(true);
+                cleanup();
+            }
+        }
+
+        @Override protected void done() {
+            if (!started.get()) {
+                executor.remove(this);
+            }
+            cleanupIfComplete();
+        }
+
+        private void cleanupIfComplete() {
+            if (!started.get() || executionComplete.get() || isDone() && !isCancelled()) {
+                cleanup();
+            }
+        }
+
+        private void cleanup() {
+            if (cleaned.compareAndSet(false, true)) {
+                futures.remove(this);
+                additionalCleanup.run();
+            }
+        }
     }
 
     @FunctionalInterface
@@ -252,12 +335,25 @@ final class ServerRuntime implements AutoCloseable {
 
     private static final class NamedThreadFactory implements ThreadFactory {
         private final String prefix;
+        private final WorkerType workerType;
         private final AtomicInteger sequence = new AtomicInteger();
-        private NamedThreadFactory(String prefix) { this.prefix = prefix; }
+        private NamedThreadFactory(String prefix, WorkerType workerType) {
+            this.prefix = prefix;
+            this.workerType = workerType;
+        }
         @Override public Thread newThread(Runnable task) {
-            Thread thread = new Thread(task, prefix + sequence.incrementAndGet());
+            Thread thread = new Thread(() -> {
+                WORKER_MARKER.set(workerType);
+                try {
+                    task.run();
+                } finally {
+                    WORKER_MARKER.remove();
+                }
+            }, prefix + sequence.incrementAndGet());
             thread.setDaemon(false);
             return thread;
         }
     }
+
+    private enum WorkerType { TRANSPORT, OPERATION, VALIDATION }
 }

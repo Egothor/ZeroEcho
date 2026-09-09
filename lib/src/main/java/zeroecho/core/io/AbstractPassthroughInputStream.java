@@ -199,6 +199,8 @@ public abstract class AbstractPassthroughInputStream extends FilterInputStream {
      * flags, and/or release resources here. This method should be idempotent and
      * must not attempt to write further bytes.
      * </p>
+     *
+     * @throws IOException if final verification or resource release fails
      */
     protected abstract void onCompleted() throws IOException;
 

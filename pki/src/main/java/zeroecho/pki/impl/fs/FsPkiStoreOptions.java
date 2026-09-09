@@ -63,15 +63,43 @@ import java.util.Optional;
  * @param signingOperationHorizon maximum stable signing identifier and record
  *                                retention horizon
  * @param signingIdPermittedSkew  permitted future signing identifier clock skew
+ * @param signingMaximumGroupSize maximum number of newly committed signing WAL
+ *                                requests per durability group, from 1 through 32
+ * @param signingResidentIndexBudgetBytes maximum conservatively accounted
+ *                                        resident bytes shared by the signing
+ *                                        indexes; must be positive
+ * @param signingCompactionTransientBudgetBytes maximum conservatively accounted
+ *                                               resident bytes available only to
+ *                                               detached compaction work; must be
+ *                                               positive
+ * @param signingEvidenceAudit                  whether to record per-signing
+ *                                               terminal-outcome (CA key-usage)
+ *                                               audit evidence; an operator opt-in
+ *                                               that costs an additional durable
+ *                                               metadata commit (extra fsync) per
+ *                                               terminal signing outcome
+ *                                               (default {@code false})
  */
+@SuppressWarnings("PMD.LongVariable") // Public option names remain explicit and configuration-stable.
 public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
         FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
-        Duration signingOperationHorizon, Duration signingIdPermittedSkew) {
+        Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
+        long signingResidentIndexBudgetBytes, long signingCompactionTransientBudgetBytes,
+        boolean signingEvidenceAudit) {
+
+    private static final int DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE = 32;
+    private static final int MAXIMUM_SIGNING_GROUP_SIZE = 32;
+    /* default */ static final long DEFAULT_RESIDENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
+    /* default */ static final long DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES = 512L * 1024L * 1024L;
+    private static final long MINIMUM_RESIDENT_INDEX_BUDGET_BYTES = 1L;
 
     /**
      * Canonical constructor with validation.
      *
-     * @throws NullPointerException if any history policy is {@code null}
+     * @throws NullPointerException     if a required object value is {@code null}
+     * @throws IllegalArgumentException if a duration, signing group size, or
+     *                                  resident-index budget is outside its
+     *                                  supported range
      */
     public FsPkiStoreOptions {
         Objects.requireNonNull(caHistoryPolicy, "caHistoryPolicy");
@@ -85,6 +113,21 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         }
         if (signingIdPermittedSkew.isNegative()) {
             throw new IllegalArgumentException("signingIdPermittedSkew must not be negative");
+        }
+        if (signingMaximumGroupSize < 1
+                || signingMaximumGroupSize > MAXIMUM_SIGNING_GROUP_SIZE) {
+            throw new IllegalArgumentException("signingMaximumGroupSize must be from 1 through 32");
+        }
+        if (signingResidentIndexBudgetBytes < MINIMUM_RESIDENT_INDEX_BUDGET_BYTES) {
+            throw new IllegalArgumentException("signingResidentIndexBudgetBytes must be positive");
+        }
+        if (signingCompactionTransientBudgetBytes < MINIMUM_RESIDENT_INDEX_BUDGET_BYTES) {
+            throw new IllegalArgumentException("signingCompactionTransientBudgetBytes must be positive");
+        }
+        try {
+            Math.addExact(signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes);
+        } catch (ArithmeticException overflow) {
+            throw new IllegalArgumentException("combined signing index budget exceeds the supported range", overflow);
         }
     }
 
@@ -102,6 +145,80 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
     public static FsPkiStoreOptions defaults() {
         FsHistoryPolicy ninetyDays = FsHistoryPolicy.onWrite(Optional.of(Duration.ofDays(90)));
         return new FsPkiStoreOptions(ninetyDays, ninetyDays, ninetyDays, ninetyDays, true, Duration.ofDays(90),
-                Duration.ZERO);
+                Duration.ZERO, DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE,
+                DEFAULT_RESIDENT_INDEX_BUDGET_BYTES, DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES, false);
+    }
+
+    /**
+     * Returns a copy using the supplied maximum signing durability-group size.
+     *
+     * <p>The setting constrains only groups written after the store is opened.
+     * Existing valid groups remain readable up to the persistent format limit of
+     * 32 requests.</p>
+     *
+     * @param maximumGroupSize maximum requests per newly committed group, from 1
+     *                         through 32
+     * @return an immutable copy with the supplied group size
+     * @throws IllegalArgumentException if {@code maximumGroupSize} is outside the
+     *                                  supported range
+     */
+    public FsPkiStoreOptions withSigningMaximumGroupSize(int maximumGroupSize) {
+        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
+                revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
+                signingOperationHorizon, signingIdPermittedSkew, maximumGroupSize,
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, signingEvidenceAudit);
+    }
+
+    /**
+     * Returns a copy toggling per-signing terminal-outcome (CA key-usage) audit evidence.
+     *
+     * <p>When enabled, each terminal signing outcome records server-derived key-usage evidence in an
+     * append-ordered evidence log for the audit projector, at the cost of an additional durable metadata
+     * commit (extra fsync) per terminal outcome. It is an operator opt-in and defaults to disabled so the
+     * signing hot path is byte-for-byte and force-for-force unchanged unless the deployment requests it.</p>
+     *
+     * @param enabled whether to record signing key-usage audit evidence
+     * @return an immutable copy with the supplied setting
+     */
+    public FsPkiStoreOptions withSigningEvidenceAudit(boolean enabled) {
+        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
+                revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
+                signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, enabled);
+    }
+
+    /**
+     * Returns a copy using the supplied shared resident signing-index budget.
+     *
+     * <p>The budget is conservative accounting used to reject an index update
+     * before it can exceed the configured resident-memory envelope. It applies
+     * equally when creating a store and rebuilding its indexes during open.</p>
+     *
+     * @param maximumBytes maximum conservatively accounted resident bytes; must
+     *                     be positive
+     * @return an immutable copy with the supplied resident-index budget
+     * @throws IllegalArgumentException if {@code maximumBytes} is not positive
+     */
+    public FsPkiStoreOptions withSigningResidentIndexBudgetBytes(long maximumBytes) {
+        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
+                revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
+                signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
+                maximumBytes, signingCompactionTransientBudgetBytes, signingEvidenceAudit);
+    }
+
+    /**
+     * Returns a copy using the supplied detached-compaction resident budget.
+     *
+     * @param maximumBytes maximum conservatively accounted transient bytes; must
+     *                     be positive and must form a representable combined
+     *                     envelope with the steady resident-index budget
+     * @return an immutable copy with the supplied transient budget
+     * @throws IllegalArgumentException if the budget is invalid
+     */
+    public FsPkiStoreOptions withSigningCompactionTransientBudgetBytes(long maximumBytes) {
+        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
+                revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
+                signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
+                signingResidentIndexBudgetBytes, maximumBytes, signingEvidenceAudit);
     }
 }

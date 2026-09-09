@@ -41,7 +41,13 @@ import zeroecho.pki.server.AdministrativeAuthenticationMode;
 /** Safe closed mutual-TLS authentication result. */
 public sealed interface PkiServerAuthenticationResult permits PkiServerAuthenticationResult.Authenticated,
         PkiServerAuthenticationResult.Rejected {
-    /** Successfully resolved persisted principal identity. */
+    /**
+     * Successfully resolved persisted principal identity.
+     *
+     * @param mode administrative authentication topology
+     * @param transportPrincipalId trusted proxy principal in proxy mode
+     * @param endClientPrincipalId authenticated end-client principal
+     */
     record Authenticated(AdministrativeAuthenticationMode mode, Optional<String> transportPrincipalId,
             String endClientPrincipalId) implements PkiServerAuthenticationResult {
         /** Validates the finite principal identity. */
@@ -57,7 +63,11 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
             }
         }
 
-        /** Creates a direct-mTLS result for an existing certificate mapper. */
+        /**
+         * Creates a direct-mTLS result for an existing certificate mapper.
+         *
+         * @param principalId authenticated end-client principal
+         */
         public Authenticated(String principalId) {
             this(AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), principalId);
         }
@@ -69,7 +79,14 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
         }
     }
 
-    /** Authentication rejection containing only a stable safe code. */
+    /**
+     * Authentication rejection containing only a stable safe code.
+     *
+     * @param mode administrative authentication topology
+     * @param transportPrincipalId trusted proxy principal when resolved
+     * @param endClientPrincipalId end-client principal when safely resolved
+     * @param code stable non-disclosing rejection code
+     */
     record Rejected(AdministrativeAuthenticationMode mode, Optional<String> transportPrincipalId,
             Optional<String> endClientPrincipalId, Code code) implements PkiServerAuthenticationResult {
         /** Validates the rejection. */
@@ -82,7 +99,11 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
             Objects.requireNonNull(code, "code");
         }
 
-        /** Creates a direct-mode rejection without resolved identity metadata. */
+        /**
+         * Creates a direct-mode rejection without resolved identity metadata.
+         *
+         * @param code stable non-disclosing rejection code
+         */
         public Rejected(Code code) {
             this(AdministrativeAuthenticationMode.DIRECT_MTLS, Optional.empty(), Optional.empty(), code);
         }
@@ -90,13 +111,26 @@ public sealed interface PkiServerAuthenticationResult permits PkiServerAuthentic
 
     /** Safe non-disclosing rejection codes. */
     enum Code {
-        CERTIFICATE_INVALID, MAPPING_UNAVAILABLE, MAPPING_AMBIGUOUS, PRINCIPAL_DISABLED,
-        FORWARDED_IDENTITY_FORBIDDEN, PROXY_NOT_TRUSTED, FORWARDING_NOT_AUTHORIZED,
-        FORWARDED_IDENTITY_MISSING, FORWARDED_IDENTITY_INVALID, CLIENT_TRUST_REJECTED,
-        CLIENT_USAGE_REJECTED, IDENTITY_COLLISION, INTERNAL_FAILURE
+        /** Presented certificate is invalid. */ CERTIFICATE_INVALID,
+        /** No exact principal mapping exists. */ MAPPING_UNAVAILABLE,
+        /** More than one principal mapping matches. */ MAPPING_AMBIGUOUS,
+        /** Resolved principal is disabled. */ PRINCIPAL_DISABLED,
+        /** Forwarded identity is forbidden in the active topology. */ FORWARDED_IDENTITY_FORBIDDEN,
+        /** Transport proxy is not trusted. */ PROXY_NOT_TRUSTED,
+        /** Proxy may not forward client identities. */ FORWARDING_NOT_AUTHORIZED,
+        /** Required forwarded client identity is absent. */ FORWARDED_IDENTITY_MISSING,
+        /** Forwarded client identity is malformed or untrusted. */ FORWARDED_IDENTITY_INVALID,
+        /** Client certificate trust validation failed. */ CLIENT_TRUST_REJECTED,
+        /** Client certificate usage constraints reject authentication. */ CLIENT_USAGE_REJECTED,
+        /** Transport and end-client identities collide. */ IDENTITY_COLLISION,
+        /** Authentication failed internally without a safe detailed classification. */ INTERNAL_FAILURE
     }
 
-    /** @return principal identity when authentication succeeded */
+    /**
+     * Returns the resolved end-client principal when authentication succeeded.
+     *
+     * @return principal identity when authenticated, otherwise empty
+     */
     default Optional<String> resolvedPrincipalId() {
         return this instanceof Authenticated authenticated
                 ? Optional.of(authenticated.endClientPrincipalId()) : Optional.empty();

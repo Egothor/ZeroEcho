@@ -55,6 +55,7 @@ import zeroecho.pki.spi.publish.Publisher;
 import zeroecho.pki.spi.publish.PublisherProvider;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreProvider;
+import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
 import zeroecho.pki.util.async.AsyncBus;
 
 /**
@@ -141,6 +142,17 @@ public final class PkiBootstrap {
      * @return store (never {@code null})
      */
     public static PkiStore openStore() {
+        return openStore(PkiStoreRuntimeDependencies.systemUtc());
+    }
+
+    /**
+     * Opens the system-property configured store with explicit runtime dependencies.
+     *
+     * @param dependencies authoritative process-local store dependencies
+     * @return opened store owned by the caller
+     */
+    public static PkiStore openStore(PkiStoreRuntimeDependencies dependencies) {
+        Objects.requireNonNull(dependencies, "dependencies");
         String requestedId = System.getProperty(PROP_STORE_BACKEND);
         Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_STORE_PREFIX);
         PkiStoreProvider provider = selectStoreProvider(requestedId);
@@ -151,7 +163,7 @@ public final class PkiBootstrap {
         if (LOG.isLoggable(Level.INFO)) {
             LOG.info("Selected store provider: " + provider.id() + " (keys: " + props.keySet() + ")");
         }
-        return provider.allocate(config);
+        return provider.allocate(config, dependencies);
     }
 
     /**
@@ -181,9 +193,20 @@ public final class PkiBootstrap {
      * @throws RuntimeException if store allocation fails
      */
     public static PkiStore openStore(ProviderConfig config) {
+        return openStore(config, PkiStoreRuntimeDependencies.systemUtc());
+    }
+
+    /**
+     * Opens an explicitly configured store with authoritative process-local dependencies.
+     *
+     * @param config immutable store-provider configuration
+     * @param dependencies authoritative process-local store dependencies
+     * @return opened store owned by the caller
+     */
+    public static PkiStore openStore(ProviderConfig config, PkiStoreRuntimeDependencies dependencies) {
         validateStoreConfiguration(config);
         PkiStoreProvider provider = selectStoreProvider(config.backendId());
-        return provider.allocate(config);
+        return provider.allocate(config, Objects.requireNonNull(dependencies, "dependencies"));
     }
 
     /**
@@ -459,6 +482,7 @@ public final class PkiBootstrap {
      * This method is safe: it does not log configuration values.
      * </p>
      *
+     * @param <T> provider allocation result type
      * @param provider provider (never {@code null})
      */
     public static <T> void logSupportedKeys(ConfigurableProvider<T> provider) {

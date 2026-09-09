@@ -101,6 +101,11 @@ public final class DurableDelayedSignatureWorkflow implements SignatureWorkflow,
     }
 
     @Override
+    public ConfigurationCommitment configurationCommitment() {
+        return new ConfigurationCommitment(new byte[ConfigurationCommitment.BYTE_LENGTH]);
+    }
+
+    @Override
     public PkiId submitSign(SignRequest request, CallControl control) {
         Objects.requireNonNull(request, "request");
 

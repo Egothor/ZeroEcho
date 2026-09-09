@@ -295,6 +295,8 @@ public final class CipherTransformInputStreamBuilder {
     /**
      * Enables update-driven streaming (Cipher.update during transform, single
      * doFinal at EOF). Suitable for CTR/CFB/OFB/GCM and padding modes.
+     *
+     * @return this builder for chaining
      */
     public CipherTransformInputStreamBuilder withUpdateStreaming() {
         this.updateStreaming = true;

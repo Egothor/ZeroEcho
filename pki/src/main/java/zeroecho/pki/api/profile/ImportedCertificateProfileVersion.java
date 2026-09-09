@@ -76,27 +76,47 @@ public final class ImportedCertificateProfileVersion {
         }
     }
 
-    /** @return exact version reference */
+    /**
+     * Returns the exact version reference.
+     *
+     * @return exact version reference
+     */
     public CertificateProfileRef reference() {
         return reference;
     }
 
-    /** @return document schema version */
+    /**
+     * Returns the document schema version.
+     *
+     * @return document schema version
+     */
     public int schemaVersion() {
         return schemaVersion;
     }
 
-    /** @return validated immutable profile definition */
+    /**
+     * Returns the imported profile definition.
+     *
+     * @return validated immutable profile definition
+     */
     public CertificateProfileDefinition definition() {
         return definition;
     }
 
-    /** @return defensive copy of canonical JSON */
+    /**
+     * Returns the canonical imported document.
+     *
+     * @return defensive copy of canonical JSON
+     */
     public byte[] canonicalJson() {
         return canonicalJson.clone();
     }
 
-    /** @return authoritative import time */
+    /**
+     * Returns the authoritative import time.
+     *
+     * @return authoritative import time
+     */
     public Instant importedAt() {
         return importedAt;
     }

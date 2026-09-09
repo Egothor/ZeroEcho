@@ -64,6 +64,10 @@ public final class Pkcs12TlsProvider implements PkiServerTlsProvider {
     private static final Set<String> KEYS = Set.of("keyStore", "keyStorePasswordEnvironment",
             "trustStore", "trustStorePasswordEnvironment");
 
+    /** Creates the stateless PKCS#12 TLS provider. */
+    public Pkcs12TlsProvider() {
+    }
+
     @Override
     public String id() {
         return ID;

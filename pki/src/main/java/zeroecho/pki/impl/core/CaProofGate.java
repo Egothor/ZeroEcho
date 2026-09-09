@@ -36,6 +36,7 @@ package zeroecho.pki.impl.core;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
@@ -43,9 +44,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.cert.X509CertificateHolder;
+import zeroecho.pkix.Pkix;
 
+import zeroecho.core.io.CancellationSignal;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
@@ -59,11 +60,13 @@ import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.core.async.DomainContinuationTemplate;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+import zeroecho.pki.impl.framework.x509.bc.BcX509SignedObjectValidator;
 import zeroecho.pki.impl.framework.x509.bc.PkiBusContentSigner;
 import zeroecho.pki.spi.audit.AuditSink;
 
@@ -112,29 +115,52 @@ final class CaProofGate {
     }
 
     /* default */ PkiBusContentSigner signer(ManagedKeyProof proof) {
+        return signer(proof, CancellationSignal.NONE);
+    }
+
+    /* default */ PkiBusContentSigner signer(ManagedKeyProof proof, CancellationSignal cancellation) {
         return signatureBindingId.isPresent()
                 ? new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity,
-                        signatureBindingId.orElseThrow(), signingTtl)
-                : new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
+                        signatureBindingId.orElseThrow(), signingTtl, cancellation)
+                : new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl, cancellation);
     }
 
     /* default */ PkiBusContentSigner signer(ManagedKeyProof proof,
             zeroecho.pki.api.profile.X509AlgorithmBindingPolicy bindingPolicy) {
+        return signer(proof, bindingPolicy, CancellationSignal.NONE);
+    }
+
+    /* default */ PkiBusContentSigner signer(ManagedKeyProof proof,
+            zeroecho.pki.api.profile.X509AlgorithmBindingPolicy bindingPolicy,
+            CancellationSignal cancellation) {
         Optional<String> bindingId = bindingPolicy.certificateSignature()
                 .map(zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.BindingReference::bindingId);
         return bindingId.isPresent()
                 ? new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, bindingId.orElseThrow(),
-                        signingTtl)
-                : new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl);
+                        signingTtl, cancellation)
+                : new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl, cancellation);
     }
 
-    /* default */ SubjectPublicKeyInfo parseRootSpki(EncodedObject spki, FormatId formatId) {
+    /* default */ PkiBusContentSigner signer(ManagedKeyProof proof,
+            zeroecho.pki.api.profile.X509AlgorithmBindingPolicy bindingPolicy,
+            CancellationSignal cancellation, DomainContinuationTemplate domainContinuation) {
+        Optional<String> bindingId = bindingPolicy.certificateSignature()
+                .map(zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.BindingReference::bindingId);
+        return bindingId.isPresent()
+                ? new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity,
+                        bindingId.orElseThrow(), signingTtl, cancellation, domainContinuation)
+                : new PkiBusContentSigner(signingBus, proof.keyRef(), signatureIdentity, signingTtl,
+                        cancellation, domainContinuation);
+    }
+
+    /* default */ byte[] parseRootSpki(EncodedObject spki, FormatId formatId) {
         if (spki.encoding() != Encoding.DER) {
             throw rejection("CREATE_ROOT_REJECTED", formatId, Optional.empty(), "ROOT_MANAGED_KEY_INVALID");
         }
         byte[] encoded = spki.bytes();
         try {
-            return parseValidatedSpki(encoded);
+            validateSpki(encoded);
+            return encoded.clone();
         } catch (IOException | RuntimeException ex) { // NOPMD - malformed resolver output fails closed
             throw rejection("CREATE_ROOT_REJECTED", formatId, Optional.empty(), "ROOT_MANAGED_KEY_INVALID");
         } finally {
@@ -142,30 +168,19 @@ final class CaProofGate {
         }
     }
 
-    /* default */ boolean rootProofIsValid(X509CertificateHolder certificate, EncodedObject expectedSpki) {
+    /* default */ boolean rootProofIsValid(X509Certificate certificate, EncodedObject expectedSpki) {
         if (expectedSpki.encoding() != Encoding.DER) {
             return false;
         }
         try {
-            byte[] embeddedSpki = certificate.getSubjectPublicKeyInfo().getEncoded();
-            BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(signingBus.authority().bindings());
-            AlgorithmIdentity outer = adapter.decode(certificate.getSignatureAlgorithm(),
-                    X509AlgorithmRole.SIGNATURE_ALGORITHM);
-            AlgorithmIdentity inner = adapter.decode(
-                    certificate.toASN1Structure().getTBSCertificate().getSignature(),
-                    X509AlgorithmRole.SIGNATURE_ALGORITHM);
-            AlgorithmIdentity key = adapter.decode(certificate.getSubjectPublicKeyInfo().getAlgorithm(),
-                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
-            X509ExecutionPlan<BcX509VerificationExecutor> plan = signingBus.authority().plan(outer, key,
-                    AlgorithmExecutionCapability.Direction.VERIFY,
-                    Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "root-proof",
-                    BcX509VerificationExecutor.class);
-            BcX509VerificationExecutor executor = plan.executor();
-            boolean verified = executor.verify(signingBus.authority(), plan, certificate.getSubjectPublicKeyInfo(),
-                    certificate.getSignatureAlgorithm(),
-                    new ImmutableByteContent(certificate.toASN1Structure().getTBSCertificate().getEncoded()),
-                    certificate.getSignature());
-            return MessageDigest.isEqual(expectedSpki.bytes(), embeddedSpki) && verified && outer.equals(inner);
+            byte[] certDer = certificate.getEncoded();
+            byte[] embeddedSpki = Pkix.subjectPublicKeyInfo(certificate);
+            // Canonical DER, known bindings, and outer==tbs algorithm equality.
+            new BcX509SignedObjectValidator(signingBus.authority()).validateCertificate(
+                    new ImmutableByteContent(certDer), Optional.empty(), CancellationSignal.NONE);
+            // Root self-signature proof.
+            certificate.verify(certificate.getPublicKey());
+            return MessageDigest.isEqual(expectedSpki.bytes(), embeddedSpki);
         } catch (Exception ex) {
             return false;
         }
@@ -173,6 +188,11 @@ final class CaProofGate {
 
     /* default */ ManagedKeyProof proveManagedKey(KeyRef keyRef, FormatId formatId, String auditAction,
             Optional<PkiId> subjectCaId) {
+        return proveManagedKey(keyRef, formatId, auditAction, subjectCaId, CancellationSignal.NONE);
+    }
+
+    /* default */ ManagedKeyProof proveManagedKey(KeyRef keyRef, FormatId formatId, String auditAction,
+            Optional<PkiId> subjectCaId, CancellationSignal cancellation) {
         EncodedObject resolved = resolveManagedKey(keyRef, formatId, auditAction, subjectCaId);
         byte[] exactSpki = resolved.bytes().clone();
         byte[] challenge = new byte[MANAGED_KEY_CHALLENGE_DOMAIN.length + CHALLENGE_NONCE_BYTES];
@@ -181,7 +201,9 @@ final class CaProofGate {
         byte[] signature = null;
         try {
             try {
-                signature = signManagedKeyChallenge(keyRef, challenge);
+                signature = signManagedKeyChallenge(keyRef, challenge, cancellation);
+            } catch (zeroecho.pki.api.SigningExecutionException executionFailure) {
+                throw executionFailure;
             } catch (RuntimeException ex) { // NOPMD - signing boundary failures reject with a stable code
                 throw rejection(auditAction, formatId, subjectCaId, "MANAGED_KEY_PROOF_FAILED");
             }
@@ -211,7 +233,7 @@ final class CaProofGate {
         }
         byte[] encoded = resolved.bytes();
         try {
-            parseValidatedSpki(encoded);
+            validateSpki(encoded);
             return new EncodedObject(Encoding.DER, encoded);
         } catch (IOException | RuntimeException exception) { // NOPMD - hostile resolver output is redacted
             throw rejection(auditAction, formatId, subjectCaId, "MANAGED_KEY_INVALID");
@@ -231,9 +253,9 @@ final class CaProofGate {
         return rejection;
     }
 
-    private byte[] signManagedKeyChallenge(KeyRef keyRef, byte[] challenge) {
+    private byte[] signManagedKeyChallenge(KeyRef keyRef, byte[] challenge, CancellationSignal cancellation) {
         try (PkiBusContentSigner contentSigner = new PkiBusContentSigner(signingBus, keyRef, signatureIdentity,
-                signingTtl)) {
+                signingTtl, cancellation)) {
             contentSigner.getOutputStream().write(challenge);
             return contentSigner.getSignature();
         } catch (IOException ex) {
@@ -243,16 +265,16 @@ final class CaProofGate {
 
     private boolean verifyChallenge(byte[] spkiDer, byte[] challenge, byte[] signature) {
         try {
-            SubjectPublicKeyInfo spki = parseValidatedSpki(spkiDer);
+            validateSpki(spkiDer);
             BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(signingBus.authority().bindings());
-            AlgorithmIdentity keyIdentity = adapter.decode(spki.getAlgorithm(),
+            AlgorithmIdentity keyIdentity = adapter.decode(Pkix.subjectPublicKeyAlgorithm(spkiDer),
                     X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
             X509ExecutionPlan<BcX509VerificationExecutor> plan = signingBus.authority().plan(signatureIdentity,
                     keyIdentity, AlgorithmExecutionCapability.Direction.VERIFY,
                     Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "managed-key-proof",
                     BcX509VerificationExecutor.class);
             BcX509VerificationExecutor executor = plan.executor();
-            return executor.verify(signingBus.authority(), plan, spki,
+            return executor.verify(signingBus.authority(), plan, spkiDer,
                     adapter.encode(signatureIdentity, X509AlgorithmRole.SIGNATURE_ALGORITHM),
                     new ImmutableByteContent(challenge), signature);
         } catch (Exception ex) {
@@ -260,12 +282,10 @@ final class CaProofGate {
         }
     }
 
-    private SubjectPublicKeyInfo parseValidatedSpki(byte[] encoded) throws IOException {
+    private void validateSpki(byte[] encoded) throws IOException {
         new StreamingDerReader().validateSubjectPublicKeyInfo(encoded, MAXIMUM_SPKI_BYTES);
-        SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(encoded);
-        new BcX509AlgorithmAdapter(signingBus.authority().bindings()).decode(spki.getAlgorithm(),
-                X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
-        return spki;
+        new BcX509AlgorithmAdapter(signingBus.authority().bindings()).decode(
+                Pkix.subjectPublicKeyAlgorithm(encoded), X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
     }
 
     /**

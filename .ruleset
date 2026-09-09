@@ -105,7 +105,7 @@
    </rule>
    <rule ref="category/java/codestyle.xml/LongVariable">
       <properties>
-         <property name="minimum" value="35" />
+         <property name="minimum" value="28" />
       </properties>
    </rule>
    <rule ref="category/java/codestyle.xml/MDBAndSessionBeanNamingConvention"/>

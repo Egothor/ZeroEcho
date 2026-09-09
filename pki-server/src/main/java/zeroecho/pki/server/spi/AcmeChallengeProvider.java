@@ -51,15 +51,42 @@ import zeroecho.pki.spi.ProviderConfig;
  */
 @SuppressWarnings("PMD.ControlStatementBraces")
 public interface AcmeChallengeProvider {
-    /** @return stable provider identity */
+    /**
+     * Returns the stable provider identity.
+     *
+     * @return the identity used by explicit provider configuration
+     */
     String id();
-    /** @return exact supported challenge types */
+    /**
+     * Returns the exact challenge types supported by this provider.
+     *
+     * @return an immutable set of supported challenge types
+     */
     Set<AcmeState.ChallengeType> challengeTypes();
 
-    /** Performs one bounded external validation attempt. */
+    /**
+     * Performs one bounded external validation attempt.
+     *
+     * @param context immutable challenge and timing input
+     * @param configuration explicit provider configuration
+     * @param cancellation signal checked while external work is in progress
+     * @return a finite, non-sensitive validation result
+     */
     Result validate(Context context, ProviderConfig configuration, CancellationSignal cancellation);
 
-    /** Exact immutable challenge input; values are sensitive and must never be logged. */
+    /**
+     * Exact immutable challenge input; values are sensitive and must never be logged.
+     *
+     * @param directoryId stable directory identity
+     * @param authorizationId stable authorization identity
+     * @param identifier identifier being authorized
+     * @param challengeType challenge mechanism to validate
+     * @param token canonical ACME challenge token
+     * @param expectedKeyAuthorization expected account-bound key authorization
+     * @param attempt positive validation-attempt number
+     * @param validationTime authoritative start time for this attempt
+     * @param deadline exclusive deadline for the bounded attempt
+     */
     record Context(String directoryId, String authorizationId, AcmeState.Identifier identifier,
             AcmeState.ChallengeType challengeType, String token, String expectedKeyAuthorization,
             int attempt, Instant validationTime, Instant deadline) {
@@ -75,7 +102,14 @@ public interface AcmeChallengeProvider {
         }
     }
 
-    /** Finite provider result without raw network, DNS, token or response data. */
+    /**
+     * Finite provider result without raw network, DNS, token or response data.
+     *
+     * @param valid whether the challenge evidence satisfied provider policy
+     * @param classification stable, non-sensitive result classification
+     * @param observedAt time at which the evidence was observed
+     * @param expiresAt exclusive evidence expiry, after {@code observedAt}
+     */
     record Result(boolean valid, String classification, Instant observedAt, Instant expiresAt) {
         /** Validates the safe evidence draft. */
         public Result {

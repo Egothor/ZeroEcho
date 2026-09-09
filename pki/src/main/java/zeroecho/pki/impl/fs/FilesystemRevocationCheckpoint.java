@@ -58,7 +58,7 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Immutable POSIX checkpoint view derived from the authoritative revocation log. */
+/** Immutable checkpoint view derived from the authoritative revocation log. */
 final class FilesystemRevocationCheckpoint implements AutoCloseable {
 
     private static final Logger LOGGER =
@@ -551,7 +551,7 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         DIRECTORY_FORCE
     }
 
-    /** POSIX publication operations isolated for deterministic fault validation. */
+    /** publication operations isolated for deterministic fault validation. */
     /* default */ interface PublicationOperations {
         /** Publishes one completed file using an atomic move. */
         void atomicMove(Path source, Path target) throws IOException;
@@ -560,7 +560,7 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
         void forceDirectory(Path directory) throws IOException;
     }
 
-    /** Default POSIX publication operations. */
+    /** Default publication operations. */
     private enum DefaultPublicationOperations implements PublicationOperations {
         /** Stateless singleton. */
         INSTANCE;
@@ -572,9 +572,7 @@ final class FilesystemRevocationCheckpoint implements AutoCloseable {
 
         @Override
         public void forceDirectory(Path directory) throws IOException {
-            try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
-                channel.force(true);
-            }
+            PlatformFs.forceDirectory(directory);
         }
     }
 

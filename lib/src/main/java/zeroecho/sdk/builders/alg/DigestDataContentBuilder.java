@@ -201,6 +201,7 @@ public final class DigestDataContentBuilder implements DataContentBuilder<PlainC
      *     .build(true);
      * }</pre>
      *
+     * @param session active session used to create cryptographic contexts
      * @return a new {@code DigestDataContentBuilder} instance
      */
     public static DigestDataContentBuilder builder(ZeroEchoSession session) {

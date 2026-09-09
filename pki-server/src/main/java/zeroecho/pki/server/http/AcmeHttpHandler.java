@@ -30,7 +30,7 @@
  * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *******************************************************************************/
+ ******************************************************************************/
 package zeroecho.pki.server.http;
 
 import java.io.ByteArrayOutputStream;
@@ -66,6 +66,9 @@ import com.sun.net.httpserver.HttpsExchange;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofChallenge;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofResult;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiRepositoryContent;
@@ -76,6 +79,7 @@ import zeroecho.pki.server.acme.AcmeNonceService;
 import zeroecho.pki.server.acme.AcmeRateAdmission;
 import zeroecho.pki.server.acme.AcmeService;
 import zeroecho.pki.server.acme.AcmeState;
+import zeroecho.pki.server.acme.AcmeWireBounds;
 import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticationResult;
 
@@ -168,16 +172,15 @@ final class AcmeHttpHandler implements HttpHandler {
         if (requestUri.getRawQuery() != null || requestUri.getRawFragment() != null) return problem(400, "malformed");
         String[] parts = requestUri.getPath().split("/", -1);
         if (parts.length < 4 || !"".equals(parts[0]) || !"acme".equals(parts[1])) return problem(404, "malformed");
-        AcmeState.Directory directory;
-        try { directory = service.activeDirectory(parts[2]); }
-        catch (RuntimeException unavailable) { return problem(404, "malformed"); }
         String resource = parts[3];
         if (parts.length == 4 && "directory".equals(resource) && "GET".equals(exchange.getRequestMethod())) {
+            AcmeState.Directory directory = activeDirectory(parts[2]);
             return json(200, directoryJson(directory), directory.directoryId());
         }
         if (parts.length == 4 && "new-nonce".equals(resource)
                 && ("GET".equals(exchange.getRequestMethod()) || "HEAD".equals(exchange.getRequestMethod()))) {
-            return new Response(204, JSON, new byte[0], Optional.empty(), directory.directoryId(), Map.of());
+            service.nonceScope(parts[2]);
+            return new Response(204, JSON, new byte[0], Optional.empty(), null, Map.of());
         }
         if (!"POST".equals(exchange.getRequestMethod())) return problem(405, "malformed");
         if (!JOSE.equalsIgnoreCase(baseContentType(exchange.getRequestHeaders().getFirst("Content-Type")))) {
@@ -185,10 +188,11 @@ final class AcmeHttpHandler implements HttpHandler {
         }
         byte[] body = readBody(exchange.getRequestBody(), configuration.maximumBodyBytes());
         URI exactUrl = configuration.externalBaseUri().resolve(requestUri.getRawPath());
+        AcmeState.Directory directory = resolveRequestDirectory(parts, resource, body, exactUrl);
         AcmeJwsVerifier.KeyMode mode = "new-account".equals(resource)
                 ? AcmeJwsVerifier.KeyMode.JWK : AcmeJwsVerifier.KeyMode.KID;
         AcmeJwsVerifier.Verified verified = verifier.verify(body, configuration.maximumBodyBytes(), exactUrl,
-                directory.directoryId(), mode, nonces, kid -> accountKey(directory, kid));
+                directory.alias(), mode, nonces, kid -> accountKey(directory, kid));
         if (parts.length == 4 && "new-account".equals(resource)) return newAccount(directory, verified);
         AcmeJwsVerifier.AccountKey account = verified.account().orElseThrow();
         requireAccountDirectory(account.accountId(), directory);
@@ -205,9 +209,17 @@ final class AcmeHttpHandler implements HttpHandler {
                     configuration.maximumBodyBytes());
             byte[] certificate = revocation.certificateDer();
             try { service.revokeCertificate(account.accountId(), account.recordCommitment(), directory, certificate,
-                    revocationReason(revocation.reasonCode())); }
+                    revocationReason(revocation.reasonCode()), requestId); }
             finally { java.util.Arrays.fill(certificate, (byte) 0); }
             return json(200, "{}", directory.directoryId());
+        }
+        if (parts.length == 7 && "credential-confirmation".equals(resource)
+                && "v1".equals(parts[4])) {
+            return switch (parts[5]) {
+                case "challenge" -> credentialConfirmationChallenge(account, parts[6], verified.payload(), directory);
+                case "complete" -> credentialConfirmationComplete(account, parts[6], verified.payload(), directory);
+                default -> problem(404, "malformed");
+            };
         }
         if (parts.length != 5) return problem(404, "malformed");
         return switch (resource) {
@@ -216,11 +228,57 @@ final class AcmeHttpHandler implements HttpHandler {
             case "authz" -> authorization(account.accountId(), parts[4], verified.payload(), directory);
             case "challenge" -> challenge(account, parts[4], verified.payload(), directory, cancellation,
                     requestDeadline);
-            case "finalize" -> finalizeOrder(account, parts[4], verified.payload(), directory);
+            case "finalize" -> finalizeOrder(account, parts[4], verified.payload(), directory, cancellation);
             case "certificate" -> certificate(account.accountId(), parts[4], verified.payload(), directory,
                     cancellation, requestDeadline);
             default -> problem(404, "malformed");
         };
+    }
+
+    private AcmeState.Directory activeDirectory(String alias) {
+        try {
+            return service.activeDirectory(alias);
+        } catch (RuntimeException unavailable) {
+            throw new AcmeJwsVerifier.AcmeProblem("malformed");
+        }
+    }
+
+    private AcmeState.Directory resolveRequestDirectory(String[] parts, String resource,
+            byte[] body, URI exactUrl) {
+        AcmeState.Directory directory;
+        if (parts.length == 4 && ("new-account".equals(resource) || "new-order".equals(resource))) {
+            directory = activeDirectory(parts[2]);
+        } else if (parts.length == 4 && ("key-change".equals(resource) || "revoke-cert".equals(resource))) {
+            String kid = verifier.kidRoutingHint(body, configuration.maximumBodyBytes(), exactUrl);
+            directory = service.accountDirectory(accountIdFromKid(parts[2], kid));
+        } else if (parts.length == 5) {
+            directory = switch (resource) {
+                case "account" -> service.accountDirectory(parts[4]);
+                case "order", "finalize", "certificate" -> service.orderDirectory(parts[4]);
+                case "authz" -> service.authorizationDirectory(parts[4]);
+                case "challenge" -> service.challengeDirectory(parts[4]);
+                default -> throw new AcmeJwsVerifier.AcmeProblem("malformed");
+            };
+        } else if (parts.length == 7 && "credential-confirmation".equals(resource)
+                && "v1".equals(parts[4])
+                && ("challenge".equals(parts[5]) || "complete".equals(parts[5]))) {
+            directory = service.orderDirectory(parts[6]);
+        } else {
+            throw new AcmeJwsVerifier.AcmeProblem("malformed");
+        }
+        if (!directory.alias().equals(parts[2])) {
+            throw new AcmeJwsVerifier.AcmeProblem("accountDoesNotExist");
+        }
+        return directory;
+    }
+
+    private String accountIdFromKid(String alias, String kid) {
+        String prefix = configuration.externalBaseUri()
+                .resolve("/acme/" + alias + "/account/").toASCIIString();
+        if (!kid.startsWith(prefix)) {
+            throw new AcmeJwsVerifier.AcmeProblem("accountDoesNotExist");
+        }
+        return kid.substring(prefix.length());
     }
 
     private Response newAccount(AcmeState.Directory directory, AcmeJwsVerifier.Verified verified) {
@@ -313,14 +371,15 @@ final class AcmeHttpHandler implements HttpHandler {
     }
 
     private Response finalizeOrder(AcmeJwsVerifier.AccountKey account, String id, byte[] payload,
-            AcmeState.Directory directory) {
+            AcmeState.Directory directory, ServerRuntime.CancellationToken cancellation) {
         byte[] csr = AcmePayloads.requiredBase64Url(payload, "csr", configuration.maximumBodyBytes());
         if (!rates.tryAcquireFinalization()) {
             java.util.Arrays.fill(csr, (byte) 0);
             return problem(429, "rateLimited");
         }
         try {
-            service.finalizeOrder(account.accountId(), account.recordCommitment(), id, csr);
+            TransportCancellationGateway.finalizeAcme(service, account.accountId(), account.recordCommitment(),
+                    id, csr, cancellation);
         } finally {
             java.util.Arrays.fill(csr, (byte) 0);
             rates.releaseFinalization();
@@ -338,6 +397,36 @@ final class AcmeHttpHandler implements HttpHandler {
         return new Response(200, PEM_CHAIN, new byte[0],
                 Optional.of(output -> writePemChain(output, order, cancellation, requestDeadline)),
                 directory.directoryId(), Map.of());
+    }
+
+    private Response credentialConfirmationChallenge(AcmeJwsVerifier.AccountKey account, String orderId,
+            byte[] payload, AcmeState.Directory directory) {
+        if (!java.util.Arrays.equals(payload, new byte[] {'{', '}'})) {
+            throw new AcmeJwsVerifier.AcmeProblem("malformed");
+        }
+        CredentialConfirmationProofChallenge challenge = service.issueCredentialConfirmationChallenge(
+                account.accountId(), account.recordCommitment(), orderId);
+        return json(200, confirmationChallengeJson(challenge), directory.directoryId());
+    }
+
+    private Response credentialConfirmationComplete(AcmeJwsVerifier.AccountKey account, String orderId,
+            byte[] payload, AcmeState.Directory directory) {
+        PkiOperationValue.ObjectValue value = object(StrictJson.parse(payload, configuration.maximumBodyBytes()));
+        requireOnly(value, "expectedLifecycleRevision", "expectedLifecycleRecordCommitment",
+                "expectedChallengeRecordCommitment", "response");
+        String encodedResponse = requiredText(value, "response");
+        byte[] response = decodeProofResponse(encodedResponse);
+        try {
+            CredentialConfirmationProofResult result = service.completeCredentialConfirmation(
+                    account.accountId(), account.recordCommitment(), orderId,
+                    requiredLong(value, "expectedLifecycleRevision"),
+                    requiredText(value, "expectedLifecycleRecordCommitment"),
+                    requiredText(value, "expectedChallengeRecordCommitment"), response);
+            return json(200, "{\"version\":1,\"confirmationResult\":\"" + result.name() + "\"}",
+                    directory.directoryId());
+        } finally {
+            java.util.Arrays.fill(response, (byte) 0);
+        }
     }
 
     private void writePemChain(OutputStream output, AcmeState.Order order,
@@ -412,8 +501,11 @@ final class AcmeHttpHandler implements HttpHandler {
 
     private void send(HttpExchange exchange, Response response, String requestId, String directoryId)
             throws IOException {
-        String nonceDirectory = directoryId == null ? nonceDirectory(exchange.getRequestURI()) : directoryId;
-        try { exchange.getResponseHeaders().set("Replay-Nonce", nonces.issue(nonceDirectory)); }
+        try {
+            String nonceScope = directoryId == null
+                    ? nonceScope(exchange.getRequestURI()) : service.directory(directoryId).alias();
+            exchange.getResponseHeaders().set("Replay-Nonce", nonces.issue(nonceScope));
+        }
         catch (RuntimeException unavailable) { /* Capacity failure is already represented by the response. */ }
         exchange.getResponseHeaders().set(RequestIds.HEADER, requestId);
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
@@ -436,16 +528,12 @@ final class AcmeHttpHandler implements HttpHandler {
         }
     }
 
-    private String nonceDirectory(URI requestUri) {
+    private String nonceScope(URI requestUri) {
         String[] parts = requestUri.getPath().split("/", -1);
         if (parts.length >= 3 && "acme".equals(parts[1])) {
-            try {
-                return service.activeDirectory(parts[2]).directoryId();
-            } catch (RuntimeException unavailable) {
-                // Unknown directories receive a non-authoritative unusable nonce.
-            }
+            return service.nonceScope(parts[2]);
         }
-        return "directory:unknown";
+        throw new IllegalArgumentException("ACME nonce scope is unavailable");
     }
 
     private void audit(String action, String actor, String requestId, String outcome) {
@@ -465,7 +553,12 @@ final class AcmeHttpHandler implements HttpHandler {
                 + "\",\"detail\":\"ACME request rejected\"}").getBytes(StandardCharsets.UTF_8),
                 Optional.empty(), null, Map.of());
     }
-    private static Response protocolFailure(Throwable failure) {
+    static Response protocolFailure(Throwable failure) {
+        if (failure instanceof zeroecho.pki.api.SigningExecutionException signingFailure
+                && signingFailure.classification()
+                        == zeroecho.pki.api.SigningExecutionException.Classification.OVERLOADED) {
+            return problem(429, "rateLimited");
+        }
         if (failure instanceof AcmeJwsVerifier.AcmeProblem problem) {
             return problem(problemStatus(problem.type()), problem.type());
         }
@@ -515,7 +608,47 @@ final class AcmeHttpHandler implements HttpHandler {
         out.append("],\"finalize\":\"").append(base(directory)).append("finalize/").append(value.orderId()).append('"');
         value.credentialId().ifPresent(ignored -> out.append(",\"certificate\":\"").append(base(directory))
                 .append("certificate/").append(value.orderId()).append('"'));
+        if (requiresCredentialConfirmation(value)) {
+            String confirmationBase = base(directory) + "credential-confirmation/v1/";
+            out.append(",\"credentialConfirmation\":{\"version\":1,\"challenge\":\"")
+                    .append(confirmationBase).append("challenge/").append(value.orderId())
+                    .append("\",\"complete\":\"").append(confirmationBase).append("complete/")
+                    .append(value.orderId()).append("\"}");
+        }
         return out.append('}').toString();
+    }
+
+    private boolean requiresCredentialConfirmation(AcmeState.Order order) {
+        if (order.status() != AcmeState.OrderStatus.VALID || order.credentialId().isEmpty()) {
+            return false;
+        }
+        CredentialConfirmationLifecycle lifecycle = realm.session().confirmations()
+                .get(order.credentialId().orElseThrow())
+                .orElseThrow(() -> new IllegalStateException("ACME credential confirmation is unavailable"));
+        return lifecycle.state() == CredentialConfirmationLifecycle.State.PENDING;
+    }
+
+    private static String confirmationChallengeJson(CredentialConfirmationProofChallenge challenge) {
+        byte[] presentation = challenge.presentation();
+        try {
+            return "{\"version\":1,\"expectedLifecycleRevision\":"
+                    + challenge.proofCas().expectedLifecycleRevision()
+                    + ",\"expectedLifecycleRecordCommitment\":\""
+                    + challenge.proofCas().expectedLifecycleRecordCommitment()
+                    + "\",\"expectedChallengeRecordCommitment\":\""
+                    + challenge.proofCas().expectedChallengeRecordCommitment()
+                    + "\",\"proofSuiteId\":\"" + challenge.proofSuiteBinding().proofSuiteRef().suiteId()
+                    + "\",\"proofSuiteConfigurationCommitment\":\""
+                    + challenge.proofSuiteBinding().proofSuiteRef().configurationCommitment()
+                    + "\",\"rsaMaximumModulusBits\":" + challenge.proofSuiteBinding().rsaMaximumModulusBits()
+                    + ",\"expiresAt\":\"" + challenge.expiresAt()
+                    + "\",\"maximumResponseBytes\":" + challenge.maximumResponseBytes()
+                    + ",\"presentation\":\"" + Base64.getUrlEncoder().withoutPadding()
+                            .encodeToString(presentation)
+                    + "\"}";
+        } finally {
+            java.util.Arrays.fill(presentation, (byte) 0);
+        }
     }
     private String authorizationJson(AcmeState.Authorization value, AcmeState.Directory directory) {
         StringBuilder out = new StringBuilder("{\"identifier\":{\"type\":\"dns\",\"value\":\"")
@@ -576,6 +709,32 @@ final class AcmeHttpHandler implements HttpHandler {
         if (item == null) return defaultValue;
         if (item instanceof PkiOperationValue.BooleanValue flag) return flag.value();
         throw new AcmeJwsVerifier.AcmeProblem("malformed");
+    }
+    private static String requiredText(PkiOperationValue.ObjectValue value, String field) {
+        if (value.fields().get(field) instanceof PkiOperationValue.Text text) return text.value();
+        throw new AcmeJwsVerifier.AcmeProblem("malformed");
+    }
+    private static long requiredLong(PkiOperationValue.ObjectValue value, String field) {
+        if (value.fields().get(field) instanceof PkiOperationValue.IntegerValue integer) return integer.value();
+        throw new AcmeJwsVerifier.AcmeProblem("malformed");
+    }
+    private static byte[] decodeProofResponse(String encoded) {
+        if (encoded.isEmpty()
+                || encoded.length() > AcmeWireBounds.MAX_PROOF_B64URL_CHARS
+                || !encoded.matches("[A-Za-z0-9_-]+")) {
+            throw new AcmeJwsVerifier.AcmeProblem("malformed");
+        }
+        byte[] decoded;
+        try {
+            decoded = Base64.getUrlDecoder().decode(encoded);
+        } catch (IllegalArgumentException malformed) {
+            throw new AcmeJwsVerifier.AcmeProblem("malformed");
+        }
+        if (!encoded.equals(Base64.getUrlEncoder().withoutPadding().encodeToString(decoded))) {
+            java.util.Arrays.fill(decoded, (byte) 0);
+            throw new AcmeJwsVerifier.AcmeProblem("malformed");
+        }
+        return decoded;
     }
     private static List<String> textList(PkiOperationValue.ObjectValue value, String field, int maximum,
             int maximumLength) {
@@ -649,9 +808,9 @@ final class AcmeHttpHandler implements HttpHandler {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
-    private record Response(int status, String contentType, byte[] body, Optional<BodyWriter> writer,
+    record Response(int status, String contentType, byte[] body, Optional<BodyWriter> writer,
             String directoryId, Map<String, String> headers) {
-        private Response {
+        Response {
             body = body.clone();
             writer = Objects.requireNonNull(writer, "writer");
             headers = Map.copyOf(headers);

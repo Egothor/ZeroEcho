@@ -201,6 +201,7 @@ public final class RsaSigDataContentBuilder implements DataContentBuilder<PlainC
      * RsaSigDataContentBuilder b = RsaSigDataContentBuilder.builder();
      * }</pre>
      *
+     * @param session active session used to create cryptographic contexts
      * @return a new {@code RsaSigDataContentBuilder} instance
      */
     public static RsaSigDataContentBuilder builder(ZeroEchoSession session) {

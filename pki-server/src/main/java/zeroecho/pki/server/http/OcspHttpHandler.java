@@ -80,6 +80,11 @@ import zeroecho.pki.server.spi.PkiServerAuthenticationContext;
 final class OcspHttpHandler implements HttpHandler {
     private static final String MEDIA_REQUEST = "application/ocsp-request";
     private static final String MEDIA_RESPONSE = "application/ocsp-response";
+    // OCSPResponseStatus values (RFC 6960, 4.2.1) for unsuccessful responses.
+    private static final int OCSP_MALFORMED_REQUEST = 1;
+    private static final int OCSP_TRY_LATER = 3;
+    private static final int OCSP_SIG_REQUIRED = 5;
+    private static final int OCSP_UNAUTHORIZED = 6;
     private final PkiServerConfiguration.PublicListener configuration;
     private final ServerRealmContext realm;
     private final AdministrativeAuthenticator authenticator;
@@ -138,20 +143,25 @@ final class OcspHttpHandler implements HttpHandler {
                     + "_REVOKED_" + response.revokedCount() + "_UNKNOWN_" + response.unknownCount());
         } catch (SignatureRequired required) { audit(requestId, Optional.ofNullable(auditedResponder),
                 transportPrincipal, requesterPrincipal, "SIGNATURE_REQUIRED"); protocolFailure(exchange,
-                        org.bouncycastle.cert.ocsp.OCSPRespBuilder.SIG_REQUIRED);
+                        OCSP_SIG_REQUIRED);
         } catch (OcspRequesterService.UnauthorizedException unauthorized) { audit(requestId,
                 Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
                 "REQUESTER_UNAUTHORIZED_" + unauthorized.classification()); protocolFailure(exchange,
-                        org.bouncycastle.cert.ocsp.OCSPRespBuilder.UNAUTHORIZED);
+                        OCSP_UNAUTHORIZED);
         } catch (OcspRequesterService.UnavailableException unavailable) { audit(requestId,
                 Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
-                "REQUESTER_AUTHORITY_UNAVAILABLE"); protocolFailure(exchange, org.bouncycastle.cert.ocsp.OCSPRespBuilder.TRY_LATER);
+                "REQUESTER_AUTHORITY_UNAVAILABLE"); protocolFailure(exchange, OCSP_TRY_LATER);
         } catch (UnknownAlias unavailable) { audit(requestId, Optional.empty(), transportPrincipal, requesterPrincipal, "UNKNOWN_RESPONDER"); transportFailure(exchange, 404);
         } catch (InactiveResponder inactive) { audit(requestId, Optional.empty(), transportPrincipal, requesterPrincipal, "INACTIVE_RESPONDER"); transportFailure(exchange, 503);
         } catch (MethodFailure method) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "METHOD_REJECTED"); transportFailure(exchange, 405);
         } catch (MediaFailure media) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MEDIA_REJECTED"); transportFailure(exchange, 406);
-        } catch (IllegalArgumentException malformed) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MALFORMED"); protocolFailure(exchange, org.bouncycastle.cert.ocsp.OCSPRespBuilder.MALFORMED_REQUEST);
+        } catch (IllegalArgumentException malformed) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MALFORMED"); protocolFailure(exchange, OCSP_MALFORMED_REQUEST);
         } catch (RejectedExecutionException overload) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "OVERLOAD"); transportFailure(exchange, 429);
+        } catch (zeroecho.pki.api.SigningExecutionException signingFailure) { int status = signingFailureStatus(signingFailure); audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, status == 429 ? "OVERLOAD" : "UNAVAILABLE"); transportFailure(exchange, status);
+        } catch (zeroecho.pki.impl.core.async.ImmediateSigningPending pending) { audit(requestId,
+                Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
+                "SIGNING_PENDING"); protocolFailure(exchange,
+                        OCSP_TRY_LATER);
         } catch (TimeoutException deadline) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "DEADLINE"); transportFailure(exchange, 504);
         } catch (RuntimeException failure) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "UNAVAILABLE"); transportFailure(exchange, 503);
         } finally { if (admitted) runtime.releaseAdmission(); exchange.close(); }
@@ -192,7 +202,8 @@ final class OcspHttpHandler implements HttpHandler {
                             responder.responseValidity())) {
                 throw new IllegalArgumentException("OCSP nonce was already used");
             }
-            return new Execution(realm.session().ocsp().orElseThrow().respond(command), requester);
+            return new Execution(TransportCancellationGateway.respondOcsp(
+                    realm.session().ocsp().orElseThrow(), command, cancellation), requester);
         });
         try {
             return submitted.future().get(configuration.maximumStreamDuration().toMillis(), TimeUnit.MILLISECONDS);
@@ -222,10 +233,9 @@ final class OcspHttpHandler implements HttpHandler {
             if (encoded.length > 1_048_576 || input.read() != -1) {
                 throw new IllegalStateException("OCSP responder certificate exceeds its finite bound");
             }
-            Instant notBefore = new org.bouncycastle.cert.X509CertificateHolder(encoded)
-                    .getNotBefore().toInstant();
+            Instant notBefore = zeroecho.pkix.Pkix.parseCertificate(encoded).getNotBefore().toInstant();
             return produced.isBefore(notBefore) ? notBefore : produced;
-        } catch (IOException failure) {
+        } catch (IOException | RuntimeException failure) {
             throw new IllegalStateException("OCSP responder certificate is unavailable");
         }
     }
@@ -344,15 +354,21 @@ final class OcspHttpHandler implements HttpHandler {
     }
 
     private static void protocolFailure(HttpExchange exchange, int status) throws IOException {
-        byte[] body;
-        try { body = new org.bouncycastle.cert.ocsp.OCSPRespBuilder().build(status, null).getEncoded(); }
-        catch (org.bouncycastle.cert.ocsp.OCSPException impossible) { throw new IOException("OCSP failure encoding failed"); }
+        byte[] body = protocolFailureBody(status);
         exchange.getResponseHeaders().set("Content-Type", MEDIA_RESPONSE); exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.sendResponseHeaders(200, body.length); try (OutputStream output = exchange.getResponseBody()) { output.write(body); }
+    }
+    /* default */ static byte[] protocolFailureBody(int status) {
+        // OCSPResponse ::= SEQUENCE { responseStatus ENUMERATED } with responseBytes absent.
+        return new byte[] { 0x30, 0x03, 0x0A, 0x01, (byte) status };
     }
     private static void transportFailure(HttpExchange exchange, int status) throws IOException {
         exchange.getResponseHeaders().set("Cache-Control", "no-store"); exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.sendResponseHeaders(status, -1);
+    }
+    static int signingFailureStatus(zeroecho.pki.api.SigningExecutionException failure) {
+        return failure.classification() == zeroecho.pki.api.SigningExecutionException.Classification.OVERLOADED
+                ? 429 : 503;
     }
     private void audit(String requestId, Optional<OcspResponderService.Responder> responder,
             Optional<String> transportPrincipal, Optional<String> requesterPrincipal, String classification) {

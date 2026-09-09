@@ -1,0 +1,69 @@
+###############################################################################
+# ZeroEcho PKI UI edge — nginx Deployment + Service.
+#
+# Stateless: scales horizontally. Configuration is baked into the image and
+# parameterised by env (envsubst at start-up). TLS material is projected from
+# Secrets. YAML parse-checked only.
+###############################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: pki-ui
+  namespace: zeroecho-pki
+  labels: {app: pki-ui}
+spec:
+  type: LoadBalancer          # or ClusterIP behind an Ingress that passes mTLS through
+  selector: {app: pki-ui}
+  ports:
+    - {name: https, port: 443, targetPort: 8443}
+    - {name: http, port: 80, targetPort: 80}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pki-ui
+  namespace: zeroecho-pki
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: pki-ui}
+  template:
+    metadata:
+      labels: {app: pki-ui}
+    spec:
+      securityContext:
+        runAsNonRoot: false    # nginx master binds 80/8443 and reads TLS keys as root, drops to 'nginx' for workers
+      containers:
+        - name: nginx
+          image: zeroecho/pki-nginx:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: https, containerPort: 8443}
+            - {name: http, containerPort: 80}
+          env:
+            - {name: NGINX_SERVER_NAME, value: "pki.example.com"}
+            - {name: NGINX_HTTPS_PORT, value: "8443"}
+            - {name: PKI_UPSTREAM, value: "pki-server.zeroecho-pki.svc.cluster.local:8443"}
+            - {name: PKI_PROXY_SSL_NAME, value: "zeroecho-admin"}
+          volumeMounts:
+            - {name: edge-tls, mountPath: /etc/nginx/tls/edge, readOnly: true}
+            - {name: admin-trust, mountPath: /etc/nginx/tls/admin-trust, readOnly: true}
+            - {name: upstream-tls, mountPath: /etc/nginx/tls/upstream, readOnly: true}
+          readinessProbe:
+            httpGet: {path: /nginx-health, port: 8080, host: 127.0.0.1}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /nginx-health, port: 8080, host: 127.0.0.1}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+      volumes:
+        # edge.crt, edge.key
+        - name: edge-tls
+          secret: {secretName: pki-ui-edge-tls, defaultMode: 0400}
+        # admin-ca-bundle.pem
+        - name: admin-trust
+          secret: {secretName: pki-ui-admin-trust}
+        # proxy-client.crt, proxy-client.key, pki-server-ca.pem
+        - name: upstream-tls
+          secret: {secretName: pki-ui-upstream-tls, defaultMode: 0400}

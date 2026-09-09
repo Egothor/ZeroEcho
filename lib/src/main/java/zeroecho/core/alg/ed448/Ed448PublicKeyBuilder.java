@@ -70,6 +70,12 @@ import zeroecho.core.spec.AlgorithmKeySpec;
  * @since 1.0
  */
 public final class Ed448PublicKeyBuilder extends AbstractEncodedPublicKeyBuilder<Ed448PublicKeySpec> {
+    /** Creates a stateless Ed448 public-key importer. */
+    public Ed448PublicKeyBuilder() {
+        super();
+        // Stateless importer.
+    }
+
     /**
      * Returns the canonical JCA key factory algorithm name for Ed448.
      *

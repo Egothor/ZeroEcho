@@ -45,12 +45,26 @@ import zeroecho.pki.application.PkiOperationResult;
 public sealed interface ServerControlOperationOutcome permits ServerControlOperationOutcome.Ordinary,
         ServerControlOperationOutcome.OneTimeSensitive {
     /** Response handling classification. */
-    enum Classification { ORDINARY, ONE_TIME_SENSITIVE }
-    /** @return response handling classification */
+    enum Classification {
+        /** Replayable result containing no one-time secret. */
+        ORDINARY,
+        /** Result carrying a secret that may be consumed exactly once. */
+        ONE_TIME_SENSITIVE
+    }
+    /**
+     * Returns the response handling classification.
+     *
+     * @return handling classification
+     */
     Classification classification();
 
-    /** Ordinary safe replayable operation result. */
+    /**
+     * Ordinary safe replayable operation result.
+     *
+     * @param outcome transport-neutral PKI operation outcome
+     */
     record Ordinary(PkiOperationOutcome outcome) implements ServerControlOperationOutcome {
+        /** Validates the required outcome. */
         public Ordinary { Objects.requireNonNull(outcome, "outcome"); }
         @Override public Classification classification() { return Classification.ORDINARY; }
     }
@@ -61,15 +75,31 @@ public sealed interface ServerControlOperationOutcome permits ServerControlOpera
         private final byte[] token;
         private final AtomicBoolean consumed = new AtomicBoolean();
 
-        /** Creates a one-time result after its commitment has been durably persisted. */
+        /**
+         * Creates a one-time result after its commitment has been durably persisted.
+         *
+         * @param safeResult non-secret result metadata
+         * @param token exactly 32 capability-token bytes; defensively copied
+         * @throws IllegalArgumentException if the token length is not 32 bytes
+         */
         public OneTimeSensitive(PkiOperationResult safeResult, byte[] token) {
             this.safeResult = Objects.requireNonNull(safeResult, "safeResult");
             this.token = Objects.requireNonNull(token, "token").clone();
             if (token.length != 32) throw new IllegalArgumentException("Capability token length is invalid");
         }
         @Override public Classification classification() { return Classification.ONE_TIME_SENSITIVE; }
-        /** @return safe non-secret metadata */ public PkiOperationResult safeResult() { return safeResult; }
-        /** Consumes the raw token exactly once and clears the retained copy. */
+        /**
+         * Returns safe non-secret metadata.
+         *
+         * @return replayable result metadata
+         */
+        public PkiOperationResult safeResult() { return safeResult; }
+        /**
+         * Consumes the raw token exactly once and clears the retained copy.
+         *
+         * @return a new array containing the token
+         * @throws IllegalStateException if the token was already consumed
+         */
         public byte[] consumeToken() {
             if (!consumed.compareAndSet(false, true)) throw new IllegalStateException("Capability token consumed");
             byte[] result = token.clone();

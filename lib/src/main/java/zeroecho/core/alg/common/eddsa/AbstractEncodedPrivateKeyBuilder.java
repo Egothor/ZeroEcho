@@ -75,6 +75,13 @@ import zeroecho.core.spi.PrivateKeyImporter;
  */
 public abstract class AbstractEncodedPrivateKeyBuilder<S extends AlgorithmKeySpec> implements PrivateKeyImporter<S> {
     /**
+     * Creates a stateless encoded-private-key importer base.
+     */
+    public AbstractEncodedPrivateKeyBuilder() {
+        // Stateless base class.
+    }
+
+    /**
      * Returns the canonical JCA algorithm identifier used by
      * {@link KeyFactory#getInstance(String)}.
      *

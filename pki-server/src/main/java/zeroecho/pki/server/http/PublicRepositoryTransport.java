@@ -65,7 +65,19 @@ public final class PublicRepositoryTransport implements AutoCloseable {
         this.ocspRuntime = ocspRuntime;
     }
 
-    /** Starts one separately bounded public listener over the shared realm. */
+    /**
+     * Starts one separately bounded public listener over the shared realm.
+     *
+     * @param configuration validated public-listener configuration
+     * @param realm shared lifecycle-owned realm
+     * @param authenticator public-listener authenticator
+     * @param clock authoritative protocol clock
+     * @param random cryptographically secure request-identifier entropy
+     * @param loader provider service class loader
+     * @param ready readiness predicate checked by request handlers
+     * @return started public-listener lifecycle owner
+     * @throws IllegalStateException if the listener cannot be initialized
+     */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public static PublicRepositoryTransport start(PkiServerConfiguration.PublicListener configuration,
             ServerRealmContext realm, AdministrativeAuthenticator authenticator, Clock clock,
@@ -107,13 +119,22 @@ public final class PublicRepositoryTransport implements AutoCloseable {
         }
     }
 
-    /** @return actual public listener address */
+    /**
+     * Returns the actual public listener address.
+     *
+     * @return bound listener address
+     */
     public InetSocketAddress address() { return listener.getAddress(); }
 
     /** Prevents new public stream admission. */
     public void quiesce() { runtime.quiesce(); ocspRuntime.quiesce(); }
 
-    /** Stops the listener and its independent bounded resources. */
+    /**
+     * Stops the listener and its independent bounded resources.
+     *
+     * @param graceful maximum transport drain duration; whole seconds are passed to the listener
+     * @throws NullPointerException if {@code graceful} is {@code null}
+     */
     public void shutdown(Duration graceful) {
         runtime.quiesce();
         int seconds = Math.toIntExact(Math.min(Integer.MAX_VALUE,

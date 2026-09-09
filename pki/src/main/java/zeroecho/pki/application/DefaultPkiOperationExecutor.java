@@ -36,6 +36,7 @@ package zeroecho.pki.application;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,8 +45,14 @@ import java.util.Optional;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.PkiFailureClassification;
+import zeroecho.pki.api.PkiFailureReason;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaCreateCommand;
+import zeroecho.pki.api.ca.IntermediateCertIssueCommand;
+import zeroecho.pki.api.ca.IntermediateCreateCommand;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.CaService;
 import zeroecho.pki.api.CertificationRequestService;
 import zeroecho.pki.api.IssuanceService;
@@ -56,6 +63,12 @@ import zeroecho.pki.api.StatusObjectService;
 import zeroecho.pki.api.algorithm.X509AlgorithmBinding;
 import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 import zeroecho.pki.api.ca.CaRecord;
+import zeroecho.pki.api.confirmation.CredentialConfirmationReview;
+import zeroecho.pki.api.confirmation.CredentialConfirmationReviewPage;
+import zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofChallenge;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofChallengeRequest;
+import zeroecho.pki.api.confirmation.CredentialConfirmationService;
 import zeroecho.pki.api.credential.CaProfileBinding;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
@@ -86,14 +99,22 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.RevocationHistory;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.impl.core.async.PendingSigningOperation;
 
 /** Explicit non-reflective executor used by one backend session. */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.ExcessiveParameterList",
         "PMD.TooManyMethods" })
-final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
+final class DefaultPkiOperationExecutor implements PkiOperationExecutor, RevocationEvidenceExecutor {
 
     private static final String COUNT = "count";
+    private static final String CREDENTIAL_ID = "credentialId";
+    private static final String AUTHORITY = "authority";
+    private static final String AUTHORITY_ID = "caId";
+    private static final zeroecho.pki.api.attr.AttributeSet EMPTY_EVIDENCE = new SimpleAttributeSet();
     private static final String FORMAT_ID = "formatId";
+    private static final String ISSUER_ID = "issuerId";
+    private static final String OPERATION_CANCELLED = "OPERATION_CANCELLED";
+    private static final String STATUS = "status";
 
     private final PkiSessionConfiguration configuration;
     private final PkiStore store;
@@ -104,13 +125,14 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
     private final Optional<IssuanceService> issuance;
     private final Optional<StatusObjectService> statusObjects;
     private final Optional<PublicationService> publications;
+    private final Optional<CredentialConfirmationService> confirmations;
     private final X509AlgorithmBindingRegistry algorithmBindings;
     private final Runnable openCheck;
 
     /* default */ DefaultPkiOperationExecutor(PkiSessionConfiguration configuration, PkiStore store,
             ProfileService profiles, RevocationService revocations, Runnable openCheck) {
         this(configuration, store, profiles, revocations, Optional.empty(), Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), defaultBindings(), openCheck);
+                Optional.empty(), Optional.empty(), Optional.empty(), defaultBindings(), openCheck);
     }
 
     /* default */ DefaultPkiOperationExecutor(PkiSessionConfiguration configuration, PkiStore store,
@@ -119,7 +141,16 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
             Optional<StatusObjectService> statusObjects, Optional<PublicationService> publications,
             Runnable openCheck) {
         this(configuration, store, profiles, revocations, authorities, requests, issuance, statusObjects,
-                publications, defaultBindings(), openCheck);
+                publications, Optional.empty(), defaultBindings(), openCheck);
+    }
+
+    /* default */ DefaultPkiOperationExecutor(PkiSessionConfiguration configuration, PkiStore store,
+            ProfileService profiles, RevocationService revocations, Optional<CaService> authorities,
+            Optional<CertificationRequestService> requests, Optional<IssuanceService> issuance,
+            Optional<StatusObjectService> statusObjects, Optional<PublicationService> publications,
+            Optional<CredentialConfirmationService> confirmations, Runnable openCheck) {
+        this(configuration, store, profiles, revocations, authorities, requests, issuance, statusObjects,
+                publications, confirmations, defaultBindings(), openCheck);
     }
 
     /* default */ DefaultPkiOperationExecutor(PkiSessionConfiguration configuration, PkiStore store,
@@ -128,6 +159,16 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
             Optional<StatusObjectService> statusObjects, Optional<PublicationService> publications,
             X509AlgorithmBindingRegistry algorithmBindings,
             Runnable openCheck) {
+        this(configuration, store, profiles, revocations, authorities, requests, issuance, statusObjects,
+                publications, Optional.empty(), algorithmBindings, openCheck);
+    }
+
+    /* default */ DefaultPkiOperationExecutor(PkiSessionConfiguration configuration, PkiStore store,
+            ProfileService profiles, RevocationService revocations, Optional<CaService> authorities,
+            Optional<CertificationRequestService> requests, Optional<IssuanceService> issuance,
+            Optional<StatusObjectService> statusObjects, Optional<PublicationService> publications,
+            Optional<CredentialConfirmationService> confirmations,
+            X509AlgorithmBindingRegistry algorithmBindings, Runnable openCheck) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
         this.store = Objects.requireNonNull(store, "store");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
@@ -137,14 +178,24 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         this.issuance = Objects.requireNonNull(issuance, "issuance");
         this.statusObjects = Objects.requireNonNull(statusObjects, "statusObjects");
         this.publications = Objects.requireNonNull(publications, "publications");
+        this.confirmations = Objects.requireNonNull(confirmations, "confirmations");
         this.algorithmBindings = Objects.requireNonNull(algorithmBindings, "algorithmBindings");
         this.openCheck = Objects.requireNonNull(openCheck, "openCheck");
     }
 
     @Override
     public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
+        return execute(operation, EMPTY_EVIDENCE, cancellation);
+    }
+
+    // The exhaustive typed dispatcher is kept as one method so adding an operation remains compile-time visible.
+    @SuppressWarnings("PMD.NcssCount")
+    @Override
+    public PkiOperationOutcome execute(PkiOperation operation,
+            zeroecho.pki.api.attr.AttributeSet issuanceEvidence, CancellationSignal cancellation) {
         openCheck.run();
         PkiOperation exact = Objects.requireNonNull(operation, "operation");
+        zeroecho.pki.api.attr.AttributeSet evidence = Objects.requireNonNull(issuanceEvidence, "issuanceEvidence");
         CancellationSignal signal = Objects.requireNonNull(cancellation, "cancellation");
         try {
             signal.throwIfCancelled();
@@ -160,33 +211,102 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
                 case PkiOperation.ActivateProfile request -> activateProfile(request);
                 case PkiOperation.InspectAuthority request -> inspectAuthority(request);
                 case PkiOperation.ListAuthorities request -> listAuthorities(request);
-                case PkiOperation.CreateAuthority request -> createAuthority(request);
+                case PkiOperation.CreateAuthority request -> createAuthority(request, signal);
                 case PkiOperation.TransitionAuthority request -> transitionAuthority(request);
                 case PkiOperation.InspectRequest request -> inspectRequest(request);
                 case PkiOperation.ImportRequest request -> importRequest(request);
                 case PkiOperation.VerifyRequest request -> verifyRequest(request);
                 case PkiOperation.InspectCredential request -> inspectCredential(request);
-                case PkiOperation.IssueCredential request -> issueCredential(request);
+                case PkiOperation.ListPendingCredentialConfirmations request ->
+                    listPendingCredentialConfirmations(request);
+                case PkiOperation.IssueCredentialConfirmationChallenge request ->
+                    issueCredentialConfirmationChallenge(request);
+                case PkiOperation.CompleteCredentialConfirmationProof request ->
+                    completeCredentialConfirmationProof(request);
+                case PkiOperation.RevokePendingCredentialConfirmation request ->
+                    revokePendingCredentialConfirmation(request, new SimpleAttributeSet());
+                case PkiOperation.IssueCredential request -> issueCredential(request, evidence, signal);
+                case PkiOperation.RenewCredential request -> renewCredential(request, evidence, signal);
+                case PkiOperation.ReplaceCredential request -> replaceCredential(request, evidence, signal);
+                case PkiOperation.ReissueCredential request -> reissueCredential(request, evidence, signal);
+                case PkiOperation.RolloverCaCertificate request -> rolloverCaCertificate(request, signal);
+                case PkiOperation.RotateCaKey request -> rotateCaKey(request, signal);
                 case PkiOperation.RevokeCredential request -> revokeCredential(request);
                 case PkiOperation.InspectRevocation request -> inspectRevocation(request);
                 case PkiOperation.ReadRevocationHistory request -> readHistory(request, signal);
                 case PkiOperation.SnapshotRevocations request -> snapshotRevocations(request, signal);
                 case PkiOperation.InspectStatus request -> inspectStatus(request);
                 case PkiOperation.ListStatus request -> listStatus(request);
-                case PkiOperation.GenerateStatus request -> generateStatus(request);
+                case PkiOperation.GenerateStatus request -> generateStatus(request, signal);
                 case PkiOperation.InspectPublication request -> inspectPublication(request);
                 case PkiOperation.ListPublications request -> listPublications(request, signal);
                 case PkiOperation.RegisterPublication request -> registerPublication(request);
                 case PkiOperation.ProcessPublication request -> processPublication(request);
                 case PkiOperation.RetryPublication request -> retryPublication(request);
                 case PkiOperation.ReconcilePublication request -> reconcilePublication(request);
+                case PkiOperation.CreateIntermediate request -> createIntermediate(request, signal);
+                case PkiOperation.IssueIntermediateCertificate request ->
+                    issueIntermediateCertificate(request, signal);
+                case PkiOperation.InspectIssuerGeneration request -> inspectIssuerGeneration(request);
+                case PkiOperation.InspectIssuerChainPath request -> inspectIssuerChainPath(request);
+                case PkiOperation.ListIssuerChainPaths request -> listIssuerChainPaths(request);
+                case PkiOperation.SelectIssuancePath request -> selectIssuancePath(request);
+                case PkiOperation.RegisterIssuerChainPath request -> registerIssuerChainPath(request);
         };
-            return new PkiOperationOutcome.Success(result);
+            return new PkiOperationOutcome.Completed(result);
+        } catch (PendingSigningOperation pending) {
+            return new PkiOperationOutcome.Pending(exact.name(), pending.operationId());
         } catch (InterruptedIOException failure) {
-            return failure(exact.name(), PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+            return failure(exact.name(), PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
         } catch (IOException failure) {
             return failure(exact.name(), PkiOperationFailure.RESOURCE_FAILURE, "OPERATION_RESOURCE_FAILED");
         } catch (RuntimeException failure) { // NOPMD - normalize provider failures at the application boundary.
+            if (signal.isCancelled()) {
+                return failure(exact.name(), PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
+            }
+            return classify(exact.name(), failure);
+        }
+    }
+
+    @Override
+    public PkiOperationOutcome executeRevocation(PkiOperation.RevokeCredential operation,
+            RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
+        openCheck.run();
+        PkiOperation.RevokeCredential exact = Objects.requireNonNull(operation, "operation");
+        RevocationExecutionEvidence exactEvidence = Objects.requireNonNull(evidence, "evidence");
+        CancellationSignal signal = Objects.requireNonNull(cancellation, "cancellation");
+        try {
+            signal.throwIfCancelled();
+            return new PkiOperationOutcome.Completed(revokeCredential(exact, exactEvidence.attributes()));
+        } catch (InterruptedIOException failure) {
+            return failure(exact.name(), PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
+        } catch (RuntimeException failure) { // NOPMD - normalize provider failures at the application boundary.
+            if (signal.isCancelled()) {
+                return failure(exact.name(), PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
+            }
+            return classify(exact.name(), failure);
+        }
+    }
+
+    @Override
+    public PkiOperationOutcome executePendingConfirmationRevocation(
+            PkiOperation.RevokePendingCredentialConfirmation operation,
+            RevocationExecutionEvidence evidence, CancellationSignal cancellation) {
+        openCheck.run();
+        PkiOperation.RevokePendingCredentialConfirmation exact = Objects.requireNonNull(
+                operation, "operation");
+        RevocationExecutionEvidence exactEvidence = Objects.requireNonNull(evidence, "evidence");
+        CancellationSignal signal = Objects.requireNonNull(cancellation, "cancellation");
+        try {
+            signal.throwIfCancelled();
+            return new PkiOperationOutcome.Completed(
+                    revokePendingCredentialConfirmation(exact, exactEvidence.attributes()));
+        } catch (InterruptedIOException failure) {
+            return failure(exact.name(), PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
+        } catch (RuntimeException failure) { // NOPMD - normalize store failures at the application boundary.
+            if (signal.isCancelled()) {
+                return failure(exact.name(), PkiOperationFailure.CANCELLED, OPERATION_CANCELLED);
+            }
             return classify(exact.name(), failure);
         }
     }
@@ -330,18 +450,19 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         return result(request.name(), fields);
     }
 
-    private PkiOperationResult createAuthority(PkiOperation.CreateAuthority request) {
+    private PkiOperationResult createAuthority(PkiOperation.CreateAuthority request,
+            CancellationSignal cancellation) {
         CaCreateCommand command = new CaCreateCommand(request.formatId(), request.subjectRef(), request.profileId(),
                 Optional.of(request.keyRef()), new SimpleAttributeSet());
-        PkiId caId = requireCapability(authorities, "authority").createRoot(command);
+        PkiId caId = requireCapability(authorities, AUTHORITY).createRoot(command, cancellation);
         Map<String, PkiOperationValue> fields = fields();
-        fields.put("caId", text(caId.value()));
+        fields.put(AUTHORITY_ID, text(caId.value()));
         fields.put("state", text(store.getCa(caId).orElseThrow(MissingObjectException::new).state().name()));
         return result(request.name(), fields);
     }
 
     private PkiOperationResult transitionAuthority(PkiOperation.TransitionAuthority request) {
-        requireCapability(authorities, "authority").setCaState(request.caId(), request.state(), request.reason());
+        requireCapability(authorities, AUTHORITY).setCaState(request.caId(), request.state(), request.reason());
         return authorityResult(request.name(), store.getCa(request.caId()).orElseThrow(MissingObjectException::new));
     }
 
@@ -384,36 +505,270 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
                 .orElseThrow(() -> new MissingObjectException());
         CertificateProfileRef profile = profileReference(credential);
         Map<String, PkiOperationValue> fields = fields();
-        fields.put("credentialId", text(credential.credentialId().value()));
+        fields.put(CREDENTIAL_ID, text(credential.credentialId().value()));
         fields.put(FORMAT_ID, text(credential.formatId().value()));
         fields.put("authorityId", text(credential.issuerRef().caId().value()));
-        fields.put("issuerId", text(credential.issuerRef().issuerId().value()));
+        fields.put(ISSUER_ID, text(credential.issuerRef().issuerId().value()));
         fields.put("publicKeyId", text(credential.publicKeyId().value()));
         fields.put("profileId", text(profile.profileId()));
         fields.put("profileVersion", integer(profile.profileVersion()));
-        fields.put("status", text(credential.status().name()));
+        fields.put(STATUS, text(credential.status().name()));
         fields.put("notBefore", text(credential.validity().notBefore().toString()));
         fields.put("notAfter", text(credential.validity().notAfter().toString()));
         return result(request.name(), fields);
     }
 
-    private PkiOperationResult issueCredential(PkiOperation.IssueCredential request) {
+    private PkiOperationResult listPendingCredentialConfirmations(
+            PkiOperation.ListPendingCredentialConfirmations request) {
+        CredentialConfirmationReviewPage page = requireCapability(confirmations, "credential-confirmation")
+                .pagePendingReviews(request.authorityId(), request.profileId(), request.cutoffInclusive(),
+                        request.afterExclusive(), request.limit());
+        List<PkiOperationValue> values = page.reviews().stream()
+                .map(DefaultPkiOperationExecutor::confirmationReviewValue)
+                .map(PkiOperationValue.class::cast).toList();
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(COUNT, integer(values.size()));
+        fields.put("reviews", new PkiOperationValue.ListValue(values));
+        page.nextCursor().ifPresent(cursor -> fields.put("nextCursor", text(cursor.value())));
+        fields.put("cutoffInclusive", text(request.cutoffInclusive().toString()));
+        return result(request.name(), fields);
+    }
+
+    private static PkiOperationValue.ObjectValue confirmationReviewValue(
+            CredentialConfirmationReview review) {
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(CREDENTIAL_ID, text(review.credentialId().value()));
+        fields.put("authorityId", text(review.authorityId().value()));
+        fields.put("profileId", text(review.profileId()));
+        fields.put("confirmationReviewAt", text(review.confirmationReviewAt().toString()));
+        fields.put("initialDisclosurePolicy", text(review.initialDisclosurePolicy().name()));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
+    private PkiOperationResult issueCredentialConfirmationChallenge(
+            PkiOperation.IssueCredentialConfirmationChallenge request) {
+        CredentialConfirmationService service = requireCapability(confirmations, "credential-confirmation");
+        CredentialConfirmationLifecycle lifecycle = service.get(request.credentialId())
+                .orElseThrow(MissingObjectException::new);
+        if (lifecycle.state() != CredentialConfirmationLifecycle.State.PENDING) {
+            throw new OperationConflictException();
+        }
+        CredentialConfirmationProofChallenge challenge;
+        try {
+            challenge = service.issueProofChallenge(new CredentialConfirmationProofChallengeRequest(
+                    request.credentialId(), lifecycle.revision(), lifecycle.recordCommitment()));
+        } catch (IllegalArgumentException | IllegalStateException failure) {
+            CredentialConfirmationLifecycle current = service.get(request.credentialId())
+                    .orElseThrow(MissingObjectException::new);
+            if (current.state() != CredentialConfirmationLifecycle.State.PENDING
+                    || current.revision() != lifecycle.revision()
+                    || !current.recordCommitment().equals(lifecycle.recordCommitment())) {
+                throw new OperationConflictException(failure);
+            }
+            throw failure;
+        }
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(CREDENTIAL_ID, text(challenge.proofCas().credentialId().value()));
+        fields.put("expectedLifecycleRevision", integer(challenge.proofCas().expectedLifecycleRevision()));
+        fields.put("expectedLifecycleRecordCommitment",
+                text(challenge.proofCas().expectedLifecycleRecordCommitment()));
+        fields.put("expectedChallengeRecordCommitment",
+                text(challenge.proofCas().expectedChallengeRecordCommitment()));
+        fields.put("proofSuiteId", text(challenge.proofSuiteBinding().proofSuiteRef().suiteId()));
+        fields.put("proofSuiteConfigurationCommitment",
+                text(challenge.proofSuiteBinding().proofSuiteRef().configurationCommitment()));
+        fields.put("rsaMaximumModulusBits",
+                integer(challenge.proofSuiteBinding().rsaMaximumModulusBits()));
+        fields.put("expiresAt", text(challenge.expiresAt().toString()));
+        fields.put("maximumResponseBytes", integer(challenge.maximumResponseBytes()));
+        fields.put("presentation", text(Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(challenge.presentation())));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult completeCredentialConfirmationProof(
+            PkiOperation.CompleteCredentialConfirmationProof request) {
+        zeroecho.pki.api.confirmation.CredentialConfirmationProofResult confirmationResult =
+                requireCapability(confirmations, "credential-confirmation")
+                        .verifyAndComplete(request.submission());
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put("confirmationResult", text(confirmationResult.name()));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult issueCredential(PkiOperation.IssueCredential request,
+            zeroecho.pki.api.attr.AttributeSet evidence, CancellationSignal cancellation) {
         ParsedCertificationRequest parsed = requireCapability(requests, "certification-request")
                 .get(request.requestId()).orElseThrow(MissingObjectException::new);
         IssueEndEntityCommand command = new IssueEndEntityCommand(request.issuerCaId(), parsed, request.profileId(),
                 Optional.empty());
-        CredentialBundle bundle = requireCapability(issuance, "issuance").issueEndEntity(command);
+        CredentialBundle bundle = requireCapability(issuance, "issuance")
+                .issueEndEntity(command, evidence, cancellation);
+        return credentialResult(request.name(), bundle);
+    }
+
+    private PkiOperationResult renewCredential(PkiOperation.RenewCredential request,
+            zeroecho.pki.api.attr.AttributeSet evidence, CancellationSignal cancellation) {
+        CredentialBundle bundle = requireCapability(issuance, "issuance").renew(
+                new zeroecho.pki.api.issuance.RenewCommand(request.credentialId(), Optional.empty(), evidence),
+                cancellation);
+        return credentialResult(request.name(), bundle);
+    }
+
+    private PkiOperationResult replaceCredential(PkiOperation.ReplaceCredential request,
+            zeroecho.pki.api.attr.AttributeSet evidence, CancellationSignal cancellation) {
+        ParsedCertificationRequest parsed = requireCapability(requests, "certification-request")
+                .get(request.requestId()).orElseThrow(MissingObjectException::new);
+        CredentialBundle bundle = requireCapability(issuance, "issuance").replace(
+                new zeroecho.pki.api.issuance.ReplaceCommand(request.existingCredentialId(), parsed,
+                        request.profileId(), evidence),
+                cancellation);
+        return credentialResult(request.name(), bundle);
+    }
+
+    private PkiOperationResult reissueCredential(PkiOperation.ReissueCredential request,
+            zeroecho.pki.api.attr.AttributeSet evidence, CancellationSignal cancellation) {
+        CredentialBundle bundle = requireCapability(issuance, "issuance").reissue(
+                new zeroecho.pki.api.issuance.ReissueCommand(request.credentialId(), evidence),
+                cancellation);
+        return credentialResult(request.name(), bundle);
+    }
+
+    private PkiOperationResult rolloverCaCertificate(PkiOperation.RolloverCaCertificate request,
+            CancellationSignal cancellation) {
+        PkiId caId = requireCapability(authorities, AUTHORITY).rolloverCaCertificate(
+                new zeroecho.pki.api.ca.CaRolloverCommand(request.caId(), request.issuerCaId(), Optional.empty(),
+                        new SimpleAttributeSet()),
+                cancellation);
         Map<String, PkiOperationValue> fields = fields();
-        fields.put("credentialId", text(bundle.credential().credentialId().value()));
-        fields.put("issuerCaId", text(bundle.credential().issuerRef().caId().value()));
-        fields.put("supportingObjectCount", integer(bundle.supportingObjects().size()));
+        fields.put(AUTHORITY_ID, text(caId.value()));
         return result(request.name(), fields);
     }
 
+    private PkiOperationResult rotateCaKey(PkiOperation.RotateCaKey request, CancellationSignal cancellation) {
+        PkiId caId = requireCapability(authorities, AUTHORITY).rotateCaKey(
+                new zeroecho.pki.api.ca.CaKeyRotationCommand(request.caId(), request.newKeyRef(), request.issuerCaId(),
+                        new SimpleAttributeSet()),
+                cancellation);
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(AUTHORITY_ID, text(caId.value()));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult createIntermediate(PkiOperation.CreateIntermediate request,
+            CancellationSignal cancellation) {
+        IntermediateCreateCommand command = new IntermediateCreateCommand(request.formatId(), request.issuerCaId(),
+                request.subjectRef(), request.profileId(), request.keyRef(), new SimpleAttributeSet());
+        PkiId caId = requireCapability(authorities, AUTHORITY).createIntermediate(command, cancellation);
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(AUTHORITY_ID, text(caId.value()));
+        fields.put("issuerCaId", text(request.issuerCaId().value()));
+        fields.put("state", text(store.getCa(caId).orElseThrow(MissingObjectException::new).state().name()));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult issueIntermediateCertificate(PkiOperation.IssueIntermediateCertificate request,
+            CancellationSignal cancellation) {
+        IntermediateCertIssueCommand command = new IntermediateCertIssueCommand(request.formatId(),
+                request.issuerCaId(), request.subjectCaId(), request.profileId(), request.requestedValidity(),
+                new SimpleAttributeSet());
+        Credential credential = requireCapability(authorities, AUTHORITY)
+                .issueIntermediateCertificate(command, cancellation);
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(CREDENTIAL_ID, text(credential.credentialId().value()));
+        fields.put("issuerCaId", text(credential.issuerRef().caId().value()));
+        fields.put(ISSUER_ID, text(credential.issuerRef().issuerId().value()));
+        fields.put("subjectCaId", text(request.subjectCaId().value()));
+        fields.put(STATUS, text(credential.status().name()));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult inspectIssuerGeneration(PkiOperation.InspectIssuerGeneration request) {
+        IssuerGeneration generation = requireCapability(authorities, AUTHORITY)
+                .getIssuerGeneration(request.issuerId());
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(ISSUER_ID, text(generation.issuerId().value()));
+        fields.put("authorityId", text(generation.authorityId().value()));
+        fields.put(CREDENTIAL_ID, text(generation.credentialId().value()));
+        fields.put("state", text(generation.state().name()));
+        fields.put("profilePolicyCommitment", text(generation.profilePolicyCommitment()));
+        fields.put("x509BindingCommitment", text(generation.x509BindingCommitment()));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult inspectIssuerChainPath(PkiOperation.InspectIssuerChainPath request) {
+        IssuerChainPath path = requireCapability(authorities, AUTHORITY).getIssuerChainPath(request.pathId());
+        return result(request.name(), chainPathFields(path));
+    }
+
+    private PkiOperationResult listIssuerChainPaths(PkiOperation.ListIssuerChainPaths request) {
+        List<IssuerChainPath> paths = requireCapability(authorities, AUTHORITY)
+                .listIssuerChainPaths(request.issuerId());
+        List<PkiOperationValue> values = paths.stream()
+                .map(path -> (PkiOperationValue) new PkiOperationValue.ObjectValue(chainPathFields(path))).toList();
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(ISSUER_ID, text(request.issuerId().value()));
+        fields.put(COUNT, integer(values.size()));
+        fields.put("paths", new PkiOperationValue.ListValue(values));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult selectIssuancePath(PkiOperation.SelectIssuancePath request) {
+        requireCapability(authorities, AUTHORITY).selectIssuancePath(request.caId(), request.issuerId(),
+                request.pathId(), request.reason());
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(AUTHORITY_ID, text(request.caId().value()));
+        fields.put(ISSUER_ID, text(request.issuerId().value()));
+        fields.put("pathId", text(request.pathId().value()));
+        return result(request.name(), fields);
+    }
+
+    private PkiOperationResult registerIssuerChainPath(PkiOperation.RegisterIssuerChainPath request) {
+        IssuerChainPath path = requireCapability(authorities, AUTHORITY)
+                .registerIssuerChainPath(request.caId(), request.issuerId(), request.parentPathId());
+        return result(request.name(), chainPathFields(path));
+    }
+
+    private static Map<String, PkiOperationValue> chainPathFields(IssuerChainPath path) {
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put("pathId", text(path.pathId().value()));
+        fields.put("authorityId", text(path.authorityId().value()));
+        fields.put(ISSUER_ID, text(path.issuerId().value()));
+        fields.put("pathCommitment", text(path.pathCommitment()));
+        List<PkiOperationValue> ordered = path.orderedCredentialIds().stream()
+                .<PkiOperationValue>map(id -> text(id.value())).toList();
+        fields.put("orderedCredentialIds", new PkiOperationValue.ListValue(ordered));
+        fields.put(COUNT, integer(ordered.size()));
+        return fields;
+    }
+
+    private PkiOperationResult credentialResult(String name, CredentialBundle bundle) {
+        Map<String, PkiOperationValue> fields = fields();
+        fields.put(CREDENTIAL_ID, text(bundle.credential().credentialId().value()));
+        fields.put("issuerCaId", text(bundle.credential().issuerRef().caId().value()));
+        fields.put("supportingObjectCount", integer(bundle.supportingObjects().size()));
+        return result(name, fields);
+    }
+
     private PkiOperationResult revokeCredential(PkiOperation.RevokeCredential request) {
+        return revokeCredential(request, new SimpleAttributeSet());
+    }
+
+    private PkiOperationResult revokeCredential(PkiOperation.RevokeCredential request,
+            zeroecho.pki.api.attr.AttributeSet attributes) {
         RevocationCommand.RevokePermanently command = new RevocationCommand.RevokePermanently(request.credentialId(),
-                request.reason(), new SimpleAttributeSet());
+                request.reason(), attributes);
         RevocationRecord record = revocations.revokePermanently(command);
+        return revocationResult(request.name(), record);
+    }
+
+    private PkiOperationResult revokePendingCredentialConfirmation(
+            PkiOperation.RevokePendingCredentialConfirmation request,
+            zeroecho.pki.api.attr.AttributeSet attributes) {
+        RevocationCommand.RevokePermanently command = new RevocationCommand.RevokePermanently(
+                request.credentialId(), zeroecho.pki.api.revocation.RevocationReason.UNSPECIFIED,
+                attributes);
+        RevocationRecord record = revocations.revokeOverduePendingConfirmation(command);
         return revocationResult(request.name(), record);
     }
 
@@ -433,7 +788,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
             truncated = transitions.size() == request.limit() && history.next(signal);
         }
         Map<String, PkiOperationValue> fields = fields();
-        fields.put("credentialId", text(request.credentialId().value()));
+        fields.put(CREDENTIAL_ID, text(request.credentialId().value()));
         fields.put(COUNT, integer(transitions.size()));
         fields.put("truncated", bool(truncated));
         fields.put("transitions", new PkiOperationValue.ListValue(transitions));
@@ -447,7 +802,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         fields.put("publicationId", text(record.publicationId().value()));
         fields.put("sourceType", text(record.sourceType().name()));
         fields.put("sourceId", text(record.sourceId().value()));
-        fields.put("status", text(record.status().name()));
+        fields.put(STATUS, text(record.status().name()));
         fields.put("attemptNumber", integer(record.attemptNumber()));
         fields.put("createdAt", text(record.createdAt().toString()));
         fields.put("updatedAt", text(record.updatedAt().toString()));
@@ -486,10 +841,11 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         return statusResult(request.name(), object);
     }
 
-    private PkiOperationResult generateStatus(PkiOperation.GenerateStatus request) {
+    private PkiOperationResult generateStatus(PkiOperation.GenerateStatus request,
+            CancellationSignal cancellation) {
         StatusObjectGenerateCommand command = new StatusObjectGenerateCommand(request.issuerCaId(), request.type(),
                 request.formatId(), new SimpleAttributeSet());
-        StatusObject object = requireCapability(statusObjects, "status-object").generate(command);
+        StatusObject object = requireCapability(statusObjects, "status-object").generate(command, cancellation);
         return statusResult(request.name(), object);
     }
 
@@ -553,7 +909,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         }
         Map<String, PkiOperationValue> fields = fields();
         fields.put("publicationId", text(publication.publicationId().value()));
-        fields.put("status", text(publication.status().name()));
+        fields.put(STATUS, text(publication.status().name()));
         fields.put("attemptNumber", integer(publication.attemptNumber()));
         return result(operation, fields);
     }
@@ -561,7 +917,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
     private static PkiOperationResult publicationRecordResult(String operation, PublicationRecord publication) {
         Map<String, PkiOperationValue> fields = fields();
         fields.put("publicationId", text(publication.publicationId().value()));
-        fields.put("status", text(publication.status().name()));
+        fields.put(STATUS, text(publication.status().name()));
         fields.put("attemptNumber", integer(publication.attemptNumber()));
         return result(operation, fields);
     }
@@ -572,7 +928,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
 
     private static PkiOperationResult revocationResult(String operation, RevocationRecord record) {
         Map<String, PkiOperationValue> fields = fields();
-        fields.put("credentialId", text(record.credentialId().value()));
+        fields.put(CREDENTIAL_ID, text(record.credentialId().value()));
         appendTransition(fields, record.transition());
         return result(operation, fields);
     }
@@ -621,7 +977,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
 
     private static Map<String, PkiOperationValue> authorityFields(CaRecord record) {
         Map<String, PkiOperationValue> fields = fields();
-        fields.put("caId", text(record.caId().value()));
+        fields.put(AUTHORITY_ID, text(record.caId().value()));
         fields.put("kind", text(record.kind().name()));
         fields.put("state", text(record.state().name()));
         fields.put("issuerGenerationCount", integer(record.issuerIds().size()));
@@ -631,7 +987,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
 
     private static PkiOperationValue revocationValue(RevocationRecord record) {
         Map<String, PkiOperationValue> fields = fields();
-        fields.put("credentialId", text(record.credentialId().value()));
+        fields.put(CREDENTIAL_ID, text(record.credentialId().value()));
         appendTransition(fields, record.transition());
         return new PkiOperationValue.ObjectValue(fields);
     }
@@ -662,7 +1018,7 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         fields.put("publicationId", text(record.publicationId().value()));
         fields.put("sourceType", text(record.sourceType().name()));
         fields.put("sourceId", text(record.sourceId().value()));
-        fields.put("status", text(record.status().name()));
+        fields.put(STATUS, text(record.status().name()));
         fields.put("attemptNumber", integer(record.attemptNumber()));
         return new PkiOperationValue.ObjectValue(fields);
     }
@@ -691,6 +1047,11 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
     }
 
     private static PkiOperationOutcome classify(String operation, RuntimeException failure) {
+        if (failure instanceof zeroecho.pki.api.SigningExecutionException signingFailure
+                && signingFailure.classification()
+                        == zeroecho.pki.api.SigningExecutionException.Classification.OVERLOADED) {
+            return failure(operation, PkiOperationFailure.OVERLOADED, "SIGNING_OVERLOADED");
+        }
         if (failure instanceof CapabilityUnavailableException) {
             return failure(operation, PkiOperationFailure.VALIDATION_FAILURE, "CAPABILITY_NOT_CONFIGURED");
         }
@@ -700,26 +1061,18 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         if (failure instanceof MissingObjectException) {
             return failure(operation, PkiOperationFailure.NOT_FOUND, "OBJECT_NOT_FOUND");
         }
-        String message = Optional.ofNullable(failure.getMessage()).orElse("");
-        if (message.contains("RECOVERY_REQUIRED") || message.contains("DURABILITY_UNCONFIRMED")) {
-            return failure(operation, PkiOperationFailure.RECOVERY_REQUIRED, "RECOVERY_REQUIRED");
-        }
-        if (message.contains("OUTCOME_UNKNOWN") || message.contains("RESULT_UNCONFIRMED")) {
-            return failure(operation, PkiOperationFailure.EXTERNAL_OUTCOME_UNKNOWN, "EXTERNAL_OUTCOME_UNKNOWN");
-        }
-        if (message.contains("CREDENTIAL_NOT_FOUND")) {
-            return failure(operation, PkiOperationFailure.NOT_FOUND, "OBJECT_NOT_FOUND");
-        }
-        String lowerMessage = message.toLowerCase(java.util.Locale.ROOT);
-        if (lowerMessage.contains("not found") || lowerMessage.contains("does not exist")) {
-            return failure(operation, PkiOperationFailure.NOT_FOUND, "OBJECT_NOT_FOUND");
-        }
-        if (message.contains("CONFLICT") || message.contains("changed concurrently")) {
+        if (failure instanceof OperationConflictException) {
             return failure(operation, PkiOperationFailure.CONFLICT, "OPERATION_CONFLICT");
         }
-        if (message.contains("TRANSITION_ILLEGAL") || message.contains("REVOCATION_TERMINAL")) {
-            return failure(operation, PkiOperationFailure.POLICY_REJECTION, "PKI_POLICY_REJECTED");
+        if (failure instanceof PkiException pkiFailure && pkiFailure.failureReason().isPresent()) {
+            return classifyReason(operation, pkiFailure.failureReason().orElseThrow());
         }
+        // Every domain producer whose outcome is caller-meaningful now carries a typed
+        // PkiFailureReason (classified above) or a typed internal marker (handled above); no code
+        // path parses exception prose. The remaining checks are a bounded structural fallback over
+        // the exception TYPE alone for a genuinely untyped programming/runtime failure: an untyped
+        // IllegalArgumentException is a validation defect, a bare PkiException a policy rejection, an
+        // IllegalStateException a resource failure, and anything else an internal failure.
         if (failure instanceof IllegalArgumentException) {
             return failure(operation, PkiOperationFailure.VALIDATION_FAILURE, "OPERATION_INPUT_INVALID");
         }
@@ -732,8 +1085,33 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
         return failure(operation, PkiOperationFailure.INTERNAL_FAILURE, "INTERNAL_FAILURE");
     }
 
+    // Maps a typed failure reason to the synchronous operation outcome by its
+    // classification alone, so no code path depends on exception message text. The
+    // switch is exhaustive over every classification, guaranteeing a stable result.
+    private static PkiOperationOutcome classifyReason(String operation, PkiFailureReason reason) {
+        PkiFailureClassification classification = reason.classification();
+        return switch (classification) {
+            case RECOVERY_REQUIRED ->
+                    failure(operation, PkiOperationFailure.RECOVERY_REQUIRED, "RECOVERY_REQUIRED");
+            case EXTERNAL_OUTCOME_UNKNOWN ->
+                    failure(operation, PkiOperationFailure.EXTERNAL_OUTCOME_UNKNOWN, "EXTERNAL_OUTCOME_UNKNOWN");
+            case NOT_FOUND -> failure(operation, PkiOperationFailure.NOT_FOUND, "OBJECT_NOT_FOUND");
+            case CONFLICT -> failure(operation, PkiOperationFailure.CONFLICT, "OPERATION_CONFLICT");
+            case POLICY_REJECTION ->
+                    failure(operation, PkiOperationFailure.POLICY_REJECTION, "PKI_POLICY_REJECTED");
+            case VALIDATION_FAILURE ->
+                    failure(operation, PkiOperationFailure.VALIDATION_FAILURE, "OPERATION_INPUT_INVALID");
+            case RESOURCE_FAILURE ->
+                    failure(operation, PkiOperationFailure.RESOURCE_FAILURE, "PKI_RESOURCE_FAILED");
+            case OVERLOADED -> failure(operation, PkiOperationFailure.OVERLOADED, "SIGNING_OVERLOADED");
+            case CANCELLED -> failure(operation, PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+            case AUTHENTICATION_FAILURE, AUTHORIZATION_DENIED, DEADLINE_EXCEEDED, INTERNAL_FAILURE ->
+                    failure(operation, PkiOperationFailure.INTERNAL_FAILURE, "INTERNAL_FAILURE");
+        };
+    }
+
     private static PkiOperationOutcome failure(String operation, PkiOperationFailure classification, String code) {
-        return new PkiOperationOutcome.Failure(operation, classification, code);
+        return new PkiOperationOutcome.Failed(operation, classification, code);
     }
 
     private static PkiOperationResult result(String operation, Map<String, PkiOperationValue> fields) {
@@ -759,6 +1137,19 @@ final class DefaultPkiOperationExecutor implements PkiOperationExecutor {
     /** Internal marker normalized to the public NOT_FOUND classification. */
     private static final class MissingObjectException extends RuntimeException {
         private static final long serialVersionUID = 1L;
+    }
+
+    /** Internal marker normalized to the public conflict classification. */
+    private static final class OperationConflictException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        private OperationConflictException() {
+            super();
+        }
+
+        private OperationConflictException(Throwable cause) {
+            super(cause);
+        }
     }
 
     /** Internal marker for an operation whose explicitly configured service is unavailable. */

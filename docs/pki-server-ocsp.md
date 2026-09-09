@@ -178,6 +178,14 @@ Every authenticated signed response uses `Cache-Control: private, no-store` and
 No request DER, response DER, serial, issuer hash, nonce, certificate identity,
 key reference, or parser/provider exception is logged or audited.
 
+Live OCSP response signing is deliberately immediate-only. If its provider does
+not produce a terminal result in the initial bounded step and single
+observation, the server cancels or reconciles that signing operation to terminal
+cleanup and returns the canonical DER OCSP `tryLater` response with `no-store`.
+It does not retain an HTTP worker, cache the response, or create a durable OCSP
+domain continuation. Signing-runtime admission overload remains the separate
+HTTP 429 mapping.
+
 ## Deployment topology and capacity
 
 Direct mode permits anonymous OCSP over the public TLS listener. An optional

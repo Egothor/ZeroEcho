@@ -70,12 +70,20 @@ public final class ZeroEchoPrivateX509Bindings {
     private ZeroEchoPrivateX509Bindings() {
     }
 
-    /** @return frozen safe descriptors in resource order */
+    /**
+     * Returns the frozen private binding descriptors.
+     *
+     * @return frozen safe descriptors in resource order
+     */
     public static List<X509AlgorithmBinding> descriptors() {
         return ASSIGNMENTS.descriptors();
     }
 
-    /** @return trusted immutable encoding-rule catalog */
+    /**
+     * Returns the trusted private encoding-rule catalog.
+     *
+     * @return trusted immutable encoding-rule catalog
+     */
     public static X509BindingCatalog catalog() {
         return ASSIGNMENTS.catalog();
     }
@@ -114,8 +122,9 @@ public final class ZeroEchoPrivateX509Bindings {
         }
     }
 
-    @SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.AvoidInstantiatingObjectsInLoops",
-            "PMD.AvoidLiteralsInIfCondition" })
+    // One pass enforces the closed object grammar and captures every binding field exactly once.
+    @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops",
+            "PMD.AvoidLiteralsInIfCondition", "PMD.CyclomaticComplexity" })
     private static List<X509AlgorithmBinding> readBindings(JsonParser parser) throws IOException {
         require(parser.currentToken(), JsonToken.START_ARRAY);
         List<X509AlgorithmBinding> bindings = new ArrayList<>();

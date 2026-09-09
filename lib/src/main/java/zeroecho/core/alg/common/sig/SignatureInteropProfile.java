@@ -90,6 +90,8 @@ public final class SignatureInteropProfile {
     /**
      * Signature byte representation bridging policy.
      */
+    // Enum names are serialized by callers and form part of the exported interoperability API.
+    @SuppressWarnings("PMD.LongVariable")
     public enum SignatureRepresentation {
         /**
          * External and internal signature bytes are identical.

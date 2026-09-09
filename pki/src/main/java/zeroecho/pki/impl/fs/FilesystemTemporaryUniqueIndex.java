@@ -59,7 +59,7 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
     private static final int MAX_VALUE_BYTES = 640;
     private static final int RECORD_VERSION = 1;
     private static final int MAX_RECORD_BYTES = 1 + Integer.BYTES + MAX_VALUE_BYTES;
-    private static final int SHA256_INDEX_KEY_HEX_CHARACTERS = 64;
+    private static final int SHA256_KEY_HEX_CHARS = 64;
     private static final byte[] GENERAL_DOMAIN =
             "zeroecho:pki:temporary-unique-index:v2".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] OWNER_DOMAIN =
@@ -242,7 +242,7 @@ final class FilesystemTemporaryUniqueIndex implements TemporaryUniqueIndex {
 
     private static void requireCommittedName(Path entry) throws IOException {
         String name = entry.getFileName().toString();
-        if (name.length() != SHA256_INDEX_KEY_HEX_CHARACTERS) {
+        if (name.length() != SHA256_KEY_HEX_CHARS) {
             throw integrityFailure();
         }
         for (int index = 0; index < name.length(); index++) {

@@ -46,26 +46,64 @@ import zeroecho.pki.api.status.StatusObject;
 
 /** Read-only authoritative repository facade owned by one {@link PkiSession}. */
 public interface PkiRepository {
-    /** Returns an exact logical authority. */
+    /**
+     * Returns an exact logical authority.
+     * @param authorityId authority identifier
+     * @return record, or empty when absent
+     */
     Optional<CaRecord> authority(PkiId authorityId);
-    /** Returns a finite canonical authority page after an optional exclusive key. */
+    /**
+     * Returns a finite canonical authority page.
+     * @param afterAuthorityId optional exclusive key
+     * @param limit positive page bound
+     * @return canonically ordered records
+     */
     List<CaRecord> authorities(Optional<PkiId> afterAuthorityId, int limit);
-    /** Returns an exact issuer generation. */
+    /**
+     * Returns an exact issuer generation.
+     * @param issuerId generation identifier
+     * @return generation, or empty when absent
+     */
     Optional<IssuerGeneration> issuer(PkiId issuerId);
-    /** Returns an exact immutable issuer chain path. */
+    /**
+     * Returns an exact immutable issuer chain path.
+     * @param pathId path identifier
+     * @return path, or empty when absent
+     */
     Optional<IssuerChainPath> chainPath(PkiId pathId);
-    /** Returns an exact credential metadata record. */
+    /**
+     * Returns an exact credential metadata record.
+     * @param credentialId credential identifier
+     * @return credential, or empty when absent
+     */
     Optional<Credential> credential(PkiId credentialId);
-    /** Returns an exact credential through the issuer-generation/serial index. */
+    /**
+     * Returns an exact credential through the issuer-generation/serial index.
+     * @param issuerId issuer-generation identifier
+     * @param serial positive canonical certificate serial
+     * @return credential, or empty when absent
+     */
     default Optional<Credential> credential(PkiId issuerId, BigInteger serial) {
         java.util.Objects.requireNonNull(issuerId, "issuerId");
         java.util.Objects.requireNonNull(serial, "serial");
         return Optional.empty();
     }
-    /** Returns an exact status-object metadata record. */
+    /**
+     * Returns an exact status-object metadata record.
+     * @param statusObjectId object identifier
+     * @return object, or empty when absent
+     */
     Optional<StatusObject> statusObject(PkiId statusObjectId);
-    /** Opens validated immutable certificate content. */
+    /**
+     * Opens validated immutable certificate content.
+     * @param credentialId credential identifier
+     * @return closeable validated content
+     */
     PkiRepositoryContent openCredential(PkiId credentialId);
-    /** Opens validated immutable status-object content. */
+    /**
+     * Opens validated immutable status-object content.
+     * @param statusObjectId object identifier
+     * @return closeable validated content
+     */
     PkiRepositoryContent openStatusObject(PkiId statusObjectId);
 }

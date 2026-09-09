@@ -51,6 +51,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -66,6 +68,44 @@ import zeroecho.pki.spi.store.TemporaryUniqueIndex;
 final class FilesystemStagedContentStoreTest {
     private static final String STORE_ID = "0123456789abcdef0123456789abcdef";
     private static final String FOREIGN_STORE_ID = "fedcba9876543210fedcba9876543210";
+
+    @Test
+    void productionContentStreamReadsExactlyOnceAndValidatesAtEof(@TempDir Path directory) throws Exception {
+        AtomicInteger opens = new AtomicInteger();
+        AtomicLong bytesRead = new AtomicLong();
+        FilesystemStagedContentStore.ContentReadObserver observer = new FilesystemStagedContentStore.ContentReadObserver() {
+            @Override
+            public void opened() {
+                opens.incrementAndGet();
+            }
+
+            @Override
+            public void read(int count) {
+                bytesRead.addAndGet(count);
+            }
+        };
+        FilesystemStagedContentStore store = new FilesystemStagedContentStore(directory, STORE_ID, observer);
+        byte[] payload = "one-production-payload-pass".getBytes(StandardCharsets.US_ASCII);
+        DurableContentReference reference = stage(store, DurableContentReference.Lifecycle.PERSISTED,
+                new String(payload, StandardCharsets.US_ASCII));
+
+        try (RepeatableContent content = store.openContent(reference);
+                java.io.InputStream input = content.openStream()) {
+            assertEquals(payload.length, input.transferTo(OutputStream.nullOutputStream()));
+        }
+        assertEquals(1, opens.get());
+        assertEquals(payload.length, bytesRead.get());
+
+        byte[] substituted = payload.clone();
+        substituted[substituted.length - 1] ^= 1;
+        Files.write(directory.resolve(reference.contentId() + ".content"), substituted);
+        try (RepeatableContent content = store.openContent(reference);
+                java.io.InputStream input = content.openStream()) {
+            assertThrows(IOException.class, () -> input.transferTo(OutputStream.nullOutputStream()));
+        }
+        assertEquals(2, opens.get());
+        assertEquals(payload.length * 2L, bytesRead.get());
+    }
 
     @Test
     void temporaryIndexClassifiesCommitForceFailureAndCleansPreMoveFailure(@TempDir Path directory) throws Exception {
@@ -177,6 +217,7 @@ final class FilesystemStagedContentStoreTest {
     }
 
     @Test
+    @RequiresSymlinkCreation
     void rejectsTraversalForeignMetadataAndSymlinkContent(@TempDir Path directory) throws Exception {
         System.out.println("rejectsTraversalForeignMetadataAndSymlinkContent");
         String storeId = STORE_ID;
@@ -284,6 +325,7 @@ final class FilesystemStagedContentStoreTest {
     }
 
     @Test
+    @RequiresSymlinkCreation
     void ownerIndexValidatesCompleteCommittedNamespace(@TempDir Path directory) throws Exception {
         System.out.println("ownerIndexValidatesCompleteCommittedNamespace");
         FilesystemStagedContentStore store = new FilesystemStagedContentStore(directory, STORE_ID);

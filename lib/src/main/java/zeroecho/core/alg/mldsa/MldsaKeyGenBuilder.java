@@ -59,6 +59,11 @@ public final class MldsaKeyGenBuilder implements AsymmetricKeyPairGenerator<Mlds
     private static final String ALG_PURE = "MLDSA";
     private static final String ALG_SHA512 = "SHA512withMLDSA";
 
+    /** Creates a stateless ML-DSA key-pair generator. */
+    public MldsaKeyGenBuilder() {
+        // Stateless generator.
+    }
+
     /**
      * Generates a key pair according to the given specification.
      *

@@ -118,6 +118,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * If {@code spec} is {@code null}, {@link DigestSpec#sha256()} is used.
      * </p>
      *
+     * @param session active session used to create the digest context
      * @param spec digest specification; may be {@code null} to select the default
      * @return a builder that produces digest-based {@link TagEngine} instances
      */
@@ -134,6 +135,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * If {@code spec} is {@code null}, {@link HmacSpec#sha256()} is used.
      * </p>
      *
+     * @param session active session used to create the MAC context
      * @param key  secret key used for MAC computation; must not be {@code null}
      * @param spec HMAC specification; may be {@code null} to select the default
      * @return a builder that produces HMAC-based {@link TagEngine} instances
@@ -160,6 +162,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * If {@code spec} is {@code null}, {@link VoidSpec#INSTANCE} is used.
      * </p>
      *
+     * @param session active session used to create the signature context
      * @param id   canonical algorithm identifier (for example "Ed25519", "RSA",
      *             "ECDSA"); must not be {@code null}
      * @param key  private or public key to bind the engine; must not be
@@ -188,6 +191,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
     /**
      * Creates a builder for an Ed25519 signing engine.
      *
+     * @param session active session used to create the signing context
      * @param privateKey private signing key; must not be {@code null}
      * @return a builder that produces Ed25519 signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
@@ -200,6 +204,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
     /**
      * Creates a builder for an Ed25519 verification engine.
      *
+     * @param session active session used to create the verification context
      * @param publicKey public verification key; must not be {@code null}
      * @return a builder that produces Ed25519 signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
@@ -217,6 +222,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * is used.
      * </p>
      *
+     * @param session active session used to create the signing context
      * @param privateKey private signing key; must not be {@code null}
      * @param spec       RSA signature specification; may be {@code null} to select
      *                   the default
@@ -237,6 +243,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * is used.
      * </p>
      *
+     * @param session active session used to create the verification context
      * @param publicKey public verification key; must not be {@code null}
      * @param spec      RSA signature specification; may be {@code null} to select
      *                  the default
@@ -256,6 +263,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * If {@code spec} is {@code null}, {@link EcdsaCurveSpec#P256} is used.
      * </p>
      *
+     * @param session active session used to create the signing context
      * @param privateKey private signing key; must not be {@code null}
      * @param spec       curve specification; may be {@code null} to select the
      *                   default
@@ -276,6 +284,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * If {@code spec} is {@code null}, {@link EcdsaCurveSpec#P256} is used.
      * </p>
      *
+     * @param session active session used to create the verification context
      * @param publicKey public verification key; must not be {@code null}
      * @param spec      curve specification; may be {@code null} to select the
      *                  default
@@ -292,6 +301,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
     /**
      * Creates a builder for an ECDSA P-256 signing engine.
      *
+     * @param session active session used to create the signing context
      * @param privateKey private signing key; must not be {@code null}
      * @return a builder that produces ECDSA signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
@@ -305,6 +315,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
     /**
      * Creates a builder for an ECDSA P-256 verification engine.
      *
+     * @param session active session used to create the verification context
      * @param publicKey public verification key; must not be {@code null}
      * @return a builder that produces ECDSA signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
@@ -323,6 +334,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * in the supplied {@link ZeroEchoSession}.
      * </p>
      *
+     * @param session active session used to create the signing context
      * @param privateKey private signing key; must not be {@code null}
      * @return a builder that produces SPHINCS+ signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
@@ -341,6 +353,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * in the supplied {@link ZeroEchoSession}.
      * </p>
      *
+     * @param session active session used to create the verification context
      * @param publicKey public verification key; must not be {@code null}
      * @return a builder that produces SPHINCS+ signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
@@ -360,6 +373,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * algorithm resolved through the supplied {@link ZeroEchoSession}.
      * </p>
      *
+     * @param session active session used to create the signing context
      * @param privateKey private signing key; must not be {@code null}
      * @return a builder that produces SLH-DSA signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
@@ -378,6 +392,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * algorithm resolved through the supplied {@link ZeroEchoSession}.
      * </p>
      *
+     * @param session active session used to create the verification context
      * @param publicKey public verification key; must not be {@code null}
      * @return a builder that produces SLH-DSA signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}
@@ -397,6 +412,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * {@link ZeroEchoSession}.
      * </p>
      *
+     * @param session active session used to create the signing context
      * @param privateKey private signing key; must not be {@code null}
      * @return a builder that produces ML-DSA signature engines in SIGN mode
      * @throws NullPointerException if {@code privateKey} is {@code null}
@@ -416,6 +432,7 @@ public final class TagEngineBuilder<T> implements Supplier<TagEngine<T>> {
      * {@link ZeroEchoSession}.
      * </p>
      *
+     * @param session active session used to create the verification context
      * @param publicKey public verification key; must not be {@code null}
      * @return a builder that produces ML-DSA signature engines in VERIFY mode
      * @throws NullPointerException if {@code publicKey} is {@code null}

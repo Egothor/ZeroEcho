@@ -158,6 +158,13 @@ public final class PairSeq {
         private final int n = size();
 
         /**
+         * Creates a cursor positioned before the first pair in the enclosing sequence.
+         */
+        public Cursor() {
+            // Field initializers establish the initial position and size snapshot.
+        }
+
+        /**
          * Advances to the next pair if available.
          *
          * @return {@code true} if advanced to a valid pair, {@code false} if end

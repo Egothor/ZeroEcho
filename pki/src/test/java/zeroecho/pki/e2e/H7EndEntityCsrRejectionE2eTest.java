@@ -367,7 +367,8 @@ final class H7EndEntityCsrRejectionE2eTest {
             CredentialIssuerBackend backend = countingBackend(runtime.issuerBackend(), backendCalls);
             PkiStore trackingStore = trackingStore(runtime.store(), persistenceCalls);
             DefaultIssuanceService service = new DefaultIssuanceService(trackingStore, runtime.framework(), backend,
-                    runtime.auditSink(), runtime.statusResolver(), runtime.profileService(), Clock.systemUTC());
+                    runtime.auditSink(), runtime.statusResolver(), runtime.profileService(), Clock.systemUTC(),
+                    runtime.revocationService());
 
             PkiException rejection = assertThrows(PkiException.class,
                     () -> service

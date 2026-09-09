@@ -40,7 +40,6 @@ import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
@@ -48,7 +47,6 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
@@ -182,10 +180,23 @@ final class CredentialContentTransaction {
         return credential;
     }
 
-    /* default */ void recover() throws IOException {
+    /** Visits each validated published credential once during startup recovery. */
+    @FunctionalInterface
+    public interface PublishedCredentialVisitor {
+        /**
+         * Visits one credential after its durable content and ownership have been validated.
+         *
+         * @param credential validated published credential
+         * @throws IOException if the visitor cannot process the credential
+         */
+        void accept(Credential credential) throws IOException;
+    }
+
+    /* default */ void recover(PublishedCredentialVisitor publishedVisitor) throws IOException {
+        Objects.requireNonNull(publishedVisitor, "publishedVisitor");
         recoverIntents();
         cleanupOrphanedPrivateRecords();
-        validatePublishedRecords();
+        validatePublishedRecords(publishedVisitor);
     }
 
     private void recoverIntents() throws IOException {
@@ -246,7 +257,7 @@ final class CredentialContentTransaction {
         }
     }
 
-    private void validatePublishedRecords() throws IOException {
+    private void validatePublishedRecords(PublishedCredentialVisitor publishedVisitor) throws IOException {
         Path root = paths.root().resolve("credentials").resolve("by-id");
         if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
             return;
@@ -265,6 +276,7 @@ final class CredentialContentTransaction {
                 throw new IOException("Credential record filename mismatch");
             }
             validateLoaded(credential.credentialId(), credential);
+            publishedVisitor.accept(credential);
         }
     }
 
@@ -358,8 +370,8 @@ final class CredentialContentTransaction {
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
             moved = true;
-            try (FileChannel directory = FileChannel.open(target.getParent(), StandardOpenOption.READ)) {
-                directory.force(true);
+            try {
+                PlatformFs.forceDirectory(target.getParent());
             } catch (IOException failure) {
                 throw new PublishedException();
             }

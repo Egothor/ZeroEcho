@@ -42,6 +42,13 @@ import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.IssuerChainPath;
 import zeroecho.pki.api.ca.IssuerGeneration;
+import zeroecho.pki.api.confirmation.CredentialConfirmationChallenge;
+import zeroecho.pki.api.confirmation.CredentialConfirmationChallengeIssuance;
+import zeroecho.pki.api.confirmation.CredentialConfirmationInitialization;
+import zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofCas;
+import zeroecho.pki.api.confirmation.CredentialConfirmationReviewCursor;
+import zeroecho.pki.api.confirmation.CredentialConfirmationReviewPage;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.issuance.IssuanceIntent;
 import zeroecho.pki.api.orch.WorkflowStateRecord;
@@ -94,7 +101,8 @@ import zeroecho.pki.api.status.StatusObject;
  * {@link IllegalStateException} when an operation cannot be completed safely.
  * </p>
  */
-public interface PkiStore extends SignWorkflowStore, AutoCloseable {
+@SuppressWarnings("PMD.ExcessivePublicCount")
+public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, AutoCloseable {
 
     /**
      * Returns the runtime-owned durable streaming-content store.
@@ -152,22 +160,50 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
      */
     List<CaRecord> listCasPage(Optional<PkiId> afterCaId, int limit);
 
-    /** Persists one immutable canonical issuer-generation record. */
+    /**
+     * Persists one immutable canonical issuer-generation record.
+     *
+     * @param generation validated issuer generation to store atomically
+     */
     void putIssuerGeneration(IssuerGeneration generation);
 
-    /** Retrieves one canonical issuer-generation record. */
+    /**
+     * Retrieves one canonical issuer-generation record.
+     *
+     * @param issuerId exact issuer-generation identifier
+     * @return immutable generation, or empty when absent
+     */
     Optional<IssuerGeneration> getIssuerGeneration(PkiId issuerId);
 
-    /** Lists issuer generations owned by an exact logical authority. */
+    /**
+     * Lists issuer generations owned by an exact logical authority.
+     *
+     * @param authorityId exact logical authority identifier
+     * @return immutable generations in store-defined stable order
+     */
     List<IssuerGeneration> listIssuerGenerations(PkiId authorityId);
 
-    /** Persists one immutable, already validated issuer chain path. */
+    /**
+     * Persists one immutable, already validated issuer chain path.
+     *
+     * @param path canonical path to store atomically
+     */
     void putIssuerChainPath(IssuerChainPath path);
 
-    /** Retrieves one immutable issuer chain path. */
+    /**
+     * Retrieves one immutable issuer chain path.
+     *
+     * @param pathId exact chain-path identifier
+     * @return immutable path, or empty when absent
+     */
     Optional<IssuerChainPath> getIssuerChainPath(PkiId pathId);
 
-    /** Lists explicit paths for an exact issuer generation. */
+    /**
+     * Lists explicit paths for an exact issuer generation.
+     *
+     * @param issuerId exact issuer-generation identifier
+     * @return immutable explicit paths in stable order
+     */
     List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId);
 
     /**
@@ -218,6 +254,114 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
     Optional<Credential> getCredentialByIssuanceIntent(IssuanceIntent intent);
 
     /**
+     * Atomically creates the credential-confirmation lifecycle and its pending
+     * review projection when absent. An exact replay returns the existing
+     * lifecycle; different frozen inputs fail closed.
+     *
+     * @param initialization exact frozen initialization inputs
+     * @return committed initial or identical existing lifecycle
+     * @throws IllegalArgumentException if the identity already has different frozen inputs
+     * @throws IllegalStateException if the credential is missing, expired, has revocation history,
+     *         or persistence cannot be completed safely
+     */
+    CredentialConfirmationLifecycle initializeCredentialConfirmation(
+            CredentialConfirmationInitialization initialization);
+
+    /**
+     * Retrieves one authoritative credential-confirmation lifecycle.
+     *
+     * @param credentialId exact credential identity
+     * @return current lifecycle when initialized
+     * @throws IllegalStateException if persisted state is corrupt or unavailable
+     */
+    Optional<CredentialConfirmationLifecycle> getCredentialConfirmation(PkiId credentialId);
+
+    /**
+     * Retrieves one authoritative credential-confirmation challenge.
+     *
+     * @param credentialId exact credential identity
+     * @return current challenge when one has been issued
+     * @throws IllegalStateException if persisted state is corrupt or unavailable
+     */
+    Optional<CredentialConfirmationChallenge> getCredentialConfirmationChallenge(PkiId credentialId);
+
+    /**
+     * Atomically issues or idempotently resolves one challenge for a pending
+     * credential-confirmation lifecycle.
+     *
+     * <p>A live challenge with identical frozen bindings is returned unchanged.
+     * An expired challenge may be replaced only through an exact metadata
+     * compare-and-set. Binding mismatches always fail closed.</p>
+     *
+     * @param issuance exact transient issuance command
+     * @return exact committed challenge, which may be an earlier live record
+     * @throws IllegalArgumentException if frozen bindings conflict with authoritative state
+     * @throws IllegalStateException if the lifecycle is not pending, the credential is unavailable,
+     *         or persistence cannot be completed safely
+     */
+    CredentialConfirmationChallenge issueCredentialConfirmationChallenge(
+            CredentialConfirmationChallengeIssuance issuance);
+
+    /**
+     * Atomically completes one exact pending lifecycle after consuming its
+     * authoritative challenge. The challenge and derived pending-review entry
+     * are removed in the same transaction. An exact terminal retry returns the
+     * committed confirmed lifecycle.
+     *
+     * @param proofCas exact pending lifecycle and challenge compare-and-set input
+     * @return committed confirmed lifecycle
+     * @throws IllegalArgumentException if the expectation conflicts with authoritative state
+     * @throws IllegalStateException if the credential is missing, expired, has revocation history,
+     *         or persistence cannot be completed safely
+     */
+    CredentialConfirmationLifecycle completeCredentialConfirmation(CredentialConfirmationProofCas proofCas);
+
+    /**
+     * Permanently revokes one still-pending non-public credential strictly after
+     * its authoritative confirmation-review boundary.
+     *
+     * <p>The implementation must read its own authoritative clock and serialize
+     * this transition with confirmation and challenge mutations for the same
+     * credential. The revocation log is authoritative and is committed before
+     * derived review projections and any outstanding challenge are removed.</p>
+     *
+     * @param command exact permanent revocation command whose reason is
+     *        {@link zeroecho.pki.api.revocation.RevocationReason#UNSPECIFIED}
+     * @return authoritative permanent revocation record
+     * @throws IllegalArgumentException if the command reason is not the fixed reason
+     * @throws IllegalStateException if the lifecycle is not eligible or cleanup cannot be established safely
+     */
+    RevocationRecord revokeOverduePendingCredentialConfirmation(
+            RevocationCommand.RevokePermanently command);
+
+    /**
+     * Returns one snapshot-consistent bounded keyset page of pending reviews due
+     * at or before the exact cutoff. A cursor is exclusive, store-bound, and
+     * bound to the cutoff, store, authority, and optional profile supplied when
+     * it was issued. The implementation reads only the selected derived index;
+     * it does not scan or filter records from another authority or profile.
+     *
+     * <p>A filesystem metadata implementation performs {@code O(log M + K log M)}
+     * metadata point/scan work and returns {@code O(K)} bounded immutable
+     * review objects, where {@code M} is its metadata population and {@code K}
+     * is the number of returned reviews. Metadata integrity validation adds a
+     * constant number of {@code O(log M)} point reads per returned item.</p>
+     *
+     * @param authorityId mandatory exact issuing-authority scope
+     * @param profileId optional exact logical-profile scope
+     * @param cutoffInclusive latest review time included in the page
+     * @param afterExclusive optional store-issued exclusive cursor
+     * @param limit page size from 1 through 4096
+     * @return reduced pending reviews in review-time then unsigned strict UTF-8 identity order
+     * @throws IllegalArgumentException if the cutoff, cursor, or limit is invalid
+     * @throws IllegalStateException if persisted state is corrupt or unavailable
+     */
+    CredentialConfirmationReviewPage pagePendingCredentialConfirmationReviews(
+            PkiId authorityId, Optional<String> profileId, Instant cutoffInclusive,
+            Optional<CredentialConfirmationReviewCursor> afterExclusive,
+            int limit);
+
+    /**
      * Persists a parsed certification request.
      *
      * <p>
@@ -240,6 +384,25 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
      * @throws IllegalStateException if retrieval fails
      */
     Optional<ParsedCertificationRequest> getRequest(PkiId requestId);
+
+    /**
+     * Returns a bounded page of stored certification requests matching the query.
+     *
+     * <p>
+     * Stores that do not maintain a request listing capability throw
+     * {@link UnsupportedOperationException}. Implementations must bound the result
+     * to at most {@code maxResults} entries and must not scan without a cap.
+     * </p>
+     *
+     * @param query      request query constraints (never {@code null})
+     * @param maxResults positive upper bound on returned entries
+     * @return bounded list of matching requests, never {@code null}
+     * @throws UnsupportedOperationException if this store cannot list requests
+     */
+    default List<ParsedCertificationRequest> searchRequests(
+            zeroecho.pki.api.request.RequestQuery query, int maxResults) {
+        throw new UnsupportedOperationException("This store does not support request search");
+    }
 
     /**
      * Atomically validates and appends one legal revocation transition.
@@ -273,6 +436,97 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
     RevocationHistory openRevocationHistory(PkiId credentialId);
 
     /**
+     * Opens an append-ordered feed captured at the current authoritative log head.
+     * Opening rejects a malformed, foreign, or structurally out-of-head position.
+     * A same-store, structurally plausible position opens in constant time without
+     * scanning the log genesis or materializing the revocation population. Exact
+     * authoritative-log continuity and commitment are validated lazily by the
+     * first {@link RevocationTransitionFeed#next()} before it yields or advances;
+     * an inconsistency is reported as an {@link java.io.IOException}.
+     *
+     * @param afterExclusive optional exclusive resume position
+     * @return closeable feed over the captured append prefix
+     * @throws IllegalArgumentException if the position is malformed, foreign, or structurally
+     *         outside the captured head
+     * @throws IllegalStateException if the authoritative feed cannot be opened safely
+     */
+    RevocationTransitionFeed openRevocationTransitionFeed(
+            Optional<RevocationTransitionFeed.Position> afterExclusive);
+
+    /**
+     * Opens the append-ordered issuance success-evidence feed strictly after {@code afterSequenceExclusive}.
+     *
+     * <p>Each entry is one committed end-entity issuance carrying its co-committed server-derived
+     * evidence, enabling a bounded, crash-consistent audit projector (Task 8a). The default throws
+     * {@link UnsupportedOperationException} for stores that do not maintain the evidence log.</p>
+     *
+     * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
+     * @return closeable append-ordered evidence feed
+     */
+    default AuditEvidenceFeed openIssuanceEvidenceFeed(long afterSequenceExclusive) {
+        throw new UnsupportedOperationException("Issuance evidence feed is not supported by this store");
+    }
+
+    /**
+     * Opens the append-ordered status-generation success-evidence feed strictly after
+     * {@code afterSequenceExclusive}.
+     *
+     * <p>Each entry is one committed status object (CRL, delta CRL, or persistent OCSP response) carrying
+     * its server-derived generation evidence, enabling a bounded, crash-consistent audit projector
+     * (Task 8a). The default throws {@link UnsupportedOperationException} for stores that do not maintain
+     * the evidence log.</p>
+     *
+     * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
+     * @return closeable append-ordered evidence feed
+     */
+    default AuditEvidenceFeed openStatusEvidenceFeed(long afterSequenceExclusive) {
+        throw new UnsupportedOperationException("Status evidence feed is not supported by this store");
+    }
+
+    /**
+     * Opens the append-ordered publication terminal-outcome success-evidence feed strictly after
+     * {@code afterSequenceExclusive}.
+     *
+     * <p>Each entry is one publication that reached a terminal outcome ({@code SUCCEEDED} or
+     * {@code TERMINAL_FAILURE}) carrying its server-derived outcome evidence, enabling a bounded,
+     * crash-consistent audit projector (Task 8a). The default throws
+     * {@link UnsupportedOperationException} for stores that do not maintain the evidence log.</p>
+     *
+     * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
+     * @return closeable append-ordered evidence feed
+     */
+    default AuditEvidenceFeed openPublicationEvidenceFeed(long afterSequenceExclusive) {
+        throw new UnsupportedOperationException("Publication evidence feed is not supported by this store");
+    }
+
+    /**
+     * Opens the append-ordered signing terminal-outcome success-evidence feed strictly after
+     * {@code afterSequenceExclusive}.
+     *
+     * <p>Each entry is one signing operation that reached a terminal outcome carrying its server-derived
+     * key-usage evidence, enabling a bounded, crash-consistent audit projector (Task 8a). The default
+     * throws {@link UnsupportedOperationException} for stores that do not maintain the evidence log.</p>
+     *
+     * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
+     * @return closeable append-ordered evidence feed
+     */
+    default AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
+        throw new UnsupportedOperationException("Signing evidence feed is not supported by this store");
+    }
+
+    /**
+     * Reports whether this store maintains the signing terminal-outcome evidence log (an operator opt-in).
+     *
+     * <p>When {@code false}, {@link #openSigningEvidenceFeed(long)} is unsupported and no signing audit
+     * projection should be registered. The default is {@code false}.</p>
+     *
+     * @return {@code true} only when signing key-usage audit is enabled for this store
+     */
+    default boolean supportsSigningEvidenceFeed() {
+        return false;
+    }
+
+    /**
      * Opens a stable restartable streaming snapshot of authoritative revocations.
      * An exact checkpoint opens in constant time after validation. Otherwise the
      * implementation may perform bounded-memory external sorting over the current
@@ -283,7 +537,11 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
      */
     RevocationSnapshot openRevocationSnapshot();
 
-    /** Opens a stable direct-lookup current-state view for finite protocol work. */
+    /**
+     * Opens a stable direct-lookup current-state view for finite protocol work.
+     *
+     * @return closeable snapshot-consistent revocation view
+     */
     RevocationView openRevocationView();
 
     /**
@@ -392,19 +650,46 @@ public interface PkiStore extends SignWorkflowStore, AutoCloseable {
      */
     ImportedCertificateProfileVersion importProfileVersion(ImportedCertificateProfileVersion version);
 
-    /** Retrieves one imported version. */
+    /**
+     * Retrieves one imported version.
+     *
+     * @param profileId nonblank logical profile identifier
+     * @param profileVersion positive imported version
+     * @return immutable imported version, or empty when absent
+     */
     Optional<ImportedCertificateProfileVersion> getProfileVersion(String profileId, long profileVersion);
 
-    /** Lists imported versions in ascending version order. */
+    /**
+     * Lists imported versions in ascending version order.
+     *
+     * @param profileId nonblank logical profile identifier
+     * @return immutable finite list ordered by version
+     */
     List<ImportedCertificateProfileVersion> listProfileVersions(String profileId);
 
-    /** Atomically activates one imported version. */
+    /**
+     * Atomically activates one imported version.
+     *
+     * @param profileId nonblank logical profile identifier
+     * @param profileVersion positive imported version
+     * @return exact newly active profile reference
+     */
     CertificateProfileRef activateProfile(String profileId, long profileVersion);
 
-    /** Retrieves the current active reference. */
+    /**
+     * Retrieves the current active reference.
+     *
+     * @param profileId nonblank logical profile identifier
+     * @return current active reference, or empty when none is active
+     */
     Optional<CertificateProfileRef> getActiveProfileRef(String profileId);
 
-    /** Resolves the exact active version and validated runtime projection. */
+    /**
+     * Resolves the exact active version and validated runtime projection.
+     *
+     * @param profileId nonblank logical profile identifier
+     * @return validated immutable active profile
+     */
     ActiveCertificateProfile requireActiveProfile(String profileId);
 
     /**

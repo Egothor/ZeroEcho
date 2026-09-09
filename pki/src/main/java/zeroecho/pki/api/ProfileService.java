@@ -55,30 +55,62 @@ import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
  * </p>
  */
 public interface ProfileService {
-    /** Imports a bounded strict JSON profile document. */
+    /**
+     * Imports a bounded strict JSON profile document without activating it.
+     * @param jsonDocument canonical profile JSON bytes
+     * @return imported immutable profile reference
+     */
     CertificateProfileRef importProfile(byte[] jsonDocument);
 
     /**
      * Imports a strict JSON profile document without taking ownership of the
      * supplied stream.
+     * @param jsonDocument bounded profile JSON stream, left open
+     * @return imported immutable profile reference
      */
     CertificateProfileRef importProfile(InputStream jsonDocument);
 
-    /** Imports a built-in provisioning template through the same document path. */
+    /**
+     * Imports a built-in provisioning template through the same document path.
+     * @param template versioned built-in profile template
+     * @return imported immutable profile reference
+     */
     CertificateProfileRef importBuiltIn(BuiltInCertificateProfileTemplate template);
 
-    /** Explicitly activates one already imported version. */
+    /**
+     * Explicitly activates one already imported version.
+     * @param profileId nonblank logical profile identifier
+     * @param profileVersion positive imported version
+     * @return exact newly active profile reference
+     */
     CertificateProfileRef activateProfile(String profileId, long profileVersion);
 
-    /** Resolves and validates the exact active profile. */
+    /**
+     * Resolves and validates the exact active profile.
+     * @param profileId nonblank logical profile identifier
+     * @return validated immutable active profile
+     */
     ActiveCertificateProfile requireActiveProfile(String profileId);
 
-    /** Retrieves one immutable imported version for administration. */
+    /**
+     * Retrieves one immutable imported version for administration.
+     * @param profileId nonblank logical profile identifier
+     * @param profileVersion positive imported version
+     * @return imported version, or empty when absent
+     */
     Optional<ImportedCertificateProfileVersion> getImportedVersion(String profileId, long profileVersion);
 
-    /** Lists immutable imported versions for one logical profile. */
+    /**
+     * Lists immutable imported versions for one logical profile.
+     * @param profileId nonblank logical profile identifier
+     * @return immutable versions in ascending version order
+     */
     List<ImportedCertificateProfileVersion> listImportedVersions(String profileId);
 
-    /** Retrieves the current active reference without activating anything. */
+    /**
+     * Retrieves the current active reference without activating anything.
+     * @param profileId nonblank logical profile identifier
+     * @return active reference, or empty when none is active
+     */
     Optional<CertificateProfileRef> getActiveReference(String profileId);
 }

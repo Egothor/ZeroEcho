@@ -61,6 +61,10 @@ public final class JndiDns01ChallengeProvider implements AcmeChallengeProvider {
     /** Stable built-in provider identity. */
     public static final String ID = "zeroecho.dns-01.jndi.v1";
 
+    /** Creates the stateless built-in JNDI DNS-01 challenge provider. */
+    public JndiDns01ChallengeProvider() {
+    }
+
     @Override public String id() { return ID; }
     @Override public Set<AcmeState.ChallengeType> challengeTypes() { return Set.of(AcmeState.ChallengeType.DNS_01); }
 

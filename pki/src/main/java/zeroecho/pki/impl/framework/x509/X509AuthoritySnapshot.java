@@ -217,7 +217,7 @@ public final class X509AuthoritySnapshot {
             canonical = identities.resolve(parsed.canonicalForm());
         }
         return canonical.or(() -> Optional.ofNullable(aliases.get(value)))
-                .orElseThrow(() -> new IllegalArgumentException("Unknown algorithm identity"));
+                .orElseThrow(() -> new UnknownAlgorithmIdentityException("Unknown algorithm identity"));
     }
 
     /**
@@ -249,7 +249,17 @@ public final class X509AuthoritySnapshot {
         return resolver.resolve(signature, key, direction, implementation, provenance, semanticFingerprint);
     }
 
-    /** Resolves one operation through an explicitly selected role-specific binding. */
+    /**
+     * Resolves one operation through an explicitly selected role-specific binding.
+     *
+     * @param signature exact signature identity
+     * @param key exact public-key identity
+     * @param direction execution direction
+     * @param implementation optional implementation selection
+     * @param provenance explicit or default provenance
+     * @param bindingId stable role-specific binding identifier
+     * @return effective immutable selection bound to this snapshot
+     */
     public X509AlgorithmResolver.Selection resolve(AlgorithmIdentity signature, AlgorithmIdentity key,
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
             String bindingId) {
@@ -281,7 +291,19 @@ public final class X509AuthoritySnapshot {
         return new X509ExecutionPlan<>(selection, executorType.cast(executor), provenanceToken);
     }
 
-    /** Resolves and authorizes one plan through an explicit binding identity. */
+    /**
+     * Resolves and authorizes one plan through an explicit binding identity.
+     *
+     * @param <E> required executor type
+     * @param signature exact signature identity
+     * @param key exact public-key identity
+     * @param direction execution direction
+     * @param implementation optional implementation selection
+     * @param provenance explicit or default provenance
+     * @param bindingId stable role-specific binding identifier
+     * @param executorType required runtime executor type
+     * @return unforgeable process-local execution plan
+     */
     public <E> X509ExecutionPlan<E> plan(AlgorithmIdentity signature, AlgorithmIdentity key,
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
             String bindingId, Class<E> executorType) {
@@ -327,12 +349,40 @@ public final class X509AuthoritySnapshot {
                 executorType);
     }
 
-    /** Resolves a signing plan through one explicit binding. */
+    /**
+     * Resolves a signing plan through one explicit binding.
+     *
+     * @param <E> required executor type
+     * @param value canonical signature identity or approved finite alias
+     * @param bindingId stable signature-binding identifier
+     * @param executorType required runtime executor type
+     * @return exact process-local signing plan
+     */
     public <E> X509ExecutionPlan<E> planSigningWithBinding(String value, String bindingId, Class<E> executorType) {
         AlgorithmIdentity signature = resolveIdentity(value);
         AlgorithmIdentity key = bootstrapKeyFor(signature);
         return plan(signature, key, AlgorithmExecutionCapability.Direction.SIGN, Optional.empty(), "explicit",
                 bindingId, executorType);
+    }
+
+    /**
+     * Resolves a signing plan through one explicit binding and one explicit
+     * implementation. Required when several signing implementations are bound and
+     * the binding alone does not select one.
+     *
+     * @param value canonical identity or approved finite alias
+     * @param bindingId exact signature binding identifier
+     * @param implementation exact implementation identifier
+     * @param executorType required executor type
+     * @param <E> executor type
+     * @return exact process-local signing plan
+     */
+    public <E> X509ExecutionPlan<E> planSigningWithBinding(String value, String bindingId, String implementation,
+            Class<E> executorType) {
+        AlgorithmIdentity signature = resolveIdentity(value);
+        AlgorithmIdentity key = bootstrapKeyFor(signature);
+        return plan(signature, key, AlgorithmExecutionCapability.Direction.SIGN, Optional.of(implementation),
+                "explicit", bindingId, executorType);
     }
 
     /**

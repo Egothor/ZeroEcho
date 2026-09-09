@@ -74,6 +74,7 @@ final class RevocationTransitionFrameCodec {
     /* default */ static final int HEADER_BYTES = 88;
     /* default */ static final int COMMITMENT_BYTES = 32;
     /* default */ static final int MAX_COMPONENT_BYTES = 256 * 1024;
+    /* default */ static final int READ_SCRATCH_BYTES = 16 * 1024;
 
     private static final int PREAMBLE_MAGIC = 0x5A455250;
     private static final int RECORD_MAGIC = 0x5A455254;
@@ -83,7 +84,6 @@ final class RevocationTransitionFrameCodec {
     private static final int PREAMBLE_FIELDS_BYTES = PREAMBLE_BYTES - COMMITMENT_BYTES;
     private static final int HEADER_FIELDS_BYTES = HEADER_BYTES - COMMITMENT_BYTES;
     private static final int STORE_ID_BYTES = 16;
-    private static final int TRANSFER_BYTES = 16 * 1024;
     private static final long MINIMUM_GLOBAL_REVISION = 1L;
     private static final long NO_REMAINING_PAYLOAD = 0L;
     private static final int LINK_PRESENT = 1;
@@ -164,7 +164,21 @@ final class RevocationTransitionFrameCodec {
     }
 
     /* default */ ReadResult read(SeekableByteChannel channel, long recordOffset) throws IOException {
-        return WireOperations.read(channel, recordOffset);
+        try (DecodeScratch scratch = new DecodeScratch()) {
+            return read(channel, recordOffset, scratch);
+        }
+    }
+
+    /** Reads one frame with caller-owned, exclusively used decode scratch. */
+    /* default */ ReadResult read(SeekableByteChannel channel, long recordOffset, DecodeScratch scratch)
+            throws IOException {
+        Objects.requireNonNull(scratch, "scratch");
+        byte[] transfer = scratch.acquire();
+        try {
+            return WireOperations.read(channel, recordOffset, transfer);
+        } finally {
+            scratch.release();
+        }
     }
 
     private static TransitionData decodePayload(Header header, BoundedReader reader) throws IOException {
@@ -275,7 +289,8 @@ final class RevocationTransitionFrameCodec {
     }
 
     /** Finite semantic input for one transition record. */
-    /* default */ record TransitionData(
+    /* default */ @SuppressWarnings("PMD.LongVariable")
+    record TransitionData(
             long globalRevision,
             Commitment previousGlobalCommitment,
             PkiId credentialId,
@@ -556,13 +571,17 @@ final class RevocationTransitionFrameCodec {
     private static final class BoundedReader {
         private final SeekableByteChannel channel;
         private final DigestOutputStream digest;
-        private final byte[] transfer = new byte[TRANSFER_BYTES];
+        private final byte[] transfer;
         private long remaining;
 
-        private BoundedReader(SeekableByteChannel channel, long remaining, MessageDigest digest) {
+        private BoundedReader(SeekableByteChannel channel, long remaining, MessageDigest digest, byte[] transfer) {
             this.channel = channel;
             this.remaining = remaining;
             this.digest = new DigestOutputStream(OutputStream.nullOutputStream(), digest);
+            if (transfer.length != READ_SCRATCH_BYTES) {
+                throw new IllegalArgumentException("Revocation decode scratch has an invalid size");
+            }
+            this.transfer = transfer;
         }
 
         private long remaining() {
@@ -630,6 +649,49 @@ final class RevocationTransitionFrameCodec {
         }
     }
 
+    /**
+     * Caller-owned fixed decode scratch for one sequential reader. Instances are
+     * not thread-safe and must be confined to one feed and one calling thread;
+     * they expose no mutable buffer reference.
+     */
+    /* default */ static final class DecodeScratch implements AutoCloseable {
+        private byte[] transfer = new byte[READ_SCRATCH_BYTES];
+        private boolean acquired;
+
+        /** Returns the exact fixed capacity without exposing mutable storage. */
+        /* default */ int capacity() {
+            requireOpen();
+            return transfer.length;
+        }
+
+        private byte[] acquire() {
+            requireOpen();
+            if (acquired) {
+                throw new IllegalStateException("Revocation decode scratch is already in use");
+            }
+            acquired = true;
+            return transfer;
+        }
+
+        private void release() {
+            acquired = false;
+        }
+
+        /** Drops the reusable storage; repeated close is harmless. */
+        @Override public void close() {
+            if (acquired) {
+                throw new IllegalStateException("Revocation decode scratch is in use");
+            }
+            transfer = null;
+        }
+
+        private void requireOpen() {
+            if (transfer == null) {
+                throw new IllegalStateException("Revocation decode scratch is closed");
+            }
+        }
+    }
+
     /** Encodes one primitive into the reusable fixed-width scratch buffer. */
     @FunctionalInterface
     private interface PrimitiveEncoder {
@@ -675,7 +737,8 @@ final class RevocationTransitionFrameCodec {
 
     /** Structural record reader that authenticates boundaries before semantic decoding. */
     private static final class WireOperations {
-        private static ReadResult read(SeekableByteChannel channel, long recordOffset) throws IOException {
+        private static ReadResult read(SeekableByteChannel channel, long recordOffset, byte[] transfer)
+                throws IOException {
             Objects.requireNonNull(channel, "channel");
             if (recordOffset < PREAMBLE_BYTES) {
                 throw new IllegalArgumentException("Revocation record offset precedes the log preamble");
@@ -701,7 +764,7 @@ final class RevocationTransitionFrameCodec {
             if (recordEnd > channel.size()) {
                 return ReadResult.incompleteTail();
             }
-            return decodeComplete(channel, recordOffset, recordEnd, header, decoded);
+            return decodeComplete(channel, recordOffset, recordEnd, header, decoded, transfer);
         }
 
         private static ReadResult decodeComplete(
@@ -709,11 +772,12 @@ final class RevocationTransitionFrameCodec {
                 long recordOffset,
                 long recordEnd,
                 byte[] header,
-                Header decoded) throws IOException {
+                Header decoded,
+                byte[] transfer) throws IOException {
             MessageDigest recordDigest = newSha256();
             recordDigest.update(RECORD_DOMAIN);
             recordDigest.update(header);
-            BoundedReader reader = new BoundedReader(channel, decoded.payloadLength(), recordDigest);
+            BoundedReader reader = new BoundedReader(channel, decoded.payloadLength(), recordDigest, transfer);
             try {
                 TransitionData data = decodePayload(decoded, reader);
                 if (reader.remaining() != NO_REMAINING_PAYLOAD) {

@@ -39,7 +39,6 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -92,7 +91,6 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             PosixFilePermission.OWNER_WRITE);
     private static final Set<PosixFilePermission> OWNER_DIRECTORY = EnumSet.of(PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
-    private static final int BUFFER_BYTES = 16 * 1024;
     private static final int METADATA_VERSION = 1;
     private static final int OWNER_METADATA_VERSION = 2;
     private static final int MAX_OWNER_RECORD_BYTES = 1024 * 1024;
@@ -105,6 +103,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     private final ReentrantLock[] ownerLocks;
     private final ConcurrentMap<String, Integer> transactionalReservations;
     private final AtomicReference<TransactionalOwnership> transactionalOwnership;
+    private final ContentReadObserver contentReadObserver;
 
     /**
      * Creates a staged-content store.
@@ -115,8 +114,14 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
      * @throws IllegalArgumentException if {@code storeId} is blank
      */
     public FilesystemStagedContentStore(Path root, String storeId) throws IOException {
+        this(root, storeId, null);
+    }
+
+    /* default */ FilesystemStagedContentStore(Path root, String storeId, ContentReadObserver observer)
+            throws IOException {
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         this.storeId = requireStoreIdentifier(storeId);
+        this.contentReadObserver = observer;
         this.ownerLocks = new ReentrantLock[OWNER_LOCK_COUNT];
         this.transactionalReservations = new ConcurrentHashMap<>();
         this.transactionalOwnership = new AtomicReference<>(reference -> Set.of());
@@ -162,7 +167,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         if (actualLength != exact.length()) {
             throw new IOException("Staged content integrity failed: code=CONTENT_INTEGRITY_FAILED");
         }
-        return new FileContent(path, exact);
+        return new FileContent(path, exact, contentReadObserver);
     }
 
     @Override
@@ -347,6 +352,11 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     interface TransactionalOwnership {
         /** Finds every exact transactional owner for a durable content reference. */
         Set<DurableContentOwner> findOwners(DurableContentReference reference) throws IOException;
+
+        /** Tests exact transactional ownership without materializing owner identities. */
+        default boolean hasOwner(DurableContentReference reference) throws IOException {
+            return !findOwners(reference).isEmpty();
+        }
     }
 
     /** Short-lived reference-counted reservation spanning validation and commit. */
@@ -578,10 +588,12 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     private static final class FileContent implements RepeatableContent {
         private final Path path;
         private final DurableContentReference reference;
+        private final ContentReadObserver observer;
 
-        private FileContent(Path path, DurableContentReference reference) {
+        private FileContent(Path path, DurableContentReference reference, ContentReadObserver observer) {
             this.path = path;
             this.reference = reference;
+            this.observer = observer;
         }
 
         @Override
@@ -591,7 +603,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             if (!attributes.isRegularFile() || attributes.size() != reference.length()) {
                 throw new IOException("Staged content integrity failed: code=CONTENT_INTEGRITY_FAILED");
             }
-            return new VerifiedChannelInputStream(path, reference);
+            return new VerifiedChannelInputStream(path, reference, observer);
         }
 
         @Override
@@ -610,39 +622,29 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         }
     }
 
-    private static void requireDigest(FileChannel channel, DurableContentReference reference) throws IOException {
-        MessageDigest digest = sha256();
-        ByteBuffer buffer = ByteBuffer.allocate(BUFFER_BYTES);
-        long length = 0L;
-        while (channel.read(buffer) >= 0) {
-            buffer.flip();
-            int count = buffer.remaining();
-            if (count != 0) {
-                digest.update(buffer);
-                length = Math.addExact(length, count);
-            }
-            buffer.clear();
-        }
-        String actual = HexFormat.of().formatHex(digest.digest());
-        if (length != reference.length() || !MessageDigest.isEqual(actual.getBytes(StandardCharsets.US_ASCII),
-                reference.sha256().getBytes(StandardCharsets.US_ASCII))) {
-            throw new IOException("Staged content integrity failed: code=CONTENT_INTEGRITY_FAILED");
-        }
-    }
-
-    /** Read stream retaining the verified file identity through its open descriptor. */
+    /** Read stream validating the retained file identity during caller consumption. */
+    @SuppressWarnings("PMD.AvoidMessageDigestField")
     private static final class VerifiedChannelInputStream extends InputStream {
         private final FileChannel channel;
         private final InputStream delegate;
+        private final DurableContentReference reference;
+        private final ContentReadObserver observer;
+        private final MessageDigest digest = sha256();
+        private long length;
+        private boolean verified;
 
-        private VerifiedChannelInputStream(Path path, DurableContentReference reference) throws IOException {
+        private VerifiedChannelInputStream(Path path, DurableContentReference reference, ContentReadObserver observer)
+                throws IOException {
             super();
+            this.reference = reference;
+            this.observer = observer;
             channel = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
             boolean initialized = false;
             try {
-                requireDigest(channel, reference);
-                channel.position(0L);
                 delegate = Channels.newInputStream(channel);
+                if (observer != null) {
+                    observer.opened();
+                }
                 initialized = true;
             } finally {
                 if (!initialized) {
@@ -653,12 +655,30 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
         @Override
         public int read() throws IOException {
-            return delegate.read();
+            int value = delegate.read();
+            if (value < 0) {
+                verifyAtEnd();
+            } else {
+                digest.update((byte) value);
+                length = Math.addExact(length, 1L);
+                observeRead(1);
+                rejectExcessLength();
+            }
+            return value;
         }
 
         @Override
         public int read(byte[] bytes, int offset, int length) throws IOException {
-            return delegate.read(bytes, offset, length);
+            int count = delegate.read(bytes, offset, length);
+            if (count < 0) {
+                verifyAtEnd();
+            } else if (count > 0) {
+                digest.update(bytes, offset, count);
+                this.length = Math.addExact(this.length, count);
+                observeRead(count);
+                rejectExcessLength();
+            }
+            return count;
         }
 
         @Override
@@ -671,6 +691,48 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                 // Transfer to try-with-resources solely for failed construction cleanup.
             }
         }
+
+        private void rejectExcessLength() throws IOException {
+            if (length > reference.length()) {
+                throw integrityFailure();
+            }
+        }
+
+        private void observeRead(int count) {
+            if (observer != null) {
+                observer.read(count);
+            }
+        }
+
+        private void verifyAtEnd() throws IOException {
+            if (verified) {
+                return;
+            }
+            verified = true;
+            byte[] actual = digest.digest();
+            byte[] expected = HexFormat.of().parseHex(reference.sha256());
+            try {
+                if (length != reference.length() || !MessageDigest.isEqual(actual, expected)) {
+                    throw integrityFailure();
+                }
+            } finally {
+                java.util.Arrays.fill(actual, (byte) 0);
+                java.util.Arrays.fill(expected, (byte) 0);
+            }
+        }
+
+        private static IOException integrityFailure() {
+            return new IOException("Staged content integrity failed: code=CONTENT_INTEGRITY_FAILED");
+        }
+    }
+
+    /** Package-local instrumentation seam for proving production stream I/O shape. */
+    /* default */ interface ContentReadObserver {
+        /** Records one successful payload-channel open. */
+        void opened();
+
+        /** Records payload bytes returned to the consumer. */
+        void read(int count);
     }
 
     private Path resolveOwned(String fileName) {
@@ -990,7 +1052,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         private static boolean hasTransactionalAuthority(FilesystemStagedContentStore store,
                 DurableContentReference reference) throws IOException {
             return store.transactionalReservations.containsKey(reference.contentId())
-                    || !store.transactionalOwnership.get().findOwners(reference).isEmpty();
+                    || store.transactionalOwnership.get().hasOwner(reference);
         }
 
         private static void retireIfUnowned(FilesystemStagedContentStore store,

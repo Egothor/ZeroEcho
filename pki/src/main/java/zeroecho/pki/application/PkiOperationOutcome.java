@@ -35,22 +35,49 @@ package zeroecho.pki.application;
 
 import java.util.Objects;
 
-/** Closed success-or-safe-failure outcome returned by the operation executor. */
-public sealed interface PkiOperationOutcome permits PkiOperationOutcome.Success, PkiOperationOutcome.Failure {
+/** Closed completed, durable-pending, or safe-failure outcome returned by the operation executor. */
+public sealed interface PkiOperationOutcome permits PkiOperationOutcome.Completed,
+        PkiOperationOutcome.Pending, PkiOperationOutcome.Failed {
 
-    /** Successful operation outcome. */
-    record Success(PkiOperationResult result) implements PkiOperationOutcome {
+    /**
+     * Successful operation outcome.
+     *
+     * @param result safe transport-neutral result
+     */
+    record Completed(PkiOperationResult result) implements PkiOperationOutcome {
         /** Validates the result. */
-        public Success {
+        public Completed {
             Objects.requireNonNull(result, "result");
         }
     }
 
-    /** Safely classified operation failure without a throwable graph. */
-    record Failure(String operationName, PkiOperationFailure classification, String code)
+    /**
+     * Durable operation that yielded without retaining its caller thread.
+     *
+     * @param operationName stable semantic operation name
+     * @param operationId private durable identifier
+     */
+    record Pending(String operationName, zeroecho.pki.api.PkiId operationId) implements PkiOperationOutcome {
+        /** Validates the stable operation and durable private identifier. */
+        public Pending {
+            if (operationName == null || operationName.isBlank()) {
+                throw new IllegalArgumentException("operationName must not be blank");
+            }
+            Objects.requireNonNull(operationId, "operationId");
+        }
+    }
+
+    /**
+     * Safely classified operation failure without a throwable graph.
+     *
+     * @param operationName stable semantic name
+     * @param classification closed failure class
+     * @param code stable non-sensitive code
+     */
+    record Failed(String operationName, PkiOperationFailure classification, String code)
             implements PkiOperationOutcome {
         /** Validates stable, non-sensitive failure data. */
-        public Failure {
+        public Failed {
             if (operationName == null || operationName.isBlank() || code == null || !code.matches("[A-Z0-9_]{3,64}")) {
                 throw new IllegalArgumentException("Operation failure identity or code is invalid");
             }

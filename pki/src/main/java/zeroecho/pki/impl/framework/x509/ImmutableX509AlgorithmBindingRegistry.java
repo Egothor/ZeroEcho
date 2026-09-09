@@ -113,7 +113,13 @@ public final class ImmutableX509AlgorithmBindingRegistry implements X509Algorith
         return new ImmutableX509AlgorithmBindingRegistry(List.copyOf(ordered));
     }
 
-    /** Tests whether one OID is strictly below or exactly at an authorized root. */
+    /**
+     * Tests whether one OID is strictly below or exactly at an authorized root.
+     *
+     * @param oid object identifier to test
+     * @param root authorized object-identifier root
+     * @return {@code true} when {@code oid} equals or descends from {@code root}
+     */
     public static boolean isWithin(String oid, String root) {
         Objects.requireNonNull(oid, "oid");
         Objects.requireNonNull(root, "root");

@@ -1,0 +1,6 @@
+# Pinned documentation toolchain for the ZeroEcho PKI site.
+# Build:  python -m venv .venv && .venv/Scripts/pip install -r documentation/requirements.txt
+#         mkdocs build --strict
+mkdocs==1.6.1
+mkdocs-material==9.7.7
+pymdown-extensions==11.0.2

@@ -33,29 +33,19 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.util.Arrays;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.ASN1OctetString;
-import org.bouncycastle.asn1.ASN1String;
-import org.bouncycastle.asn1.DERIA5String;
-import org.bouncycastle.asn1.DERPrintableString;
-import org.bouncycastle.asn1.DERUTF8String;
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x500.X500NameBuilder;
-import org.bouncycastle.asn1.x500.style.BCStyle;
-import org.bouncycastle.asn1.x509.BasicConstraints;
-import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.GeneralName;
-import org.bouncycastle.asn1.x509.GeneralNames;
-import org.bouncycastle.asn1.x509.KeyPurposeId;
-import org.bouncycastle.asn1.x509.KeyUsage;
-import org.bouncycastle.cert.X509CertificateHolder;
+import javax.security.auth.x500.X500Principal;
 
+import zeroecho.pkix.DirectoryStringType;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.RelativeDistinguishedName;
 import zeroecho.pki.api.profile.LeafKeyUsage;
 import zeroecho.pki.api.request.SubjectAlternativeName;
 import zeroecho.pki.api.request.SubjectRdn;
@@ -63,9 +53,23 @@ import zeroecho.pki.impl.core.ValidatedCertificateRequest;
 
 /**
  * Exact X.509 representation and postcondition helpers for validated leaf
- * profiles.
+ * profiles, expressed in terms of the ZeroEcho PKIX library and standard JDK
+ * certificate accessors.
  */
+// Dotted literals in this class are ASN.1 object identifiers, never network endpoints.
+@SuppressWarnings("PMD.AvoidUsingHardCodedIP")
 public final class BcX509ProfileSupport {
+
+    private static final String OID_BASIC_CONSTRAINTS = "2.5.29.19";
+    private static final String OID_KEY_USAGE = "2.5.29.15";
+    private static final String OID_EXTENDED_KEY_USAGE = "2.5.29.37";
+    private static final String OID_SUBJECT_ALTERNATIVE_NAME = "2.5.29.17";
+
+    private static final int SAN_RFC822 = 1;
+    private static final int SAN_DNS = 2;
+    private static final int SAN_URI = 6;
+    private static final int SAN_IP = 7;
+
     private BcX509ProfileSupport() {
     }
 
@@ -73,149 +77,180 @@ public final class BcX509ProfileSupport {
      * Builds the exact ordered subject name.
      *
      * @param rdns validated ordered RDNs
-     * @return exact X.509 name
+     * @return exact X.500 name
      */
     // ASN.1 value construction is necessarily one object per approved RDN.
-    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
-    public static X500Name subject(List<SubjectRdn> rdns) {
-        X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
+    public static X500Principal subject(List<SubjectRdn> rdns) {
+        List<RelativeDistinguishedName> converted = new ArrayList<>(rdns.size());
         for (SubjectRdn rdn : rdns) {
-            builder.addRDN(new ASN1ObjectIdentifier(rdn.type().oid()), subjectValue(rdn));
+            converted.add(new RelativeDistinguishedName(rdn.type().oid(), rdn.value(), stringType(rdn)));
         }
-        return builder.build();
+        return Pkix.distinguishedName(converted);
     }
 
-    private static org.bouncycastle.asn1.ASN1Encodable subjectValue(SubjectRdn rdn) {
+    /**
+     * Renders the ordered subject name as its canonical string form, matching the
+     * representation used for {@code SubjectRef} identity throughout the runtime.
+     *
+     * @param rdns validated ordered RDNs
+     * @return the canonical distinguished-name string
+     */
+    public static String subjectRefString(List<SubjectRdn> rdns) {
+        List<RelativeDistinguishedName> converted = new ArrayList<>(rdns.size());
+        for (SubjectRdn rdn : rdns) {
+            converted.add(new RelativeDistinguishedName(rdn.type().oid(), rdn.value(), stringType(rdn)));
+        }
+        return Pkix.distinguishedNameString(converted);
+    }
+
+    private static DirectoryStringType stringType(SubjectRdn rdn) {
         return switch (rdn.type()) {
-            case COUNTRY_NAME, SERIAL_NUMBER -> new DERPrintableString(rdn.value(), true);
-            case EMAIL_ADDRESS -> new DERIA5String(rdn.value(), true);
+            case COUNTRY_NAME, SERIAL_NUMBER -> DirectoryStringType.PRINTABLE;
+            case EMAIL_ADDRESS -> DirectoryStringType.IA5;
             case COMMON_NAME, ORGANIZATION_NAME, ORGANIZATIONAL_UNIT_NAME, STATE_OR_PROVINCE_NAME, LOCALITY_NAME,
                     PSEUDONYM ->
-                new DERUTF8String(rdn.value());
+                DirectoryStringType.UTF8;
         };
     }
 
     /**
      * Verifies the complete allowed leaf extension set and exact values.
      *
-     * @param holder  issued certificate
-     * @param request validated request
+     * @param certificate issued certificate
+     * @param request     validated request
      * @return {@code true} only when every extension matches
      */
-    // Malformed post-signing ASN.1 is a false postcondition, not an exposed parser
-    // failure.
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    public static boolean matchesLeafExtensions(X509CertificateHolder holder, ValidatedCertificateRequest request) {
+    // Malformed post-signing structure is a false postcondition, not an exposed
+    // parser failure.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
+    public static boolean matchesLeafExtensions(X509Certificate certificate, ValidatedCertificateRequest request) {
         try {
-            Set<ASN1ObjectIdentifier> expectedOids = new LinkedHashSet<>();
-            expectedOids.add(Extension.basicConstraints);
+            Set<String> expectedOids = new LinkedHashSet<>();
+            expectedOids.add(OID_BASIC_CONSTRAINTS);
             if (!request.keyUsages().isEmpty()) {
-                expectedOids.add(Extension.keyUsage);
+                expectedOids.add(OID_KEY_USAGE);
             }
             if (!request.extendedKeyUsages().isEmpty()) {
-                expectedOids.add(Extension.extendedKeyUsage);
+                expectedOids.add(OID_EXTENDED_KEY_USAGE);
             }
             if (!request.subjectAlternativeNames().isEmpty()) {
-                expectedOids.add(Extension.subjectAlternativeName);
+                expectedOids.add(OID_SUBJECT_ALTERNATIVE_NAME);
             }
-            ASN1ObjectIdentifier[] encodedOids = holder.getExtensions().getExtensionOIDs();
-            Set<ASN1ObjectIdentifier> actualOids = new LinkedHashSet<>(Arrays.asList(encodedOids));
-            if (actualOids.size() != encodedOids.length || !actualOids.equals(expectedOids)) {
+            Set<String> actualOids = new LinkedHashSet<>();
+            if (certificate.getCriticalExtensionOIDs() != null) {
+                actualOids.addAll(certificate.getCriticalExtensionOIDs());
+            }
+            if (certificate.getNonCriticalExtensionOIDs() != null) {
+                actualOids.addAll(certificate.getNonCriticalExtensionOIDs());
+            }
+            if (!actualOids.equals(expectedOids)) {
                 return false;
             }
-            Extension basic = holder.getExtension(Extension.basicConstraints);
-            if (basic == null || basic.isCritical() != request.basicConstraintsCritical()
-                    || BasicConstraints.getInstance(basic.getParsedValue()).isCA()) {
+            // basicConstraints present, matching criticality, non-CA.
+            if (certificate.getBasicConstraints() != -1
+                    || isCritical(certificate, OID_BASIC_CONSTRAINTS) != request.basicConstraintsCritical()) {
                 return false;
             }
-            if (!matchesKeyUsage(holder, request) || !matchesExtendedKeyUsage(holder, request)) {
-                return false;
-            }
-            return matchesSubjectAlternativeNames(holder, request);
-        } catch (RuntimeException exception) {
+            return matchesKeyUsage(certificate, request) && matchesExtendedKeyUsage(certificate, request)
+                    && matchesSubjectAlternativeNames(certificate, request);
+        } catch (RuntimeException | java.security.cert.CertificateParsingException exception) {
             return false;
         }
     }
 
-    private static boolean matchesKeyUsage(X509CertificateHolder holder, ValidatedCertificateRequest request) {
-        Extension extension = holder.getExtension(Extension.keyUsage);
+    private static boolean isCritical(X509Certificate certificate, String oid) {
+        Set<String> critical = certificate.getCriticalExtensionOIDs();
+        return critical != null && critical.contains(oid);
+    }
+
+    private static boolean matchesKeyUsage(X509Certificate certificate, ValidatedCertificateRequest request) {
+        boolean[] actual = certificate.getKeyUsage();
         if (request.keyUsages().isEmpty()) {
-            return extension == null;
+            return actual == null;
         }
-        if (extension == null || extension.isCritical() != request.keyUsageCritical()) {
+        if (actual == null || isCritical(certificate, OID_KEY_USAGE) != request.keyUsageCritical()) {
             return false;
         }
-        KeyUsage actual = KeyUsage.getInstance(extension.getParsedValue());
-        KeyUsage expected = new KeyUsage(toKeyUsageBits(request.keyUsages()));
-        return Arrays.equals(actual.getBytes(), expected.getBytes()) && actual.getPadBits() == expected.getPadBits();
-    }
-
-    private static boolean matchesExtendedKeyUsage(X509CertificateHolder holder, ValidatedCertificateRequest request) {
-        Extension extension = holder.getExtension(Extension.extendedKeyUsage);
-        if (request.extendedKeyUsages().isEmpty()) {
-            return extension == null;
+        boolean[] expected = new boolean[9];
+        for (LeafKeyUsage usage : request.keyUsages()) {
+            expected[keyUsageBit(usage)] = true;
         }
-        if (extension == null || extension.isCritical() != request.extendedKeyUsageCritical()) {
-            return false;
+        for (int index = 0; index < 9; index++) {
+            boolean present = index < actual.length && actual[index];
+            if (present != expected[index]) {
+                return false;
+            }
         }
-        ExtendedKeyUsage actual = ExtendedKeyUsage.getInstance(extension.getParsedValue());
-        KeyPurposeId[] actualUsages = actual.getUsages();
-        Set<String> actualOids = new LinkedHashSet<>();
-        for (KeyPurposeId purpose : actualUsages) {
-            actualOids.add(purpose.getId());
-        }
-        Set<String> expectedOids = new LinkedHashSet<>();
-        request.extendedKeyUsages().forEach(value -> expectedOids.add(value.oid()));
-        return actualOids.size() == actualUsages.length && actualOids.equals(expectedOids);
-    }
-
-    private static boolean matchesSubjectAlternativeNames(X509CertificateHolder holder,
-            ValidatedCertificateRequest request) {
-        Extension extension = holder.getExtension(Extension.subjectAlternativeName);
-        if (request.subjectAlternativeNames().isEmpty()) {
-            return extension == null;
-        }
-        if (extension == null || extension.isCritical() != request.subjectAlternativeNameCritical()) {
-            return false;
-        }
-        GeneralName[] names = GeneralNames.getInstance(extension.getParsedValue()).getNames();
-        if (names.length != request.subjectAlternativeNames().size()) {
-            return false;
-        }
-        for (int index = 0; index < names.length; index++) {
-            if (!parse(names[index]).equals(request.subjectAlternativeNames().get(index))) {
+        // Reject any usage bit beyond bit 8.
+        for (int index = 9; index < actual.length; index++) {
+            if (actual[index]) {
                 return false;
             }
         }
         return true;
     }
 
-    private static SubjectAlternativeName parse(GeneralName name) {
-        return switch (name.getTagNo()) {
-            case GeneralName.dNSName -> new SubjectAlternativeName.DnsName(((ASN1String) name.getName()).getString());
-            case GeneralName.iPAddress ->
-                new SubjectAlternativeName.IpAddress(ASN1OctetString.getInstance(name.getName()).getOctets());
-            case GeneralName.uniformResourceIdentifier ->
-                new SubjectAlternativeName.UriName(((ASN1String) name.getName()).getString());
-            case GeneralName.rfc822Name ->
-                new SubjectAlternativeName.Rfc822Name(((ASN1String) name.getName()).getString());
+    private static int keyUsageBit(LeafKeyUsage usage) {
+        return switch (usage) {
+            case DIGITAL_SIGNATURE -> 0;
+            case CONTENT_COMMITMENT -> 1;
+            case KEY_ENCIPHERMENT -> 2;
+            case DATA_ENCIPHERMENT -> 3;
+            case KEY_AGREEMENT -> 4;
+            case ENCIPHER_ONLY -> 7;
+            case DECIPHER_ONLY -> 8;
+        };
+    }
+
+    private static boolean matchesExtendedKeyUsage(X509Certificate certificate, ValidatedCertificateRequest request)
+            throws java.security.cert.CertificateParsingException {
+        List<String> actual = certificate.getExtendedKeyUsage();
+        if (request.extendedKeyUsages().isEmpty()) {
+            return actual == null;
+        }
+        if (actual == null || isCritical(certificate, OID_EXTENDED_KEY_USAGE) != request.extendedKeyUsageCritical()) {
+            return false;
+        }
+        Set<String> actualOids = new LinkedHashSet<>(actual);
+        Set<String> expectedOids = new LinkedHashSet<>();
+        request.extendedKeyUsages().forEach(value -> expectedOids.add(value.oid()));
+        return actualOids.size() == actual.size() && actualOids.equals(expectedOids);
+    }
+
+    private static boolean matchesSubjectAlternativeNames(X509Certificate certificate,
+            ValidatedCertificateRequest request) throws java.security.cert.CertificateParsingException {
+        java.util.Collection<List<?>> names = certificate.getSubjectAlternativeNames();
+        if (request.subjectAlternativeNames().isEmpty()) {
+            return names == null;
+        }
+        if (names == null || isCritical(certificate, OID_SUBJECT_ALTERNATIVE_NAME)
+                != request.subjectAlternativeNameCritical()) {
+            return false;
+        }
+        List<SubjectAlternativeName> actual = new ArrayList<>(names.size());
+        for (List<?> entry : names) {
+            actual.add(parse(entry));
+        }
+        return actual.equals(request.subjectAlternativeNames());
+    }
+
+    private static SubjectAlternativeName parse(List<?> entry) {
+        int type = ((Number) entry.get(0)).intValue();
+        Object value = entry.get(1);
+        return switch (type) {
+            case SAN_DNS -> new SubjectAlternativeName.DnsName((String) value);
+            case SAN_URI -> new SubjectAlternativeName.UriName((String) value);
+            case SAN_RFC822 -> new SubjectAlternativeName.Rfc822Name((String) value);
+            case SAN_IP -> new SubjectAlternativeName.IpAddress(ipOctets((String) value));
             default -> throw new IllegalArgumentException("Unsupported SAN type");
         };
     }
 
-    private static int toKeyUsageBits(Set<LeafKeyUsage> usages) {
-        int bits = 0;
-        for (LeafKeyUsage usage : usages) {
-            bits |= switch (usage) {
-                case DIGITAL_SIGNATURE -> KeyUsage.digitalSignature;
-                case CONTENT_COMMITMENT -> KeyUsage.nonRepudiation;
-                case KEY_ENCIPHERMENT -> KeyUsage.keyEncipherment;
-                case DATA_ENCIPHERMENT -> KeyUsage.dataEncipherment;
-                case KEY_AGREEMENT -> KeyUsage.keyAgreement;
-                case ENCIPHER_ONLY -> KeyUsage.encipherOnly;
-                case DECIPHER_ONLY -> KeyUsage.decipherOnly;
-            };
+    private static byte[] ipOctets(String literal) {
+        try {
+            return InetAddress.getByName(literal).getAddress();
+        } catch (UnknownHostException exception) {
+            throw new IllegalArgumentException("Malformed IP SAN literal", exception);
         }
-        return bits;
     }
 }

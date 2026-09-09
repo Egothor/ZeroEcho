@@ -1,0 +1,145 @@
+###############################################################################
+# ZeroEcho PKI — reference Compose stack (pki-server + nginx edge).
+#
+#   browser --mTLS--> nginx (edge) --mTLS--> pki-server (admin listener)
+#
+# POSIX-ONLY. The store/keyring volumes MUST be POSIX filesystems (see
+# deploy/README.md and docs/windows-portability-analysis.md). Secrets are passed
+# ONLY via environment variables; nothing secret is baked into an image.
+#
+# Fill in host paths and secrets via deploy/.env (copy from deploy/.env.example).
+# NOT run/validated with a container engine here — YAML parse-checked only.
+###############################################################################
+name: zeroecho-pki
+
+services:
+  pki-server:
+    build:
+      context: ../..
+      dockerfile: deploy/pki-server/Dockerfile
+    image: zeroecho/pki-server:latest
+    restart: unless-stopped
+    # No published ports: only nginx (same private network) reaches the admin
+    # listener. Expose is documentation-only.
+    expose:
+      - "8443"
+    environment:
+      # Keyring unlock + TLS store passwords are resolved BY NAME from the
+      # process environment (see server-config.json *PasswordEnvironment fields
+      # and runtime.keyUnlockEnvironmentVariable / signing.unlockEnvironmentVariable).
+      ZEROECHO_KEYRING_PASSWORD: "${ZEROECHO_KEYRING_PASSWORD:?set in .env}"
+      ZEROECHO_TLS_KEYSTORE_PASSWORD: "${ZEROECHO_TLS_KEYSTORE_PASSWORD:?set in .env}"
+      ZEROECHO_PROXY_TRUSTSTORE_PASSWORD: "${ZEROECHO_PROXY_TRUSTSTORE_PASSWORD:?set in .env}"
+      ZEROECHO_ADMIN_TRUSTSTORE_PASSWORD: "${ZEROECHO_ADMIN_TRUSTSTORE_PASSWORD:?set in .env}"
+      # Paths the entrypoint uses (defaults match the image; override if needed).
+      ZEROECHO_SERVER_CONFIG: /etc/zeroecho/server-config.json
+      ZEROECHO_PROFILES_DIR: /etc/zeroecho/profiles
+      ZEROECHO_STORE_DIR: /var/lib/zeroecho/store
+      ZEROECHO_AUDIT_DIR: /var/lib/zeroecho/audit
+      ZEROECHO_ADMIN_PORT: "8443"
+    volumes:
+      # Read-only configuration.
+      - type: bind
+        source: ${ZEROECHO_SERVER_CONFIG_FILE:?path to server-config.json}
+        target: /etc/zeroecho/server-config.json
+        read_only: true
+      - type: bind
+        source: ${ZEROECHO_PROFILES_HOST_DIR:?path to certificate-profiles dir}
+        target: /etc/zeroecho/profiles
+        read_only: true
+      # Read-only TLS material referenced by server-config.json (paths inside the
+      # config must resolve under the container working dir /var/lib/zeroecho, so
+      # reference them as e.g. "tls/server-identity.p12"; mount them here).
+      - type: bind
+        source: ${ZEROECHO_TLS_HOST_DIR:?path to pki-server TLS material dir}
+        target: /var/lib/zeroecho/tls
+        read_only: true
+      # Read-only health-probe client identity (for the container HEALTHCHECK).
+      - type: bind
+        source: ${ZEROECHO_HEALTH_HOST_DIR:?path to health-probe client identity dir}
+        target: /etc/zeroecho/health
+        read_only: true
+      # Persistent state. Store and keyring are SEPARATE volumes on purpose.
+      - store:/var/lib/zeroecho/store
+      - keyring:/var/lib/zeroecho/keyring
+      - artifacts:/var/lib/zeroecho/artifacts
+      - audit:/var/lib/zeroecho/audit
+    # The image already runs as the non-root 'zeroecho' user (uid 10001).
+    read_only: false
+    tmpfs:
+      - /tmp
+    networks:
+      - pki
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - --max-time
+        - "4"
+        - --cert
+        - /etc/zeroecho/health/health-client.pem
+        - --key
+        - /etc/zeroecho/health/health-client-key.pem
+        - --cacert
+        - /etc/zeroecho/health/health-ca.pem
+        - https://127.0.0.1:8443/health/ready
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  nginx:
+    build:
+      context: ../..
+      dockerfile: deploy/nginx/Dockerfile
+    image: zeroecho/pki-nginx:latest
+    restart: unless-stopped
+    depends_on:
+      pki-server:
+        condition: service_healthy
+    ports:
+      - "${NGINX_PUBLISH_HTTPS:-8443}:8443"
+      - "${NGINX_PUBLISH_HTTP:-8080}:80"
+    environment:
+      NGINX_SERVER_NAME: "${NGINX_SERVER_NAME:?public UI hostname}"
+      NGINX_HTTPS_PORT: "8443"
+      PKI_UPSTREAM: "pki-server:8443"
+      PKI_PROXY_SSL_NAME: "${PKI_PROXY_SSL_NAME:-zeroecho-admin}"
+    volumes:
+      - type: bind
+        source: ${NGINX_EDGE_TLS_DIR:?edge TLS dir (edge.crt, edge.key)}
+        target: /etc/nginx/tls/edge
+        read_only: true
+      - type: bind
+        source: ${NGINX_ADMIN_TRUST_DIR:?admin client trust dir (admin-ca-bundle.pem)}
+        target: /etc/nginx/tls/admin-trust
+        read_only: true
+      - type: bind
+        source: ${NGINX_UPSTREAM_TLS_DIR:?upstream mTLS dir (proxy-client.crt/.key, pki-server-ca.pem)}
+        target: /etc/nginx/tls/upstream
+        read_only: true
+    networks:
+      - pki
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "http://127.0.0.1:8080/nginx-health"]
+      interval: 15s
+      timeout: 4s
+      retries: 5
+      start_period: 10s
+
+# Private bridge network: only nginx is published to the host; the admin
+# listener is reachable solely from within this network.
+networks:
+  pki:
+    driver: bridge
+
+# Named volumes. On first mount of an EMPTY named volume, Docker copies the
+# image's directory ownership (uid 10001 / mode 0700 for store & keyring), so the
+# non-root server can write. Back these with durable, POSIX storage in
+# production (see deploy/README.md for persistence guidance).
+volumes:
+  store:
+  keyring:
+  artifacts:
+  audit:

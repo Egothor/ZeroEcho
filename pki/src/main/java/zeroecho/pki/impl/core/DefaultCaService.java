@@ -33,14 +33,12 @@
  ******************************************************************************/
 package zeroecho.pki.impl.core;
 
-import java.io.IOException;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -48,16 +46,16 @@ import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x509.BasicConstraints;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.KeyUsage;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.cert.CertException;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.X509v3CertificateBuilder;
-import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+import java.security.cert.X509Certificate;
+
+import javax.security.auth.x500.X500Principal;
+
+import zeroecho.pkix.BasicConstraints;
+import zeroecho.pkix.KeyUsage;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.cert.CertificateBuilder;
+
+import zeroecho.core.io.CancellationSignal;
 
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
@@ -69,6 +67,7 @@ import zeroecho.pki.api.IssuerRef;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.SigningExecutionException;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
@@ -79,6 +78,9 @@ import zeroecho.pki.api.ca.CaKeyRotationCommand;
 import zeroecho.pki.api.ca.CaKind;
 import zeroecho.pki.api.ca.CaQuery;
 import zeroecho.pki.api.ca.CaRecord;
+import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.ca.IssuerGeneration;
+import zeroecho.pki.api.profile.CertificateProfileRef;
 import zeroecho.pki.api.ca.CaRolloverCommand;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.ca.IntermediateCertIssueCommand;
@@ -92,6 +94,10 @@ import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileKind;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
+import zeroecho.pki.impl.core.async.DomainCommandEncoding;
+import zeroecho.pki.impl.core.async.DomainContinuationTemplate;
+import zeroecho.pki.impl.core.async.PendingSigningOperation;
+import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.impl.framework.x509.bc.PkiBusContentSigner;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
@@ -154,12 +160,14 @@ import zeroecho.pki.spi.store.PkiStore;
  * model.
  * </p>
  */
-// PMD cannot infer that retaining boundary causes would violate the redaction contract.
-@SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.CyclomaticComplexity", "PMD.ExcessiveParameterList",
-        "PMD.PreserveStackTrace" })
+// The service keeps CA lifecycle, credential, policy, audit, and signing collaborators together so
+// state transitions remain one boundary; retaining boundary causes would also violate redaction.
+@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.ExcessiveParameterList",
+        "PMD.PreserveStackTrace", "PMD.CouplingBetweenObjects" })
 public final class DefaultCaService implements CaService {
 
     private static final Logger LOG = Logger.getLogger(DefaultCaService.class.getName());
+    private static final String CANCELLATION_PARAMETER = "cancellation";
     private static final String CREATE_ROOT_REJECTED = "CREATE_ROOT_REJECTED";
     private static final String CREATE_INT_REJECTED = "CREATE_INTERMEDIATE_REJECTED";
     private static final String ISSUE_INT_REJECTED = "ISSUE_INTERMEDIATE_REJECTED";
@@ -216,6 +224,8 @@ public final class DefaultCaService implements CaService {
      *                             must not be {@code null}
      * @param statusResolver       authoritative runtime credential-status resolver;
      *                             must not be {@code null}
+     * @param profileService authoritative certificate-profile service
+     * @param clock authoritative service clock
      * @param signatureAlgorithmId non-blank JCA signature algorithm identifier used
      *                             for certificate signing requests initiated by
      *                             this service
@@ -274,10 +284,12 @@ public final class DefaultCaService implements CaService {
             throw new IllegalArgumentException("signingTtl must be positive");
         }
         AlgorithmIdentity signatureIdentity = signingBus.authority().resolveIdentity(signatureAlgorithmId);
+        String implementation = signingBus.defaultSigningImplementationId();
         X509ExecutionPlan<SignatureWorkflow> plan = signatureBindingId.isPresent()
                 ? signingBus.authority().planSigningWithBinding(signatureIdentity.canonicalForm(),
-                        signatureBindingId.orElseThrow(), SignatureWorkflow.class)
-                : signingBus.authority().planSigning(signatureIdentity.canonicalForm(), SignatureWorkflow.class);
+                        signatureBindingId.orElseThrow(), implementation, SignatureWorkflow.class)
+                : signingBus.authority().planSigning(signatureIdentity.canonicalForm(), implementation,
+                        SignatureWorkflow.class);
         signingBus.authority().authorize(plan, plan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
         this.signatureIdentity = signatureIdentity;
         this.proofGate = new CaProofGate(publicKeyResolver, signingBus, auditSink, signatureIdentity,
@@ -314,6 +326,12 @@ public final class DefaultCaService implements CaService {
      */
     @Override
     public PkiId createRoot(CaCreateCommand command) {
+        return createRoot(command, CancellationSignal.NONE);
+    }
+
+    @Override
+    public PkiId createRoot(CaCreateCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, CANCELLATION_PARAMETER);
         Objects.requireNonNull(command, "command"); // NOPMD
         ActiveCertificateProfile activeProfile = profileService.requireActiveProfile(command.profileId());
         CaCertificateProfileValidator.requireProfileShape(activeProfile, CertificateProfileKind.ROOT_CA,
@@ -334,28 +352,39 @@ public final class DefaultCaService implements CaService {
                 ValidatedCaCertificateRequest.Operation.CREATE_ROOT, activeProfile, CertificateProfileKind.ROOT_CA,
                 command.formatId(), new PkiId("ca:pending-root"), new PkiId("ca:pending-root"), command.subjectRef(),
                 spki, Optional.empty(), evaluationTime, Optional.empty(), serial, authority);
-        SubjectPublicKeyInfo rootPublicKeyInfo = proofGate.parseRootSpki(spki, command.formatId());
+        byte[] rootPublicKeyInfo = proofGate.parseRootSpki(spki, command.formatId());
         CaProofGate.ManagedKeyProof proof = proofGate.proveManagedKey(keyRef, command.formatId(), CREATE_ROOT_REJECTED,
-                Optional.empty());
+                Optional.empty(), cancellation);
         requireSameManagedKey(spki, proof.exactPublicKey(), CREATE_ROOT_REJECTED, command.formatId(), Optional.empty());
 
         Validity validity = request.validity();
-        X500Name dn = zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subject(request.subjectRdns());
+        X500Principal dn = zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subject(request.subjectRdns());
 
-        X509v3CertificateBuilder b = new X509v3CertificateBuilder(dn, serial, Date.from(validity.notBefore()),
-                Date.from(validity.notAfter()), dn, rootPublicKeyInfo);
+        CertificateBuilder b = Pkix.certificateBuilder().issuer(dn).serialNumber(serial)
+                .validity(validity.notBefore(), validity.notAfter()).subject(dn).publicKeyInfo(rootPublicKeyInfo);
         try {
-            b.addExtension(Extension.basicConstraints, request.policy().basicConstraintsCritical(),
-                    new BasicConstraints(request.policy().pathLengthConstraint()));
-            b.addExtension(Extension.keyUsage, request.policy().keyUsageCritical(),
-                    new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+            b.basicConstraints(BasicConstraints.ca(request.policy().pathLengthConstraint()),
+                    request.policy().basicConstraintsCritical());
+            b.keyUsage(java.util.EnumSet.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN),
+                    request.policy().keyUsageCritical());
         } catch (Exception ex) {
             throw new PkiException("Root extension construction failed: code=ROOT_EXTENSION_BUILD_FAILED");
         }
 
-        X509CertificateHolder cert;
-        try (PkiBusContentSigner signer = proofGate.signer(proof, request.algorithmBindingPolicy())) {
+        X509Certificate cert;
+        DomainContinuationTemplate domain = DomainCommandEncoding.template(DomainContinuationStore.Kind.CA,
+                "CREATE_ROOT", command.formatId().value(), command.subjectRef().value(), command.profileId(),
+                keyRef.value(), request.profileReference().profileId(),
+                Long.toString(request.profileReference().profileVersion()),
+                HexFormat.of().formatHex(request.profileReference().canonicalSha256()),
+                request.validity().notBefore().toString(), request.validity().notAfter().toString(),
+                request.serial().toString(), request.subjectRdns().toString(), request.policy().toString(),
+                request.algorithmBindingPolicy().toString());
+        try (PkiBusContentSigner signer = proofGate.signer(proof, request.algorithmBindingPolicy(), cancellation,
+                domain)) {
             cert = b.build(signer);
+        } catch (PendingSigningOperation | SigningExecutionException signingFailure) {
+            throw signingFailure;
         } catch (RuntimeException ex) { // NOPMD
             throw proofGate.rejection(CREATE_ROOT_REJECTED, command.formatId(), Optional.empty(),
                     "ROOT_SIGNING_FAILED");
@@ -375,8 +404,8 @@ public final class DefaultCaService implements CaService {
 
         PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
         PkiId caId = new PkiId("ca:" + sha256Hex(certDer).substring(0, 16));
-        PkiId issuerId = zeroecho.pki.api.ca.IssuerGeneration.idFor(caId, credId);
-        zeroecho.pki.api.ca.IssuerChainPath rootPath = IssuerAuthorities.rootPath(caId, issuerId, credId);
+        PkiId issuerId = IssuerGeneration.idFor(caId, credId);
+        IssuerChainPath rootPath = IssuerAuthorities.rootPath(caId, issuerId, credId);
 
         PkiId publicKeyId = new PkiId("spki:" + sha256Hex(spki.bytes()));
 
@@ -424,6 +453,14 @@ public final class DefaultCaService implements CaService {
      */
     @Override
     public PkiId importRoot(CaImportCommand command) {
+        return importRoot(command, CancellationSignal.NONE);
+    }
+
+    // X.509 providers expose parse and accessor failures through provider-specific exception subtypes.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    @Override
+    public PkiId importRoot(CaImportCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, CANCELLATION_PARAMETER);
         Objects.requireNonNull(command, "command");
         ActiveCertificateProfile activeProfile = profileService.requireActiveProfile(command.profileId());
         CaCertificateProfileValidator.requireProfileShape(activeProfile, CertificateProfileKind.ROOT_CA,
@@ -439,11 +476,11 @@ public final class DefaultCaService implements CaService {
 
         CredentialContent.validateCertificate(store, command.existingCaCredential(), authority, Optional.empty());
         byte[] certDer = CredentialContent.materializeForBc(store, command.existingCaCredential());
-        X509CertificateHolder holder;
+        X509Certificate holder;
         try {
-            holder = new X509CertificateHolder(certDer);
+            holder = Pkix.parseCertificate(certDer);
         } catch (Exception ex) {
-            throw new PkiException("Invalid X.509 credential: code=CREDENTIAL_INVALID");
+            throw new PkiException("Invalid X.509 credential: code=CREDENTIAL_INVALID", ex);
         }
 
         Instant notBefore = holder.getNotBefore().toInstant();
@@ -452,14 +489,14 @@ public final class DefaultCaService implements CaService {
 
         PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
         PkiId caId = new PkiId("ca:" + sha256Hex(certDer).substring(0, 16));
-        PkiId issuerId = zeroecho.pki.api.ca.IssuerGeneration.idFor(caId, credId);
-        zeroecho.pki.api.ca.IssuerChainPath rootPath = IssuerAuthorities.rootPath(caId, issuerId, credId);
+        PkiId issuerId = IssuerGeneration.idFor(caId, credId);
+        IssuerChainPath rootPath = IssuerAuthorities.rootPath(caId, issuerId, credId);
 
         byte[] spkiDer;
         try {
-            spkiDer = holder.getSubjectPublicKeyInfo().getEncoded();
-        } catch (IOException ex) {
-            throw new PkiException("Subject public key encoding failed: code=SPKI_ENCODE_FAILED");
+            spkiDer = Pkix.subjectPublicKeyInfo(holder);
+        } catch (RuntimeException ex) {
+            throw new PkiException("Subject public key encoding failed: code=SPKI_ENCODE_FAILED", ex);
         }
 
         PkiId publicKeyId = new PkiId("spki:" + sha256Hex(spkiDer));
@@ -478,7 +515,7 @@ public final class DefaultCaService implements CaService {
         CredentialProfileBindings.requireCaBinding(credential.profileBinding(), request.profileReference());
         requireCaCertificateMatches(credential, credential, request, caId, IMPORT_ROOT_REJECTED,
                 ROOT_CREDENTIAL_INVALID);
-        requireValidImportedRoot(command, holder);
+        requireValidImportedRoot(command, holder, cancellation);
         store.putCredential(credential);
         store.putIssuerGeneration(IssuerAuthorities.generation(caId, command.keyRef(), credential));
         store.putIssuerChainPath(rootPath);
@@ -523,6 +560,12 @@ public final class DefaultCaService implements CaService {
      */
     @Override
     public PkiId createIntermediate(IntermediateCreateCommand command) {
+        return createIntermediate(command, CancellationSignal.NONE);
+    }
+
+    @Override
+    public PkiId createIntermediate(IntermediateCreateCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, CANCELLATION_PARAMETER);
         Objects.requireNonNull(command, "command");
         ActiveCertificateProfile activeProfile = profileService.requireActiveProfile(command.profileId());
         CaCertificateProfileValidator.requireProfileShape(activeProfile, CertificateProfileKind.INTERMEDIATE_CA,
@@ -541,15 +584,15 @@ public final class DefaultCaService implements CaService {
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, command.formatId(),
                 CredentialUse.INTERMEDIATE_ISSUER, statusEvaluation));
-        zeroecho.pki.api.ca.IssuerGeneration parentGeneration = IssuerAuthorities.current(store, issuer);
-        zeroecho.pki.api.ca.IssuerChainPath parentPath = IssuerAuthorities.issuancePath(store, issuer);
+        IssuerGeneration parentGeneration = IssuerAuthorities.current(store, issuer);
+        IssuerChainPath parentPath = IssuerAuthorities.issuancePath(store, issuer);
         requireHistoricalCaProfile(issuerCredential,
                 issuer.kind() == CaKind.ROOT ? CertificateProfileKind.ROOT_CA : CertificateProfileKind.INTERMEDIATE_CA);
 
         List<zeroecho.pki.api.request.SubjectRdn> approvedSubject = CaCertificateProfileValidator
                 .validateSubject(command.subjectRef(), activeProfile.definition());
         SubjectRef canonicalSubject = new SubjectRef(
-                zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subject(approvedSubject).toString());
+                zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subjectRefString(approvedSubject));
         PkiId caId = new PkiId("ca:" + sha256Hex((issuer.caId().value() + "\n" + canonicalSubject.value())
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)).substring(0, 16));
 
@@ -560,16 +603,21 @@ public final class DefaultCaService implements CaService {
                 CertificateProfileKind.INTERMEDIATE_CA, command.formatId(), command.issuerCaId(), caId, approvedSubject,
                 subjectSpki, Optional.empty(), evaluationTime, Optional.of(issuerCredential.validity().notAfter()),
                 CertificateSerialAllocator.allocate(), authority);
+        issue = issue.withFrozenPublication(parentGeneration.issuerId(), parentPath.pathId(),
+                parentPath.pathCommitment(), command.keyRef().orElseThrow());
         CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(command.keyRef().get(), command.formatId(),
-                CREATE_INT_REJECTED, Optional.of(caId));
+                CREATE_INT_REJECTED, Optional.of(caId), cancellation);
         requireSameManagedKey(subjectSpki, subjectProof.exactPublicKey(), CREATE_INT_REJECTED, command.formatId(),
                 Optional.of(caId));
-        requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), CREATE_INT_REJECTED, Optional.of(caId));
+        requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), CREATE_INT_REJECTED,
+                Optional.of(caId), cancellation);
 
         Credential backendCredential;
         try {
             backendCredential = issuerBackend.issueIntermediateCertificate(issue, issuerCredential.content(),
-                    issuer.issuerKeyRef());
+                    issuer.issuerKeyRef(), cancellation);
+        } catch (PendingSigningOperation | SigningExecutionException signingFailure) {
+            throw signingFailure;
         } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
             throw proofGate.rejection(CREATE_INT_REJECTED, command.formatId(), Optional.of(caId),
                     BACKEND_CRED_MISMATCH);
@@ -588,9 +636,9 @@ public final class DefaultCaService implements CaService {
         Credential cred = IssuerAuthorities.withIssuer(rawCredential,
                 new IssuerRef(issuer.caId(), parentGeneration.issuerId(), parentPath.pathId()));
         store.putCredential(cred);
-        zeroecho.pki.api.ca.IssuerGeneration subjectGeneration = IssuerAuthorities.generation(caId,
+        IssuerGeneration subjectGeneration = IssuerAuthorities.generation(caId,
                 command.keyRef().orElseThrow(), cred);
-        zeroecho.pki.api.ca.IssuerChainPath subjectPath = IssuerAuthorities.childPath(caId,
+        IssuerChainPath subjectPath = IssuerAuthorities.childPath(caId,
                 subjectGeneration.issuerId(), cred.credentialId(), parentPath);
         store.putIssuerGeneration(subjectGeneration);
         store.putIssuerChainPath(subjectPath);
@@ -628,6 +676,13 @@ public final class DefaultCaService implements CaService {
      */
     @Override
     public Credential issueIntermediateCertificate(IntermediateCertIssueCommand command) {
+        return issueIntermediateCertificate(command, CancellationSignal.NONE);
+    }
+
+    @Override
+    public Credential issueIntermediateCertificate(IntermediateCertIssueCommand command,
+            CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, CANCELLATION_PARAMETER);
         Objects.requireNonNull(command, "command");
         ActiveCertificateProfile activeProfile = profileService.requireActiveProfile(command.profileId());
         CaCertificateProfileValidator.requireProfileShape(activeProfile, CertificateProfileKind.INTERMEDIATE_CA,
@@ -649,8 +704,8 @@ public final class DefaultCaService implements CaService {
         EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
         Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, command.formatId(),
                 CredentialUse.INTERMEDIATE_ISSUER, statusEvaluation));
-        zeroecho.pki.api.ca.IssuerGeneration parentGeneration = IssuerAuthorities.current(store, issuer);
-        zeroecho.pki.api.ca.IssuerChainPath parentPath = IssuerAuthorities.issuancePath(store, issuer);
+        IssuerGeneration parentGeneration = IssuerAuthorities.current(store, issuer);
+        IssuerChainPath parentPath = IssuerAuthorities.issuancePath(store, issuer);
         requireHistoricalCaProfile(issuerCredential,
                 issuer.kind() == CaKind.ROOT ? CertificateProfileKind.ROOT_CA : CertificateProfileKind.INTERMEDIATE_CA);
 
@@ -664,17 +719,21 @@ public final class DefaultCaService implements CaService {
                 approvedSubject, subjectSpki, command.requestedValidity(), evaluationTime,
                 Optional.of(issuerCredential.validity().notAfter()), CertificateSerialAllocator.allocate(),
                 authority);
+        gated = gated.withFrozenPublication(parentGeneration.issuerId(), parentPath.pathId(),
+                parentPath.pathCommitment(), subject.issuerKeyRef());
         CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(subject.issuerKeyRef(), command.formatId(),
-                ISSUE_INT_REJECTED, Optional.of(subject.caId()));
+                ISSUE_INT_REJECTED, Optional.of(subject.caId()), cancellation);
         requireSameManagedKey(subjectSpki, subjectProof.exactPublicKey(), ISSUE_INT_REJECTED, command.formatId(),
                 Optional.of(subject.caId()));
         requireIssuerKeyBinding(issuer, issuerCredential, command.formatId(), ISSUE_INT_REJECTED,
-                Optional.of(subject.caId()));
+                Optional.of(subject.caId()), cancellation);
 
         Credential backendCredential;
         try {
             backendCredential = issuerBackend.issueIntermediateCertificate(gated, issuerCredential.content(),
-                    issuer.issuerKeyRef());
+                    issuer.issuerKeyRef(), cancellation);
+        } catch (PendingSigningOperation | SigningExecutionException signingFailure) {
+            throw signingFailure;
         } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
             throw proofGate.rejection(ISSUE_INT_REJECTED, command.formatId(), Optional.of(subject.caId()),
                     BACKEND_CRED_MISMATCH);
@@ -693,9 +752,9 @@ public final class DefaultCaService implements CaService {
         Credential cred = IssuerAuthorities.withIssuer(rawCredential,
                 new IssuerRef(issuer.caId(), parentGeneration.issuerId(), parentPath.pathId()));
         store.putCredential(cred);
-        zeroecho.pki.api.ca.IssuerGeneration subjectGeneration = IssuerAuthorities.generation(subject.caId(),
+        IssuerGeneration subjectGeneration = IssuerAuthorities.generation(subject.caId(),
                 subject.issuerKeyRef(), cred);
-        zeroecho.pki.api.ca.IssuerChainPath subjectPath = IssuerAuthorities.childPath(subject.caId(),
+        IssuerChainPath subjectPath = IssuerAuthorities.childPath(subject.caId(),
                 subjectGeneration.issuerId(), cred.credentialId(), parentPath);
         store.putIssuerGeneration(subjectGeneration);
         store.putIssuerChainPath(subjectPath);
@@ -725,28 +784,243 @@ public final class DefaultCaService implements CaService {
      */
     @Override
     public PkiId rolloverCaCertificate(CaRolloverCommand command) {
+        return rolloverCaCertificate(command, CancellationSignal.NONE);
+    }
+
+    /**
+     * Rolls over a CA credential, keeping the same key reference. Mints a new issuer
+     * generation for the existing CA, advances the current issuance pointers to it,
+     * and keeps historical generations for chain selection and validation of
+     * previously issued credentials.
+     */
+    // The monitor serializes the complete read-renew-publish transition for one service instance.
+    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    @Override
+    public synchronized PkiId rolloverCaCertificate(CaRolloverCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, CANCELLATION_PARAMETER);
         Objects.requireNonNull(command, "command");
-        throw new PkiException("CA rollover is not implemented in this runtime build");
+        CaRecord ca = getCa(command.caId());
+        return renewCaGeneration(ca, command.issuerCaId(), ca.issuerKeyRef(), command.requestedValidity(),
+                command.attributes(), cancellation);
     }
 
     /**
      * Requests CA key rotation.
      *
      * <p>
-     * The {@link CaService} contract exposes this capability, but the current
-     * runtime build does not implement it.
+     * Rotation changes the CA key reference and issues a new corresponding CA
+     * credential (a new issuer generation), then advances the current issuance
+     * pointers and the CA key reference. Historical generations and key references
+     * remain discoverable for audit and validation of previously issued
+     * credentials. Key generation is not wired: {@code newKeyRef} is required.
      * </p>
      *
      * @param command key rotation request; must not be {@code null}
-     * @return never returns normally
-     * @throws NullPointerException if {@code command} is {@code null}
-     * @throws PkiException         always, because CA key rotation is not
-     *                              implemented in this runtime build
+     * @return the CA identifier
      */
     @Override
     public PkiId rotateCaKey(CaKeyRotationCommand command) {
+        return rotateCaKey(command, CancellationSignal.NONE);
+    }
+
+    // The monitor serializes the complete read-rotate-publish transition for one service instance.
+    @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+    @Override
+    public synchronized PkiId rotateCaKey(CaKeyRotationCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, CANCELLATION_PARAMETER);
         Objects.requireNonNull(command, "command");
-        throw new PkiException("CA key rotation is not implemented in this runtime build");
+        KeyRef newKeyRef = command.newKeyRef()
+                .orElseThrow(() -> new PkiException("CA key rotation requires newKeyRef (key generation not wired)"));
+        CaRecord ca = getCa(command.caId());
+        return renewCaGeneration(ca, command.issuerCaId(), newKeyRef, Optional.empty(), command.attributes(),
+                cancellation);
+    }
+
+    // Shared rollover/rotation core: mints a new CA generation for the existing CA using the
+    // supplied signing key, advances the current issuance pointers to it, and adopts the signing
+    // key on the CA record. Rollover supplies the CA's existing key; rotation supplies a new key.
+    // A root CA re-signs itself (issuerCaId empty); an intermediate CA is re-signed by its parent.
+    private PkiId renewCaGeneration(CaRecord ca, Optional<PkiId> issuerCaId, KeyRef signingKey,
+            Optional<Validity> requestedValidity, AttributeSet attributes,
+            CancellationSignal cancellation) {
+        ensureActive(ca, "subject");
+        requireNoCaOverrides(attributes);
+        CertificateProfileRef currentProfile = ((CaProfileBinding) IssuerAuthorities.currentCredential(store, ca)
+                .profileBinding()).reference();
+        ActiveCertificateProfile activeProfile = profileService.requireActiveProfile(currentProfile.profileId());
+        IssuerGeneration generation;
+        IssuerChainPath path;
+        if (ca.kind() == CaKind.ROOT) {
+            if (issuerCaId.isPresent()) {
+                throw new PkiException("Root CA rollover is self-issued: issuerCaId must be empty");
+            }
+            CaCertificateProfileValidator.requireProfileShape(activeProfile, CertificateProfileKind.ROOT_CA,
+                    framework.formatId());
+            Credential credential = signRootGeneration(ca.caId(), ca.subjectRef(), signingKey, activeProfile,
+                    requestedValidity, cancellation);
+            generation = IssuerAuthorities.generation(ca.caId(), signingKey, credential);
+            path = IssuerAuthorities.rootPath(ca.caId(), generation.issuerId(), credential.credentialId());
+            store.putCredential(credential);
+            store.putIssuerGeneration(generation);
+            store.putIssuerChainPath(path);
+        } else {
+            PkiId parentId = issuerCaId
+                    .orElseThrow(() -> new PkiException("Intermediate CA rollover requires issuerCaId"));
+            CaRecord issuer = getCa(parentId);
+            ensureActive(issuer, "issuer");
+            CaCertificateProfileValidator.requireProfileShape(activeProfile, CertificateProfileKind.INTERMEDIATE_CA,
+                    framework.formatId());
+            RenewedIntermediate renewed = signIntermediateGeneration(ca, issuer, signingKey, requestedValidity,
+                    activeProfile, cancellation);
+            store.putCredential(renewed.credential());
+            generation = IssuerAuthorities.generation(ca.caId(), signingKey, renewed.credential());
+            path = IssuerAuthorities.childPath(ca.caId(), generation.issuerId(), renewed.credential().credentialId(),
+                    renewed.parentPath());
+            store.putIssuerGeneration(generation);
+            store.putIssuerChainPath(path);
+        }
+        publishRenewedCa(ca, generation, path, signingKey);
+        return ca.caId();
+    }
+
+    // Advances the current issuance pointers to the new generation/path and adopts the signing
+    // key, appending the new generation to the CA's ordered history. This pointer advance is the
+    // single commit point of a rollover/rotation and is deliberately performed last.
+    private void publishRenewedCa(CaRecord ca, IssuerGeneration generation, IssuerChainPath path, KeyRef signingKey) {
+        List<PkiId> issuerIds = new ArrayList<>(ca.issuerIds());
+        if (!issuerIds.contains(generation.issuerId())) {
+            issuerIds.add(generation.issuerId());
+        }
+        store.putCa(new CaRecord(ca.caId(), ca.kind(), ca.state(), signingKey, ca.subjectRef(),
+                List.copyOf(issuerIds), generation.issuerId(), path.pathId()));
+    }
+
+    private Credential signRootGeneration(PkiId caId, SubjectRef subjectRef, KeyRef keyRef,
+            ActiveCertificateProfile activeProfile, Optional<Validity> requestedValidity,
+            CancellationSignal cancellation) {
+        Instant evaluationTime = clock.instant();
+        EncodedObject spki = proofGate.resolveManagedKey(keyRef, framework.formatId(), CREATE_ROOT_REJECTED,
+                Optional.empty());
+        BigInteger serial = CertificateSerialAllocator.allocate();
+        ValidatedCaCertificateRequest request = CaCertificateProfileValidator.validate(
+                ValidatedCaCertificateRequest.Operation.CREATE_ROOT, activeProfile, CertificateProfileKind.ROOT_CA,
+                framework.formatId(), caId, caId, subjectRef, spki, requestedValidity, evaluationTime,
+                Optional.empty(), serial, authority);
+        byte[] rootPublicKeyInfo = proofGate.parseRootSpki(spki, framework.formatId());
+        CaProofGate.ManagedKeyProof proof = proofGate.proveManagedKey(keyRef, framework.formatId(),
+                CREATE_ROOT_REJECTED, Optional.empty(), cancellation);
+        requireSameManagedKey(spki, proof.exactPublicKey(), CREATE_ROOT_REJECTED, framework.formatId(),
+                Optional.empty());
+        Validity validity = request.validity();
+        X500Principal dn = zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport.subject(request.subjectRdns());
+        CertificateBuilder b = Pkix.certificateBuilder().issuer(dn).serialNumber(serial)
+                .validity(validity.notBefore(), validity.notAfter()).subject(dn).publicKeyInfo(rootPublicKeyInfo);
+        try {
+            b.basicConstraints(BasicConstraints.ca(request.policy().pathLengthConstraint()),
+                    request.policy().basicConstraintsCritical());
+            b.keyUsage(java.util.EnumSet.of(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN),
+                    request.policy().keyUsageCritical());
+        } catch (Exception ex) {
+            throw new PkiException("Root extension construction failed: code=ROOT_EXTENSION_BUILD_FAILED");
+        }
+        // ROLLOVER_ROOT continuation mirrors CREATE_ROOT (fields 0-12) and freezes the existing
+        // authority id in field 13, so an async/remote signature is durably resumable and publishes a
+        // new generation for the existing CA (with pointer advance) on reconcile.
+        DomainContinuationTemplate domain = DomainCommandEncoding.template(DomainContinuationStore.Kind.CA,
+                "ROLLOVER_ROOT", framework.formatId().value(), request.subjectRef().value(),
+                request.profileReference().profileId(), keyRef.value(), request.profileReference().profileId(),
+                Long.toString(request.profileReference().profileVersion()),
+                HexFormat.of().formatHex(request.profileReference().canonicalSha256()),
+                validity.notBefore().toString(), validity.notAfter().toString(), serial.toString(),
+                request.subjectRdns().toString(), request.policy().toString(),
+                request.algorithmBindingPolicy().toString(), caId.value());
+        X509Certificate cert;
+        try (PkiBusContentSigner signer = proofGate.signer(proof, request.algorithmBindingPolicy(), cancellation,
+                domain)) {
+            cert = b.build(signer);
+        } catch (PendingSigningOperation | SigningExecutionException signingFailure) {
+            throw signingFailure;
+        } catch (RuntimeException ex) { // NOPMD - redacted signing failure
+            throw proofGate.rejection(CREATE_ROOT_REJECTED, framework.formatId(), Optional.empty(),
+                    "ROOT_SIGNING_FAILED");
+        }
+        if (!proofGate.rootProofIsValid(cert, spki)) {
+            throw proofGate.rejection(CREATE_ROOT_REJECTED, framework.formatId(), Optional.empty(),
+                    "ROOT_SELF_SIGNATURE_INVALID");
+        }
+        byte[] certDer;
+        try {
+            certDer = cert.getEncoded();
+        } catch (Exception ex) {
+            throw new PkiException("Root certificate encoding failed: code=ROOT_CERTIFICATE_ENCODE_FAILED");
+        }
+        PkiId credId = new PkiId("x509:" + sha256Hex(certDer));
+        PkiId issuerId = IssuerGeneration.idFor(caId, credId);
+        IssuerChainPath rootPath = IssuerAuthorities.rootPath(caId, issuerId, credId);
+        Credential credential = new Credential(credId, framework.formatId(),
+                new IssuerRef(caId, issuerId, rootPath.pathId()), request.subjectRef(), validity, serial.toString(),
+                new PkiId("spki:" + sha256Hex(spki.bytes())), new CaProfileBinding(request.profileReference()),
+                CredentialStatus.ISSUED, CredentialContent.stage(store, certDer), SimpleAttributeSet.builder().build());
+        CredentialProfileBindings.requireCaBinding(credential.profileBinding(), request.profileReference());
+        requireCaCertificateMatches(credential, credential, request, caId, CREATE_ROOT_REJECTED, BACKEND_CRED_MISMATCH);
+        return credential;
+    }
+
+    private RenewedIntermediate signIntermediateGeneration(CaRecord subject, CaRecord issuer, KeyRef subjectKey,
+            Optional<Validity> requestedValidity, ActiveCertificateProfile activeProfile,
+            CancellationSignal cancellation) {
+        Instant evaluationTime = clock.instant();
+        EffectiveCredentialStatusResolver.Evaluation statusEvaluation = statusResolver.beginEvaluation();
+        Credential issuerCredential = CredentialSnapshots.copy(selectIssuerCredential(issuer, framework.formatId(),
+                CredentialUse.INTERMEDIATE_ISSUER, statusEvaluation));
+        IssuerGeneration parentGeneration = IssuerAuthorities.current(store, issuer);
+        IssuerChainPath parentPath = IssuerAuthorities.issuancePath(store, issuer);
+        requireHistoricalCaProfile(issuerCredential,
+                issuer.kind() == CaKind.ROOT ? CertificateProfileKind.ROOT_CA : CertificateProfileKind.INTERMEDIATE_CA);
+        List<zeroecho.pki.api.request.SubjectRdn> approvedSubject = CaCertificateProfileValidator
+                .validateTrustedSubject(subject.subjectRef(), activeProfile.definition());
+        EncodedObject subjectSpki = proofGate.resolveManagedKey(subjectKey, framework.formatId(), ISSUE_INT_REJECTED,
+                Optional.of(subject.caId()));
+        ValidatedCaCertificateRequest gated = CaCertificateProfileValidator.validateApprovedSubject(
+                ValidatedCaCertificateRequest.Operation.ROLLOVER_INTERMEDIATE, activeProfile,
+                CertificateProfileKind.INTERMEDIATE_CA, framework.formatId(), issuer.caId(), subject.caId(),
+                approvedSubject, subjectSpki, requestedValidity, evaluationTime,
+                Optional.of(issuerCredential.validity().notAfter()), CertificateSerialAllocator.allocate(), authority);
+        gated = gated.withFrozenPublication(parentGeneration.issuerId(), parentPath.pathId(),
+                parentPath.pathCommitment(), subjectKey);
+        CaProofGate.ManagedKeyProof subjectProof = proofGate.proveManagedKey(subjectKey, framework.formatId(),
+                ISSUE_INT_REJECTED, Optional.of(subject.caId()), cancellation);
+        requireSameManagedKey(subjectSpki, subjectProof.exactPublicKey(), ISSUE_INT_REJECTED, framework.formatId(),
+                Optional.of(subject.caId()));
+        requireIssuerKeyBinding(issuer, issuerCredential, framework.formatId(), ISSUE_INT_REJECTED,
+                Optional.of(subject.caId()), cancellation);
+        Credential backendCredential;
+        try {
+            backendCredential = issuerBackend.issueIntermediateCertificate(gated, issuerCredential.content(),
+                    issuer.issuerKeyRef(), cancellation);
+        } catch (PendingSigningOperation | SigningExecutionException signingFailure) {
+            throw signingFailure;
+        } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
+            throw proofGate.rejection(ISSUE_INT_REJECTED, framework.formatId(), Optional.of(subject.caId()),
+                    BACKEND_CRED_MISMATCH);
+        }
+        requireCaBinding(backendCredential, gated.profileReference(), ISSUE_INT_REJECTED, framework.formatId(),
+                Optional.of(subject.caId()));
+        Credential rawCredential;
+        try {
+            rawCredential = CredentialSnapshots.copy(backendCredential);
+        } catch (RuntimeException ex) { // NOPMD - reject malformed or mutable framework output
+            throw proofGate.rejection(ISSUE_INT_REJECTED, framework.formatId(), Optional.of(subject.caId()),
+                    BACKEND_CRED_MISMATCH);
+        }
+        requireCaCertificateMatches(rawCredential, issuerCredential, gated, subject.caId(), ISSUE_INT_REJECTED,
+                BACKEND_CRED_MISMATCH);
+        Credential cred = IssuerAuthorities.withIssuer(rawCredential,
+                new IssuerRef(issuer.caId(), parentGeneration.issuerId(), parentPath.pathId()));
+        return new RenewedIntermediate(cred, parentPath);
+    }
+
+    private record RenewedIntermediate(Credential credential, IssuerChainPath parentPath) {
     }
 
     /**
@@ -807,7 +1081,8 @@ public final class DefaultCaService implements CaService {
     @Override
     public CaRecord getCa(PkiId caId) {
         Objects.requireNonNull(caId, "caId");
-        return store.getCa(caId).orElseThrow(() -> new PkiException("CA not found"));
+        return store.getCa(caId).orElseThrow(() -> new PkiException("CA not found",
+                zeroecho.pki.api.PkiFailureReason.ISSUER_CA_NOT_FOUND));
     }
 
     /**
@@ -848,19 +1123,21 @@ public final class DefaultCaService implements CaService {
     }
 
     @Override
-    public zeroecho.pki.api.ca.IssuerGeneration getIssuerGeneration(PkiId issuerId) {
+    public IssuerGeneration getIssuerGeneration(PkiId issuerId) {
         Objects.requireNonNull(issuerId, "issuerId");
-        return store.getIssuerGeneration(issuerId).orElseThrow(() -> new PkiException("Issuer generation not found"));
+        return store.getIssuerGeneration(issuerId).orElseThrow(() -> new PkiException("Issuer generation not found",
+                zeroecho.pki.api.PkiFailureReason.ISSUER_GENERATION_NOT_FOUND));
     }
 
     @Override
-    public zeroecho.pki.api.ca.IssuerChainPath getIssuerChainPath(PkiId pathId) {
+    public IssuerChainPath getIssuerChainPath(PkiId pathId) {
         Objects.requireNonNull(pathId, "pathId");
-        return store.getIssuerChainPath(pathId).orElseThrow(() -> new PkiException("Issuer chain path not found"));
+        return store.getIssuerChainPath(pathId).orElseThrow(() -> new PkiException("Issuer chain path not found",
+                zeroecho.pki.api.PkiFailureReason.ISSUER_CHAIN_PATH_NOT_FOUND));
     }
 
     @Override
-    public List<zeroecho.pki.api.ca.IssuerChainPath> listIssuerChainPaths(PkiId issuerId) {
+    public List<IssuerChainPath> listIssuerChainPaths(PkiId issuerId) {
         return store.listIssuerChainPaths(Objects.requireNonNull(issuerId, "issuerId"));
     }
 
@@ -873,8 +1150,8 @@ public final class DefaultCaService implements CaService {
             throw new IllegalArgumentException("reason must not be null/blank");
         }
         CaRecord ca = getCa(caId);
-        zeroecho.pki.api.ca.IssuerGeneration generation = getIssuerGeneration(issuerId);
-        zeroecho.pki.api.ca.IssuerChainPath path = getIssuerChainPath(pathId);
+        IssuerGeneration generation = getIssuerGeneration(issuerId);
+        IssuerChainPath path = getIssuerChainPath(pathId);
         if (!ca.issuerIds().contains(issuerId) || !caId.equals(generation.authorityId())
                 || generation.state() != zeroecho.pki.api.ca.IssuerGenerationState.ACTIVE
                 || !caId.equals(path.authorityId()) || !issuerId.equals(path.issuerId())) {
@@ -885,17 +1162,17 @@ public final class DefaultCaService implements CaService {
     }
 
     @Override
-    public zeroecho.pki.api.ca.IssuerChainPath registerIssuerChainPath(PkiId caId, PkiId issuerId,
+    public IssuerChainPath registerIssuerChainPath(PkiId caId, PkiId issuerId,
             PkiId parentPathId) {
         CaRecord ca = getCa(Objects.requireNonNull(caId, "caId"));
-        zeroecho.pki.api.ca.IssuerGeneration generation = getIssuerGeneration(
+        IssuerGeneration generation = getIssuerGeneration(
                 Objects.requireNonNull(issuerId, "issuerId"));
-        zeroecho.pki.api.ca.IssuerChainPath parent = getIssuerChainPath(
+        IssuerChainPath parent = getIssuerChainPath(
                 Objects.requireNonNull(parentPathId, "parentPathId"));
         if (!ca.issuerIds().contains(issuerId) || !caId.equals(generation.authorityId())) {
             throw new PkiException("Issuer generation is outside the authority");
         }
-        zeroecho.pki.api.ca.IssuerChainPath path = IssuerAuthorities.childPath(caId, issuerId,
+        IssuerChainPath path = IssuerAuthorities.childPath(caId, issuerId,
                 generation.credentialId(), parent);
         store.putIssuerChainPath(path);
         return path;
@@ -903,7 +1180,8 @@ public final class DefaultCaService implements CaService {
 
     private static void ensureActive(CaRecord ca, String role) {
         if (ca.state() != CaState.ACTIVE) {
-            throw new PkiException("CA not ACTIVE: " + role);
+            throw new PkiException("CA not ACTIVE: " + role,
+                    zeroecho.pki.api.PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
         }
     }
 
@@ -922,11 +1200,12 @@ public final class DefaultCaService implements CaService {
         return credential;
     }
 
-    private void requireValidImportedRoot(CaImportCommand command, X509CertificateHolder holder) {
+    private void requireValidImportedRoot(CaImportCommand command, X509Certificate holder,
+            CancellationSignal cancellation) {
         try {
             CaProofGate.ManagedKeyProof proof = proofGate.proveManagedKey(command.keyRef(), command.formatId(),
-                    IMPORT_ROOT_REJECTED, Optional.empty());
-            if (!MessageDigest.isEqual(proof.exactPublicKey().bytes(), holder.getSubjectPublicKeyInfo().getEncoded())) {
+                    IMPORT_ROOT_REJECTED, Optional.empty(), cancellation);
+            if (!MessageDigest.isEqual(proof.exactPublicKey().bytes(), Pkix.subjectPublicKeyInfo(holder))) {
                 throw proofGate.rejection(IMPORT_ROOT_REJECTED, command.formatId(), Optional.empty(),
                         "ROOT_MANAGED_KEY_MISMATCH");
             }
@@ -939,17 +1218,17 @@ public final class DefaultCaService implements CaService {
     }
 
     private void requireIssuerKeyBinding(CaRecord issuer, Credential credential, FormatId formatId, String action,
-            Optional<PkiId> objectId) {
+            Optional<PkiId> objectId, CancellationSignal cancellation) {
         try {
             if (credential.content().encoding() != Encoding.DER) {
                 throw proofGate.rejection(action, formatId, objectId, "ISSUER_CREDENTIAL_INVALID");
             }
             CredentialContent.validateCertificate(store, credential.content(), authority, Optional.empty());
-            X509CertificateHolder holder = new X509CertificateHolder(CredentialContent.materializeForBc(store,
+            X509Certificate holder = Pkix.parseCertificate(CredentialContent.materializeForBc(store,
                     credential.content()));
             CaProofGate.ManagedKeyProof proof = proofGate.proveManagedKey(issuer.issuerKeyRef(), formatId, action,
-                    objectId);
-            if (!MessageDigest.isEqual(proof.exactPublicKey().bytes(), holder.getSubjectPublicKeyInfo().getEncoded())) {
+                    objectId, cancellation);
+            if (!MessageDigest.isEqual(proof.exactPublicKey().bytes(), Pkix.subjectPublicKeyInfo(holder))) {
                 throw proofGate.rejection(action, formatId, objectId, "ISSUER_MANAGED_KEY_MISMATCH");
             }
         } catch (PkiException ex) {
@@ -969,24 +1248,17 @@ public final class DefaultCaService implements CaService {
                     Optional.of(signatureIdentity));
             CredentialContent.validateCertificate(store, issuerCredential.content(), authority, Optional.empty());
             byte[] credentialDer = CredentialContent.materializeForBc(store, credential.content());
-            X509CertificateHolder holder = new X509CertificateHolder(credentialDer);
-            X509CertificateHolder issuerHolder = new X509CertificateHolder(CredentialContent.materializeForBc(store,
+            X509Certificate holder = Pkix.parseCertificate(credentialDer);
+            X509Certificate issuerHolder = Pkix.parseCertificate(CredentialContent.materializeForBc(store,
                     issuerCredential.content()));
-            byte[] actualSpki = holder.getSubjectPublicKeyInfo().getEncoded();
-            Extension constraintsExtension = holder.getExtension(Extension.basicConstraints);
-            BasicConstraints constraints = constraintsExtension == null ? null
-                    : BasicConstraints.getInstance(constraintsExtension.getParsedValue());
-            Extension keyUsageExtension = holder.getExtension(Extension.keyUsage);
-            KeyUsage keyUsage = keyUsageExtension == null ? null
-                    : KeyUsage.getInstance(keyUsageExtension.getParsedValue());
-            X500Name expectedSubject = zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport
+            byte[] actualSpki = Pkix.subjectPublicKeyInfo(holder);
+            X500Principal expectedSubject = zeroecho.pki.impl.framework.x509.bc.BcX509ProfileSupport
                     .subject(request.subjectRdns());
-            X500Name expectedIssuer = request.certificateType() == CertificateProfileKind.ROOT_CA ? expectedSubject
-                    : issuerHolder.getSubject();
+            X500Principal expectedIssuer = request.certificateType() == CertificateProfileKind.ROOT_CA ? expectedSubject
+                    : issuerHolder.getSubjectX500Principal();
             if (!matchesCaCertificateIdentity(holder, issuerHolder, request, expectedSubject, expectedIssuer,
                     actualSpki)
-                    || !matchesCaCertificatePolicy(holder, request, constraintsExtension, constraints,
-                            keyUsageExtension, keyUsage)
+                    || !matchesCaCertificatePolicy(holder, request)
                     || !matchesCaCredentialMetadata(credential, holder, request, actualSpki, credentialDer)) {
                 throw proofGate.rejection(action, framework.formatId(), Optional.of(subjectCaId), mismatchCode);
             }
@@ -1008,28 +1280,54 @@ public final class DefaultCaService implements CaService {
                                 : request.issuerCaId());
     }
 
-    private static boolean matchesCaCertificateIdentity(X509CertificateHolder holder,
-            X509CertificateHolder issuerHolder, ValidatedCaCertificateRequest request, X500Name expectedSubject,
-            X500Name expectedIssuer, byte[] actualSpki) throws IOException, OperatorCreationException, CertException {
+    private static boolean matchesCaCertificateIdentity(X509Certificate holder,
+            X509Certificate issuerHolder, ValidatedCaCertificateRequest request, X500Principal expectedSubject,
+            X500Principal expectedIssuer, byte[] actualSpki) {
         return MessageDigest.isEqual(request.exactPublicKey().bytes(), actualSpki)
-                && MessageDigest.isEqual(holder.getSubject().getEncoded(), expectedSubject.getEncoded())
-                && MessageDigest.isEqual(holder.getIssuer().getEncoded(), expectedIssuer.getEncoded())
-                && holder.isSignatureValid(
-                        new JcaContentVerifierProviderBuilder().build(issuerHolder.getSubjectPublicKeyInfo()));
+                && MessageDigest.isEqual(holder.getSubjectX500Principal().getEncoded(), expectedSubject.getEncoded())
+                && MessageDigest.isEqual(holder.getIssuerX500Principal().getEncoded(), expectedIssuer.getEncoded())
+                && signatureValid(holder, issuerHolder.getPublicKey());
     }
 
-    private static boolean matchesCaCertificatePolicy(X509CertificateHolder holder,
-            ValidatedCaCertificateRequest request, Extension constraintsExtension, BasicConstraints constraints,
-            Extension keyUsageExtension, KeyUsage keyUsage) {
-        return constraintsExtension != null && constraintsExtension.isCritical() && constraints != null
-                && constraints.isCA()
-                && BigInteger.valueOf(request.policy().pathLengthConstraint())
-                        .equals(constraints.getPathLenConstraint())
-                && keyUsageExtension != null && keyUsageExtension.isCritical() && hasIntermediateKeyUsage(keyUsage)
-                && holder.getExtensions().getExtensionOIDs().length == 2;
+    private static boolean signatureValid(X509Certificate certificate, java.security.PublicKey signerKey) {
+        try {
+            certificate.verify(signerKey);
+            return true;
+        } catch (java.security.GeneralSecurityException failure) {
+            return false;
+        }
     }
 
-    private static boolean matchesCaCredentialMetadata(Credential credential, X509CertificateHolder holder,
+    // Dotted literals are X.509 extension object identifiers, not network addresses.
+    @SuppressWarnings("PMD.AvoidUsingHardCodedIP")
+    private static boolean matchesCaCertificatePolicy(X509Certificate holder,
+            ValidatedCaCertificateRequest request) {
+        int basicConstraints = holder.getBasicConstraints();
+        boolean[] keyUsage = holder.getKeyUsage();
+        int extensionCount = extensionOidCount(holder);
+        return isCritical(holder, "2.5.29.19") && basicConstraints != -1
+                && basicConstraints == request.policy().pathLengthConstraint()
+                && keyUsage != null && isCritical(holder, "2.5.29.15") && hasIntermediateKeyUsage(keyUsage)
+                && extensionCount == 2;
+    }
+
+    private static boolean isCritical(X509Certificate certificate, String oid) {
+        java.util.Set<String> critical = certificate.getCriticalExtensionOIDs();
+        return critical != null && critical.contains(oid);
+    }
+
+    private static int extensionOidCount(X509Certificate certificate) {
+        java.util.Set<String> all = new java.util.HashSet<>();
+        if (certificate.getCriticalExtensionOIDs() != null) {
+            all.addAll(certificate.getCriticalExtensionOIDs());
+        }
+        if (certificate.getNonCriticalExtensionOIDs() != null) {
+            all.addAll(certificate.getNonCriticalExtensionOIDs());
+        }
+        return all.size();
+    }
+
+    private static boolean matchesCaCredentialMetadata(Credential credential, X509Certificate holder,
             ValidatedCaCertificateRequest request, byte[] actualSpki, byte[] credentialDer) {
         return credential.publicKeyId().equals(new PkiId("spki:" + sha256Hex(actualSpki)))
                 && credential.credentialId().equals(new PkiId("x509:" + sha256Hex(credentialDer)))
@@ -1044,7 +1342,7 @@ public final class DefaultCaService implements CaService {
     }
 
     private void requireCaBinding(Credential credential,
-            zeroecho.pki.api.profile.CertificateProfileRef expectedCaProfile, String action, FormatId formatId,
+            CertificateProfileRef expectedCaProfile, String action, FormatId formatId,
             Optional<PkiId> objectId) {
         try {
             CredentialProfileBindings.requireCaBinding(credential == null ? null : credential.profileBinding(),
@@ -1054,14 +1352,18 @@ public final class DefaultCaService implements CaService {
         }
     }
 
-    private static boolean hasIntermediateKeyUsage(KeyUsage keyUsage) {
-        if (keyUsage == null || !keyUsage.hasUsages(KeyUsage.keyCertSign | KeyUsage.cRLSign)) {
+    // The boolean array is the fixed X.509 keyUsage bitmap, not a variable argument sequence.
+    @SuppressWarnings("PMD.UseVarargs")
+    private static boolean hasIntermediateKeyUsage(boolean[] keyUsage) {
+        if (!bit(keyUsage, 5) || !bit(keyUsage, 6)) {
             return false;
         }
-        return !keyUsage.hasUsages(KeyUsage.digitalSignature) && !keyUsage.hasUsages(KeyUsage.nonRepudiation)
-                && !keyUsage.hasUsages(KeyUsage.keyEncipherment) && !keyUsage.hasUsages(KeyUsage.dataEncipherment)
-                && !keyUsage.hasUsages(KeyUsage.keyAgreement) && !keyUsage.hasUsages(KeyUsage.encipherOnly)
-                && !keyUsage.hasUsages(KeyUsage.decipherOnly);
+        return !bit(keyUsage, 0) && !bit(keyUsage, 1) && !bit(keyUsage, 2) && !bit(keyUsage, 3)
+                && !bit(keyUsage, 4) && !bit(keyUsage, 7) && !bit(keyUsage, 8);
+    }
+
+    private static boolean bit(boolean[] keyUsage, int index) {
+        return keyUsage != null && index < keyUsage.length && keyUsage[index];
     }
 
     private static void requireNoCaOverrides(AttributeSet attributes) {
@@ -1074,7 +1376,7 @@ public final class DefaultCaService implements CaService {
         if (!(credential.profileBinding() instanceof CaProfileBinding binding)) {
             throw new PkiException("CA issuer profile rejected: code=CREDENTIAL_PROFILE_BINDING_MISMATCH");
         }
-        zeroecho.pki.api.profile.CertificateProfileRef reference = binding.reference();
+        CertificateProfileRef reference = binding.reference();
         zeroecho.pki.api.profile.ImportedCertificateProfileVersion version = profileService
                 .getImportedVersion(reference.profileId(), reference.profileVersion())
                 .orElseThrow(() -> new PkiException("CA issuer profile rejected: code=CA_PROFILE_VERSION_MISSING"));

@@ -79,7 +79,15 @@ public record PkiServerAuthenticationContext(List<X509Certificate> peerCertifica
         requestHeaders = Map.copyOf(copied);
     }
 
-    /** Creates a direct-mTLS context without forwarded identity headers. */
+    /**
+     * Creates a direct-mTLS context without forwarded identity headers.
+     *
+     * @param peerCertificates non-empty authenticated peer chain; defensively copied
+     * @param protocol negotiated TLS protocol name
+     * @param cipherSuite negotiated TLS cipher-suite name
+     * @param requestId validated request correlation identity
+     * @param realmId realm receiving the request
+     */
     public PkiServerAuthenticationContext(List<X509Certificate> peerCertificates, String protocol,
             String cipherSuite, String requestId, RealmId realmId) {
         this(peerCertificates, protocol, cipherSuite, requestId, realmId, Map.of());

@@ -97,6 +97,12 @@ class KeyringFilesystemSecurityTest {
 
     @Test
     void secureCreationAndUnsafePermissionsMatrix() throws Exception {
+        // This matrix asserts rejection of unsafe POSIX permission bits; owner-only
+        // enforcement on Windows is expressed as an ACL and covered by the other
+        // keyring suites (which establish and validate the ACL end-to-end).
+        org.junit.jupiter.api.Assumptions
+                .assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                        "POSIX permission model required");
         start("secureCreationAndUnsafePermissionsMatrix");
         Path parent = temporaryDirectory.resolve("secure");
         Path path = parent.resolve("keys.zek");
@@ -157,7 +163,44 @@ class KeyringFilesystemSecurityTest {
     }
 
     @Test
+    void windowsOwnerOnlyAclEstablishedForKeyringArtifacts() throws Exception {
+        // The Windows analogue of the POSIX 0700/0600 matrix: creating a keyring
+        // must leave its parent directory, main image, lock and sidecar owner-only
+        // under NTFS ACLs (a single owner allow entry, inheritance broken).
+        Set<String> views = FileSystems.getDefault().supportedFileAttributeViews();
+        org.junit.jupiter.api.Assumptions.assumeTrue(!views.contains("posix") && views.contains("acl"),
+                "NTFS/ACL platform required");
+        start("windowsOwnerOnlyAclEstablishedForKeyringArtifacts");
+        Path parent = temporaryDirectory.resolve("acl-secure");
+        Path path = parent.resolve("keys.zek");
+        createPopulated(path, 1);
+        assertOwnerOnlyAcl(parent);
+        assertOwnerOnlyAcl(path);
+        assertOwnerOnlyAcl(lock(path));
+        assertOwnerOnlyAcl(sidecar(path));
+        assertOpenSucceeds(path);
+        ok();
+    }
+
+    private static void assertOwnerOnlyAcl(Path path) throws java.io.IOException {
+        java.nio.file.attribute.AclFileAttributeView view = Files.getFileAttributeView(path,
+                java.nio.file.attribute.AclFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        assertTrue(view != null, "ACL view unavailable for " + path);
+        UserPrincipal owner = view.getOwner();
+        for (java.nio.file.attribute.AclEntry entry : view.getAcl()) {
+            assertEquals(owner, entry.principal(), "non-owner ACL entry present on " + path);
+        }
+    }
+
+    @Test
     void symlinkAndHardLinkMatrixFailsClosed() throws Exception {
+        // Symbolic and hard link creation, and the POSIX nlink==1 defence, are
+        // POSIX-specific; on Windows link creation requires a privilege not held by
+        // an ordinary process and the nlink defence is replaced by the owner-only
+        // parent-directory ACL (see the Windows keyring policy).
+        org.junit.jupiter.api.Assumptions
+                .assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                        "POSIX link semantics required");
         start("symlinkAndHardLinkMatrixFailsClosed");
         assertKeyringSymlinkRejected();
         assertArtifactSymlinkRejected(Artifact.LOCK);

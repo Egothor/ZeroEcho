@@ -43,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileAttribute;
@@ -214,7 +215,11 @@ class KeyringAtomicPersistenceTest {
             assertFalse(store.contains("B"));
             Path residual = operations.firstTemporary();
             assertTrue(Files.isRegularFile(residual));
-            assertEquals(FILE_PERMISSIONS, Files.getPosixFilePermissions(residual));
+            if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+                // Owner-only enforcement is asserted via POSIX bits here; on Windows it
+                // is carried by the parent directory's owner-only ACL inheritance.
+                assertEquals(FILE_PERMISSIONS, Files.getPosixFilePermissions(residual));
+            }
             assertSentinelAbsent(residual.getParent(), ENTRY_B);
             put(store, "B", ENTRY_B);
             assertNotEquals(residual, operations.lastTemporary());
@@ -360,10 +365,10 @@ class KeyringAtomicPersistenceTest {
         }
 
         @Override
-        public Path createTemporary(Target actualTarget, Path parent, String prefix, String suffix,
-                FileAttribute<Set<PosixFilePermission>> permissions) throws IOException {
+        public Path createTemporary(Target actualTarget, Path parent, String prefix, String suffix)
+                throws IOException {
             failBefore(actualTarget, FailureStage.CREATE_TEMP);
-            Path temporary = NIO.createTemporary(actualTarget, parent, prefix, suffix, permissions);
+            Path temporary = NIO.createTemporary(actualTarget, parent, prefix, suffix);
             if (actualTarget == target) {
                 temporaryPaths.add(temporary);
             }

@@ -30,7 +30,7 @@
  * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *******************************************************************************/
+ ******************************************************************************/
 package zeroecho.pki.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Field;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -51,8 +52,11 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
+import java.security.Signature;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.spec.MGF1ParameterSpec;
+import java.security.spec.PSSParameterSpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -96,13 +100,19 @@ import zeroecho.core.storage.KeyringStore;
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.ca.CaCreateCommand;
+import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.revocation.RevocationQuery;
+import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
 import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
 import zeroecho.pki.application.PkiSessionConfiguration;
 import zeroecho.pki.application.PkiSessionRuntimeDependencies;
+import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.application.RevocationExecutionEvidence;
 import zeroecho.pki.impl.framework.x509.bc.SimpleAttributeSet;
 import zeroecho.pki.server.acme.AcmeService;
 import zeroecho.pki.server.acme.AcmeState;
@@ -111,6 +121,8 @@ import zeroecho.pki.server.acme.TestAcmeEabProvider;
 import zeroecho.pki.server.http.AcmeTestClient;
 import zeroecho.pki.server.http.TestTlsProvider;
 import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.spi.store.RevocationHistory;
+import zeroecho.pki.spi.store.RevocationSnapshot;
 
 /** Complete wire-level ACME account-to-revocation integration. */
 @SuppressWarnings("PMD")
@@ -135,6 +147,7 @@ class AcmeEndToEndTest {
         KeyPair leafKey = rsa((byte) 22);
         KeyPair accountKey = ec((byte) 23);
         KeyPair replacementKey = ec((byte) 24);
+        KeyPair otherAccountKey = ec((byte) 26);
         Fixture fixture = fixture(tls, acmePort, publicPort, challengePort, rootKey);
         seed(fixture);
 
@@ -143,25 +156,39 @@ class AcmeEndToEndTest {
         HttpClient wire = HttpClient.newBuilder().sslContext(tls.anonymousContext())
                 .connectTimeout(Duration.ofSeconds(5)).build();
         String accountKid;
+        String otherAccountKid;
         URI accountUri;
         URI orderUri;
         URI certificateUri;
+        URI confirmationCompleteUri;
+        URI nonceUri;
+        URI revokeUri;
+        PkiId issuedAuthorityId;
+        String confirmationCompletionPayload;
         byte[] leafDer;
+        String revocationRequestId;
         try (PkiHttpsServer server = start(fixture);
                 AcmeTestClient client = new AcmeTestClient(wire, directoryUri, accountKey)) {
             verifyEabOverHttp(wire, acmePort, ec((byte) 25));
             AcmeTestClient.Response directory = client.directory();
             assertEquals(200, directory.status());
-            URI nonceUri = URI.create(AcmeTestClient.text(directory, "newNonce"));
+            nonceUri = URI.create(AcmeTestClient.text(directory, "newNonce"));
             URI newAccount = URI.create(AcmeTestClient.text(directory, "newAccount"));
             URI newOrder = URI.create(AcmeTestClient.text(directory, "newOrder"));
             URI keyChange = URI.create(AcmeTestClient.text(directory, "keyChange"));
+            revokeUri = URI.create(AcmeTestClient.text(directory, "revokeCert"));
             client.nonce(nonceUri);
             AcmeTestClient.Response account = client.createAccount(newAccount,
                     "{\"termsOfServiceAgreed\":true}");
             assertEquals(201, account.status());
             accountKid = client.accountKid();
             accountUri = URI.create(accountKid);
+            try (AcmeTestClient other = new AcmeTestClient(wire, directoryUri, otherAccountKey)) {
+                other.nonce(nonceUri);
+                assertEquals(201, other.createAccount(newAccount,
+                        "{\"termsOfServiceAgreed\":true}").status());
+                otherAccountKid = other.accountKid();
+            }
 
             AcmeTestClient.Response order = client.kid(newOrder,
                     "{\"identifiers\":[{\"type\":\"dns\",\"value\":\"localhost\"}]}");
@@ -185,6 +212,11 @@ class AcmeEndToEndTest {
             }
             AcmeTestClient.Response ready = client.postAsGet(orderUri);
             assertEquals("ready", AcmeTestClient.text(ready, "status"));
+            byte[] newerProfile = new String(template("server-tls").canonicalJson(), StandardCharsets.UTF_8)
+                    .replace("\"profileVersion\":1", "\"profileVersion\":2")
+                    .getBytes(StandardCharsets.UTF_8);
+            server.realm().session().profiles().importProfile(newerProfile);
+            server.realm().session().profiles().activateProfile("server-tls", 2L);
             String csr = Base64.getUrlEncoder().withoutPadding().encodeToString(csr(leafKey));
             AcmeTestClient.Response finalized = client.kid(finalizeUri, "{\"csr\":\"" + csr + "\"}");
             assertEquals(200, finalized.status());
@@ -192,6 +224,49 @@ class AcmeEndToEndTest {
             certificateUri = URI.create(AcmeTestClient.text(finalized, "certificate"));
             AcmeTestClient.Response certificate = client.postAsGet(certificateUri);
             assertEquals(200, certificate.status());
+            String orderId = orderUri.getPath().substring(orderUri.getPath().lastIndexOf('/') + 1);
+            AcmeState.Order issuedOrder = server.realm().acmeControl().get(AcmeState.Order.class, orderId)
+                    .orElseThrow();
+            PkiId issuedCredentialId = issuedOrder.credentialId().orElseThrow();
+            issuedAuthorityId = issuedOrder.authorityId();
+            assertEquals(1L, ((zeroecho.pki.api.credential.EndEntityProfileBinding) server.realm().session()
+                    .repository().credential(issuedCredentialId).orElseThrow().profileBinding())
+                    .reference().profileVersion());
+            assertEquals(zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle.State.PENDING,
+                    server.realm().session().confirmations().get(issuedCredentialId).orElseThrow().state());
+            PkiOperationValue.ObjectValue confirmation = object(finalized, "credentialConfirmation");
+            assertEquals(1L, integer(confirmation, "version"));
+            URI confirmationChallengeUri = URI.create(text(confirmation, "challenge"));
+            confirmationCompleteUri = URI.create(text(confirmation, "complete"));
+            AcmeState.Directory activeDirectory = server.realm().acmeControl()
+                    .get(AcmeState.Directory.class, issuedOrder.directoryId()).orElseThrow();
+            replaceDirectoryStatus(server, activeDirectory, AcmeState.DirectoryStatus.INACTIVE);
+            assertEquals(200, client.postAsGet(orderUri).status());
+            assertFalse(client.kid(newOrder,
+                    "{\"identifiers\":[{\"type\":\"dns\",\"value\":\"localhost\"}]}").status() == 201);
+            AcmeTestClient.Response proofChallenge = client.kid(confirmationChallengeUri, "{}");
+            assertEquals(1L, integer(proofChallenge.json(), "version"));
+            byte[] presentation = Base64.getUrlDecoder().decode(
+                    AcmeTestClient.text(proofChallenge, "presentation"));
+            byte[] proof;
+            try {
+                Signature signer = Signature.getInstance("RSASSA-PSS");
+                signer.setParameter(new PSSParameterSpec("SHA-256", "MGF1",
+                        MGF1ParameterSpec.SHA256, 32, 1));
+                signer.initSign(leafKey.getPrivate());
+                signer.update(presentation);
+                proof = signer.sign();
+            } finally {
+                java.util.Arrays.fill(presentation, (byte) 0);
+            }
+            confirmationCompletionPayload = confirmationCompletionPayload(proofChallenge, proof);
+            java.util.Arrays.fill(proof, (byte) 0);
+            URI anonymousCertificate = URI.create("https://localhost:" + publicPort
+                    + "/public/v1/certificates/" + issuedCredentialId.value());
+            java.net.http.HttpResponse<Void> anonymousResponse = wire.send(
+                    java.net.http.HttpRequest.newBuilder(anonymousCertificate).GET().build(),
+                    java.net.http.HttpResponse.BodyHandlers.discarding());
+            assertEquals(404, anonymousResponse.statusCode());
             List<X509Certificate> chain = certificates(certificate.bodyText());
             assertEquals(2, chain.size());
             assertEquals(List.of(IDENTIFIER), chain.get(0).getSubjectAlternativeNames().stream()
@@ -214,16 +289,50 @@ class AcmeEndToEndTest {
         }
 
         registerManagedRequester(fixture, leafDer, leafKey);
+        try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
+                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+            context.session().authorities().orElseThrow().setCaState(
+                    issuedAuthorityId, CaState.RETIRED, "ACME frozen-binding continuation test");
+        }
 
         try (PkiHttpsServer restarted = start(fixture);
                 AcmeTestClient replacement = new AcmeTestClient(wire, directoryUri, replacementKey);
-                AcmeTestClient old = new AcmeTestClient(wire, directoryUri, accountKey)) {
-            URI nonceUri = URI.create(AcmeTestClient.text(replacement.directory(), "newNonce"));
+                AcmeTestClient old = new AcmeTestClient(wire, directoryUri, accountKey);
+                AcmeTestClient other = new AcmeTestClient(wire, directoryUri, otherAccountKey)) {
+            replaceImmediateAuditWithThrowingSink(restarted.realm());
             replacement.nonce(nonceUri); replacement.useAccount(accountKid);
             assertEquals(200, replacement.postAsGet(accountUri).status());
-            old.directory(); old.nonce(nonceUri); old.useAccount(accountKid);
+            old.nonce(nonceUri); old.useAccount(accountKid);
             assertEquals(403, old.postAsGet(accountUri).status());
+            assertEquals(403, old.kid(confirmationCompleteUri, confirmationCompletionPayload).status());
+            other.nonce(nonceUri); other.useAccount(otherAccountKid);
+            assertFalse(other.postAsGet(orderUri).status() == 200);
             assertEquals(200, replacement.postAsGet(orderUri).status());
+            String emptyResponse = confirmationCompletionPayload.replaceFirst(
+                    "\"response\":\"[^\"]+\"", "\"response\":\"\"");
+            assertFalse(replacement.kid(confirmationCompleteUri, emptyResponse).status() == 200);
+            String paddedResponse = confirmationCompletionPayload.replaceFirst(
+                    "\"response\":\"[^\"]+\"", "\"response\":\"AQ==\"");
+            assertFalse(replacement.kid(confirmationCompleteUri, paddedResponse).status() == 200);
+            String oversizedResponse = confirmationCompletionPayload.replaceFirst(
+                    "\"response\":\"[^\"]+\"", "\"response\":\"" + "A".repeat(
+                            zeroecho.pki.server.acme.AcmeWireBounds.MAX_PROOF_B64URL_CHARS + 1) + "\"");
+            assertFalse(replacement.kid(confirmationCompleteUri, oversizedResponse).status() == 200);
+            String staleCas = confirmationCompletionPayload.replaceFirst(
+                    "\"expectedChallengeRecordCommitment\":\"[^\"]+\"",
+                    "\"expectedChallengeRecordCommitment\":\"" + "f".repeat(64) + "\"");
+            assertFalse(replacement.kid(confirmationCompleteUri, staleCas).status() == 200);
+            String rejectedPayload = confirmationCompletionPayload.replaceFirst(
+                    "\"response\":\"[^\"]+\"", "\"response\":\"AQ\"");
+            assertEquals("REJECTED", AcmeTestClient.text(
+                    replacement.kid(confirmationCompleteUri, rejectedPayload), "confirmationResult"));
+            assertEquals("CONFIRMED", AcmeTestClient.text(
+                    replacement.kid(confirmationCompleteUri, confirmationCompletionPayload),
+                    "confirmationResult"));
+            assertEquals("CONFIRMED", AcmeTestClient.text(
+                    replacement.kid(confirmationCompleteUri, confirmationCompletionPayload),
+                    "confirmationResult"));
+            assertFalse(replacement.postAsGet(orderUri).json().fields().containsKey("credentialConfirmation"));
             assertEquals(200, replacement.postAsGet(certificateUri).status());
             X509Certificate requesterCertificate = (X509Certificate) CertificateFactory.getInstance("X.509")
                     .generateCertificate(new ByteArrayInputStream(leafDer));
@@ -231,21 +340,95 @@ class AcmeEndToEndTest {
                     replacement.postAsGet(certificateUri).bodyText());
             assertSignedOcsp(wire, publicPort, preRevocationChain.get(1), requesterCertificate, leafKey,
                     requesterCertificate, "managed", true, false);
-            URI revoke = URI.create(AcmeTestClient.text(replacement.directory(), "revokeCert"));
             String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(leafDer);
-            assertEquals(200, replacement.kid(revoke,
-                    "{\"certificate\":\"" + encoded + "\",\"reason\":1}").status());
+            AcmeTestClient.Response revocation = replacement.kid(revokeUri,
+                    "{\"certificate\":\"" + encoded + "\",\"reason\":1}");
+            assertEquals(200, revocation.status());
+            revocationRequestId = revocation.header("X-ZeroEcho-Request-Id").orElseThrow();
             List<X509Certificate> chain = certificates(replacement.postAsGet(certificateUri).bodyText());
             assertOcsp(wire, publicPort, chain.get(1), chain.get(0), true);
             assertSignedOcsp(wire, publicPort, chain.get(1), chain.get(0), rsa((byte) 81),
                     requesterCertificate(rsa((byte) 81)), "signed", true, true);
             assertSignedOcspUnauthorized(wire, publicPort, chain.get(1), requesterCertificate, leafKey,
                     requesterCertificate, "managed");
-            assertFalse(replacement.kid(revoke,
+            assertFalse(replacement.kid(revokeUri,
                     "{\"certificate\":\"" + encoded + "\",\"reason\":1}").status() == 200);
             System.out.println("...rollover-restart-revocation=true");
         }
+        try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
+                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random());
+                RevocationSnapshot snapshot = context.session().revocations().search(new RevocationQuery(
+                        Optional.empty(), Optional.of(RevocationReason.KEY_COMPROMISE), Optional.empty(),
+                        Optional.empty())); RevocationSnapshot.Cursor cursor = snapshot.openCursor()) {
+            assertTrue(cursor.next());
+            try (RevocationHistory history = context.session().revocations().history(cursor.current().credentialId())) {
+                assertTrue(history.next());
+                zeroecho.pki.api.revocation.RevocationTransition transition = history.current();
+                assertEquals("ACME_ACCOUNT", stringAttribute(transition, RevocationExecutionEvidence.ACTOR_TYPE));
+                assertEquals("ACME_ACCOUNT_JWS",
+                        stringAttribute(transition, RevocationExecutionEvidence.AUTHENTICATION));
+                assertEquals("ACME_OWNERSHIP",
+                        stringAttribute(transition, RevocationExecutionEvidence.AUTHORIZATION));
+                assertEquals(revocationRequestId,
+                        stringAttribute(transition, RevocationExecutionEvidence.REQUEST_ID));
+                assertEquals(accountUri.getPath().substring(accountUri.getPath().lastIndexOf('/') + 1),
+                        stringAttribute(transition, RevocationExecutionEvidence.ACTOR_ID));
+                assertFalse(transition.attributes().ids().contains(RevocationExecutionEvidence.AUTHORIZATION_PATH));
+                assertFalse(transition.attributes().ids().contains(RevocationExecutionEvidence.OPERATION_COMMITMENT));
+            }
+            assertFalse(cursor.next());
+        }
         System.out.println("...ok");
+    }
+
+    private static String confirmationCompletionPayload(AcmeTestClient.Response challenge, byte[] proof) {
+        return "{\"expectedLifecycleRevision\":" + integer(challenge.json(), "expectedLifecycleRevision")
+                + ",\"expectedLifecycleRecordCommitment\":\""
+                + AcmeTestClient.text(challenge, "expectedLifecycleRecordCommitment")
+                + "\",\"expectedChallengeRecordCommitment\":\""
+                + AcmeTestClient.text(challenge, "expectedChallengeRecordCommitment")
+                + "\",\"response\":\"" + Base64.getUrlEncoder().withoutPadding().encodeToString(proof)
+                + "\"}";
+    }
+
+    private static PkiOperationValue.ObjectValue object(AcmeTestClient.Response response, String field) {
+        PkiOperationValue value = response.json().fields().get(field);
+        return assertInstanceOf(PkiOperationValue.ObjectValue.class, value);
+    }
+
+    private static long integer(PkiOperationValue.ObjectValue value, String field) {
+        return assertInstanceOf(PkiOperationValue.IntegerValue.class, value.fields().get(field)).value();
+    }
+
+    private static String text(PkiOperationValue.ObjectValue value, String field) {
+        return assertInstanceOf(PkiOperationValue.Text.class, value.fields().get(field)).value();
+    }
+
+    private static AcmeState.Directory replaceDirectoryStatus(PkiHttpsServer server,
+            AcmeState.Directory current, AcmeState.DirectoryStatus status) {
+        AcmeState.Directory replacement = new AcmeState.Directory(current.directoryId(), current.alias(),
+                current.revision(), current.realmId(), current.authorityId(), current.profile(),
+                current.issuerId(), current.issuancePathId(), current.issuancePathCommitment(),
+                current.identifierTypes(), current.dnsNamespaces(), current.maximumValidity(),
+                current.publicKeyAlgorithms(), current.x509BindingPolicies(), current.challengeTypes(),
+                current.challengeProviderIds(), current.eabProviderId(), current.eabRequired(),
+                current.confirmationPolicy(), current.confirmationPolicyCommitment(), status,
+                current.policyCommitment(), current.createdAt(), "0".repeat(64));
+        return (AcmeState.Directory) server.realm().acmeControl().replace(List.of(
+                new zeroecho.pki.server.acme.AcmeControlStore.Replacement(current, replacement))).get(0);
+    }
+
+    private static String stringAttribute(zeroecho.pki.api.revocation.RevocationTransition transition,
+            zeroecho.pki.api.attr.AttributeId id) {
+        return ((AttributeValue.StringValue) transition.attributes().get(id).orElseThrow()).value();
+    }
+
+    private static void replaceImmediateAuditWithThrowingSink(ServerRealmContext context) throws Exception {
+        Field field = ServerRealmContext.class.getDeclaredField("audit");
+        field.setAccessible(true);
+        field.set(context, new SafeAudit(ServerTestSupport.CLOCK, event -> {
+            throw new IllegalStateException("immediate ACME audit unavailable");
+        }));
     }
 
     @Test
@@ -381,17 +564,19 @@ class AcmeEndToEndTest {
             store.putPublic("root.pub", "RSA", rootKey.getPublic());
         }
         ProviderConfig workflow = new ProviderConfig("zeroecho-lib", Map.of(
-                "keyringPath", keyring.toString(), "operationRoot", root.resolve("signing-operations").toString(),
+                "keyringPath", keyring.toString(),
                 "keyRefPrefix", "acme-test:", "requireComponentSuffix", "true"));
         PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
-                workflow, new ProviderConfig("x509-bc", Map.of()), root.resolve("signing-bus.log").toString(),
-                "SHA256withRSA", Duration.ofSeconds(10), Optional.empty());
+                workflow, new ProviderConfig("x509-bc", Map.of()), "SHA256withRSA", Duration.ofSeconds(10),
+                Optional.empty());
         PkiSessionConfiguration session = new PkiSessionConfiguration(3,
                 base.realm().pkiSessionConfiguration().store(), base.realm().pkiSessionConfiguration().audit(),
                 Optional.of(signing), List.of(), List.of());
         ServerRealmConfiguration realm = new ServerRealmConfiguration(base.realm().realmId(),
-                base.realm().displayName(), session, base.realm().authorityExposure(),
+                base.realm().displayName(), base.realm().confirmationProofPolicy(), session,
+                base.realm().authorityExposure(),
                 base.realm().authorizationCommitment(), base.realm().approvalCommitment(),
+                base.realm().extendedApprovalCommitment(),
                 base.realm().disclosureCommitment(), base.realm().disclosureDefaults(),
                 base.realm().controlLogPath(), base.realm().controlStoreId(), base.realm().approvalPolicies());
         PkiServerConfiguration.Execution lane = new PkiServerConfiguration.Execution(2, 4, 2, 4, 4,
@@ -463,14 +648,14 @@ class AcmeEndToEndTest {
                     DIRECTORY_ALIAS, authority, "server-tls", Set.of(IDENTIFIER), Duration.ofDays(30),
                     active.definition().leafPolicy().allowedSubjectKeyAlgorithmIds(), Set.of("STANDARD_ONLY"),
                     Set.of(AcmeState.ChallengeType.HTTP_01), Set.of(Http01ChallengeProvider.ID), Optional.empty(),
-                    false, DisclosureService.Policy.OWNER_ONLY));
+                    false));
             service.activateDirectory(directory.directoryId());
             if (includeEab) {
                 AcmeState.Directory eab = service.registerDirectory(new AcmeService.DirectoryRegistration(
                         EAB_DIRECTORY_ALIAS, authority, "server-tls", Set.of(IDENTIFIER), Duration.ofDays(30),
                         active.definition().leafPolicy().allowedSubjectKeyAlgorithmIds(), Set.of("STANDARD_ONLY"),
                         Set.of(AcmeState.ChallengeType.HTTP_01), Set.of(Http01ChallengeProvider.ID),
-                        Optional.of(TestAcmeEabProvider.ID), true, DisclosureService.Policy.OWNER_ONLY));
+                        Optional.of(TestAcmeEabProvider.ID), true));
                 service.activateDirectory(eab.directoryId());
             }
             assertEquals(authority, context.session().repository().authority(authority).orElseThrow().caId());
@@ -660,19 +845,23 @@ class AcmeEndToEndTest {
             store.putPublic("root.pub", "RSA", rootKey.getPublic());
         }
         ProviderConfig workflow = new ProviderConfig("zeroecho-lib", Map.of("keyringPath", keyring.toString(),
-                "operationRoot", root.resolve("signing-operations").toString(), "keyRefPrefix", "acme-test:",
+                "keyRefPrefix", "acme-test:",
                 "requireComponentSuffix", "true"));
         PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
-                workflow, new ProviderConfig("x509-bc", Map.of()), root.resolve("signing-bus.log").toString(),
-                "SHA256withRSA", Duration.ofSeconds(10), Optional.of("ZEROECHO_TEST_KEYRING_PASSWORD"));
+                workflow, new ProviderConfig("x509-bc", Map.of()), "SHA256withRSA", Duration.ofSeconds(10),
+                Optional.of("ZEROECHO_TEST_KEYRING_PASSWORD"));
         PkiSessionConfiguration session = new PkiSessionConfiguration(3,
                 new ProviderConfig("fs", Map.of("root", root.resolve("pki").toString())),
                 new ProviderConfig("memory", Map.of("size", "256")), Optional.of(signing), List.of(), List.of());
         ApprovalService.Policy approval = new ApprovalService.Policy("high-risk", 1, Set.of("approver"), Set.of(),
                 true, Duration.ofHours(1), true);
         ServerRealmConfiguration realm = new ServerRealmConfiguration(ServerTestSupport.REALM, "Packaged ACME",
-                session, new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(),
-                        true), ServerTestSupport.DIGEST, approval.commitment(), ServerTestSupport.DIGEST,
+                ServerTestSupport.CONFIRMATION_PROOF_POLICY, session,
+                new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(),
+                        true), ServerTestSupport.DIGEST, approval.commitment(),
+                ServerRealmConfiguration.extendedApprovalCommitment(
+                        Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval)),
+                ServerTestSupport.DIGEST,
                 DisclosureService.Defaults.recommended(), root.resolve("control.log"),
                 new zeroecho.pki.spi.store.MetadataStoreId("1234567890abcdef1234567890abcdef"),
                 Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval));
@@ -735,6 +924,12 @@ class AcmeEndToEndTest {
         return "{\"version\":" + PkiServerConfiguration.CURRENT_VERSION
                 + ",\"serverName\":\"packaged-acme\",\"realm\":{"
                 + "\"realmId\":\"production\",\"displayName\":\"Packaged ACME\","
+                + "\"confirmationProof\":{\"audience\":\""
+                + realm.confirmationProofPolicy().audience().value()
+                + "\",\"challengeTtlMillis\":"
+                + realm.confirmationProofPolicy().challengeTimeToLive().toMillis()
+                + ",\"rsaMaximumModulusBits\":"
+                + realm.confirmationProofPolicy().rsaMaximumModulusBits() + "},"
                 + "\"authorityExposure\":{\"mode\":\"ALL_REALM_AUTHORITIES\",\"authorityIds\":[],"
                 + "\"creationPermitted\":true},\"authorizationCommitment\":\"" + realm.authorizationCommitment()
                 + "\",\"approvalCommitment\":\"" + realm.approvalCommitment()
@@ -746,10 +941,12 @@ class AcmeEndToEndTest {
                 + "\"approvalPolicy\":{\"policyId\":\"high-risk\",\"threshold\":1,"
                 + "\"eligibleApprovers\":[\"approver\"],\"requiredRoleTemplateIds\":[],"
                 + "\"requesterSeparation\":true,\"lifetimeMillis\":3600000,\"justificationRequired\":true},"
-                + "\"pkiSession\":{\"version\":3,\"store\":" + store + ",\"audit\":" + audit
+                + "\"pkiSession\":{\"version\":4,\"store\":" + store + ",\"audit\":" + audit
                 + ",\"signing\":{\"workflow\":" + workflow + ",\"framework\":"
-                + providerJson(signing.framework()) + ",\"busPath\":\"" + json(signing.busPath())
-                + "\",\"signatureAlgorithm\":\"SHA256withRSA\",\"signingTtlMillis\":10000,"
+                + providerJson(signing.framework()) + ",\"signatureAlgorithm\":\"SHA256withRSA\","
+                + "\"signingTtlMillis\":10000,"
+                + "\"laneCount\":2,\"queueCapacity\":3,\"gracefulDrainMillis\":4000,"
+                + "\"forcedCancellationMillis\":5000,"
                 + "\"unlockEnvironmentVariable\":\"ZEROECHO_TEST_KEYRING_PASSWORD\"},"
                 + "\"publishers\":[],\"bindingProviders\":[]}},\"listener\":{\"address\":\"127.0.0.1\","
                 + "\"port\":" + configuration.listener().port() + ",\"tlsProvider\":" + tlsJson

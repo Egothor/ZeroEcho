@@ -36,6 +36,7 @@ package zeroecho.pki.impl.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -54,6 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.PkiFailureReason;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.revocation.RevocationCommand;
@@ -64,6 +66,7 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationTransitionFeed;
 import zeroecho.core.io.CancellationSignal;
 
 final class DefaultRevocationServiceTest {
@@ -87,6 +90,22 @@ final class DefaultRevocationServiceTest {
         assertEquals("COMMITTED", events.get(0).details().get("result"));
         assertEquals("HELD", events.get(0).details().get("state"));
         assertEquals("1", events.get(0).details().get("revision"));
+    }
+
+    @Test
+    void delegatesExactExclusiveFeedPositionWithoutPopulationWork() {
+        RevocationTransitionFeed source = emptyFeed();
+        RevocationTransitionFeed.Position position = new RevocationTransitionFeed.Position("position_a");
+        Optional<RevocationTransitionFeed.Position> afterExclusive = Optional.of(position);
+        DefaultRevocationService service = new DefaultRevocationService(store((method, arguments) -> {
+            if ("openRevocationTransitionFeed".equals(method)) {
+                assertSame(afterExclusive, arguments[0]);
+                return source;
+            }
+            throw new AssertionError("Unexpected population operation: " + method);
+        }), Clock.fixed(NOW, ZoneOffset.UTC), event -> { });
+
+        assertSame(source, service.feed(afterExclusive));
     }
 
     @Test
@@ -122,7 +141,8 @@ final class DefaultRevocationServiceTest {
         List<AuditEvent> events = new ArrayList<>();
         DefaultRevocationService service = new DefaultRevocationService(store((method, arguments) -> {
             if ("transitionRevocation".equals(method)) {
-                throw new PkiException("Revocation append outcome is unknown: code=REVOCATION_RECOVERY_REQUIRED");
+                throw new PkiException("Revocation append outcome is unknown: code=REVOCATION_RECOVERY_REQUIRED",
+                        PkiFailureReason.REVOCATION_RECOVERY_REQUIRED);
             }
             if ("getRevocation".equals(method)) {
                 return Optional.empty();
@@ -190,6 +210,18 @@ final class DefaultRevocationServiceTest {
                 };
             }
             @Override public void close() throws IOException { }
+        };
+    }
+
+    private static RevocationTransitionFeed emptyFeed() {
+        return new RevocationTransitionFeed() {
+            @Override public HighWatermark highWatermark() {
+                return new HighWatermark(new zeroecho.pki.spi.store.MetadataStoreId(
+                        "102030405060708090a0b0c0d0e0f001"), 0L, "0".repeat(64));
+            }
+            @Override public boolean next(CancellationSignal cancellation) { return false; }
+            @Override public Entry current() { throw new IllegalStateException(); }
+            @Override public void close() { }
         };
     }
 

@@ -39,6 +39,7 @@ import java.util.Objects;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.Validity;
@@ -69,7 +70,9 @@ public final class ValidatedCaCertificateRequest {
         /** Creates an intermediate CA's initial credential. */
         CREATE_INTERMEDIATE,
         /** Issues an additional intermediate CA credential. */
-        ISSUE_INTERMEDIATE
+        ISSUE_INTERMEDIATE,
+        /** Rolls over or rotates an intermediate CA, advancing it to a new generation. */
+        ROLLOVER_INTERMEDIATE
     }
 
     private final Operation operation;
@@ -85,6 +88,28 @@ public final class ValidatedCaCertificateRequest {
     private final BigInteger serial;
     private final CaCertificatePolicy policy;
     private final X509AlgorithmBindingPolicy algorithmBindingPolicy;
+    private final FrozenPublication frozenPublication;
+
+    /**
+     * Exact parent issuance selection and subject managed-key binding.
+     *
+     * @param parentIssuerId exact parent issuer-generation identifier
+     * @param parentPathId exact parent chain-path identifier
+     * @param parentPathCommitment lowercase 64-hex-character path commitment
+     * @param subjectKeyRef managed key bound to the subject authority
+     */
+    public record FrozenPublication(PkiId parentIssuerId, PkiId parentPathId,
+            String parentPathCommitment, KeyRef subjectKeyRef) {
+        /** Validates immutable CA publication authority. */
+        public FrozenPublication {
+            Objects.requireNonNull(parentIssuerId, "parentIssuerId");
+            Objects.requireNonNull(parentPathId, "parentPathId");
+            Objects.requireNonNull(subjectKeyRef, "subjectKeyRef");
+            if (parentPathCommitment == null || !parentPathCommitment.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException("Parent path commitment is invalid");
+            }
+        }
+    }
 
     // The constructor is the single cohesive gate output boundary.
     @SuppressWarnings("PMD.ExcessiveParameterList")
@@ -115,73 +140,159 @@ public final class ValidatedCaCertificateRequest {
         this.serial = Objects.requireNonNull(serial, "serial");
         this.policy = Objects.requireNonNull(policy, "policy");
         this.algorithmBindingPolicy = Objects.requireNonNull(algorithmBindingPolicy, "algorithmBindingPolicy");
+        this.frozenPublication = null;
         if (serial.signum() <= 0 || serial.toByteArray().length > 20) {
             throw new IllegalArgumentException("serial must be positive and at most 20 bytes");
         }
     }
 
-    /** Returns the authorized operation. */
+    private ValidatedCaCertificateRequest(ValidatedCaCertificateRequest source,
+            FrozenPublication frozenPublication) {
+        this.operation = source.operation;
+        this.formatId = source.formatId;
+        this.issuerCaId = source.issuerCaId;
+        this.subjectCaId = source.subjectCaId;
+        this.profileReference = source.profileReference;
+        this.certificateType = source.certificateType;
+        this.subjectRef = source.subjectRef;
+        this.subjectRdns = source.subjectRdns;
+        this.exactPublicKey = source.exactPublicKey;
+        this.validity = source.validity;
+        this.serial = source.serial;
+        this.policy = source.policy;
+        this.algorithmBindingPolicy = source.algorithmBindingPolicy;
+        this.frozenPublication = Objects.requireNonNull(frozenPublication, "frozenPublication");
+    }
+
+    /* default */ ValidatedCaCertificateRequest withFrozenPublication(PkiId parentIssuerId,
+            PkiId parentPathId, String parentPathCommitment, KeyRef subjectKeyRef) {
+        return new ValidatedCaCertificateRequest(this,
+                new FrozenPublication(parentIssuerId, parentPathId, parentPathCommitment, subjectKeyRef));
+    }
+
+    /**
+     * Returns the authorized operation.
+     *
+     * @return closed CA operation
+     */
     public Operation operation() {
         return operation;
     }
 
-    /** Returns the credential format. */
+    /**
+     * Returns the credential format.
+     *
+     * @return exact format identifier
+     */
     public FormatId formatId() {
         return formatId;
     }
 
-    /** Returns the issuing CA identifier. */
+    /**
+     * Returns the issuing CA identifier.
+     *
+     * @return exact issuer authority
+     */
     public PkiId issuerCaId() {
         return issuerCaId;
     }
 
-    /** Returns the subject CA identifier. */
+    /**
+     * Returns the subject CA identifier.
+     *
+     * @return exact subject authority
+     */
     public PkiId subjectCaId() {
         return subjectCaId;
     }
 
-    /** Returns the exact active profile reference. */
+    /**
+     * Returns the exact active profile reference.
+     *
+     * @return immutable profile reference
+     */
     public CertificateProfileRef profileReference() {
         return profileReference;
     }
 
-    /** Returns the required certificate kind. */
+    /**
+     * Returns the required certificate kind.
+     *
+     * @return exact profile certificate kind
+     */
     public CertificateProfileKind certificateType() {
         return certificateType;
     }
 
-    /** Returns the canonical subject reference. */
+    /**
+     * Returns the canonical subject reference.
+     *
+     * @return exact inventory subject
+     */
     public SubjectRef subjectRef() {
         return subjectRef;
     }
 
-    /** Returns the ordered canonical subject components. */
+    /**
+     * Returns the ordered canonical subject components.
+     *
+     * @return immutable subject RDNs
+     */
     public List<SubjectRdn> subjectRdns() {
         return subjectRdns;
     }
 
-    /** Returns a defensive copy of the proof-bound public key. */
+    /**
+     * Returns a defensive copy of the proof-bound public key.
+     *
+     * @return exact SPKI copy
+     */
     public EncodedObject exactPublicKey() {
         return new EncodedObject(exactPublicKey.encoding(), exactPublicKey.bytes());
     }
 
-    /** Returns the approved exact validity. */
+    /**
+     * Returns the approved exact validity.
+     *
+     * @return credential validity interval
+     */
     public Validity validity() {
         return validity;
     }
 
-    /** Returns the issuer-controlled serial. */
+    /**
+     * Returns the issuer-controlled serial.
+     *
+     * @return positive canonical serial
+     */
     public BigInteger serial() {
         return serial;
     }
 
-    /** Returns the exact profile-derived CA policy. */
+    /**
+     * Returns the exact profile-derived CA policy.
+     *
+     * @return immutable CA policy
+     */
     public CaCertificatePolicy policy() {
         return policy;
     }
 
-    /** @return exact immutable X.509 representation selection */
+    /**
+     * Returns the X.509 representation selection.
+     *
+     * @return exact immutable binding policy
+     */
     public X509AlgorithmBindingPolicy algorithmBindingPolicy() {
         return algorithmBindingPolicy;
+    }
+
+    /**
+     * Returns service-frozen CA publication inputs.
+     *
+     * @return frozen inputs, when supplied
+     */
+    public java.util.Optional<FrozenPublication> frozenPublication() {
+        return java.util.Optional.ofNullable(frozenPublication);
     }
 }

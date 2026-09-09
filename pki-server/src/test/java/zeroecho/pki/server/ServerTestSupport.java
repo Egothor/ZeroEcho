@@ -36,6 +36,7 @@ package zeroecho.pki.server;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -47,7 +48,8 @@ import java.util.Set;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.AuditEvent;
-import zeroecho.pki.impl.fs.PosixTransactionalMetadataStore;
+import zeroecho.pki.application.CredentialConfirmationProofAudience;
+import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
@@ -58,17 +60,21 @@ final class ServerTestSupport {
     static final Clock CLOCK = Clock.fixed(Instant.parse("2026-08-04T12:00:00Z"), ZoneOffset.UTC);
     static final String DIGEST = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     static final MetadataStoreId STORE_ID = new MetadataStoreId("0123456789abcdef0123456789abcdef");
+    static final CredentialConfirmationProofPolicy CONFIRMATION_PROOF_POLICY =
+            new CredentialConfirmationProofPolicy(new CredentialConfirmationProofAudience(
+                    "urn:uuid:123e4567-e89b-42d3-a456-426614174000"),
+                    Duration.ofMinutes(5L), 8_192);
 
     private ServerTestSupport() { }
 
     static OpenedStore open(Path directory) throws IOException {
         Path log = directory.resolve("server-control.log");
-        PosixTransactionalMetadataStore metadata = PosixTransactionalMetadataStore.create(log, STORE_ID,
+        DurableTransactionalMetadataStore metadata = DurableTransactionalMetadataStore.create(log, STORE_ID,
                 OptionalLong.of(1_048_576));
         ServerControlStore store = new ServerControlStore(metadata);
         store.ensureRealm(new ServerControlStore.RealmRecord(REALM, "Production",
                 new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true),
-                DIGEST, DIGEST, DIGEST, STORE_ID));
+                DIGEST, DIGEST, DIGEST, DIGEST, STORE_ID));
         return new OpenedStore(log, store, new RecordingAudit());
     }
 

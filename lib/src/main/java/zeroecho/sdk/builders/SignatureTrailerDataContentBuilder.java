@@ -139,6 +139,7 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
     /**
      * Enters single-algorithm (non-hybrid) construction helpers.
      *
+     * @param session active session used to create signature contexts
      * @return selector for creating signing/verifying builders
      * @since 1.0
      */
@@ -149,6 +150,7 @@ public final class SignatureTrailerDataContentBuilder implements DataContentBuil
     /**
      * Enters hybrid signature construction helpers.
      *
+     * @param session active session used to create signature contexts
      * @return selector for creating signing/verifying builders
      * @since 1.0
      */

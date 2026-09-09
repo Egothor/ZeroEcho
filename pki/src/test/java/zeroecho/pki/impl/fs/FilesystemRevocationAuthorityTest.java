@@ -78,6 +78,7 @@ import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
+import zeroecho.pki.application.RevocationExecutionEvidence;
 import zeroecho.pki.impl.core.StoreBackedEffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
@@ -112,6 +113,33 @@ final class FilesystemRevocationAuthorityTest {
             assertEquals(RevocationReason.KEY_COMPROMISE, history.latest().permanentReason().orElseThrow());
         }
         System.out.println("legalTransitionsAreContiguousDurableAndPermanentIsTerminal...ok");
+    }
+
+    @Test
+    void authoritativeEvidenceAndNativeFieldsSurviveHistoryReopen() throws Exception {
+        Path root = temporaryDirectory.resolve("evidence-reopen");
+        Credential credential;
+        RevocationExecutionEvidence evidence = RevocationExecutionEvidence.administrative("operator-a", "realm-a",
+                "request-a", RevocationExecutionEvidence.Authentication.DIRECT_MTLS,
+                RevocationExecutionEvidence.AuthorizationPath.APPROVAL, "a".repeat(64),
+                Optional.of("ticket-100"));
+        try (FilesystemPkiStore store = store(root)) {
+            credential = credential(store, "evidence-reopen");
+            store.putCredential(credential);
+            transition(store, new RevocationCommand.RevokePermanently(credential.credentialId(),
+                    RevocationReason.KEY_COMPROMISE, evidence.attributes()));
+        }
+        try (FilesystemPkiStore reopened = store(root)) {
+            RevocationTransition transition = readHistory(reopened, credential.credentialId()).orElseThrow().latest();
+            assertEquals(1L, transition.revision());
+            assertEquals(TIME, transition.time());
+            assertEquals(RevocationState.PERMANENTLY_REVOKED, transition.state());
+            assertEquals(RevocationReason.KEY_COMPROMISE, transition.permanentReason().orElseThrow());
+            assertEquals(evidence.attributes().ids(), transition.attributes().ids());
+            for (AttributeId id : evidence.attributes().ids()) {
+                assertEquals(evidence.attributes().getAll(id), transition.attributes().getAll(id));
+            }
+        }
     }
 
     @Test
@@ -253,9 +281,11 @@ final class FilesystemRevocationAuthorityTest {
             store.putCredential(blocked);
             store.putCredential(independent);
 
-            Method acquire = FilesystemPkiStore.class.getDeclaredMethod("acquireRevocationLock", PkiId.class);
+            Method acquire = FilesystemPkiStore.class.getDeclaredMethod(
+                    "acquireCredentialStateLock", PkiId.class);
             Method release = Arrays.stream(FilesystemPkiStore.class.getDeclaredMethods())
-                    .filter(method -> method.getName().equals("releaseRevocationLock")).findFirst().orElseThrow();
+                    .filter(method -> method.getName().equals("releaseCredentialStateLock"))
+                    .findFirst().orElseThrow();
             acquire.setAccessible(true);
             release.setAccessible(true);
             Object heldLock = acquire.invoke(store, blocked.credentialId());
@@ -366,7 +396,7 @@ final class FilesystemRevocationAuthorityTest {
         Files.write(legacyCredential, new byte[] { 0x03, 0x04 });
 
         IllegalStateException failure = assertThrows(IllegalStateException.class, () -> store(root));
-        assertTrue(failure.getMessage().contains("unversioned store is not empty"));
+        assertEquals("Filesystem store open failed: code=STORE_OPEN_FAILED", failure.getMessage());
         assertFalse(Files.exists(root.resolve(FsPaths.VERSION_FILE)));
         assertArrayEquals(new byte[] { 0x01, 0x02 }, Files.readAllBytes(legacyJournal));
         System.out.println("unversionedLegacyJournalStoreIsRejected...ok");

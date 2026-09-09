@@ -295,6 +295,7 @@ final class FilesystemRevocationLogTest {
     }
 
     @Test
+    @RequiresSymlinkCreation
     void authorityPreambleAndEntryTypeFailuresFailClosed() throws Exception {
         System.out.print("authorityPreambleAndEntryTypeFailuresFailClosed ");
         Path path = logPath("authority");
@@ -353,7 +354,7 @@ final class FilesystemRevocationLogTest {
             public void publish(LogRecord record) {
                 if (record.getLevel().intValue() >= Level.WARNING.intValue()) {
                     assertEquals(
-                            "POSIX revocation-log creation durability is limited; continuing in best-effort mode",
+                            "Durable revocation-log creation durability is limited; continuing in best-effort mode",
                             record.getMessage());
                     assertEquals(null, record.getThrown());
                     warnings.incrementAndGet();
@@ -373,8 +374,8 @@ final class FilesystemRevocationLogTest {
             FilesystemRevocationLog.CapabilityProfile limited =
                     new FilesystemRevocationLog.CapabilityProfile() {
                         @Override
-                        public boolean posixAvailable(Path parent) {
-                            return true;
+                        public boolean posixAvailable(Path parent) throws IOException {
+                            return Files.getFileStore(parent).supportsFileAttributeView("posix");
                         }
 
                         @Override
@@ -572,8 +573,8 @@ final class FilesystemRevocationLogTest {
     private static FilesystemRevocationLog.CapabilityProfile supportedProfile() {
         return new FilesystemRevocationLog.CapabilityProfile() {
             @Override
-            public boolean posixAvailable(Path parent) {
-                return true;
+            public boolean posixAvailable(Path parent) throws IOException {
+                return Files.getFileStore(parent).supportsFileAttributeView("posix");
             }
 
             @Override

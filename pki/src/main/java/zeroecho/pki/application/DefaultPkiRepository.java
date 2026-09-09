@@ -43,10 +43,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.math.BigInteger;
 
-import org.bouncycastle.cert.X509CRLHolder;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.asn1.ASN1InputStream;
-import org.bouncycastle.asn1.x509.CertificateList;
+import java.security.cert.X509CRL;
+import java.security.cert.X509Certificate;
+
+import zeroecho.pkix.Pkix;
 
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.PkiException;
@@ -160,26 +160,31 @@ final class DefaultPkiRepository implements PkiRepository {
 
     private static void validateCertificate(RepeatableContent content, long expectedLength, String expectedDigest)
             throws IOException {
-        try (InputStream input = content.openStream(); ASN1InputStream asn1 = new ASN1InputStream(input)) {
-            X509CertificateHolder holder = new X509CertificateHolder(
-                    org.bouncycastle.asn1.x509.Certificate.getInstance(asn1.readObject()));
-            requireComplete(asn1);
-            requireCanonical(holder.getEncoded(), expectedLength, expectedDigest, "certificate");
+        byte[] bytes;
+        try (InputStream input = content.openStream()) {
+            bytes = input.readAllBytes();
+        }
+        try {
+            X509Certificate certificate = Pkix.parseCertificate(bytes);
+            // The certificate re-encodes to canonical DER; matching the stored length and
+            // digest proves the stored bytes are a single canonical object with no trailing data.
+            requireCanonical(certificate.getEncoded(), expectedLength, expectedDigest, "certificate");
+        } catch (IllegalArgumentException | java.security.cert.CertificateEncodingException failure) {
+            throw new IOException("Repository certificate is not canonical DER", failure);
         }
     }
 
     private static void validateCrl(RepeatableContent content, long expectedLength, String expectedDigest)
             throws IOException {
-        try (InputStream input = content.openStream(); ASN1InputStream asn1 = new ASN1InputStream(input)) {
-            X509CRLHolder holder = new X509CRLHolder(CertificateList.getInstance(asn1.readObject()));
-            requireComplete(asn1);
-            requireCanonical(holder.getEncoded(), expectedLength, expectedDigest, "CRL");
+        byte[] bytes;
+        try (InputStream input = content.openStream()) {
+            bytes = input.readAllBytes();
         }
-    }
-
-    private static void requireComplete(ASN1InputStream input) throws IOException {
-        if (input.readObject() != null) {
-            throw new IOException("Repository DER has trailing input");
+        try {
+            X509CRL crl = Pkix.parseCrl(bytes);
+            requireCanonical(crl.getEncoded(), expectedLength, expectedDigest, "CRL");
+        } catch (IllegalArgumentException | java.security.cert.CRLException failure) {
+            throw new IOException("Repository CRL is not canonical DER", failure);
         }
     }
 

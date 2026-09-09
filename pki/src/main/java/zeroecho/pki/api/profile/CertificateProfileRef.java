@@ -72,17 +72,29 @@ public final class CertificateProfileRef {
         this.canonicalSha256 = canonicalSha256.clone();
     }
 
-    /** @return logical profile identifier */
+    /**
+     * Returns the logical profile identifier.
+     *
+     * @return logical profile identifier
+     */
     public String profileId() {
         return profileId;
     }
 
-    /** @return positive profile version */
+    /**
+     * Returns the profile version.
+     *
+     * @return positive profile version
+     */
     public long profileVersion() {
         return profileVersion;
     }
 
-    /** @return defensive copy of the canonical SHA-256 digest */
+    /**
+     * Returns the canonical profile digest.
+     *
+     * @return defensive copy of the canonical SHA-256 digest
+     */
     public byte[] canonicalSha256() {
         return canonicalSha256.clone();
     }

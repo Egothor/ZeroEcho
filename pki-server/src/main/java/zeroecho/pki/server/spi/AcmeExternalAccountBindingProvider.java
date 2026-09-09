@@ -47,13 +47,32 @@ import zeroecho.pki.spi.ProviderConfig;
  */
 @SuppressWarnings("PMD.ControlStatementBraces")
 public interface AcmeExternalAccountBindingProvider {
-    /** @return stable explicitly configured provider identity */
+    /**
+     * Returns the stable, explicitly configured provider identity.
+     *
+     * @return the provider identity used in configuration
+     */
     String id();
 
-    /** Verifies and, when configured, consumes one exact nested EAB JWS. */
+    /**
+     * Verifies and, when configured, consumes one exact nested EAB JWS.
+     *
+     * @param request bounded EAB verification request
+     * @param configuration explicit provider configuration
+     * @return verified policy binding without HMAC key material
+     */
     Binding verify(Request request, ProviderConfig configuration);
 
-    /** Exact bounded EAB verification request. */
+    /**
+     * Exact bounded EAB verification request.
+     *
+     * @param directoryId directory receiving the account request
+     * @param authorityId authority to which the account will be bound
+     * @param profileId requested issuance profile
+     * @param accountKeyThumbprint lowercase SHA-256 account-key commitment
+     * @param nestedJws bounded nested EAB JWS; defensively copied
+     * @param now authoritative verification time
+     */
     record Request(String directoryId, PkiId authorityId, String profileId,
             String accountKeyThumbprint, byte[] nestedJws, Instant now) {
         /** Defensively snapshots non-secret protocol material. */
@@ -66,10 +85,23 @@ public interface AcmeExternalAccountBindingProvider {
             if (nestedJws.length == 0 || nestedJws.length > 65_536) throw new IllegalArgumentException("Invalid EAB document bound");
             Objects.requireNonNull(now, "now");
         }
+        /**
+         * Returns a defensive copy of the nested JWS.
+         *
+         * @return copied nested JWS bytes
+         */
         @Override public byte[] nestedJws() { return nestedJws.clone(); }
     }
 
-    /** Finite EAB policy output without secret material. */
+    /**
+     * Finite EAB policy output without secret material.
+     *
+     * @param keyId stable external-account key identity
+     * @param policyCommitment lowercase SHA-256 policy commitment
+     * @param dnsNamespaces immutable DNS namespaces authorized by the binding
+     * @param expiresAt binding expiry
+     * @param consumed whether the provider atomically consumed a one-time binding
+     */
     record Binding(String keyId, String policyCommitment, Set<String> dnsNamespaces,
             Instant expiresAt, boolean consumed) {
         /** Validates complete EAB policy binding. */

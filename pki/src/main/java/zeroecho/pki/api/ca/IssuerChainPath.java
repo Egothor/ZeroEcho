@@ -46,6 +46,12 @@ import zeroecho.pki.api.PkiId;
 /**
  * Immutable explicitly ordered issuer chain from selected issuer certificate to
  * its trust-anchor certificate.
+ *
+ * @param pathId deterministic identity derived from {@code pathCommitment}
+ * @param authorityId logical authority that owns the path
+ * @param issuerId exact issuer generation at the path leaf
+ * @param orderedCredentialIds nonempty leaf-to-anchor credential identities
+ * @param pathCommitment lowercase SHA-256 commitment to authority, issuer, and order
  */
 public record IssuerChainPath(PkiId pathId, PkiId authorityId, PkiId issuerId,
         List<PkiId> orderedCredentialIds, String pathCommitment) {
@@ -73,13 +79,23 @@ public record IssuerChainPath(PkiId pathId, PkiId authorityId, PkiId issuerId,
         }
     }
 
-    /** Creates a canonical path from its exact ordered credential identities. */
+    /**
+     * Creates a canonical path from its exact ordered credential identities.
+     * @param authorityId logical authority that owns the path
+     * @param issuerId exact issuer generation at the path leaf
+     * @param credentials nonempty leaf-to-anchor credential identities
+     * @return validated path with deterministic identity and commitment
+     */
     public static IssuerChainPath create(PkiId authorityId, PkiId issuerId, List<PkiId> credentials) {
         String commitment = commitmentFor(authorityId, issuerId, credentials);
         return new IssuerChainPath(idFor(commitment), authorityId, issuerId, credentials, commitment);
     }
 
-    /** Returns the canonical path identity for a path commitment. */
+    /**
+     * Returns the canonical path identity for a path commitment.
+     * @param commitment lowercase 64-hex-character SHA-256 commitment
+     * @return deterministic path identifier
+     */
     public static PkiId idFor(String commitment) {
         if (commitment == null || !commitment.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("commitment must be lowercase SHA-256 hexadecimal");
@@ -87,7 +103,13 @@ public record IssuerChainPath(PkiId pathId, PkiId authorityId, PkiId issuerId,
         return new PkiId("path:" + commitment.substring(0, 32));
     }
 
-    /** Returns the canonical commitment to authority, generation, and order. */
+    /**
+     * Returns the canonical commitment to authority, generation, and order.
+     * @param authorityId logical authority identifier
+     * @param issuerId exact issuer-generation identifier
+     * @param credentials exact ordered credential identifiers
+     * @return lowercase SHA-256 hexadecimal commitment
+     */
     public static String commitmentFor(PkiId authorityId, PkiId issuerId, List<PkiId> credentials) {
         Objects.requireNonNull(authorityId, "authorityId");
         Objects.requireNonNull(issuerId, "issuerId");

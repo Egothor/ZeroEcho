@@ -125,6 +125,10 @@ final class FsCodecTest {
         unsupportedVersion[VERSION_OFFSET] = (byte) (FsCodec.CURRENT_CODEC_VERSION + 1);
         assertInvalid(unsupportedVersion);
 
+        byte[] previousVersion = valid.clone();
+        previousVersion[VERSION_OFFSET] = (byte) (FsCodec.CURRENT_CODEC_VERSION - 1);
+        assertInvalid(previousVersion);
+
         byte[] unknownType = valid.clone();
         unknownType[TYPE_OFFSET] = (byte) 127;
         assertInvalid(unknownType);
@@ -340,7 +344,14 @@ final class FsCodecTest {
             CertificateProfile profile = profile();
             CertificateProfileDefinition definition = new CertificateProfileDefinition(
                     CertificateProfileKind.END_ENTITY, profile.profileId(), 1, profile.formatId(),
-                    profile.displayName(), profile.maximumValidity(), profile.subjectPolicy(), profile.leafPolicy());
+                    profile.displayName(), profile.maximumValidity(), profile.subjectPolicy(), profile.leafPolicy(),
+                    zeroecho.pki.api.profile.X509AlgorithmBindingPolicy.standardOnly(),
+                    Optional.of(new zeroecho.pki.api.confirmation.CredentialConfirmationPolicy(
+                            zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy.OWNER_ONLY,
+                            Duration.ofHours(24L),
+                            new zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef(
+                                    "zeroecho.signature-pop.v1",
+                                    "5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11"))));
             byte[] canonical = CertificateProfileDocumentCodec.writeCanonical(definition);
             CertificateProfileRef reference = new CertificateProfileRef(profile.profileId(), 1,
                     MessageDigest.getInstance("SHA-256").digest(canonical));

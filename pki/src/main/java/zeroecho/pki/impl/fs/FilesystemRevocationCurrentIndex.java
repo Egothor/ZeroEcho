@@ -440,6 +440,13 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
                 next = builder.state();
             }
             faults.fail(FaultPoint.PUBLISH_ATOMIC_MOVE);
+            // Release the retained index handle before the atomic replace: Windows
+            // refuses to replace a file this process still holds open, whereas POSIX
+            // tolerates rename-over-open. Closing first is correct on both platforms
+            // because this operation runs under lifecycleLock (no concurrent reader
+            // can touch the channel) and installPublished reopens a fresh handle on
+            // the replaced file; on failure update() marks the index UNUSABLE.
+            indexChannel.close();
             try {
                 operations.atomicReplace(temporary, indexPath);
             } catch (AtomicMoveNotSupportedException unsupported) {
@@ -1066,7 +1073,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         }
     }
 
-    /** Strict binary format, probing, arithmetic, and local-POSIX primitives. */
+    /** Strict binary format, probing, arithmetic, and local filesystem primitives. */
     private static final class IndexOperations {
     private static SuperblockCandidates selectSuperblocks(
             FileChannel channel, MetadataStoreId expectedStore, Configuration configuration)
@@ -1470,7 +1477,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
 
     private static FileLock acquireLock(FileChannel channel) throws IOException {
         try {
-            FileLock lock = channel.tryLock();
+            FileLock lock = WriterExclusionLock.tryAcquire(channel);
             if (lock == null) {
                 throw new IOException("Revocation current index is already open for writing");
             }
@@ -1601,7 +1608,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         DIRECTORY_FORCE
     }
 
-    /** POSIX operations isolated for deterministic atomic-publication tests. */
+    /** publication operations isolated for deterministic atomic-publication tests. */
     /* default */ interface PublicationOperations {
         /** Atomically replaces the target with a completed derived generation. */
         void atomicReplace(Path source, Path target) throws IOException;
@@ -1610,7 +1617,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
         void forceDirectory(Path directory) throws IOException;
     }
 
-    /** Default local-POSIX atomic publication operations. */
+    /** Default local atomic publication operations. */
     private enum DefaultPublicationOperations implements PublicationOperations {
         INSTANCE;
 
@@ -1622,9 +1629,7 @@ final class FilesystemRevocationCurrentIndex implements AutoCloseable {
 
         @Override
         public void forceDirectory(Path directory) throws IOException {
-            try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
-                channel.force(true);
-            }
+            PlatformFs.forceDirectory(directory);
         }
     }
 

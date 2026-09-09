@@ -50,7 +50,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import zeroecho.pkix.Pkix;
 
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiException;
@@ -94,9 +94,27 @@ final class CertificateProfileValidator {
     /* package */ static ValidatedCertificateRequest validate(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
             Instant evaluationTime, X509AuthoritySnapshot authority) {
+        requireCanonicalRequestAttributes(candidate.request());
+        return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority);
+    }
+
+    /**
+     * Validates a request reconstructed from an already-issued certificate for
+     * renewal or reissue. Applies the identical deny-by-default subject, SAN,
+     * key, and validity policy, but does not require the CSR transport attribute,
+     * because a reconstruction carries no fresh PKCS#10 request.
+     */
+    /* package */ static ValidatedCertificateRequest validateReconstructed(VerifiedIssuanceCandidate candidate,
+            CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
+            Instant evaluationTime, X509AuthoritySnapshot authority) {
+        return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority);
+    }
+
+    private static ValidatedCertificateRequest validatePolicy(VerifiedIssuanceCandidate candidate,
+            CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
+            Instant evaluationTime, X509AuthoritySnapshot authority) {
         ParsedCertificationRequest request = candidate.request();
         LeafCertificatePolicy policy = profile.leafPolicy();
-        requireCanonicalRequestAttributes(request);
         List<SubjectRdn> approvedSubject = validateSubject(request, profile);
         List<SubjectAlternativeName> approvedSans = validateSans(request, policy, approvedSubject.isEmpty());
         requireSubjectKeyAllowed(candidate.exactPublicKey(), policy.allowedSubjectKeyAlgorithmIds(), authority);
@@ -104,7 +122,7 @@ final class CertificateProfileValidator {
         boolean sanCritical = approvedSubject.isEmpty()
                 || policy.subjectAlternativeNamePolicy().criticalWithNonemptySubject();
         SubjectRef approvedSubjectRef = new SubjectRef(approvedSubject.isEmpty() ? "x509:empty-subject"
-                : BcX509ProfileSupport.subject(approvedSubject).toString());
+                : BcX509ProfileSupport.subjectRefString(approvedSubject));
         return new ValidatedCertificateRequest(candidate.issuerCaId(), profileReference, approvedSubjectRef,
                 approvedSubject, approvedSans, sanCritical, candidate.exactPublicKey(), validity, policy.keyUsages(),
                 policy.extendedKeyUsages(), policy.keyUsageCritical(), policy.extendedKeyUsageCritical(),
@@ -237,28 +255,24 @@ final class CertificateProfileValidator {
         byte[] encoded = exactPublicKey.bytes();
         try {
             new StreamingDerReader().validateSubjectPublicKeyInfo(encoded, MAXIMUM_SPKI_BYTES);
-            SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(encoded);
+            zeroecho.pkix.AlgorithmIdentifier spkiAlgorithm = Pkix.subjectPublicKeyAlgorithm(encoded);
             AlgorithmIdentity identity;
             try {
-                identity = new BcX509AlgorithmAdapter(authority.bindings()).decode(spki.getAlgorithm(),
+                identity = new BcX509AlgorithmAdapter(authority.bindings()).decode(spkiAlgorithm,
                         X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
             } catch (IllegalArgumentException invalidBinding) {
                 boolean knownOid = authority.bindings().rules().stream()
                         .filter(rule -> rule.role() == X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM)
-                        .anyMatch(rule -> rule.oid().equals(spki.getAlgorithm().getAlgorithm().getId()));
+                        .anyMatch(rule -> rule.oid().equals(spkiAlgorithm.oid()));
                 throw reject(knownOid ? "SUBJECT_KEY_PARAMETERS_UNSUPPORTED" : "SUBJECT_KEY_ALGORITHM_UNKNOWN");
             }
             SubjectKeyAlgorithm algorithm = subjectKeyAlgorithm(identity);
             if (!allowedAlgorithms.contains(algorithm.profileId())) {
                 throw reject("SUBJECT_KEY_ALGORITHM_FORBIDDEN");
             }
-            SubjectPublicKeyInfo nativeSpki = new zeroecho.pki.impl.framework.x509.bc.BcX509PublicKeyAdapter(
-                    authority.bindings()).unwrap(spki);
-            byte[] nativeEncoded = nativeSpki.getEncoded();
-            KeyFactory keyFactory = BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY.equals(identity)
-                    ? KeyFactory.getInstance(algorithm.jcaName(),
-                            new org.bouncycastle.pqc.jcajce.provider.BouncyCastlePQCProvider())
-                    : KeyFactory.getInstance(algorithm.jcaName());
+            byte[] nativeEncoded = new zeroecho.pki.impl.framework.x509.bc.BcX509PublicKeyAdapter(
+                    authority.bindings()).unwrap(encoded);
+            KeyFactory keyFactory = KeyFactory.getInstance(algorithm.jcaName());
             PublicKey reconstructed = keyFactory.generatePublic(new X509EncodedKeySpec(nativeEncoded));
             byte[] canonical = reconstructed.getEncoded();
             try {
@@ -323,7 +337,7 @@ final class CertificateProfileValidator {
     }
 
     private static PkiException reject(String code) {
-        return new PkiException("End-entity profile validation rejected: code=" + code);
+        return new ProfileValidationRejection(code);
     }
 
     private record SubjectKeyAlgorithm(String profileId, String jcaName) {

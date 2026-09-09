@@ -101,6 +101,9 @@ import zeroecho.pki.spi.store.PkiStore;
  */
 public final class DefaultCertificationRequestService implements CertificationRequestService {
 
+    /** Bounded maximum number of certification requests returned by one search. */
+    private static final int MAX_SEARCH_RESULTS = 1000;
+
     private final PkiStore store;
     private final CredentialFramework framework;
 
@@ -277,24 +280,27 @@ public final class DefaultCertificationRequestService implements CertificationRe
      * Searches stored certification requests matching the supplied query.
      *
      * <p>
-     * This operation is currently unsupported because the active {@link PkiStore}
-     * SPI does not expose request listing or request search capabilities. Callers
-     * must therefore resolve requests directly by identifier through
-     * {@link #get(PkiId)}.
+     * Requests are filtered on the enterprise-standard axes carried by
+     * {@link RequestQuery}: framework format, subject, requested profile, and
+     * creation-time range. The result is bounded to at most
+     * {@value #MAX_SEARCH_RESULTS} entries. Resolve an exact request by identifier
+     * through {@link #get(PkiId)}.
      * </p>
      *
      * @param query request query constraints; must not be {@code null}
-     * @return never returns normally
+     * @return bounded list of matching requests
      * @throws IllegalArgumentException if {@code query} is {@code null}
-     * @throws PkiException             always, because request search is not
-     *                                  supported by the current store SPI contract
+     * @throws PkiException             if the active store cannot list requests
      */
     @Override
     public List<ParsedCertificationRequest> search(RequestQuery query) {
         if (query == null) {
             throw new IllegalArgumentException("query must not be null");
         }
-        throw new PkiException(
-                "Request search is not supported by the PkiStore SPI (no request listing); use get(requestId) instead");
+        try {
+            return store.searchRequests(query, MAX_SEARCH_RESULTS);
+        } catch (UnsupportedOperationException unsupported) {
+            throw new PkiException("Request search is not supported by the active store", unsupported);
+        }
     }
 }

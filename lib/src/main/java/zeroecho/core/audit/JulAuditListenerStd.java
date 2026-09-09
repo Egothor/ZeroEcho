@@ -156,6 +156,13 @@ public final class JulAuditListenerStd implements AuditListener {
         private boolean includeStackTraces;
 
         /**
+         * Creates a builder with standard JUL severity mappings and no logger yet.
+         */
+        public Builder() {
+            // Field initializers establish the standard mappings.
+        }
+
+        /**
          * Sets the JUL logger that will receive audit messages.
          *
          * @param logger the target logger; must not be null

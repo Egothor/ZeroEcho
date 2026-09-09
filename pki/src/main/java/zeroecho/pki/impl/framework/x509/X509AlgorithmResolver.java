@@ -144,6 +144,7 @@ public final class X509AlgorithmResolver {
     public static final class ResolutionException extends IllegalArgumentException {
 
         private static final long serialVersionUID = 1L;
+        /** Stable non-sensitive resolution failure. */
         private final Failure failure;
 
         /* default */ ResolutionException(Failure failure) {
@@ -188,6 +189,7 @@ public final class X509AlgorithmResolver {
      * @param direction       execution direction
      * @param implementation optional explicit implementation identifier
      * @param provenance      stable default identifier or {@code explicit}
+     * @param authorityFingerprint semantic fingerprint of the resolving authority
      * @return immutable effective selection
      * @throws ResolutionException for a precise fail-closed category
      */
@@ -198,7 +200,17 @@ public final class X509AlgorithmResolver {
                 Optional.empty());
     }
 
-    /** Resolves an operation with an optional explicit X.509 binding identity. */
+    /**
+     * Resolves an operation with an optional explicit X.509 binding identity.
+     * @param requested exact signature identity
+     * @param key exact public-key identity
+     * @param direction execution direction
+     * @param implementation optional explicit implementation identifier
+     * @param provenance stable default identifier or {@code explicit}
+     * @param authorityFingerprint semantic fingerprint of the resolving authority
+     * @param bindingId optional explicit role-specific binding identifier
+     * @return immutable effective selection
+     */
     public Selection resolve(AlgorithmIdentity requested, AlgorithmIdentity key,
             AlgorithmExecutionCapability.Direction direction, Optional<String> implementation, String provenance,
             String authorityFingerprint, Optional<String> bindingId) {

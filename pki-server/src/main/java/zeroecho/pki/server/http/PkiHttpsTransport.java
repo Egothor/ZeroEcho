@@ -159,14 +159,32 @@ public final class PkiHttpsTransport implements AutoCloseable {
         }
     }
 
-    /** @return actual bound listener address, including an allocated ephemeral port */
+    /**
+     * Returns the actual bound listener address, including an allocated ephemeral port.
+     *
+     * @return bound administrative listener address
+     */
     public InetSocketAddress address() {
         return listener.getAddress();
     }
 
-    /** @return whether operation admission is accepting new requests */
+    /**
+     * Indicates whether operation admission is accepting new requests.
+     *
+     * @return {@code true} while new requests may be admitted
+     */
     public boolean accepting() {
         return runtime.accepting();
+    }
+
+    /**
+     * Reports the implementation-owned worker marker used to prevent lifecycle
+     * self-waits. This is not an application scheduling or authorization signal.
+     *
+     * @return whether the current thread is owned by a packaged server runtime
+     */
+    public static boolean currentThreadIsServerWorker() {
+        return ServerRuntime.isWorkerThread();
     }
 
     /** Prevents new operation admission without closing in-flight work. */

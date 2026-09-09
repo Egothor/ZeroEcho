@@ -74,6 +74,9 @@ import java.util.Objects;
  *                   g.inChunkSize(), g.outChunkSize());
  * }</pre>
  *
+ * @param inChunkSize maximum input bytes accepted by one block operation
+ * @param outChunkSize maximum output bytes produced by one block operation
+ * @param finalizationOutputChunks additional output chunks reserved for finalization
  * @since 1.0
  */
 public record BlockGeometry(int inChunkSize, int outChunkSize, int finalizationOutputChunks) {

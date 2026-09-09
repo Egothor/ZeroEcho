@@ -1,6 +1,39 @@
+/*******************************************************************************
+ * Copyright (C) 2025, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+
 plugins {
     id 'buildlogic.java-application-conventions'
-    id 'com.palantir.git-version'
 }
 
 group='org.egothor'
@@ -13,8 +46,6 @@ dependencies {
     implementation project(':lib')
     implementation project(':ext')
     implementation project(':pki')
-    // might be removed if I move BC ops to the lib
-    testImplementation 'org.bouncycastle:bcpkix-jdk18on'
 }
 
 application {
@@ -22,6 +53,9 @@ application {
     mainClass = 'zeroecho.ZeroEcho'
 }
 
+// Thin module jar. The runnable distribution is produced by the application
+// plugin (installDist / distZip), which places each dependency on the classpath;
+// dependencies are never bundled into this jar.
 jar {
     manifest {
         attributes(
@@ -30,31 +64,6 @@ jar {
             'Implementation-Version': "${version}"
         )
     }
-
-    from sourceSets.main.output
-
-    dependsOn configurations.runtimeClasspath
-
-    // Include each JAR dependency
-    configurations.runtimeClasspath.findAll { it.exists() && it.name.endsWith('.jar') }.each { jarFile ->
-        def jarName = jarFile.name.replaceAll(/\.jar$/, '')
-
-        from(zipTree(jarFile)) {
-            // Exclude signature-related files
-            exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
-
-            // Rename license/notice files to avoid conflicts
-            eachFile { file ->
-                if (file.path ==~ /META-INF\/(LICENSE|NOTICE)(\..*)?/) {
-                    file.path = "META-INF/licenses-from-${jarName}/${file.name}"
-                }
-            }
-
-            includeEmptyDirs = false
-        }
-    }
-
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 javadoc {

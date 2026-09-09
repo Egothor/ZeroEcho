@@ -85,12 +85,33 @@ final class RepositoryAliasServiceTest {
                     + created.recordCommitment().substring(0, 12));
         }
         try (ServerControlStore store = new ServerControlStore(
-                zeroecho.pki.impl.fs.PosixTransactionalMetadataStore.open(
+                zeroecho.pki.impl.fs.DurableTransactionalMetadataStore.open(
                         directory.resolve("server-control.log"), java.util.OptionalLong.of(1_048_576)))) {
             ServerTestSupport.OpenedStore reopened = new ServerTestSupport.OpenedStore(
                     directory.resolve("server-control.log"), store, new ServerTestSupport.RecordingAudit());
             assertEquals(created, service(reopened, repository).require(ServerTestSupport.AUTHORITY,
                     RepositoryAliasService.Type.CURRENT_CRL));
+        }
+        System.out.println("...ok");
+    }
+
+    @Test
+    void currentDeltaCrlAliasRequiresDeltaCrlTypeAndIsPublicByDefault() throws Exception {
+        System.out.println("currentDeltaCrlAliasRequiresDeltaCrlTypeAndIsPublicByDefault");
+        PkiId deltaId = new PkiId("status-delta-crl");
+        RepositoryFixtures repository = new RepositoryFixtures(new PkiId("status-full-crl"), deltaId);
+        try (ServerTestSupport.OpenedStore opened = ServerTestSupport.open(directory)) {
+            opened.store().createPrincipal(ServerTestSupport.principal("alias-admin"));
+            RepositoryAliasService aliases = service(opened, repository);
+            RepositoryAliasService.Record created = aliases.setCurrentDeltaCrl(ServerTestSupport.AUTHORITY,
+                    deltaId, Optional.empty(), "alias-admin");
+            assertEquals(RepositoryAliasService.Type.CURRENT_DELTA_CRL, created.type());
+            assertEquals(deltaId, created.targetObjectId());
+            assertEquals(created, aliases.setCurrentDeltaCrl(ServerTestSupport.AUTHORITY,
+                    deltaId, Optional.empty(), "alias-admin"));
+            assertThrows(IllegalArgumentException.class, () -> aliases.setCurrentDeltaCrl(
+                    ServerTestSupport.AUTHORITY, new PkiId("status-full-crl"), Optional.empty(), "alias-admin"));
+            System.out.println("...alias=" + created.aliasId() + " type=" + created.type());
         }
         System.out.println("...ok");
     }
@@ -166,11 +187,20 @@ final class RepositoryAliasServiceTest {
                 new KeyRef("issuer-key"), new zeroecho.pki.api.SubjectRef("CN=Authority"),
                 List.of(issuer.issuerId()), issuer.issuerId(), path.pathId());
         private final StatusObject status;
+        private final Optional<StatusObject> deltaStatus;
 
         private RepositoryFixtures(PkiId statusId) {
+            this(statusId, null);
+        }
+
+        private RepositoryFixtures(PkiId statusId, PkiId deltaStatusId) {
             status = new StatusObject(statusId, new FormatId("x509"), ServerTestSupport.AUTHORITY,
                     StatusObjectType.CRL, Instant.EPOCH, Optional.empty(), reference(statusId),
                     new SimpleAttributeSet());
+            deltaStatus = deltaStatusId == null ? Optional.empty()
+                    : Optional.of(new StatusObject(deltaStatusId, new FormatId("x509"), ServerTestSupport.AUTHORITY,
+                            StatusObjectType.DELTA_CRL, Instant.EPOCH, Optional.empty(), reference(deltaStatusId),
+                            new SimpleAttributeSet()));
         }
 
         @Override public Optional<CaRecord> authority(PkiId id) {
@@ -186,6 +216,7 @@ final class RepositoryAliasServiceTest {
         @Override public Optional<Credential> credential(PkiId id) { return Optional.empty(); }
         @Override public Optional<StatusObject> statusObject(PkiId id) {
             if (status.statusObjectId().equals(id)) return Optional.of(status);
+            if (deltaStatus.isPresent() && deltaStatus.get().statusObjectId().equals(id)) return deltaStatus;
             if ("status-other".equals(id.value())) {
                 return Optional.of(new StatusObject(id, status.formatId(), status.issuerCaId(), status.type(),
                         status.thisUpdate(), status.nextUpdate(), reference(id), status.attributes()));

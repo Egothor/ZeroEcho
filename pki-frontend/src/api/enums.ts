@@ -1,0 +1,122 @@
+/*******************************************************************************
+ * Copyright (C) 2025, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+
+/**
+ * Closed enum vocabularies mirrored from the server (`pki`/`pki-server` Java
+ * enums). These populate operation-form choice controls. They are a client-side
+ * MIRROR: the server remains authoritative and rejects unknown values. See the
+ * gap document — a server-published parameter schema would remove this mirror.
+ */
+
+export const CA_STATE = ['ACTIVE', 'RETIRED', 'COMPROMISED'] as const;
+
+export const REVOCATION_REASON = [
+  'UNSPECIFIED',
+  'KEY_COMPROMISE',
+  'CA_COMPROMISE',
+  'AFFILIATION_CHANGED',
+  'SUPERSEDED',
+  'CESSATION_OF_OPERATION',
+  'CERTIFICATE_HOLD',
+  'REMOVE_FROM_CRL',
+  'PRIVILEGE_WITHDRAWN',
+  'AA_COMPROMISE',
+] as const;
+
+export const STATUS_OBJECT_TYPE = ['CRL', 'DELTA_CRL'] as const;
+
+export const PUBLICATION_SOURCE_TYPE = ['CREDENTIAL', 'STATUS_OBJECT'] as const;
+export const PUBLICATION_TARGET_TYPE = ['FILESYSTEM', 'LDAP', 'HTTP', 'OBJECT_STORE'] as const;
+
+export const PRINCIPAL_TYPE = ['USER', 'SERVICE', 'ACCOUNT', 'PUBLIC'] as const;
+
+export const PERMISSION_EFFECT = ['ALLOW', 'DENY'] as const;
+export const PERMISSION_RELATIONSHIP = ['OWN', 'ANY'] as const;
+export const PERMISSION_DATA_VIEW = ['METADATA_REDACTED', 'METADATA_FULL', 'CONTENT_FULL', 'PII_FULL'] as const;
+export const PERMISSION_CONDITION = [
+  'REASON_REQUIRED',
+  'APPROVAL_REQUIRED',
+  'REQUESTER_APPROVER_SEPARATION',
+  'AUTHORITY_ACTIVE',
+  'PROFILE_MATCH_REQUIRED',
+] as const;
+
+export const PERMISSION_RESOURCE_TYPE = [
+  'REALM', 'SERVER_CONFIGURATION', 'PRINCIPAL', 'ROLE', 'GRANT', 'AUTHORITY', 'ISSUER', 'PROFILE',
+  'POLICY', 'X509_BINDING', 'REQUEST', 'CERTIFICATE', 'REVOCATION', 'STATUS_OBJECT', 'PUBLICATION',
+  'AUDIT', 'BACKUP', 'RESTORE', 'DISCLOSURE', 'CAPABILITY', 'APPROVAL', 'BREAK_GLASS',
+  'REPOSITORY_ALIAS', 'ACME_DIRECTORY', 'ACME_ACCOUNT', 'OCSP_RESPONDER',
+] as const;
+
+export const PERMISSION_ACTION = [
+  'REALM_READ', 'SERVER_HEALTH_READ', 'SERVER_CONFIGURATION_READ', 'SERVER_CONFIGURATION_UPDATE',
+  'IDENTITY_PROVIDER_MANAGE', 'PRINCIPAL_MANAGE', 'ROLE_MANAGE', 'PERMISSION_GRANT',
+  'FORWARD_AUTHENTICATED_CLIENT_IDENTITY', 'AUTHORITY_LIST', 'AUTHORITY_READ', 'AUTHORITY_CREATE',
+  'AUTHORITY_IMPORT', 'AUTHORITY_ACTIVATE', 'AUTHORITY_SUSPEND', 'AUTHORITY_RETIRE', 'ISSUER_CREATE',
+  'ISSUER_ROTATE', 'ISSUER_RETIRE', 'CA_CHAIN_DOWNLOAD', 'PROFILE_READ', 'PROFILE_REGISTER',
+  'PROFILE_VALIDATE', 'PROFILE_ACTIVATE', 'PROFILE_DEACTIVATE', 'POLICY_READ', 'POLICY_UPDATE',
+  'X509_BINDING_READ', 'X509_BINDING_PROVIDER_ENABLE', 'REQUEST_SUBMIT', 'REQUEST_READ_OWN',
+  'REQUEST_READ_ANY', 'REQUEST_APPROVE', 'REQUEST_REJECT', 'REQUEST_CANCEL', 'CERTIFICATE_ISSUE',
+  'CERTIFICATE_RENEW', 'CERTIFICATE_REKEY', 'CERTIFICATE_READ_METADATA', 'CERTIFICATE_READ_CONTENT',
+  'CERTIFICATE_SEARCH', 'CERTIFICATE_READ_PII', 'CERTIFICATE_DOWNLOAD', 'CERTIFICATE_PUBLICATION_CHANGE',
+  'CERTIFICATE_CONFIRM', 'CERTIFICATE_REVOKE', 'CERTIFICATE_HOLD', 'CERTIFICATE_RELEASE_HOLD',
+  'REVOCATION_HISTORY_READ', 'CRL_GENERATE', 'CRL_PUBLISH', 'CRL_DOWNLOAD', 'OCSP_ADMINISTER',
+  'OCSP_RESPONDER_READ', 'OCSP_STATUS_QUERY', 'PUBLICATION_REGISTER', 'PUBLICATION_READ',
+  'PUBLICATION_PROCESS', 'PUBLICATION_RETRY', 'PUBLICATION_RECONCILE', 'AUDIT_READ_REDACTED',
+  'AUDIT_READ_FULL', 'AUDIT_READ_PII', 'AUDIT_EXPORT', 'AUDIT_INTEGRITY_VERIFY', 'BACKUP_EXPORT',
+  'BACKUP_VERIFY', 'RESTORE_EXECUTE', 'DISCLOSURE_READ', 'DISCLOSURE_CHANGE',
+  'DISCLOSURE_CAPABILITY_ISSUE', 'DISCLOSURE_CAPABILITY_REVOKE', 'REPOSITORY_ALIAS_READ',
+  'REPOSITORY_ALIAS_MANAGE', 'ACME_DIRECTORY_READ', 'ACME_DIRECTORY_MANAGE', 'ACME_ACCOUNT_READ',
+  'ACME_ACCOUNT_MANAGE',
+] as const;
+
+export const APPROVAL_STATE = [
+  'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'CANCELLED', 'EXECUTING', 'EXECUTED',
+] as const;
+
+export const DISCLOSURE_POLICY = [
+  'PUBLIC', 'PUBLIC_UNLISTED', 'AUTHENTICATED', 'OWNER_ONLY', 'RESTRICTED', 'NOT_PUBLISHED',
+] as const;
+
+export const REPOSITORY_ALIAS_TYPE = ['CURRENT_CRL', 'CURRENT_CHAIN', 'CURRENT_DELTA_CRL'] as const;
+
+export const ACME_CHALLENGE_TYPE = ['HTTP_01', 'DNS_01'] as const;
+
+export const OCSP_SIGNING_MODE = ['ISSUER_SIGNED', 'DELEGATED_RESPONDER'] as const;
+export const OCSP_NONCE_POLICY = ['REJECT', 'OPTIONAL_ECHO', 'REQUIRED'] as const;
+export const OCSP_RESPONDER_ID_FORM = ['BY_NAME', 'BY_KEY'] as const;
+export const OCSP_CERT_ID_HASH = ['SHA1', 'SHA256'] as const;
+export const OCSP_REQUEST_AUTHENTICATION_MODE = [
+  'UNSIGNED_ONLY', 'UNSIGNED_OR_AUTHORIZED_SIGNED', 'AUTHORIZED_SIGNED_REQUIRED',
+] as const;

@@ -131,6 +131,11 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     }
 
     @Override
+    public ConfigurationCommitment configurationCommitment() {
+        return new ConfigurationCommitment(new byte[ConfigurationCommitment.BYTE_LENGTH]);
+    }
+
+    @Override
     public Set<String> supportedAlgorithms() {
         return Set.of("SHA256withRSA");
     }
@@ -355,7 +360,23 @@ public final class DurableOperatorApprovalSignatureWorkflow implements Signature
     }
 
     private Path opDir(PkiId opId) {
-        return root.resolve(opId.value());
+        // Operation identifiers (e.g. "zsign:v1:...") contain characters such as
+        // ':' that are illegal in a Windows path component; encode them to a safe,
+        // collision-free single-segment name for the on-disk staging directory.
+        return root.resolve(safeSegment(opId.value()));
+    }
+
+    private static String safeSegment(String value) {
+        StringBuilder builder = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            boolean safe = (character >= 'a' && character <= 'z')
+                    || (character >= 'A' && character <= 'Z')
+                    || (character >= '0' && character <= '9')
+                    || character == '-' || character == '.';
+            builder.append(safe ? character : '_');
+        }
+        return builder.toString();
     }
 
     private void persistRequest(PkiId opId, SignRequest req) {

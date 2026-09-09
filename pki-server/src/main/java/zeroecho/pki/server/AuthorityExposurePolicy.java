@@ -61,12 +61,22 @@ public record AuthorityExposurePolicy(Mode mode, Set<PkiId> authorityIds,
             this.code = code;
         }
 
-        /** @return stable persistence code */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded exposure-mode code
+         */
         public int code() {
             return code;
         }
 
-        /** Resolves one stable persistence code. */
+        /**
+         * Resolves one stable persistence code.
+         *
+         * @param code encoded exposure-mode code
+         * @return corresponding exposure mode
+         * @throws IllegalArgumentException if {@code code} is unknown
+         */
         public static Mode fromCode(int code) {
             return switch (code) {
                 case 1 -> ALL_REALM_AUTHORITIES;

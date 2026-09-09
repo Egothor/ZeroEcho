@@ -99,7 +99,7 @@ public final class PkiSigningBusResilienceTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(100), Map.of(keyRef.value(), kp.getPrivate()));
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile, signingAuthority(signer))) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, signingAuthority(signer))) {
 
             opId = bus.canonicalizeOperationId(clientOpId, owner);
             System.out.println("...opId=" + opId.value());
@@ -139,7 +139,7 @@ public final class PkiSigningBusResilienceTest {
         try (FilesystemPkiStore store2 = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer2 = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(0), Map.of(keyRef.value(), kp.getPrivate()));
-                PkiSigningBus bus2 = new PkiSigningBus(store2, signer2, busFile, signingAuthority(signer2))) {
+                PkiSigningBus bus2 = new PkiSigningBus(store2, signer2, signingAuthority(signer2))) {
 
             PkiId opId2 = opId;
             System.out.println("...opIdReattach=" + opId2.value());
@@ -181,11 +181,10 @@ public final class PkiSigningBusResilienceTest {
         Instant deadline = Instant.now().plusSeconds(2);
         while (Instant.now().isBefore(deadline)) {
             bus.sweep(Instant.now());
-            Optional<zeroecho.pki.api.orch.WorkflowStateRecord> wsOpt = store
-                    .getWorkflowState(new PkiId(opId.value().split("#")[0]));
-            if (wsOpt.isPresent() && wsOpt.get().payload().isPresent()) {
+            Optional<zeroecho.pki.spi.store.SignWorkflowStore.Record> record = store.getSignRecord(opId);
+            if (record.isPresent()) {
                 PkiSigningBus.SignContinuation cont = PkiSigningBus.SignContinuation
-                        .decode(wsOpt.get().payload().get(), store.stagedContent());
+                        .decode(record.orElseThrow().request(), store.stagedContent());
                 if (cont.signerOpId().isPresent()) {
                     return cont.signerOpId().get();
                 }

@@ -35,7 +35,7 @@ package zeroecho.pki.impl.framework.x509.bc;
 
 import java.util.Objects;
 
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
+import zeroecho.pkix.AlgorithmIdentifier;
 
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.pki.impl.framework.x509.StandardX509Bindings;

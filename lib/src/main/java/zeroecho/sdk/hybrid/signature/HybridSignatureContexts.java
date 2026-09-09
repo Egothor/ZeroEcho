@@ -58,6 +58,7 @@ public final class HybridSignatureContexts {
     /**
      * Creates a signing hybrid signature context.
      *
+     * @param session          active session used to create both signature contexts
      * @param profile          hybrid signature profile
      * @param classicPrivate   private key for the classical signature engine
      * @param pqcPrivate       private key for the PQC signature engine
@@ -80,6 +81,7 @@ public final class HybridSignatureContexts {
     /**
      * Creates a verification hybrid signature context.
      *
+     * @param session          active session used to create both verification contexts
      * @param profile          hybrid signature profile
      * @param classicPublic    public key for the classical signature engine
      * @param pqcPublic        public key for the PQC signature engine

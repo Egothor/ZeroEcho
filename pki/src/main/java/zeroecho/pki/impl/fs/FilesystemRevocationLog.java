@@ -70,13 +70,13 @@ import zeroecho.pki.api.revocation.RevocationState;
 import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Exclusive-writer POSIX append-only revocation transition log. */
+/** Exclusive-writer durable append-only revocation transition log. */
 @SuppressWarnings("PMD.CyclomaticComplexity")
 final class FilesystemRevocationLog implements AutoCloseable {
 
     private static final Logger LOGGER = Logger.getLogger(FilesystemRevocationLog.class.getName());
     private static final String CAPABILITY_WARNING =
-            "POSIX revocation-log creation durability is limited; continuing in best-effort mode";
+            "Durable revocation-log creation durability is limited; continuing in best-effort mode";
     private static final String INDEX_DIRECTORY_WARNING =
             "Revocation current-index directory durability is limited; continuing in best-effort mode";
     private static final byte[] INDEX_KEY_DOMAIN =
@@ -1137,9 +1137,9 @@ final class FilesystemRevocationLog implements AutoCloseable {
 
         @Override
         public void forceParent(Path parent) throws IOException {
-            try (FileChannel directory = FileChannel.open(parent, StandardOpenOption.READ)) {
-                directory.force(true);
-            }
+            // POSIX directory fsync; a correct no-op on platforms that carry
+            // directory durability through the write-through atomic publish.
+            PlatformFs.forceDirectory(parent);
         }
     }
 
@@ -1188,7 +1188,7 @@ final class FilesystemRevocationLog implements AutoCloseable {
         private static FileLock acquireLock(FileChannel channel) throws IOException {
             final FileLock lock;
             try {
-                lock = channel.tryLock();
+                lock = WriterExclusionLock.tryAcquire(channel);
             } catch (OverlappingFileLockException unavailable) {
                 throw new IOException("Revocation log writer lock is unavailable", unavailable);
             }

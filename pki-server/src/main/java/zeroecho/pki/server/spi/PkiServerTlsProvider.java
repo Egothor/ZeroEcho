@@ -48,7 +48,11 @@ import zeroecho.pki.spi.ProviderConfig;
  */
 @SuppressWarnings("PMD")
 public interface PkiServerTlsProvider {
-    /** @return stable explicit provider identity */
+    /**
+     * Returns the stable explicit provider identity.
+     *
+     * @return provider identity used in configuration
+     */
     String id();
 
     /**

@@ -39,6 +39,7 @@ import java.time.Clock;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.net.ssl.SSLContext;
@@ -61,7 +62,18 @@ import zeroecho.pki.server.spi.PkiServerAuthenticator;
 @SuppressWarnings("PMD")
 public final class PkiHttpsServer implements AutoCloseable {
     /** Closed process lifecycle. */
-    public enum State { NEW, STARTING, READY, QUIESCING, TERMINATED }
+    public enum State {
+        /** Constructed but not yet starting. */
+        NEW,
+        /** Initializing realm and listener resources. */
+        STARTING,
+        /** Accepting requests. */
+        READY,
+        /** Rejecting new work while owned resources drain. */
+        QUIESCING,
+        /** Fully closed; listener addresses and realm access are unavailable. */
+        TERMINATED
+    }
 
     private final PkiServerConfiguration configuration;
     private final ServerRealmContext realm;
@@ -72,8 +84,12 @@ public final class PkiHttpsServer implements AutoCloseable {
     private final Optional<AcmeTransport> acmeTransport;
     private final Optional<SigningReconciliationWorker> signingReconciliation;
     private final AtomicReference<State> state;
+    private final RetryableCloseGate closeGate = new RetryableCloseGate();
+    private final AtomicBoolean realmClosed = new AtomicBoolean();
+    private final AtomicBoolean authenticatorClosed = new AtomicBoolean();
+    private final AtomicBoolean publicAuthenticatorClosed = new AtomicBoolean();
 
-    private PkiHttpsServer(PkiServerConfiguration configuration, ServerRealmContext realm,
+    PkiHttpsServer(PkiServerConfiguration configuration, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, PkiHttpsTransport transport,
             Optional<PkiServerAuthenticator> publicAuthenticator,
             Optional<PublicRepositoryTransport> publicTransport,
@@ -162,12 +178,11 @@ public final class PkiHttpsServer implements AutoCloseable {
                     }
                 }
                 acmeTransport = AcmeTransport.start(acmeConfiguration, sharedRealm, clock, random, loader,
-                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN);
+                        () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN,
+                        sharedRealm::signalReconciliation);
             }
-            if (exact.signingReconciliation().enabled()) {
-                signingReconciliation = new SigningReconciliationWorker(realm, exact.signingReconciliation(),
-                        exact.execution().forcedShutdown(), clock);
-            }
+            signingReconciliation = new SigningReconciliationWorker(realm, exact.signingReconciliation(),
+                    exact.execution().forcedShutdown(), clock);
             realm.auditTransport("SERVER_READY", "system", Map.of("state", "READY"));
             PkiHttpsServer server = new PkiHttpsServer(exact, realm, authenticator, transport,
                     Optional.ofNullable(publicAuthenticator), Optional.ofNullable(publicTransport),
@@ -184,30 +199,54 @@ public final class PkiHttpsServer implements AutoCloseable {
         }
     }
 
-    /** @return current lifecycle state */
+    /**
+     * Returns the current lifecycle state.
+     *
+     * @return current state
+     */
     public State state() {
         return state.get();
     }
 
-    /** @return actual bound address, including an allocated ephemeral port */
+    /**
+     * Returns the actual bound administrative address, including an allocated ephemeral port.
+     *
+     * @return administrative listener address
+     * @throws IllegalStateException if the server is terminated
+     */
     public InetSocketAddress address() {
         if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
         return transport.address();
     }
 
-    /** @return actual public listener address when the repository listener is enabled */
+    /**
+     * Returns the actual public listener address when the repository listener is enabled.
+     *
+     * @return bound public address, or empty when disabled
+     * @throws IllegalStateException if the server is terminated
+     */
     public Optional<InetSocketAddress> publicAddress() {
         if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
         return publicTransport.map(PublicRepositoryTransport::address);
     }
 
-    /** @return actual ACME listener address when enabled */
+    /**
+     * Returns the actual ACME listener address when enabled.
+     *
+     * @return bound ACME address, or empty when disabled
+     * @throws IllegalStateException if the server is terminated
+     */
     public Optional<InetSocketAddress> acmeAddress() {
         if (state.get() == State.TERMINATED) throw new IllegalStateException("HTTPS server is terminated");
         return acmeTransport.map(AcmeTransport::address);
     }
 
-    /** @return the one lifecycle-owned realm context */
+    /**
+     * Returns the one lifecycle-owned realm context.
+     *
+     * @return the open realm context
+     * @throws IllegalStateException unless the server is ready
+     */
     public ServerRealmContext realm() {
         if (state.get() != State.READY) throw new IllegalStateException("HTTPS server is not ready");
         return realm;
@@ -233,19 +272,32 @@ public final class PkiHttpsServer implements AutoCloseable {
      */
     @Override
     public void close() throws Exception {
-        State observed = state.get();
-        if (observed != State.QUIESCING && !state.compareAndSet(State.READY, State.QUIESCING)
-                && !state.compareAndSet(State.STARTING, State.QUIESCING)) return;
+        closeFromServerWorker(PkiHttpsTransport.currentThreadIsServerWorker());
+    }
+
+    void closeFromServerWorker(boolean workerThread) throws Exception {
+        closeGate.close(workerThread, this::quiesceForClose, this::closeAttempt);
+    }
+
+    private void quiesceForClose() {
+        state.compareAndSet(State.READY, State.QUIESCING);
+        state.compareAndSet(State.STARTING, State.QUIESCING);
         signingReconciliation.ifPresent(SigningReconciliationWorker::stopScheduling);
-        Throwable primary = null;
-        try {
-            realm.auditTransport("SERVER_SHUTDOWN", "system", Map.of("state", "QUIESCING"));
-        } catch (Throwable failure) {
-            primary = failure;
-        }
         transport.quiesce();
         publicTransport.ifPresent(PublicRepositoryTransport::quiesce);
         acmeTransport.ifPresent(AcmeTransport::quiesce);
+    }
+
+    private Throwable closeAttempt() {
+        quiesceForClose();
+        Throwable primary = null;
+        if (!realmClosed.get()) {
+            try {
+                realm.auditTransport("SERVER_SHUTDOWN", "system", Map.of("state", "QUIESCING"));
+            } catch (Throwable failure) {
+                primary = failure;
+            }
+        }
         try {
             if (acmeTransport.isPresent()) {
                 acmeTransport.orElseThrow().shutdown(configuration.acmeListener().orElseThrow()
@@ -272,15 +324,23 @@ public final class PkiHttpsServer implements AutoCloseable {
                 signingReconciliation.orElseThrow().awaitStopped();
             }
         } catch (Throwable failure) {
-            if (primary != null && primary != failure) failure.addSuppressed(primary);
-            rethrow(failure);
-            return;
+            return preferFailure(failure, primary);
         }
-        if (publicAuthenticator.isPresent()) primary = close(publicAuthenticator.orElseThrow(), primary);
-        primary = close(authenticator, primary);
-        primary = close(realm, primary);
-        state.set(State.TERMINATED);
-        rethrow(primary);
+        if (primary != null) {
+            return primary;
+        }
+        primary = closeOnce(realm, realmClosed, null);
+        if (primary != null) {
+            return primary;
+        }
+        if (publicAuthenticator.isPresent()) {
+            primary = closeOnce(publicAuthenticator.orElseThrow(), publicAuthenticatorClosed, null);
+        }
+        primary = closeOnce(authenticator, authenticatorClosed, primary);
+        if (primary == null) {
+            state.set(State.TERMINATED);
+        }
+        return primary;
     }
 
     private static void closePartial(SigningReconciliationWorker signingReconciliation, AcmeTransport acmeTransport,
@@ -329,16 +389,27 @@ public final class PkiHttpsServer implements AutoCloseable {
         return primary;
     }
 
+    private static Throwable closeOnce(AutoCloseable resource, AtomicBoolean closed, Throwable primary) {
+        if (closed.get()) return primary;
+        try {
+            resource.close();
+            closed.set(true);
+        } catch (Throwable failure) {
+            return suppress(primary, failure);
+        }
+        return primary;
+    }
+
     private static Throwable suppress(Throwable primary, Throwable failure) {
         if (primary == null) return failure;
         if (primary != failure) primary.addSuppressed(failure);
         return primary;
     }
 
-    private static void rethrow(Throwable failure) throws Exception {
-        if (failure == null) return;
-        if (failure instanceof Exception exception) throw exception;
-        if (failure instanceof Error error) throw error;
-        throw new IllegalStateException("Server close failed");
+    private static Throwable preferFailure(Throwable failure, Throwable prior) {
+        if (prior != null && prior != failure) {
+            failure.addSuppressed(prior);
+        }
+        return failure;
     }
 }

@@ -40,17 +40,29 @@ import zeroecho.pki.application.PkiOperation;
 /** One closed administrative namespace spanning PKI and server-control families. */
 public sealed interface AdministrativeOperation permits AdministrativeOperation.Pki,
         AdministrativeOperation.Control {
-    /** @return stable operation identity */
+    /**
+     * Returns the stable operation identity.
+     *
+     * @return operation name used for routing and authorization
+     */
     String name();
 
-    /** Existing transport-neutral PKI operation family. */
+    /**
+     * Existing transport-neutral PKI operation family.
+     *
+     * @param operation exact PKI operation
+     */
     record Pki(PkiOperation operation) implements AdministrativeOperation {
         /** Validates the typed PKI operation. */
         public Pki { Objects.requireNonNull(operation, "operation"); }
         @Override public String name() { return operation.name(); }
     }
 
-    /** Server security-control operation family. */
+    /**
+     * Server security-control operation family.
+     *
+     * @param operation exact server-control operation
+     */
     record Control(ServerControlOperation operation) implements AdministrativeOperation {
         /** Validates the typed control operation. */
         public Control { Objects.requireNonNull(operation, "operation"); }

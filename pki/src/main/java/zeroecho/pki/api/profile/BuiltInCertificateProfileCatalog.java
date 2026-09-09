@@ -85,7 +85,7 @@ public final class BuiltInCertificateProfileCatalog {
     private static final int MAXIMUM_RESOURCE_BYTES = CertificateProfileDocumentCodec.MAXIMUM_DOCUMENT_BYTES;
     private static final int MAXIMUM_MANIFEST_ENTRIES = 128;
     private static final int MAXIMUM_MANIFEST_DEPTH = 16;
-    private static final int MAXIMUM_MANIFEST_STRING_BYTES = 4_096;
+    private static final int MAX_MANIFEST_STRING_BYTES = 4_096;
     private static final int READ_BUFFER_BYTES = 8_192;
     private static final int CATALOGUE_SCHEMA_VERSION = 1;
     private static final int EXPECTED_PROFILE_VERSION = 1;
@@ -303,7 +303,7 @@ public final class BuiltInCertificateProfileCatalog {
         private static JsonFactory createJsonFactory() {
             StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(MAXIMUM_MANIFEST_DEPTH)
                     .maxDocumentLength(MAXIMUM_RESOURCE_BYTES).maxTokenCount(1_024).maxNumberLength(10)
-                    .maxStringLength(MAXIMUM_MANIFEST_STRING_BYTES).maxNameLength(32).build();
+                    .maxStringLength(MAX_MANIFEST_STRING_BYTES).maxNameLength(32).build();
             JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
                     .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
             for (JsonReadFeature feature : JsonReadFeature.values()) {
@@ -436,6 +436,10 @@ public final class BuiltInCertificateProfileCatalog {
             }
         }
 
+        // Jackson signals a STRICT_DUPLICATE_DETECTION violation only through its
+        // message; the library exposes no typed duplicate-field exception. This narrow,
+        // stable third-party marker is matched deliberately and is not internal control
+        // flow that parses one of our own machine-coded exception messages.
         private static boolean isDuplicateFailure(JacksonException exception) {
             String message = exception.getMessage();
             return message != null && message.contains("Duplicate");

@@ -1,0 +1,138 @@
+site_name: ZeroEcho
+site_description: >-
+  ZeroEcho — a cryptography platform: a general-purpose classic and
+  post-quantum cryptography library, and a certificate authority built on it.
+  Deployment, administration, user, and developer documentation.
+docs_dir: documentation
+site_dir: site
+copyright: Copyright © ZeroEcho
+
+theme:
+  name: material
+  language: en
+  icon:
+    logo: material/shield-lock-outline
+    repo: material/source-branch
+  favicon: assets/favicon.svg
+  font:
+    text: Inter
+    code: Roboto Mono
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+extra:
+  generator: false
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+  nav:
+    omitted_files: warn
+    not_found: warn
+
+extra_css:
+  - assets/extra.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Home: index.md
+  - Introduction: overview/introduction.md
+  - The Framework:
+      - developer/index.md
+      - overview/architecture.md
+      - developer/modules.md
+      - developer/library.md
+      - developer/crypto-primer.md
+      - developer/cryptography.md
+      - developer/extending.md
+  - Applications:
+      - applications/index.md
+      - Certificate Authority:
+          - overview/concepts.md
+          - Deployment:
+              - deployment/index.md
+              - deployment/requirements.md
+              - deployment/containers.md
+              - deployment/configuration.md
+              - deployment/kubernetes.md
+              - deployment/operations.md
+              - deployment/security-hardening.md
+          - Administration:
+              - admin/index.md
+              - admin/console.md
+              - admin/authorities.md
+              - admin/profiles-and-issuance.md
+              - admin/revocation-and-status.md
+              - admin/publication.md
+              - admin/access-control.md
+              - admin/audit-and-disclosure.md
+              - admin/protocols.md
+              - admin/command-line.md
+          - Using certificates:
+              - user/index.md
+              - user/accessing.md
+              - user/requesting-certificates.md
+              - user/managing-certificates.md
+              - user/acme-enrollment.md
+              - user/command-line.md
+          - Command-line application: developer/application.md
+  - Reference:
+      - reference/admin-api.md
+      - reference/cli-reference.md
+      - reference/configuration-reference.md
+      - reference/security-model.md
+      - reference/glossary.md

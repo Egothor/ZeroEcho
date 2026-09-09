@@ -41,6 +41,7 @@ import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
@@ -98,11 +99,111 @@ import zeroecho.pki.api.audit.AccessContext;
 public interface SignatureWorkflow extends Closeable {
 
     /**
+     * Immutable commitment to one workflow's effective signing configuration.
+     *
+     * <p>The value is exactly 256 bits. Implementations must supply a stable,
+     * non-secret commitment that changes whenever effective signing behavior or
+     * effective key identity changes. The constructor and {@link #bytes()} use
+     * defensive copies, so callers retain no mutable reference to internal state.
+     * Instances are immutable and thread-safe.</p>
+     *
+     * <p>{@link #matches(ConfigurationCommitment)} and value equality compare the
+     * complete value using {@link MessageDigest#isEqual(byte[], byte[])}. String
+     * rendering is deliberately redacted.</p>
+     *
+     * <p>An unkeyed hash is suitable only when every committed input is a public,
+     * high-entropy identity that is impractical to enumerate. Sensitive or
+     * guessable inputs require a versioned, domain-separated pseudorandom
+     * function under a stable, protected, high-entropy provider key. Raw secrets,
+     * filesystem paths, credentials, bearer tokens, and analogous sensitive
+     * values must never be embedded in or directly hashed into this value.</p>
+     */
+    final class ConfigurationCommitment {
+        /** Required commitment length in bytes. */
+        public static final int BYTE_LENGTH = 32;
+
+        private final byte[] bytes;
+
+        /**
+         * Creates a commitment from one borrowed 32-byte value.
+         *
+         * @param bytes borrowed commitment bytes
+         * @throws NullPointerException if {@code bytes} is {@code null}
+         * @throws IllegalArgumentException if {@code bytes} is not exactly 32 bytes
+         */
+        public ConfigurationCommitment(byte[] bytes) {
+            Objects.requireNonNull(bytes, "bytes");
+            if (bytes.length != BYTE_LENGTH) {
+                throw new IllegalArgumentException("Configuration commitment must contain exactly 32 bytes");
+            }
+            this.bytes = bytes.clone();
+        }
+
+        /**
+         * Returns a newly owned copy of the commitment bytes.
+         *
+         * @return independent 32-byte value
+         */
+        public byte[] bytes() {
+            return bytes.clone();
+        }
+
+        /**
+         * Compares the complete commitment value in constant time for equal-length
+         * inputs.
+         *
+         * @param other comparison value, or {@code null}
+         * @return {@code true} only when all 32 bytes match
+         */
+        public boolean matches(ConfigurationCommitment other) {
+            return other != null && MessageDigest.isEqual(bytes, other.bytes);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return this == other || other instanceof ConfigurationCommitment commitment
+                    && MessageDigest.isEqual(bytes, commitment.bytes);
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(bytes);
+        }
+
+        @Override
+        public String toString() {
+            return "ConfigurationCommitment[redacted]";
+        }
+    }
+
+    /**
      * Provider identifier for diagnostics and audit correlation.
      *
      * @return stable provider id (never blank)
      */
     String id();
+
+    /**
+     * Returns the immutable commitment to this workflow's effective signing
+     * configuration and effective key identities.
+     *
+     * <p>The value must remain stable for the lifetime of this workflow and across
+     * restarts using the same effective configuration. It must change whenever a
+     * configuration or key-identity change could alter signing behavior. The
+     * commitment must not expose configuration values, paths, credentials, key
+     * material, or other secrets.</p>
+     *
+     * <p>Providers may use an unkeyed hash only for public, high-entropy identities
+     * that are impractical to guess or enumerate. If any effective input is
+     * sensitive or guessable, the commitment must use a versioned,
+     * domain-separated pseudorandom function keyed by a stable, protected,
+     * high-entropy provider key. Providers must not embed or directly hash raw
+     * secrets, paths, credentials, bearer tokens, or equivalent sensitive
+     * values.</p>
+     *
+     * @return immutable non-secret 256-bit configuration commitment
+     */
+    ConfigurationCommitment configurationCommitment();
 
     /**
      * Validates the authoritative signing domain selected by orchestration.
@@ -264,7 +365,9 @@ public interface SignatureWorkflow extends Closeable {
 
     /**
      * Immutable cooperative deadline and cancellation control for one provider
-     * invocation.
+     * invocation. Providers must not retain this value as workflow state.
+     * Subsequent work reloads authoritative state using the operation {@link PkiId}
+     * and receives a new control value for that invocation.
      *
      * @param deadline absolute exclusive call deadline
      * @param cancellation cooperative cancellation signal
@@ -306,6 +409,8 @@ public interface SignatureWorkflow extends Closeable {
      * @param namespace                  provider/store namespace
      * @param semanticFingerprint        versioned request fingerprint excluding
      *                                   fence
+     * @param configurationCommitment    immutable commitment to the exact
+     *                                   effective provider configuration
      * @param fencingToken               current positive fencing token
      * @param accessContext              audit/governance context (never
      *                                   {@code null})
@@ -313,24 +418,32 @@ public interface SignatureWorkflow extends Closeable {
      *                                   {@code null})
      * @param algorithmId                requested signature algorithm id (never
      *                                   blank)
+     * @param contentCommitment          canonical commitment to the exact content
+     *                                   bytes
      * @param content                    immutable repeatable content
      * @param preferredSignatureEncoding preferred signature encoding (optional)
      * @param deadline                   optional absolute deadline
+     * @param cancellation               cooperative cancellation for this invocation
      */
-    record SignRequest(PkiId submissionId, String namespace, String semanticFingerprint, long fencingToken,
-            AccessContext accessContext, KeyRef keyRef, String algorithmId, RepeatableContent content,
+    record SignRequest(PkiId submissionId, String namespace, String semanticFingerprint,
+            ConfigurationCommitment configurationCommitment, long fencingToken,
+            AccessContext accessContext, KeyRef keyRef, String algorithmId, ContentCommitment contentCommitment,
+            RepeatableContent content,
             Optional<Encoding> preferredSignatureEncoding, Optional<Instant> deadline,
             CancellationSignal cancellation) {
 
         private static final long MIN_FENCING_TOKEN = 1L;
 
+        /** Validates the request structure and its constant-time semantic fingerprint. */
         public SignRequest {
             Objects.requireNonNull(submissionId, "submissionId");
             Objects.requireNonNull(namespace, "namespace");
             Objects.requireNonNull(semanticFingerprint, "semanticFingerprint");
+            Objects.requireNonNull(configurationCommitment, "configurationCommitment");
             Objects.requireNonNull(accessContext, "accessContext");
             Objects.requireNonNull(keyRef, "keyRef");
             Objects.requireNonNull(algorithmId, "algorithmId");
+            Objects.requireNonNull(contentCommitment, "contentCommitment");
             Objects.requireNonNull(content, "content");
             Objects.requireNonNull(preferredSignatureEncoding, "preferredSignatureEncoding");
             Objects.requireNonNull(deadline, "deadline");
@@ -341,8 +454,8 @@ public interface SignatureWorkflow extends Closeable {
             if (fencingToken < MIN_FENCING_TOKEN) {
                 throw new IllegalArgumentException("fencingToken must be positive");
             }
-            String expected = fingerprint(namespace, accessContext, keyRef, algorithmId, content,
-                    preferredSignatureEncoding, deadline);
+            String expected = fingerprint(configurationCommitment, namespace, accessContext, keyRef, algorithmId,
+                    contentCommitment, preferredSignatureEncoding, deadline);
             if (!constantTimeFingerprintEquals(expected, semanticFingerprint)) {
                 throw new IllegalArgumentException("semanticFingerprint does not match signing request");
             }
@@ -350,50 +463,87 @@ public interface SignatureWorkflow extends Closeable {
 
         /**
          * Creates a request with its canonical versioned fingerprint.
+         *
+         * @param submissionId stable caller-assigned submission identifier
+         * @param namespace provider/store namespace
+         * @param configurationCommitment exact effective provider configuration commitment
+         * @param fencingToken positive current fencing token
+         * @param accessContext audit and governance context
+         * @param keyRef opaque private-key reference
+         * @param algorithmId nonblank signature algorithm identifier
+         * @param contentCommitment commitment to the exact content bytes
+         * @param content immutable repeatable content
+         * @param preferredSignatureEncoding optional requested signature encoding
+         * @param deadline optional absolute signing deadline
+         * @return validated request with its canonical semantic fingerprint
          */
-        public static SignRequest create(PkiId submissionId, String namespace, long fencingToken,
-                AccessContext accessContext, KeyRef keyRef, String algorithmId, RepeatableContent content,
+        @SuppressWarnings("PMD.ExcessiveParameterList")
+        public static SignRequest create(PkiId submissionId, String namespace,
+                ConfigurationCommitment configurationCommitment, long fencingToken,
+                AccessContext accessContext, KeyRef keyRef, String algorithmId, ContentCommitment contentCommitment,
+                RepeatableContent content,
                 Optional<Encoding> preferredSignatureEncoding, Optional<Instant> deadline) {
-            String fingerprint = fingerprint(namespace, accessContext, keyRef, algorithmId, content,
-                    preferredSignatureEncoding, deadline);
-            return new SignRequest(submissionId, namespace, fingerprint, fencingToken, accessContext, keyRef,
-                    algorithmId, content, preferredSignatureEncoding, deadline, CancellationSignal.NONE);
+            String fingerprint = fingerprint(configurationCommitment, namespace, accessContext, keyRef, algorithmId,
+                    contentCommitment, preferredSignatureEncoding, deadline);
+            return new SignRequest(submissionId, namespace, fingerprint, configurationCommitment, fencingToken,
+                    accessContext, keyRef, algorithmId, contentCommitment, content, preferredSignatureEncoding, deadline,
+                    CancellationSignal.NONE);
         }
 
         /**
-         * Computes the canonical {@code signfp:v1} semantic fingerprint in O(payload)
-         * time and O(payload) temporary memory from the defensive payload copy, with
-         * constant-size digest state.
+         * Computes the canonical {@code signfp:v3} semantic fingerprint in O(1)
+         * time and auxiliary memory. The fingerprint binds the exact canonical
+         * configuration and content commitments and never relies on a
+         * provider-defined content identifier.
+         *
+         * @param configurationCommitment exact effective provider configuration commitment
+         * @param namespace provider/store namespace
+         * @param accessContext audit and governance context
+         * @param keyRef opaque private-key reference
+         * @param algorithmId nonblank signature algorithm identifier
+         * @param contentCommitment commitment to the exact content bytes
+         * @param preferredSignatureEncoding optional requested signature encoding
+         * @param deadline optional absolute signing deadline
+         * @return canonical lowercase {@code signfp:v3} SHA-256 fingerprint
          */
-        public static String fingerprint(String namespace, AccessContext accessContext, KeyRef keyRef,
-                String algorithmId, RepeatableContent content, Optional<Encoding> preferredSignatureEncoding,
+        public static String fingerprint(ConfigurationCommitment configurationCommitment, String namespace,
+                AccessContext accessContext, KeyRef keyRef,
+                String algorithmId, ContentCommitment contentCommitment,
+                Optional<Encoding> preferredSignatureEncoding,
                 Optional<Instant> deadline) {
+            Objects.requireNonNull(configurationCommitment, "configurationCommitment");
             Objects.requireNonNull(namespace, "namespace");
             Objects.requireNonNull(accessContext, "accessContext");
             Objects.requireNonNull(keyRef, "keyRef");
             Objects.requireNonNull(algorithmId, "algorithmId");
-            Objects.requireNonNull(content, "content");
+            Objects.requireNonNull(contentCommitment, "contentCommitment");
             Objects.requireNonNull(preferredSignatureEncoding, "preferredSignatureEncoding");
             Objects.requireNonNull(deadline, "deadline");
             try {
-                return fingerprintWithDigest(namespace, accessContext, keyRef, algorithmId, content,
-                        preferredSignatureEncoding, deadline, MessageDigest.getInstance("SHA-256"), ignored -> {
+                return fingerprintWithDigest(configurationCommitment, namespace, accessContext, keyRef, algorithmId,
+                        contentCommitment, preferredSignatureEncoding, deadline, MessageDigest.getInstance("SHA-256"), ignored -> {
                         });
             } catch (NoSuchAlgorithmException ex) {
                 throw new IllegalStateException("Unable to compute signing request fingerprint");
             }
         }
 
-        /* default */ static String fingerprintWithDigest(String namespace, AccessContext accessContext, KeyRef keyRef,
-                String algorithmId, RepeatableContent content, Optional<Encoding> preferredSignatureEncoding,
+        @SuppressWarnings("PMD.ExcessiveParameterList")
+        /* default */ static String fingerprintWithDigest(ConfigurationCommitment configurationCommitment,
+                String namespace, AccessContext accessContext, KeyRef keyRef,
+                String algorithmId, ContentCommitment contentCommitment,
+                Optional<Encoding> preferredSignatureEncoding,
                 Optional<Instant> deadline, MessageDigest digest, Consumer<byte[]> cleanupObserver) {
             Objects.requireNonNull(digest, "digest");
             Objects.requireNonNull(cleanupObserver, "cleanupObserver");
+            Objects.requireNonNull(configurationCommitment, "configurationCommitment");
+            byte[] commitmentBytes = configurationCommitment.bytes();
             byte[] digestBytes = null;
             try {
                 try (DataOutputStream output = new DataOutputStream(
                         new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
-                    output.writeUTF("sign-request-v2");
+                    output.writeUTF("sign-request-v4");
+                    output.write(commitmentBytes);
                     output.writeUTF(namespace);
                     output.writeUTF(accessContext.principal().type());
                     output.writeUTF(accessContext.principal().name());
@@ -402,16 +552,18 @@ public interface SignatureWorkflow extends Closeable {
                     output.writeUTF(accessContext.formatId().map(zeroecho.pki.api.FormatId::value).orElse(""));
                     output.writeUTF(keyRef.value());
                     output.writeUTF(algorithmId);
-                    output.writeUTF(content.contentId());
-                    output.writeLong(content.length().orElse(-1L));
+                    output.writeUTF(contentCommitment.version());
+                    output.writeLong(contentCommitment.length());
+                    output.writeUTF(contentCommitment.sha256());
                     output.writeUTF(preferredSignatureEncoding.map(Enum::name).orElse(""));
                     output.writeUTF(deadline.map(Instant::toString).orElse(""));
                 }
                 digestBytes = digest.digest();
-                return "signfp:v1:" + HexFormat.of().formatHex(digestBytes);
+                return "signfp:v3:" + HexFormat.of().formatHex(digestBytes);
             } catch (IOException ex) {
                 throw new IllegalStateException("Unable to compute signing request fingerprint");
             } finally {
+                clearOwned(commitmentBytes, cleanupObserver);
                 clearOwned(digestBytes, cleanupObserver);
             }
         }
@@ -422,16 +574,72 @@ public interface SignatureWorkflow extends Closeable {
             try {
                 return MessageDigest.isEqual(leftBytes, rightBytes);
             } finally {
-                java.util.Arrays.fill(leftBytes, (byte) 0);
-                java.util.Arrays.fill(rightBytes, (byte) 0);
+                Arrays.fill(leftBytes, (byte) 0);
+                Arrays.fill(rightBytes, (byte) 0);
             }
         }
 
         private static void clearOwned(byte[] owned, Consumer<byte[]> cleanupObserver) {
             if (owned != null) {
-                java.util.Arrays.fill(owned, (byte) 0);
+                Arrays.fill(owned, (byte) 0);
                 cleanupObserver.accept(owned);
             }
+        }
+    }
+
+    /**
+     * Canonical commitment to the exact bytes consumed by a signing operation.
+     *
+     * <p>The current version commits an exact non-negative byte length and a
+     * lowercase hexadecimal SHA-256 digest. It is independent of storage identity
+     * and is therefore safe to carry across transport boundaries.</p>
+     *
+     * @param version commitment format version
+     * @param length exact payload length in bytes
+     * @param sha256 lowercase hexadecimal SHA-256 digest
+     */
+    record ContentCommitment(String version, long length, String sha256) {
+        /** Current canonical commitment version. */
+        public static final String SHA256_V1 = "content-sha256:v1";
+
+        /** Validates a canonical content commitment. */
+        public ContentCommitment {
+            Objects.requireNonNull(version, "version");
+            Objects.requireNonNull(sha256, "sha256");
+            if (!SHA256_V1.equals(version) || length < 0L || sha256.length() != 64
+                    || !isLowercaseHex(sha256)) {
+                throw new IllegalArgumentException("Content commitment is not canonical");
+            }
+        }
+
+        /**
+         * Computes a canonical commitment for an already materialized payload.
+         *
+         * @param bytes payload bytes
+         * @return exact SHA-256 commitment
+         */
+        public static ContentCommitment sha256(byte[] bytes) {
+            Objects.requireNonNull(bytes, "bytes");
+            try {
+                byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+                try {
+                    return new ContentCommitment(SHA256_V1, bytes.length, HexFormat.of().formatHex(digest));
+                } finally {
+                    Arrays.fill(digest, (byte) 0);
+                }
+            } catch (NoSuchAlgorithmException unavailable) {
+                throw new IllegalStateException("SHA-256 is unavailable");
+            }
+        }
+
+        private static boolean isLowercaseHex(String value) {
+            for (int index = 0; index < value.length(); index++) {
+                char current = value.charAt(index);
+                if (!(current >= '0' && current <= '9') && !(current >= 'a' && current <= 'f')) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
@@ -454,11 +662,13 @@ public interface SignatureWorkflow extends Closeable {
      * @param publicKeyEncoded optional encoded public key bytes (provider-specific;
      *                         may be unsupported)
      * @param deadline         optional absolute deadline
+     * @param cancellation     cooperative cancellation for this invocation
      */
     record VerifyRequest(AccessContext accessContext, String algorithmId, RepeatableContent content,
             EncodedObject signature, Optional<KeyRef> publicKeyRef, Optional<EncodedObject> publicKeyEncoded,
             Optional<Instant> deadline, CancellationSignal cancellation) {
 
+        /** Validates the request and requires at least one public-key representation. */
         public VerifyRequest {
             Objects.requireNonNull(accessContext, "accessContext");
             Objects.requireNonNull(algorithmId, "algorithmId");
@@ -527,6 +737,7 @@ public interface SignatureWorkflow extends Closeable {
     record OperationStatus(State state, Instant updatedAt, Optional<String> detailCode,
             Optional<OperationResult> result) {
 
+        /** Validates that terminal-result presence matches the lifecycle state. */
         public OperationStatus {
             Objects.requireNonNull(state, "state");
             Objects.requireNonNull(updatedAt, "updatedAt");
@@ -579,7 +790,20 @@ public interface SignatureWorkflow extends Closeable {
      * </p>
      */
     enum State {
-        PENDING, RUNNING, WAITING_APPROVAL, SUCCEEDED, FAILED, CANCELLED, EXPIRED
+        /** Accepted but not yet actively processed. */
+        PENDING,
+        /** Provider processing is active. */
+        RUNNING,
+        /** Processing is suspended for an external approval. */
+        WAITING_APPROVAL,
+        /** Operation completed successfully. */
+        SUCCEEDED,
+        /** Operation permanently failed. */
+        FAILED,
+        /** Provider confirmed caller-requested cancellation. */
+        CANCELLED,
+        /** Deadline elapsed before successful completion. */
+        EXPIRED
     }
 
     /**
@@ -609,6 +833,7 @@ public interface SignatureWorkflow extends Closeable {
      */
     record OperationResult(Optional<EncodedObject> signature, Optional<Boolean> verified) {
 
+        /** Validates optional terminal result values. */
         public OperationResult {
             Objects.requireNonNull(signature, "signature");
             Objects.requireNonNull(verified, "verified");

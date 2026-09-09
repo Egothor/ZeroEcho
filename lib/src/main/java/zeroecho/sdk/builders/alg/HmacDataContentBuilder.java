@@ -248,6 +248,7 @@ public final class HmacDataContentBuilder implements DataContentBuilder<PlainCon
      *     .build(true);
      * }</pre>
      *
+     * @param session active session used to create cryptographic contexts
      * @return a new {@code HmacDataContentBuilder} instance
      */
     public static HmacDataContentBuilder builder(ZeroEchoSession session) {

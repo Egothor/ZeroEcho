@@ -33,27 +33,22 @@
  ******************************************************************************/
 package zeroecho.pki.server.http;
 
-import java.io.IOException;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-import org.bouncycastle.asn1.ASN1Primitive;
-import org.bouncycastle.asn1.ASN1OctetString;
-import org.bouncycastle.asn1.DERNull;
-import org.bouncycastle.asn1.nist.NISTObjectIdentifiers;
-import org.bouncycastle.asn1.ocsp.OCSPRequest;
-import org.bouncycastle.asn1.ocsp.OCSPObjectIdentifiers;
-import org.bouncycastle.asn1.ocsp.Signature;
-import org.bouncycastle.asn1.oiw.OIWObjectIdentifiers;
-import org.bouncycastle.asn1.x509.GeneralName;
-import org.bouncycastle.cert.ocsp.CertificateID;
-import org.bouncycastle.cert.ocsp.OCSPReq;
-import org.bouncycastle.cert.ocsp.Req;
+import zeroecho.pkix.AlgorithmIdentifier;
+import zeroecho.pkix.CertificateExtension;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.ocsp.CertId;
+import zeroecho.pkix.ocsp.OcspRequest;
 
 import zeroecho.pki.application.OcspResponseService;
 import zeroecho.pki.server.OcspRequesterService;
@@ -62,6 +57,10 @@ import zeroecho.pki.server.OcspRequesterService;
 @SuppressWarnings({ "PMD.ControlStatementBraces", "PMD.ExceptionAsFlowControl", "PMD.PreserveStackTrace",
         "PMD.AvoidCatchingGenericException", "PMD.CyclomaticComplexity", "PMD.AvoidLiteralsInIfCondition" })
 final class OcspRequestParser {
+    private static final String OID_SHA1 = "1.3.14.3.2.26";
+    private static final String OID_SHA256 = "2.16.840.1.101.3.4.2.1";
+    private static final String OID_NONCE = "1.3.6.1.5.5.7.48.1.2";
+
     /* default */ record Parsed(List<OcspResponseService.CertId> requests, Optional<byte[]> nonce,
             Optional<OcspRequesterService.SignedRequest> signedRequest) {
         Parsed {
@@ -94,68 +93,71 @@ final class OcspRequestParser {
             Set<OcspResponseService.CertIdHash> acceptedHashes, int maximumNonceBytes,
             int maximumSignerCertificates, int maximumSignerChainBytes) {
         try {
-            OCSPReq request = new OCSPReq(der);
-            if (!Arrays.equals(der, request.getEncoded())) throw malformed();
             byte[] exactTbsRequest = firstSequenceElement(der);
-            Req[] entries = request.getRequestList();
-            if (entries.length == 0 || entries.length > maximumEntries) throw malformed();
-            List<OcspResponseService.CertId> result = new ArrayList<>(entries.length);
-            for (Req entry : entries) {
-                if (entry.getSingleRequestExtensions() != null) throw malformed();
-                CertificateID id = entry.getCertID();
-                org.bouncycastle.asn1.x509.AlgorithmIdentifier algorithm = id.toASN1Primitive().getHashAlgorithm();
-                OcspResponseService.CertIdHash hash;
-                if (OIWObjectIdentifiers.idSHA1.equals(id.getHashAlgOID())
-                        && DERNull.INSTANCE.equals(algorithm.getParameters())) {
-                    hash = OcspResponseService.CertIdHash.SHA1;
-                } else if (NISTObjectIdentifiers.id_sha256.equals(id.getHashAlgOID())
-                        && algorithm.getParameters() == null) {
-                    hash = OcspResponseService.CertIdHash.SHA256;
-                }
-                else throw malformed();
+            OcspRequest request = Pkix.parseOcspRequest(der);
+            TbsRequestView view = TbsRequestView.parse(exactTbsRequest);
+            if (view.singleRequestExtensions()) throw malformed();
+
+            List<CertId> requested = request.requestedCertificates();
+            if (requested.isEmpty() || requested.size() > maximumEntries) throw malformed();
+            List<OcspResponseService.CertId> result = new ArrayList<>(requested.size());
+            for (CertId id : requested) {
+                OcspResponseService.CertIdHash hash = certIdHash(id.hashAlgorithm());
                 if (!acceptedHashes.contains(hash)) throw malformed();
-                result.add(new OcspResponseService.CertId(hash, id.getIssuerNameHash(),
-                        id.getIssuerKeyHash(), id.getSerialNumber()));
+                result.add(new OcspResponseService.CertId(hash, id.issuerNameHash(), id.issuerKeyHash(),
+                        id.serialNumber()));
             }
-            List<?> extensionIds = request.getExtensionOIDs();
-            if (extensionIds.size() > 1 || extensionIds.stream().anyMatch(
-                    oid -> !OCSPObjectIdentifiers.id_pkix_ocsp_nonce.equals(oid))) throw malformed();
+
+            List<CertificateExtension> extensions = view.requestExtensions();
+            if (extensions.size() > 1) throw malformed();
             Optional<byte[]> nonce = Optional.empty();
-            if (!extensionIds.isEmpty()) {
-                org.bouncycastle.asn1.x509.Extension extension = request.getExtension(
-                        OCSPObjectIdentifiers.id_pkix_ocsp_nonce);
-                if (extension == null || extension.isCritical()) throw malformed();
-                byte[] value = ASN1OctetString.getInstance(extension.getParsedValue()).getOctets();
+            if (!extensions.isEmpty()) {
+                CertificateExtension extension = extensions.getFirst();
+                if (!OID_NONCE.equals(extension.oid()) || extension.critical()) throw malformed();
+                byte[] value = request.nonce().orElseThrow(OcspRequestParser::malformed);
                 if (value.length == 0 || value.length > maximumNonceBytes) throw malformed();
                 nonce = Optional.of(value);
             }
-            Optional<OcspRequesterService.SignedRequest> signed = signedRequest(request, der, exactTbsRequest,
+
+            Optional<OcspRequesterService.SignedRequest> signed = signedRequest(request, view, exactTbsRequest,
                     maximumSignerCertificates, maximumSignerChainBytes);
-            if (signed.isEmpty() && request.getRequestorName() != null) throw malformed();
+            if (signed.isEmpty() && view.requestorNamePresent()) throw malformed();
             return new Parsed(result, nonce, signed);
-        } catch (IOException | RuntimeException failure) { throw malformed(); }
+        } catch (RuntimeException failure) { throw malformed(); }
     }
 
-    private static Optional<OcspRequesterService.SignedRequest> signedRequest(OCSPReq request, byte[] requestDer,
-            byte[] exactTbsRequest, int maximumSignerCertificates, int maximumSignerChainBytes) throws IOException {
+    private static OcspResponseService.CertIdHash certIdHash(AlgorithmIdentifier algorithm) {
+        if (OID_SHA1.equals(algorithm.oid())
+                && algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.DER_NULL) {
+            return OcspResponseService.CertIdHash.SHA1;
+        }
+        if (OID_SHA256.equals(algorithm.oid())
+                && algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.ABSENT) {
+            return OcspResponseService.CertIdHash.SHA256;
+        }
+        throw malformed();
+    }
+
+    private static Optional<OcspRequesterService.SignedRequest> signedRequest(OcspRequest request,
+            TbsRequestView view, byte[] exactTbsRequest, int maximumSignerCertificates,
+            int maximumSignerChainBytes) {
         if (!request.isSigned()) return Optional.empty();
         if (maximumSignerCertificates <= 0 || maximumSignerChainBytes <= 0) throw malformed();
-        GeneralName requestor = request.getRequestorName();
-        if (requestor == null || requestor.getTagNo() != GeneralName.directoryName) throw malformed();
-        byte[] nameDer = requestor.getName().toASN1Primitive().getEncoded("DER");
-        OCSPRequest structure = OCSPRequest.getInstance(ASN1Primitive.fromByteArray(requestDer));
-        Signature signature = structure.getOptionalSignature();
-        if (signature == null || signature.getSignature().getPadBits() != 0
-                || signature.getSignature().getOctets().length == 0) throw malformed();
-        byte[] algorithmDer = signature.getSignatureAlgorithm().getEncoded("DER");
-        org.bouncycastle.cert.X509CertificateHolder[] holders = request.getCerts();
-        if (holders.length == 0 || holders.length > maximumSignerCertificates) throw malformed();
+        byte[] nameDer = view.requestorNameDirectory().orElseThrow(OcspRequestParser::malformed);
+        byte[] signature = request.signature().orElseThrow(OcspRequestParser::malformed);
+        if (signature.length == 0) throw malformed();
+        byte[] algorithmDer = Pkix.encodeAlgorithmIdentifier(
+                request.signatureAlgorithm().orElseThrow(OcspRequestParser::malformed));
+        List<X509Certificate> signers = request.signerCertificates();
+        if (signers.isEmpty() || signers.size() > maximumSignerCertificates) throw malformed();
         int total = 0;
-        List<byte[]> certificates = new ArrayList<>(holders.length);
-        Set<String> unique = new java.util.HashSet<>();
-        for (org.bouncycastle.cert.X509CertificateHolder holder : holders) {
-            byte[] certificate = holder.getEncoded();
-            if (!Arrays.equals(certificate, ASN1Primitive.fromByteArray(certificate).getEncoded("DER"))) {
+        List<byte[]> certificates = new ArrayList<>(signers.size());
+        Set<String> unique = new HashSet<>();
+        for (X509Certificate signer : signers) {
+            byte[] certificate;
+            try {
+                certificate = signer.getEncoded();
+            } catch (CertificateEncodingException failure) {
                 throw malformed();
             }
             total = Math.addExact(total, certificate.length);
@@ -165,7 +167,81 @@ final class OcspRequestParser {
             certificates.add(certificate);
         }
         return Optional.of(new OcspRequesterService.SignedRequest(exactTbsRequest, nameDer, algorithmDer,
-                signature.getSignature().getOctets(), certificates));
+                signature, certificates));
+    }
+
+    /**
+     * A minimal structural view of the exact {@code tbsRequest} DER, used to enforce
+     * strictness the high-level {@link OcspRequest} does not expose: the presence and
+     * form of {@code requestorName}, whether any per-request {@code singleRequestExtensions}
+     * are present, and the request-level extensions (for canonical nonce validation).
+     */
+    private record TbsRequestView(boolean requestorNamePresent, Optional<byte[]> requestorNameDirectory,
+            boolean singleRequestExtensions, List<CertificateExtension> requestExtensions) {
+
+        private static TbsRequestView parse(byte[] tbs) {
+            Tlv outer = readTlv(tbs, 0, tbs.length);
+            if (outer.tag() != 0x30 || outer.end() != tbs.length) throw malformed();
+            boolean requestorNamePresent = false;
+            Optional<byte[]> requestorNameDirectory = Optional.empty();
+            boolean singleRequestExtensions = false;
+            List<CertificateExtension> requestExtensions = List.of();
+            int position = outer.contentStart();
+            while (position < outer.end()) {
+                Tlv field = readTlv(tbs, position, outer.end());
+                switch (field.tag()) {
+                    case 0xA0 -> { }
+                    case 0xA1 -> {
+                        requestorNamePresent = true;
+                        Tlv generalName = readTlv(tbs, field.contentStart(), field.end());
+                        if (generalName.tag() == 0xA4) {
+                            Tlv name = readTlv(tbs, generalName.contentStart(), generalName.end());
+                            if (name.tag() != 0x30) throw malformed();
+                            requestorNameDirectory = Optional.of(
+                                    Arrays.copyOfRange(tbs, generalName.contentStart(), name.end()));
+                        }
+                    }
+                    case 0x30 -> singleRequestExtensions = scanRequestList(tbs, field);
+                    case 0xA2 -> {
+                        Tlv sequence = readTlv(tbs, field.contentStart(), field.end());
+                        if (sequence.tag() != 0x30) throw malformed();
+                        requestExtensions = Pkix.parseExtensions(
+                                Arrays.copyOfRange(tbs, field.contentStart(), sequence.end()));
+                    }
+                    default -> throw malformed();
+                }
+                position = field.end();
+            }
+            return new TbsRequestView(requestorNamePresent, requestorNameDirectory, singleRequestExtensions,
+                    requestExtensions);
+        }
+
+        private static boolean scanRequestList(byte[] tbs, Tlv requestList) {
+            boolean singleRequestExtensions = false;
+            int position = requestList.contentStart();
+            while (position < requestList.end()) {
+                Tlv entry = readTlv(tbs, position, requestList.end());
+                if (entry.tag() != 0x30) throw malformed();
+                Tlv certId = readTlv(tbs, entry.contentStart(), entry.end());
+                if (certId.tag() != 0x30) throw malformed();
+                if (certId.end() < entry.end() && readTlv(tbs, certId.end(), entry.end()).tag() == 0xA0) {
+                    singleRequestExtensions = true;
+                }
+                position = entry.end();
+            }
+            return singleRequestExtensions;
+        }
+    }
+
+    private record Tlv(int tag, int contentStart, int contentLength, int end) { }
+
+    private static Tlv readTlv(byte[] der, int offset, int limit) {
+        if (offset >= limit) throw malformed();
+        int tag = Byte.toUnsignedInt(der[offset]);
+        Length content = length(der, offset + 1);
+        int end = Math.addExact(content.offset(), content.length());
+        if (end > limit) throw malformed();
+        return new Tlv(tag, content.offset(), content.length(), end);
     }
 
     private static byte[] firstSequenceElement(byte[] der) {

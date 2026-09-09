@@ -50,29 +50,84 @@ public final class Permission {
 
     /** Stable permission actions; semantic separation is part of the public contract. */
     public enum Action {
-        REALM_READ(1), SERVER_HEALTH_READ(2), SERVER_CONFIGURATION_READ(3),
-        SERVER_CONFIGURATION_UPDATE(4), IDENTITY_PROVIDER_MANAGE(5), PRINCIPAL_MANAGE(6),
-        ROLE_MANAGE(7), PERMISSION_GRANT(8), FORWARD_AUTHENTICATED_CLIENT_IDENTITY(9),
-        AUTHORITY_LIST(20), AUTHORITY_READ(21),
-        AUTHORITY_CREATE(22), AUTHORITY_IMPORT(23), AUTHORITY_ACTIVATE(24), AUTHORITY_SUSPEND(25),
-        AUTHORITY_RETIRE(26), ISSUER_CREATE(27), ISSUER_ROTATE(28), ISSUER_RETIRE(29),
-        CA_CHAIN_DOWNLOAD(30), PROFILE_READ(40), PROFILE_REGISTER(41), PROFILE_VALIDATE(42),
-        PROFILE_ACTIVATE(43), PROFILE_DEACTIVATE(44), POLICY_READ(45), POLICY_UPDATE(46),
-        X509_BINDING_READ(47), X509_BINDING_PROVIDER_ENABLE(48), REQUEST_SUBMIT(60),
-        REQUEST_READ_OWN(61), REQUEST_READ_ANY(62), REQUEST_APPROVE(63), REQUEST_REJECT(64),
-        REQUEST_CANCEL(65), CERTIFICATE_ISSUE(70), CERTIFICATE_RENEW(71), CERTIFICATE_REKEY(72),
-        CERTIFICATE_READ_METADATA(73), CERTIFICATE_READ_CONTENT(74), CERTIFICATE_SEARCH(75),
-        CERTIFICATE_READ_PII(76), CERTIFICATE_DOWNLOAD(77), CERTIFICATE_PUBLICATION_CHANGE(78),
-        CERTIFICATE_REVOKE(80), CERTIFICATE_HOLD(81), CERTIFICATE_RELEASE_HOLD(82),
-        REVOCATION_HISTORY_READ(83), CRL_GENERATE(84), CRL_PUBLISH(85), CRL_DOWNLOAD(86),
-        OCSP_ADMINISTER(87), OCSP_RESPONDER_READ(88), OCSP_STATUS_QUERY(89),
-        PUBLICATION_REGISTER(100), PUBLICATION_READ(101),
-        PUBLICATION_PROCESS(102), PUBLICATION_RETRY(103), PUBLICATION_RECONCILE(104),
-        AUDIT_READ_REDACTED(120), AUDIT_READ_FULL(121), AUDIT_READ_PII(122), AUDIT_EXPORT(123),
-        AUDIT_INTEGRITY_VERIFY(124), BACKUP_EXPORT(140), BACKUP_VERIFY(141), RESTORE_EXECUTE(142),
-        DISCLOSURE_READ(160), DISCLOSURE_CHANGE(161), DISCLOSURE_CAPABILITY_ISSUE(162),
-        DISCLOSURE_CAPABILITY_REVOKE(163), REPOSITORY_ALIAS_READ(164), REPOSITORY_ALIAS_MANAGE(165),
-        ACME_DIRECTORY_READ(180), ACME_DIRECTORY_MANAGE(181), ACME_ACCOUNT_READ(182), ACME_ACCOUNT_MANAGE(183);
+        /** Reads realm metadata. */ REALM_READ(1),
+        /** Reads server health. */ SERVER_HEALTH_READ(2),
+        /** Reads server configuration. */ SERVER_CONFIGURATION_READ(3),
+        /** Updates server configuration. */ SERVER_CONFIGURATION_UPDATE(4),
+        /** Manages identity-provider configuration. */ IDENTITY_PROVIDER_MANAGE(5),
+        /** Manages security principals. */ PRINCIPAL_MANAGE(6),
+        /** Manages role definitions. */ ROLE_MANAGE(7),
+        /** Grants or revokes permissions. */ PERMISSION_GRANT(8),
+        /** Forwards an authenticated client identity. */ FORWARD_AUTHENTICATED_CLIENT_IDENTITY(9),
+        /** Lists authorities. */ AUTHORITY_LIST(20),
+        /** Reads authority metadata. */ AUTHORITY_READ(21),
+        /** Creates an authority. */ AUTHORITY_CREATE(22),
+        /** Imports an authority. */ AUTHORITY_IMPORT(23),
+        /** Activates an authority. */ AUTHORITY_ACTIVATE(24),
+        /** Suspends an authority. */ AUTHORITY_SUSPEND(25),
+        /** Retires an authority. */ AUTHORITY_RETIRE(26),
+        /** Creates an issuer generation. */ ISSUER_CREATE(27),
+        /** Rotates an issuer generation. */ ISSUER_ROTATE(28),
+        /** Retires an issuer generation. */ ISSUER_RETIRE(29),
+        /** Downloads a CA certificate chain. */ CA_CHAIN_DOWNLOAD(30),
+        /** Reads certificate profiles. */ PROFILE_READ(40),
+        /** Registers certificate profiles. */ PROFILE_REGISTER(41),
+        /** Validates certificate profiles. */ PROFILE_VALIDATE(42),
+        /** Activates certificate profiles. */ PROFILE_ACTIVATE(43),
+        /** Deactivates certificate profiles. */ PROFILE_DEACTIVATE(44),
+        /** Reads policy definitions. */ POLICY_READ(45),
+        /** Updates policy definitions. */ POLICY_UPDATE(46),
+        /** Reads X.509 bindings. */ X509_BINDING_READ(47),
+        /** Enables an X.509 binding provider. */ X509_BINDING_PROVIDER_ENABLE(48),
+        /** Submits a certificate request. */ REQUEST_SUBMIT(60),
+        /** Reads requests owned by the principal. */ REQUEST_READ_OWN(61),
+        /** Reads any request in scope. */ REQUEST_READ_ANY(62),
+        /** Approves a certificate request. */ REQUEST_APPROVE(63),
+        /** Rejects a certificate request. */ REQUEST_REJECT(64),
+        /** Cancels a certificate request. */ REQUEST_CANCEL(65),
+        /** Issues a certificate. */ CERTIFICATE_ISSUE(70),
+        /** Renews a certificate. */ CERTIFICATE_RENEW(71),
+        /** Replaces a certificate key. */ CERTIFICATE_REKEY(72),
+        /** Reads certificate metadata. */ CERTIFICATE_READ_METADATA(73),
+        /** Reads certificate content. */ CERTIFICATE_READ_CONTENT(74),
+        /** Searches certificates. */ CERTIFICATE_SEARCH(75),
+        /** Reads certificate personal data. */ CERTIFICATE_READ_PII(76),
+        /** Downloads a certificate. */ CERTIFICATE_DOWNLOAD(77),
+        /** Changes certificate publication. */ CERTIFICATE_PUBLICATION_CHANGE(78),
+        /** Confirms certificate possession. */ CERTIFICATE_CONFIRM(79),
+        /** Permanently revokes a certificate. */ CERTIFICATE_REVOKE(80),
+        /** Places a certificate on hold. */ CERTIFICATE_HOLD(81),
+        /** Releases a certificate hold. */ CERTIFICATE_RELEASE_HOLD(82),
+        /** Reads revocation history. */ REVOCATION_HISTORY_READ(83),
+        /** Generates a certificate revocation list. */ CRL_GENERATE(84),
+        /** Publishes a certificate revocation list. */ CRL_PUBLISH(85),
+        /** Downloads a certificate revocation list. */ CRL_DOWNLOAD(86),
+        /** Administers OCSP configuration. */ OCSP_ADMINISTER(87),
+        /** Reads OCSP responder configuration. */ OCSP_RESPONDER_READ(88),
+        /** Queries certificate status through OCSP. */ OCSP_STATUS_QUERY(89),
+        /** Registers a publication target. */ PUBLICATION_REGISTER(100),
+        /** Reads publication state. */ PUBLICATION_READ(101),
+        /** Processes pending publication. */ PUBLICATION_PROCESS(102),
+        /** Retries failed publication. */ PUBLICATION_RETRY(103),
+        /** Reconciles publication state. */ PUBLICATION_RECONCILE(104),
+        /** Reads redacted audit data. */ AUDIT_READ_REDACTED(120),
+        /** Reads complete audit metadata. */ AUDIT_READ_FULL(121),
+        /** Reads personal data from audit records. */ AUDIT_READ_PII(122),
+        /** Exports audit data. */ AUDIT_EXPORT(123),
+        /** Verifies audit-log integrity. */ AUDIT_INTEGRITY_VERIFY(124),
+        /** Exports a backup. */ BACKUP_EXPORT(140),
+        /** Verifies a backup. */ BACKUP_VERIFY(141),
+        /** Executes a restore. */ RESTORE_EXECUTE(142),
+        /** Reads disclosure policy and state. */ DISCLOSURE_READ(160),
+        /** Changes disclosure policy or state. */ DISCLOSURE_CHANGE(161),
+        /** Issues a disclosure capability. */ DISCLOSURE_CAPABILITY_ISSUE(162),
+        /** Revokes a disclosure capability. */ DISCLOSURE_CAPABILITY_REVOKE(163),
+        /** Reads repository aliases. */ REPOSITORY_ALIAS_READ(164),
+        /** Manages repository aliases. */ REPOSITORY_ALIAS_MANAGE(165),
+        /** Reads an ACME directory. */ ACME_DIRECTORY_READ(180),
+        /** Manages an ACME directory. */ ACME_DIRECTORY_MANAGE(181),
+        /** Reads an ACME account. */ ACME_ACCOUNT_READ(182),
+        /** Manages an ACME account. */ ACME_ACCOUNT_MANAGE(183);
 
         private final int code;
 
@@ -80,12 +135,21 @@ public final class Permission {
             this.code = code;
         }
 
-        /** @return stable persistence code */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable persistence code
+         */
         public int code() {
             return code;
         }
 
-        /** Resolves a stable persistence code. */
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted action code
+         * @return corresponding action
+         */
         public static Action fromCode(int code) {
             for (Action candidate : values()) {
                 if (candidate.code == code) {
@@ -98,11 +162,22 @@ public final class Permission {
 
     /** Grant effect. */
     public enum Effect {
-        ALLOW(1), DENY(2);
+        /** Allows the action when no stronger deny applies. */ ALLOW(1),
+        /** Explicitly denies the action. */ DENY(2);
         private final int code;
         Effect(int code) { this.code = code; }
-        /** @return stable code */ public int code() { return code; }
-        /** Resolves a stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted effect code
+         * @return corresponding effect
+         */
         public static Effect fromCode(int code) {
             return switch (code) { case 1 -> ALLOW; case 2 -> DENY;
                 default -> throw new IllegalArgumentException("Unknown grant effect code"); };
@@ -111,15 +186,46 @@ public final class Permission {
 
     /** Security resource types, distinct from PKI authority ownership. */
     public enum ResourceType {
-        REALM(1), SERVER_CONFIGURATION(2), PRINCIPAL(3), ROLE(4), GRANT(5), AUTHORITY(10),
-        ISSUER(11), PROFILE(12), POLICY(13), X509_BINDING(14), REQUEST(20), CERTIFICATE(21),
-        REVOCATION(22), STATUS_OBJECT(23), PUBLICATION(24), AUDIT(30), BACKUP(31), RESTORE(32),
-        DISCLOSURE(33), CAPABILITY(34), APPROVAL(35), BREAK_GLASS(36), REPOSITORY_ALIAS(37),
-        ACME_DIRECTORY(38), ACME_ACCOUNT(39), OCSP_RESPONDER(40);
+        /** Security realm. */ REALM(1),
+        /** Server configuration. */ SERVER_CONFIGURATION(2),
+        /** Security principal. */ PRINCIPAL(3),
+        /** Role definition. */ ROLE(4),
+        /** Permission grant. */ GRANT(5),
+        /** Logical certificate authority. */ AUTHORITY(10),
+        /** Authority issuer generation. */ ISSUER(11),
+        /** Certificate profile. */ PROFILE(12),
+        /** Security or issuance policy. */ POLICY(13),
+        /** X.509 representation binding. */ X509_BINDING(14),
+        /** Certificate request. */ REQUEST(20),
+        /** Issued certificate. */ CERTIFICATE(21),
+        /** Revocation state. */ REVOCATION(22),
+        /** Generated status object. */ STATUS_OBJECT(23),
+        /** Publication operation or target. */ PUBLICATION(24),
+        /** Audit data. */ AUDIT(30),
+        /** Backup archive. */ BACKUP(31),
+        /** Restore operation. */ RESTORE(32),
+        /** Disclosure configuration or result. */ DISCLOSURE(33),
+        /** Delegated disclosure capability. */ CAPABILITY(34),
+        /** Approval request. */ APPROVAL(35),
+        /** Break-glass authorization. */ BREAK_GLASS(36),
+        /** Public repository alias. */ REPOSITORY_ALIAS(37),
+        /** ACME directory configuration. */ ACME_DIRECTORY(38),
+        /** ACME account. */ ACME_ACCOUNT(39),
+        /** OCSP responder configuration. */ OCSP_RESPONDER(40);
         private final int code;
         ResourceType(int code) { this.code = code; }
-        /** @return stable code */ public int code() { return code; }
-        /** Resolves a stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted resource-type code
+         * @return corresponding resource type
+         */
         public static ResourceType fromCode(int code) {
             for (ResourceType candidate : values()) if (candidate.code == code) return candidate;
             throw new IllegalArgumentException("Unknown resource type code");
@@ -128,11 +234,22 @@ public final class Permission {
 
     /** Relationship between the requesting principal and the target object. */
     public enum Relationship {
-        OWN(1), ANY(2);
+        /** Restricts the grant to objects owned by the principal. */ OWN(1),
+        /** Applies the grant to any object in its scope. */ ANY(2);
         private final int code;
         Relationship(int code) { this.code = code; }
-        /** @return stable code */ public int code() { return code; }
-        /** Resolves a stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted relationship code
+         * @return corresponding relationship
+         */
         public static Relationship fromCode(int code) {
             return switch (code) { case 1 -> OWN; case 2 -> ANY;
                 default -> throw new IllegalArgumentException("Unknown relationship code"); };
@@ -141,18 +258,36 @@ public final class Permission {
 
     /** Explicitly separated disclosure and audit data views. */
     public enum DataView {
-        METADATA_REDACTED(1), METADATA_FULL(2), CONTENT_FULL(3), PII_FULL(4);
+        /** Redacted non-sensitive metadata. */ METADATA_REDACTED(1),
+        /** Complete metadata without content or personal data. */ METADATA_FULL(2),
+        /** Complete object content. */ CONTENT_FULL(3),
+        /** Personal data. */ PII_FULL(4);
         private final int code;
         DataView(int code) { this.code = code; }
-        /** @return stable code */ public int code() { return code; }
-        /** Resolves a stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted data-view code
+         * @return corresponding data view
+         */
         public static DataView fromCode(int code) {
             return switch (code) { case 1 -> METADATA_REDACTED; case 2 -> METADATA_FULL;
                 case 3 -> CONTENT_FULL; case 4 -> PII_FULL;
                 default -> throw new IllegalArgumentException("Unknown data-view code"); };
         }
 
-        /** Tests view sufficiency without merging content and PII authority. */
+        /**
+         * Tests view sufficiency without merging content and PII authority.
+         *
+         * @param requested requested data view
+         * @return {@code true} when this view permits the requested view
+         */
         public boolean permits(DataView requested) {
             Objects.requireNonNull(requested, "requested");
             return this == requested || this == METADATA_FULL && requested == METADATA_REDACTED;
@@ -161,12 +296,25 @@ public final class Permission {
 
     /** Closed non-programmable grant conditions. */
     public enum Condition {
-        REASON_REQUIRED(1), APPROVAL_REQUIRED(2), REQUESTER_APPROVER_SEPARATION(3),
-        AUTHORITY_ACTIVE(4), PROFILE_MATCH_REQUIRED(5);
+        /** Requires a nonblank operator reason. */ REASON_REQUIRED(1),
+        /** Requires a valid approval. */ APPROVAL_REQUIRED(2),
+        /** Requires distinct requester and approver principals. */ REQUESTER_APPROVER_SEPARATION(3),
+        /** Requires an active authority. */ AUTHORITY_ACTIVE(4),
+        /** Requires the configured profile to match. */ PROFILE_MATCH_REQUIRED(5);
         private final int code;
         Condition(int code) { this.code = code; }
-        /** @return stable code */ public int code() { return code; }
-        /** Resolves a stable code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted condition code
+         * @return corresponding condition
+         */
         public static Condition fromCode(int code) {
             for (Condition candidate : values()) if (candidate.code == code) return candidate;
             throw new IllegalArgumentException("Unknown condition code");
@@ -180,6 +328,7 @@ public final class Permission {
      * @param authorityId explicit logical authority when applicable
      * @param issuerId explicit issuer generation when applicable
      * @param profileId explicit profile when applicable
+     * @param responderId explicit OCSP responder when applicable
      */
     public record Scope(RealmId realmId, Optional<PkiId> authorityId, Optional<PkiId> issuerId,
             Optional<String> profileId, Optional<String> responderId) {
@@ -196,7 +345,14 @@ public final class Permission {
             }
         }
 
-        /** Creates a scope without an OCSP responder dimension. */
+        /**
+         * Creates a scope without an OCSP responder dimension.
+         *
+         * @param realmId realm identity
+         * @param authorityId explicit logical authority when applicable
+         * @param issuerId explicit issuer generation when applicable
+         * @param profileId explicit profile when applicable
+         */
         public Scope(RealmId realmId, Optional<PkiId> authorityId, Optional<PkiId> issuerId,
                 Optional<String> profileId) {
             this(realmId, authorityId, issuerId, profileId, Optional.empty());
@@ -222,7 +378,12 @@ public final class Permission {
                     .map(Permission::requirePrincipal);
         }
 
-        /** @return whether the principal owns this object */
+        /**
+         * Tests whether the principal owns this object.
+         *
+         * @param principal principal to test
+         * @return {@code true} when the resource records that principal as owner
+         */
         public boolean ownedBy(SecurityPrincipal principal) {
             Objects.requireNonNull(principal, "principal");
             return ownerPrincipalId.filter(principal.principalId()::equals).isPresent();
@@ -262,17 +423,29 @@ public final class Permission {
         }
     }
 
-    /** Safe finite context used only by closed conditions. */
-    public record Context(Optional<String> reason, boolean approvalPresent, boolean authorityActive,
+    /**
+     * Safe finite context used only by closed conditions.
+     *
+     * @param operatorJustification optional bounded operator reason or ticket
+     * @param approvalPresent whether a valid approval is present
+     * @param authorityActive whether the scoped authority is active
+     * @param safeAttributes immutable non-sensitive condition attributes
+     */
+    public record Context(Optional<String> operatorJustification, boolean approvalPresent, boolean authorityActive,
             Map<String, String> safeAttributes) {
         /** Validates the finite condition context. */
         public Context {
-            reason = Objects.requireNonNull(reason, "reason").map(value -> requireBounded(value, 1024, "reason"));
+            operatorJustification = Objects.requireNonNull(operatorJustification, "operatorJustification")
+                    .map(value -> requireBounded(value, 1024, "operator justification"));
             safeAttributes = Map.copyOf(Objects.requireNonNull(safeAttributes, "safeAttributes"));
             if (safeAttributes.size() > 32) throw new IllegalArgumentException("Too many context attributes");
         }
 
-        /** @return empty safe context */
+        /**
+         * Creates an empty safe context.
+         *
+         * @return empty safe context
+         */
         public static Context empty() {
             return new Context(Optional.empty(), false, false, Map.of());
         }

@@ -71,6 +71,13 @@ import zeroecho.core.spi.AsymmetricKeyPairGenerator;
  */
 public abstract class AbstractEdDSAKeyGenBuilder<S extends AlgorithmKeySpec> implements AsymmetricKeyPairGenerator<S> {
     /**
+     * Creates a stateless EdDSA key-pair generator base.
+     */
+    public AbstractEdDSAKeyGenBuilder() {
+        // Stateless base class.
+    }
+
+    /**
      * Returns the JCA algorithm name understood by {@link KeyPairGenerator}.
      *
      * <p>

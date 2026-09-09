@@ -50,6 +50,11 @@ public final class MldsaPrivateKeyBuilder implements PrivateKeyImporter<MldsaPri
 
     private static final String ALG = "ML-DSA";
 
+    /** Creates a stateless ML-DSA private-key importer. */
+    public MldsaPrivateKeyBuilder() {
+        // Stateless importer.
+    }
+
     /**
      * Imports a private key from PKCS#8 encoding.
      *

@@ -1,9 +1,14 @@
 {
-  "version": 6,
+  "version": 7,
   "serverName": "zeroecho-admin",
   "realm": {
     "realmId": "production",
     "displayName": "ZeroEcho Production",
+    "confirmationProof": {
+      "audience": "urn:uuid:22222222-2222-4222-9222-222222222222",
+      "challengeTtlMillis": 300000,
+      "rsaMaximumModulusBits": 8192
+    },
     "authorityExposure": {
       "mode": "ALL_REALM_AUTHORITIES",
       "authorityIds": [],

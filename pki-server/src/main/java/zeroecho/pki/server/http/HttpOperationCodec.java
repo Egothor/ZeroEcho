@@ -35,6 +35,8 @@ package zeroecho.pki.server.http;
 
 import java.time.Instant;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -42,11 +44,15 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.ca.CaState;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofCas;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofSubmission;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.application.PkiOperation;
@@ -57,6 +63,7 @@ import zeroecho.pki.server.AdministrativeOperation;
 import zeroecho.pki.server.ApprovalService;
 import zeroecho.pki.server.DisclosureService;
 import zeroecho.pki.server.Permission;
+import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.OcspResponderService;
 import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.RepositoryAliasService;
@@ -91,7 +98,7 @@ final class HttpOperationCodec {
         Permission.Scope scope;
         Optional<PkiId> objectId;
         if (descriptor.family() == OperationSecurityDescriptors.Family.PKI_OPERATION) {
-            PkiOperation pki = operation(operationId, arguments);
+            PkiOperation pki = operation(operationId, arguments, authority);
             operation = new AdministrativeOperation.Pki(pki);
             boolean realmWide = realmWide(pki);
             if (realmWide == authority.isPresent()) {
@@ -112,14 +119,13 @@ final class HttpOperationCodec {
         root.complete();
         Permission.Resource resource = new Permission.Resource(descriptor.resourceType(), scope, objectId,
                 Optional.empty());
-        Optional<String> reason = operation instanceof AdministrativeOperation.Pki pki
-                && pki.operation() instanceof PkiOperation.TransitionAuthority transition
-                ? Optional.of(transition.reason()) : Optional.empty();
-        Permission.Context context = new Permission.Context(reason, approval.isPresent(), false, Map.of());
+        Optional<String> justification = operation instanceof AdministrativeOperation.Pki pki
+                ? operatorJustification(pki.operation()) : Optional.empty();
+        Permission.Context context = new Permission.Context(justification, approval.isPresent(), false, Map.of());
         return new Decoded(operation, resource, context, approval, deadline);
     }
 
-    private static PkiOperation operation(String id, Fields fields) {
+    private static PkiOperation operation(String id, Fields fields, Optional<PkiId> authority) {
         return switch (id) {
             case PkiOperation.ListAuthorities.NAME -> {
                 fields.exact("limit"); yield new PkiOperation.ListAuthorities(fields.integer("limit"));
@@ -152,15 +158,68 @@ final class HttpOperationCodec {
             case PkiOperation.InspectCredential.NAME -> {
                 fields.exact("credentialId"); yield new PkiOperation.InspectCredential(fields.pkiId("credentialId"));
             }
+            case PkiOperation.ListPendingCredentialConfirmations.NAME -> {
+                fields.allowed(Set.of("profileId", "cutoffInclusive", "afterExclusive", "limit"));
+                yield new PkiOperation.ListPendingCredentialConfirmations(
+                        authority.orElseThrow(() -> new IllegalArgumentException(
+                                "Pending confirmation query requires authorityId")),
+                        fields.optionalText("profileId"), instant(fields.text("cutoffInclusive")),
+                        fields.optionalText("afterExclusive").map(
+                                zeroecho.pki.api.confirmation.CredentialConfirmationReviewCursor::new),
+                        fields.integer("limit"));
+            }
+            case PkiOperation.IssueCredentialConfirmationChallenge.NAME -> {
+                fields.exact("credentialId");
+                yield new PkiOperation.IssueCredentialConfirmationChallenge(fields.pkiId("credentialId"));
+            }
+            case PkiOperation.CompleteCredentialConfirmationProof.NAME -> {
+                fields.exact("credentialId", "expectedLifecycleRevision",
+                        "expectedLifecycleRecordCommitment", "expectedChallengeRecordCommitment", "response");
+                CredentialConfirmationProofCas proofCas = new CredentialConfirmationProofCas(
+                        fields.pkiId("credentialId"), fields.longValue("expectedLifecycleRevision"),
+                        fields.text("expectedLifecycleRecordCommitment"),
+                        fields.text("expectedChallengeRecordCommitment"));
+                yield new PkiOperation.CompleteCredentialConfirmationProof(
+                        proofSubmission(proofCas, fields.text("response")));
+            }
+            case PkiOperation.RevokePendingCredentialConfirmation.NAME -> {
+                fields.allowed(Set.of("credentialId", "justification"));
+                yield new PkiOperation.RevokePendingCredentialConfirmation(
+                        fields.pkiId("credentialId"), fields.optionalText("justification"));
+            }
             case PkiOperation.IssueCredential.NAME -> {
                 fields.exact("issuerCaId", "requestId", "profileId");
                 yield new PkiOperation.IssueCredential(fields.pkiId("issuerCaId"), fields.pkiId("requestId"),
                         fields.text("profileId"));
             }
             case PkiOperation.RevokeCredential.NAME -> {
-                fields.exact("credentialId", "reason");
+                fields.allowed(Set.of("credentialId", "reason", "justification"));
                 yield new PkiOperation.RevokeCredential(fields.pkiId("credentialId"),
-                        RevocationReason.valueOf(fields.text("reason")));
+                        RevocationReason.valueOf(fields.text("reason")), fields.optionalText("justification"));
+            }
+            case PkiOperation.RenewCredential.NAME -> {
+                fields.exact("credentialId");
+                yield new PkiOperation.RenewCredential(fields.pkiId("credentialId"));
+            }
+            case PkiOperation.ReplaceCredential.NAME -> {
+                fields.exact("existingCredentialId", "requestId", "profileId");
+                yield new PkiOperation.ReplaceCredential(fields.pkiId("existingCredentialId"),
+                        fields.pkiId("requestId"), fields.text("profileId"));
+            }
+            case PkiOperation.ReissueCredential.NAME -> {
+                fields.exact("credentialId");
+                yield new PkiOperation.ReissueCredential(fields.pkiId("credentialId"));
+            }
+            case PkiOperation.RolloverCaCertificate.NAME -> {
+                fields.allowed(Set.of("caId", "issuerCaId"));
+                yield new PkiOperation.RolloverCaCertificate(fields.pkiId("caId"),
+                        fields.optionalText("issuerCaId").map(PkiId::new));
+            }
+            case PkiOperation.RotateCaKey.NAME -> {
+                fields.allowed(Set.of("caId", "newKeyRef", "issuerCaId"));
+                yield new PkiOperation.RotateCaKey(fields.pkiId("caId"),
+                        fields.optionalText("newKeyRef").map(KeyRef::new),
+                        fields.optionalText("issuerCaId").map(PkiId::new));
             }
             case PkiOperation.ReadRevocationHistory.NAME -> {
                 fields.exact("credentialId", "limit");
@@ -179,6 +238,77 @@ final class HttpOperationCodec {
                 fields.exact("publicationId");
                 yield new PkiOperation.ProcessPublication(fields.pkiId("publicationId"));
             }
+            case PkiOperation.InspectRevocation.NAME -> {
+                fields.exact("credentialId");
+                yield new PkiOperation.InspectRevocation(fields.pkiId("credentialId"));
+            }
+            case PkiOperation.SnapshotRevocations.NAME -> {
+                fields.exact("limit");
+                yield new PkiOperation.SnapshotRevocations(fields.integer("limit"));
+            }
+            case PkiOperation.InspectStatus.NAME -> {
+                fields.exact("statusObjectId");
+                yield new PkiOperation.InspectStatus(fields.pkiId("statusObjectId"));
+            }
+            case PkiOperation.ListStatus.NAME -> {
+                fields.exact("issuerCaId", "limit");
+                yield new PkiOperation.ListStatus(fields.pkiId("issuerCaId"), fields.integer("limit"));
+            }
+            case PkiOperation.ListPublications.NAME -> {
+                fields.exact("limit");
+                yield new PkiOperation.ListPublications(fields.integer("limit"));
+            }
+            case PkiOperation.RegisterPublication.NAME -> {
+                fields.exact("publicationId", "sourceType", "sourceId", "targetType", "targetId");
+                yield new PkiOperation.RegisterPublication(fields.pkiId("publicationId"),
+                        zeroecho.pki.api.publication.PublicationSourceType.valueOf(fields.text("sourceType")),
+                        fields.pkiId("sourceId"),
+                        new zeroecho.pki.api.publication.PublicationTarget(
+                                zeroecho.pki.api.publication.PublicationTargetType.valueOf(fields.text("targetType")),
+                                fields.text("targetId")));
+            }
+            case PkiOperation.RetryPublication.NAME -> {
+                fields.exact("publicationId");
+                yield new PkiOperation.RetryPublication(fields.pkiId("publicationId"));
+            }
+            case PkiOperation.ReconcilePublication.NAME -> {
+                fields.exact("publicationId");
+                yield new PkiOperation.ReconcilePublication(fields.pkiId("publicationId"));
+            }
+            case PkiOperation.CreateIntermediate.NAME -> {
+                fields.allowed(Set.of("formatId", "issuerCaId", "subjectRef", "profileId", "keyRef"));
+                yield new PkiOperation.CreateIntermediate(new FormatId(fields.text("formatId")),
+                        fields.pkiId("issuerCaId"), new SubjectRef(fields.text("subjectRef")),
+                        fields.text("profileId"), fields.optionalText("keyRef").map(KeyRef::new));
+            }
+            case PkiOperation.IssueIntermediateCertificate.NAME -> {
+                fields.allowed(Set.of("formatId", "issuerCaId", "subjectCaId", "profileId", "notBefore", "notAfter"));
+                yield new PkiOperation.IssueIntermediateCertificate(new FormatId(fields.text("formatId")),
+                        fields.pkiId("issuerCaId"), fields.pkiId("subjectCaId"), fields.text("profileId"),
+                        requestedValidity(fields));
+            }
+            case PkiOperation.InspectIssuerGeneration.NAME -> {
+                fields.exact("issuerId");
+                yield new PkiOperation.InspectIssuerGeneration(fields.pkiId("issuerId"));
+            }
+            case PkiOperation.InspectIssuerChainPath.NAME -> {
+                fields.exact("pathId");
+                yield new PkiOperation.InspectIssuerChainPath(fields.pkiId("pathId"));
+            }
+            case PkiOperation.ListIssuerChainPaths.NAME -> {
+                fields.exact("issuerId");
+                yield new PkiOperation.ListIssuerChainPaths(fields.pkiId("issuerId"));
+            }
+            case PkiOperation.SelectIssuancePath.NAME -> {
+                fields.exact("caId", "issuerId", "pathId", "reason");
+                yield new PkiOperation.SelectIssuancePath(fields.pkiId("caId"), fields.pkiId("issuerId"),
+                        fields.pkiId("pathId"), fields.text("reason"));
+            }
+            case PkiOperation.RegisterIssuerChainPath.NAME -> {
+                fields.exact("caId", "issuerId", "parentPathId");
+                yield new PkiOperation.RegisterIssuerChainPath(fields.pkiId("caId"), fields.pkiId("issuerId"),
+                        fields.pkiId("parentPathId"));
+            }
             case PkiOperation.ListAlgorithmBindings.NAME -> {
                 fields.allowed(Set.of("origin", "role", "limit"));
                 yield new PkiOperation.ListAlgorithmBindings(fields.optionalText("origin"),
@@ -187,6 +317,36 @@ final class HttpOperationCodec {
             case PkiOperation.InspectAlgorithmBinding.NAME -> {
                 fields.exact("bindingId");
                 yield new PkiOperation.InspectAlgorithmBinding(fields.text("bindingId"));
+            }
+            case PkiOperation.InspectRequest.NAME -> {
+                fields.exact("requestId");
+                yield new PkiOperation.InspectRequest(fields.pkiId("requestId"));
+            }
+            case PkiOperation.ImportRequest.NAME -> {
+                fields.exact("formatId", "encoded");
+                yield new PkiOperation.ImportRequest(new FormatId(fields.text("formatId")),
+                        new EncodedObject(Encoding.DER, java.util.Base64.getDecoder().decode(fields.text("encoded"))));
+            }
+            case PkiOperation.VerifyRequest.NAME -> {
+                fields.exact("requestId");
+                yield new PkiOperation.VerifyRequest(fields.pkiId("requestId"));
+            }
+            case PkiOperation.RegisterProfile.NAME -> {
+                fields.exact("document");
+                yield new PkiOperation.RegisterProfile(java.util.Base64.getDecoder().decode(fields.text("document")));
+            }
+            case PkiOperation.ValidateConfiguration.NAME -> {
+                fields.exact();
+                yield new PkiOperation.ValidateConfiguration();
+            }
+            case PkiOperation.ValidateProfile.NAME -> {
+                fields.exact("document");
+                yield new PkiOperation.ValidateProfile(java.util.Base64.getDecoder().decode(fields.text("document")));
+            }
+            case PkiOperation.ValidateAlgorithmBindings.NAME -> {
+                fields.allowed(Set.of("bindingId", "expectedCommitment"));
+                yield new PkiOperation.ValidateAlgorithmBindings(fields.optionalText("bindingId"),
+                        fields.optionalText("expectedCommitment"));
             }
             default -> throw new SecurityException("Operation is not exposed");
         };
@@ -288,7 +448,7 @@ final class HttpOperationCodec {
                 Permission.Scope targetScope;
                 Optional<PkiId> targetObject;
                 if (targetDescriptor.family() == OperationSecurityDescriptors.Family.PKI_OPERATION) {
-                    PkiOperation targetPki = operation(targetId, targetFields);
+                    PkiOperation targetPki = operation(targetId, targetFields, targetAuthority);
                     targetOperation = new AdministrativeOperation.Pki(targetPki);
                     targetScope = new Permission.Scope(realmId, targetAuthority, Optional.empty(), profile(targetPki));
                     targetObject = objectId(targetPki);
@@ -356,6 +516,11 @@ final class HttpOperationCodec {
                 fields.exact("objectId", "policy"); yield new ServerControlOperation.SetDisclosure(
                         fields.pkiId("objectId"), DisclosureService.Policy.valueOf(fields.text("policy")));
             }
+            case ServerControlOperation.EnrollCredentialPublication.NAME -> {
+                fields.allowed(Set.of("credentialId", "ownerPrincipalId"));
+                yield new ServerControlOperation.EnrollCredentialPublication(fields.pkiId("credentialId"),
+                        fields.optionalText("ownerPrincipalId"));
+            }
             case ServerControlOperation.IssueCapability.NAME -> {
                 fields.exact("objectId", "expiresAt"); yield new ServerControlOperation.IssueCapability(
                         fields.pkiId("objectId"), fields.instant("expiresAt"));
@@ -401,15 +566,14 @@ final class HttpOperationCodec {
             case ServerControlOperation.RegisterAcmeDirectory.NAME -> {
                 fields.allowed(Set.of("alias", "authorityId", "profileId", "dnsNamespaces",
                         "maximumValidityMillis", "publicKeyAlgorithms", "x509BindingPolicies",
-                        "challengeTypes", "challengeProviderIds", "eabProviderId", "eabRequired",
-                        "disclosurePolicy"));
+                        "challengeTypes", "challengeProviderIds", "eabProviderId", "eabRequired"));
                 yield new ServerControlOperation.RegisterAcmeDirectory(new AcmeService.DirectoryRegistration(
                         fields.text("alias"), fields.pkiId("authorityId"), fields.text("profileId"),
                         fields.stringSet("dnsNamespaces"), Duration.ofMillis(fields.longValue("maximumValidityMillis")),
                         fields.stringSet("publicKeyAlgorithms"), fields.stringSet("x509BindingPolicies"),
                         fields.enumSet("challengeTypes", AcmeState.ChallengeType.class),
                         fields.stringSet("challengeProviderIds"), fields.optionalText("eabProviderId"),
-                        fields.bool("eabRequired"), DisclosureService.Policy.valueOf(fields.text("disclosurePolicy"))));
+                        fields.bool("eabRequired")));
             }
             case ServerControlOperation.InspectAcmeDirectory.NAME -> {
                 fields.exact("directoryId"); yield new ServerControlOperation.InspectAcmeDirectory(
@@ -475,6 +639,24 @@ final class HttpOperationCodec {
                 fields.exact("responderId"); yield new ServerControlOperation.SetOcspResponderActive(
                         fields.text("responderId"), id.equals(ServerControlOperation.SetOcspResponderActive.ACTIVATE));
             }
+            case ServerControlOperation.SearchAudit.NAME -> {
+                fields.allowed(Set.of("category", "action", "after", "before", "objectId", "principalName", "limit"));
+                yield new ServerControlOperation.SearchAudit(new zeroecho.pki.api.audit.AuditQuery(
+                        fields.optionalText("category"), fields.optionalText("action"),
+                        fields.optionalText("after").map(HttpOperationCodec::instant),
+                        fields.optionalText("before").map(HttpOperationCodec::instant),
+                        fields.optionalText("objectId").map(PkiId::new), fields.optionalText("principalName"),
+                        java.util.Map.of(), fields.integer("limit")));
+            }
+            case ServerControlOperation.VerifyAuditIntegrity.NAME -> {
+                fields.allowed(Set.of("sequence", "recordHash"));
+                Optional<zeroecho.pki.api.audit.AuditChainHead> head =
+                        fields.contains("sequence") || fields.contains("recordHash")
+                                ? Optional.of(new zeroecho.pki.api.audit.AuditChainHead(
+                                        fields.longValue("sequence"), fields.text("recordHash")))
+                                : Optional.empty();
+                yield new ServerControlOperation.VerifyAuditIntegrity(head);
+            }
             default -> throw new SecurityException("Control operation is not exposed");
         };
     }
@@ -487,6 +669,12 @@ final class HttpOperationCodec {
             case ServerControlOperation.EvaluateAuthorization value -> value.resource().scope();
             case ServerControlOperation.RequestApproval value -> value.targetResource().scope();
             case ServerControlOperation.CreateBreakGlass value -> value.grant().scope();
+            case ServerControlOperation.EnrollCredentialPublication ignored -> {
+                if (authority.isPresent()) {
+                    throw new IllegalArgumentException("Credential publication resolves authority from issuance");
+                }
+                yield new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty());
+            }
             case ServerControlOperation.InspectRepositoryAlias value -> authorityScope(realmId, authority,
                     value.authorityId());
             case ServerControlOperation.SetRepositoryAlias value -> authorityScope(realmId, authority,
@@ -506,6 +694,7 @@ final class HttpOperationCodec {
         return switch (operation) {
             case ServerControlOperation.InspectDisclosure value -> Optional.of(value.objectId());
             case ServerControlOperation.SetDisclosure value -> Optional.of(value.objectId());
+            case ServerControlOperation.EnrollCredentialPublication value -> Optional.of(value.credentialId());
             case ServerControlOperation.IssueCapability value -> Optional.of(value.objectId());
             case ServerControlOperation.InspectAuditView value -> Optional.of(value.objectId());
             case ServerControlOperation.SetRepositoryAlias value -> Optional.of(value.targetObjectId());
@@ -525,7 +714,20 @@ final class HttpOperationCodec {
         return operation instanceof PkiOperation.ListAuthorities
                 || operation instanceof PkiOperation.CreateAuthority
                 || operation instanceof PkiOperation.ListAlgorithmBindings
-                || operation instanceof PkiOperation.InspectAlgorithmBinding;
+                || operation instanceof PkiOperation.InspectAlgorithmBinding
+                || operation instanceof PkiOperation.InspectRequest
+                || operation instanceof PkiOperation.ImportRequest
+                || operation instanceof PkiOperation.VerifyRequest
+                || operation instanceof PkiOperation.RegisterProfile
+                || operation instanceof PkiOperation.ValidateConfiguration
+                || operation instanceof PkiOperation.ValidateProfile
+                || operation instanceof PkiOperation.ValidateAlgorithmBindings
+                || operation instanceof PkiOperation.SnapshotRevocations
+                || operation instanceof PkiOperation.InspectStatus
+                || operation instanceof PkiOperation.ListPublications
+                || operation instanceof PkiOperation.InspectIssuerGeneration
+                || operation instanceof PkiOperation.InspectIssuerChainPath
+                || operation instanceof PkiOperation.ListIssuerChainPaths;
     }
 
     private static void validateAuthority(PkiOperation operation, Optional<PkiId> authority) {
@@ -534,6 +736,14 @@ final class HttpOperationCodec {
             case PkiOperation.TransitionAuthority value -> Optional.of(value.caId());
             case PkiOperation.IssueCredential value -> Optional.of(value.issuerCaId());
             case PkiOperation.GenerateStatus value -> Optional.of(value.issuerCaId());
+            case PkiOperation.ListStatus value -> Optional.of(value.issuerCaId());
+            case PkiOperation.ListPendingCredentialConfirmations value -> Optional.of(value.authorityId());
+            case PkiOperation.RolloverCaCertificate value -> Optional.of(value.caId());
+            case PkiOperation.RotateCaKey value -> Optional.of(value.caId());
+            case PkiOperation.CreateIntermediate value -> Optional.of(value.issuerCaId());
+            case PkiOperation.IssueIntermediateCertificate value -> Optional.of(value.issuerCaId());
+            case PkiOperation.SelectIssuancePath value -> Optional.of(value.caId());
+            case PkiOperation.RegisterIssuerChainPath value -> Optional.of(value.caId());
             default -> Optional.empty();
         };
         if (embedded.isPresent() && !embedded.equals(authority)) {
@@ -547,6 +757,10 @@ final class HttpOperationCodec {
             case PkiOperation.InspectProfile value -> Optional.of(value.profileId());
             case PkiOperation.ActivateProfile value -> Optional.of(value.profileId());
             case PkiOperation.IssueCredential value -> Optional.of(value.profileId());
+            case PkiOperation.ReplaceCredential value -> Optional.of(value.profileId());
+            case PkiOperation.CreateIntermediate value -> Optional.of(value.profileId());
+            case PkiOperation.IssueIntermediateCertificate value -> Optional.of(value.profileId());
+            case PkiOperation.ListPendingCredentialConfirmations value -> value.profileId();
             default -> Optional.empty();
         };
     }
@@ -556,12 +770,93 @@ final class HttpOperationCodec {
             case PkiOperation.InspectAuthority value -> Optional.of(value.caId());
             case PkiOperation.TransitionAuthority value -> Optional.of(value.caId());
             case PkiOperation.InspectCredential value -> Optional.of(value.credentialId());
+            case PkiOperation.IssueCredentialConfirmationChallenge value -> Optional.of(value.credentialId());
+            case PkiOperation.CompleteCredentialConfirmationProof value ->
+                Optional.of(value.submission().proofCas().credentialId());
+            case PkiOperation.RevokePendingCredentialConfirmation value ->
+                Optional.of(value.credentialId());
             case PkiOperation.RevokeCredential value -> Optional.of(value.credentialId());
+            case PkiOperation.RenewCredential value -> Optional.of(value.credentialId());
+            case PkiOperation.ReplaceCredential value -> Optional.of(value.existingCredentialId());
+            case PkiOperation.ReissueCredential value -> Optional.of(value.credentialId());
+            case PkiOperation.RolloverCaCertificate value -> Optional.of(value.caId());
+            case PkiOperation.RotateCaKey value -> Optional.of(value.caId());
+            case PkiOperation.InspectRequest value -> Optional.of(value.requestId());
+            case PkiOperation.VerifyRequest value -> Optional.of(value.requestId());
             case PkiOperation.ReadRevocationHistory value -> Optional.of(value.credentialId());
             case PkiOperation.InspectPublication value -> Optional.of(value.publicationId());
             case PkiOperation.ProcessPublication value -> Optional.of(value.publicationId());
+            case PkiOperation.InspectRevocation value -> Optional.of(value.credentialId());
+            case PkiOperation.InspectStatus value -> Optional.of(value.statusObjectId());
+            case PkiOperation.RegisterPublication value -> Optional.of(value.publicationId());
+            case PkiOperation.RetryPublication value -> Optional.of(value.publicationId());
+            case PkiOperation.ReconcilePublication value -> Optional.of(value.publicationId());
+            case PkiOperation.IssueIntermediateCertificate value -> Optional.of(value.subjectCaId());
+            case PkiOperation.InspectIssuerGeneration value -> Optional.of(value.issuerId());
+            case PkiOperation.InspectIssuerChainPath value -> Optional.of(value.pathId());
+            case PkiOperation.ListIssuerChainPaths value -> Optional.of(value.issuerId());
+            case PkiOperation.SelectIssuancePath value -> Optional.of(value.caId());
+            case PkiOperation.RegisterIssuerChainPath value -> Optional.of(value.caId());
             default -> Optional.empty();
         };
+    }
+
+    private static Optional<String> operatorJustification(PkiOperation operation) {
+        return switch (operation) {
+            case PkiOperation.RevokeCredential value -> value.operatorJustification();
+            case PkiOperation.RevokePendingCredentialConfirmation value ->
+                value.operatorJustification();
+            case PkiOperation.TransitionAuthority value -> Optional.of(value.reason());
+            default -> Optional.empty();
+        };
+    }
+
+    private static CredentialConfirmationProofSubmission proofSubmission(
+            CredentialConfirmationProofCas proofCas, String encodedResponse) {
+        Objects.requireNonNull(encodedResponse, "response");
+        if (encodedResponse.isEmpty()
+                || encodedResponse.length()
+                        > PkiServerConfiguration.Listener.MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS
+                || !encodedResponse.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalArgumentException("Proof response is not canonical unpadded Base64url");
+        }
+        byte[] decoded;
+        try {
+            decoded = Base64.getUrlDecoder().decode(encodedResponse);
+        } catch (IllegalArgumentException malformed) {
+            throw new IllegalArgumentException("Proof response is not canonical unpadded Base64url", malformed);
+        }
+        try {
+            if (decoded.length > zeroecho.pki.spi.confirmation.KeyPossessionProofResponse.MAXIMUM_BYTES
+                    || !encodedResponse.equals(Base64.getUrlEncoder().withoutPadding().encodeToString(decoded))) {
+                throw new IllegalArgumentException("Proof response is not canonical unpadded Base64url");
+            }
+            return new CredentialConfirmationProofSubmission(proofCas, decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
+    }
+
+    private static Optional<zeroecho.pki.api.Validity> requestedValidity(Fields fields) {
+        boolean hasBefore = fields.contains("notBefore");
+        boolean hasAfter = fields.contains("notAfter");
+        if (hasBefore != hasAfter) {
+            throw new IllegalArgumentException("notBefore and notAfter must be supplied together");
+        }
+        if (!hasBefore) {
+            return Optional.empty();
+        }
+        return Optional.of(new zeroecho.pki.api.Validity(instant(fields.text("notBefore")),
+                instant(fields.text("notAfter"))));
+    }
+
+    private static java.time.Instant instant(String value) {
+        java.time.Instant parsed = java.time.Instant.parse(value);
+        if (!parsed.toString().equals(value) || parsed.getEpochSecond() < 0L
+                || parsed.getEpochSecond() > 253_402_300_799L) {
+            throw new IllegalArgumentException("Instant is not canonical or supported");
+        }
+        return parsed;
     }
 
     private static OcspResponderService.RequesterTrustPolicy requesterTrustPolicy(Fields fields) {

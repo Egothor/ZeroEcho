@@ -33,15 +33,11 @@
  ******************************************************************************/
 package zeroecho.pki.impl.framework.x509.bc;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.ASN1BitString;
-import org.bouncycastle.asn1.pkcs.CertificationRequest;
-import org.bouncycastle.asn1.pkcs.CertificationRequestInfo;
-import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import zeroecho.pkix.Pkix;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
@@ -52,6 +48,7 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.request.ProofOfPossessionReason;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
@@ -170,7 +167,7 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
      * {@link BcX509Attributes#CSR_DER},</li>
      * <li>parses the CSR,</li>
      * <li>extracts the subject public key information, signature bytes, and
-     * DER-encoded {@link CertificationRequestInfo},</li>
+     * DER-encoded {@code CertificationRequestInfo},</li>
      * <li>maps the X.509 signature algorithm OID to a ZeroEcho algorithm
      * identifier,</li>
      * <li>submits a {@link SignatureWorkflow.VerifyRequest},</li>
@@ -186,6 +183,8 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
      * @throws IllegalArgumentException if {@code request} or {@code policy} is
      *                                  {@code null}
      */
+    // Provider-backed CSR accessors can throw distinct runtime failures, all mapped to MALFORMED_REQUEST.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     @Override
     public ProofOfPossessionResult verify(ParsedCertificationRequest request, VerificationPolicy policy) {
         if (request == null) {
@@ -195,54 +194,53 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
             throw new IllegalArgumentException("policy must not be null");
         }
         if (!policy.requireProofOfPossession()) {
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.NOT_PRESENT, Optional.empty());
+            return ProofOfPossessionResult.of(ProofOfPossessionReason.NOT_PRESENT);
         }
 
         Optional<byte[]> csrDer = extractCsrDer(request);
         if (csrDer.isEmpty()) {
-            return failed("CSR payload not present");
+            return failed(ProofOfPossessionReason.CSR_PAYLOAD_MISSING, "CSR payload not present");
         }
 
-        Optional<PKCS10CertificationRequest> csr = parseCsr(csrDer.get());
+        Optional<zeroecho.pkix.csr.CertificationRequest> csr = parseCsr(csrDer.get());
         if (csr.isEmpty()) {
-            return failed("Invalid CSR");
+            return failed(ProofOfPossessionReason.CSR_MALFORMED, "Invalid CSR");
         }
 
-        Optional<byte[]> spkiDer = extractSpkiDer(csr.get());
-        if (spkiDer.isEmpty()) {
-            return failed("CSR SPKI missing");
+        byte[] spkiDer;
+        byte[] tbs;
+        byte[] signature;
+        try {
+            spkiDer = csr.get().subjectPublicKeyInfo();
+            tbs = csr.get().certificationRequestInfo();
+            signature = csr.get().signature();
+        } catch (RuntimeException ex) {
+            return failed(ProofOfPossessionReason.CSR_MALFORMED, "CSR SPKI missing");
         }
 
-        CertificationRequest csrAsn1 = csr.get().toASN1Structure();
         BcX509AlgorithmAdapter algorithmAdapter = new BcX509AlgorithmAdapter(authority.bindings());
         zeroecho.core.spec.AlgorithmIdentity signatureIdentity;
         X509ExecutionPlan<SignatureWorkflow> executionPlan;
         try {
             signatureIdentity = algorithmAdapter.decode(
-                    csrAsn1.getSignatureAlgorithm(), X509AlgorithmRole.SIGNATURE_ALGORITHM);
+                    csr.get().signatureAlgorithm(), X509AlgorithmRole.SIGNATURE_ALGORITHM);
             zeroecho.core.spec.AlgorithmIdentity keyIdentity = algorithmAdapter.decode(
-                    csr.get().getSubjectPublicKeyInfo().getAlgorithm(),
-                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+                    Pkix.subjectPublicKeyAlgorithm(spkiDer), X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
             executionPlan = authority.plan(signatureIdentity, keyIdentity,
                     zeroecho.core.spi.AlgorithmExecutionCapability.Direction.VERIFY,
                     Optional.empty(), "csr-proof",
-                    authority.bindings().bindingId(BcX509AlgorithmAdapter.fromBc(
-                            csrAsn1.getSignatureAlgorithm()), X509AlgorithmRole.SIGNATURE_ALGORITHM),
+                    authority.bindings().bindingId(BcX509AlgorithmAdapter.fromLib(
+                            csr.get().signatureAlgorithm()), X509AlgorithmRole.SIGNATURE_ALGORITHM),
                     SignatureWorkflow.class);
         } catch (IllegalArgumentException unsupported) {
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.NOT_SUPPORTED,
-                    Optional.of("Unsupported CSR algorithm"));
-        }
-        Optional<byte[]> tbs = encodeCertificationRequestInfo(csrAsn1.getCertificationRequestInfo());
-        if (tbs.isEmpty()) {
-            return failed("CSR TBS encoding failed");
+            return ProofOfPossessionResult.of(ProofOfPossessionReason.UNSUPPORTED_ALGORITHM,
+                    "Unsupported CSR algorithm");
         }
 
         String algorithmId = signatureIdentity.canonicalForm();
 
-        byte[] signature = extractSignatureBytes(csrAsn1.getSignature());
-        SignatureWorkflow.VerifyRequest verifyRequest = toVerifyRequest(request, algorithmId, tbs.get(), signature,
-                spkiDer.get());
+        SignatureWorkflow.VerifyRequest verifyRequest = toVerifyRequest(request, algorithmId, tbs, signature,
+                spkiDer);
 
         return verifyWithWorkflow(verifyRequest, executionPlan);
     }
@@ -269,55 +267,14 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
      * @return optional parsed CSR, or an empty optional when the input is not a
      *         valid PKCS#10 request
      */
-    private static Optional<PKCS10CertificationRequest> parseCsr(byte[] csrDer) {
+    private static Optional<zeroecho.pkix.csr.CertificationRequest> parseCsr(byte[] csrDer) {
         try {
             new StreamingDerReader().validate(csrDer,
                     BcX509CertificationRequestParser.MAXIMUM_CSR_DER_BYTES);
-            return Optional.of(new PKCS10CertificationRequest(csrDer));
-        } catch (IOException | IllegalArgumentException ex) {
+            return Optional.of(Pkix.parseCertificationRequest(csrDer));
+        } catch (java.io.IOException | IllegalArgumentException ex) {
             return Optional.empty();
         }
-    }
-
-    /**
-     * Extracts the DER-encoded {@code SubjectPublicKeyInfo} from the CSR.
-     *
-     * @param csr parsed CSR; must not be {@code null}
-     * @return optional DER-encoded SPKI bytes, or an empty optional when the SPKI
-     *         cannot be encoded
-     */
-    private static Optional<byte[]> extractSpkiDer(PKCS10CertificationRequest csr) {
-        try {
-            return Optional.of(csr.getSubjectPublicKeyInfo().getEncoded());
-        } catch (IOException | IllegalStateException ex) {
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * DER-encodes the CSR {@code CertificationRequestInfo} structure.
-     *
-     * @param certificationRequestInfo CSR to-be-signed structure; must not be
-     *                                 {@code null}
-     * @return optional DER-encoded TBS bytes, or an empty optional when encoding
-     *         fails
-     */
-    private static Optional<byte[]> encodeCertificationRequestInfo(CertificationRequestInfo certificationRequestInfo) {
-        try {
-            return Optional.of(certificationRequestInfo.getEncoded(Encoding.DER.name()));
-        } catch (IOException ex) {
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * Extracts the raw signature bytes from the CSR signature BIT STRING.
-     *
-     * @param signatureBits CSR signature bit string; must not be {@code null}
-     * @return raw signature bytes
-     */
-    private static byte[] extractSignatureBytes(ASN1BitString signatureBits) {
-        return signatureBits.getOctets();
     }
 
     /**
@@ -360,32 +317,50 @@ public final class WorkflowProofOfPossessionVerifier implements ProofOfPossessio
         SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(callDeadline,
                 verifyRequest.cancellation());
         PkiId verifyOperationId = executionPlan.executor().submitVerify(verifyRequest, control);
-        SignatureWorkflow.OperationStatus status = executionPlan.executor().status(verifyOperationId, control);
-        if (status == null) {
-            return failed("Verifier returned no status");
-        }
-        if (!status.isTerminal()) {
-            return failed("Verifier not completed");
-        }
-        if (status.state() != SignatureWorkflow.State.SUCCEEDED || status.result().isEmpty()
-                || status.result().get().verified().isEmpty()) {
-            return failed("Verification failed");
-        }
-
-        boolean verified = status.result().get().verified().get();
-        if (verified) {
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.VERIFIED, Optional.empty());
-        }
-        return failed("CSR signature invalid");
+        return mapWorkflowStatus(executionPlan.executor().status(verifyOperationId, control));
     }
 
     /**
-     * Creates a failed proof-of-possession result with a textual reason.
+     * Maps a terminal or non-terminal workflow status to a stable proof-of-possession
+     * result. The {@code switch} is exhaustive over {@link SignatureWorkflow.State}, so
+     * a new workflow state cannot be introduced without an explicit mapping decision.
      *
-     * @param reason failure reason; must not be {@code null}
-     * @return failed proof-of-possession result
+     * @param status workflow operation status, or {@code null} if none was reported
+     * @return the deterministic proof-of-possession result
      */
-    private static ProofOfPossessionResult failed(String reason) {
-        return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of(reason));
+    /* default */ static ProofOfPossessionResult mapWorkflowStatus(SignatureWorkflow.OperationStatus status) {
+        if (status == null) {
+            return failed(ProofOfPossessionReason.PROVIDER_UNAVAILABLE, "Verifier returned no status");
+        }
+        return switch (status.state()) {
+            case SUCCEEDED -> fromVerifiedResult(status);
+            case FAILED -> failed(ProofOfPossessionReason.INTERNAL_FAILURE, "Verification workflow failed");
+            case CANCELLED -> failed(ProofOfPossessionReason.OPERATION_INCOMPLETE, "Verification was cancelled");
+            case EXPIRED -> failed(ProofOfPossessionReason.OPERATION_INCOMPLETE, "Verification deadline expired");
+            case PENDING, RUNNING, WAITING_APPROVAL ->
+                    failed(ProofOfPossessionReason.OPERATION_INCOMPLETE, "Verifier not completed");
+        };
+    }
+
+    private static ProofOfPossessionResult fromVerifiedResult(SignatureWorkflow.OperationStatus status) {
+        Optional<Boolean> verified = status.result().flatMap(SignatureWorkflow.OperationResult::verified);
+        if (verified.isEmpty()) {
+            return failed(ProofOfPossessionReason.INTERNAL_FAILURE, "Verification result missing");
+        }
+        return verified.orElseThrow()
+                ? ProofOfPossessionResult.of(ProofOfPossessionReason.VERIFIED)
+                : failed(ProofOfPossessionReason.SIGNATURE_INVALID, "CSR signature invalid");
+    }
+
+    /**
+     * Creates a failed proof-of-possession result carrying a stable reason and
+     * non-sensitive diagnostic detail.
+     *
+     * @param reason  stable verification reason; must not be {@code null}
+     * @param details non-sensitive diagnostic text; must not be {@code null}
+     * @return the proof-of-possession result
+     */
+    private static ProofOfPossessionResult failed(ProofOfPossessionReason reason, String details) {
+        return ProofOfPossessionResult.of(reason, details);
     }
 }

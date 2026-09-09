@@ -36,20 +36,13 @@ package zeroecho.core.storage;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.nio.file.FileStore;
-import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFileAttributeView;
-import java.nio.file.attribute.PosixFileAttributes;
-import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.UserPrincipal;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.Arrays;
-import java.util.Objects;
-import java.util.Set;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
@@ -124,64 +117,14 @@ final class KeyringSecuritySupport {
         }
         return image;
     }
-    @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ static Path securePath(Path requested, boolean createParent) throws IOException {
-        Objects.requireNonNull(requested, "path must not be null");
-        Path absolute = requested.toAbsolutePath().normalize();
-        Path parent = absolute.getParent();
-        if (parent == null) {
-            throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-        }
-        if (!Files.exists(parent, LinkOption.NOFOLLOW_LINKS)) {
-            if (!createParent) {
-                throw new KeyringException(Code.KEYRING_IO_FAILED);
-            }
-            try {
-                Files.createDirectories(parent, KeyringStore.DIRECTORY_ATTRIBUTE);
-            } catch (UnsupportedOperationException exception) {
-                throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-            }
-        }
-        if (Files.isSymbolicLink(parent)) {
-            throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-        }
-        FileStore store = Files.getFileStore(parent);
-        if (!store.supportsFileAttributeView(PosixFileAttributeView.class)) {
-            throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-        }
-        validateOwnerOnly(parent, true);
-        if (Files.isSymbolicLink(absolute)) {
-            throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-        }
-        return absolute;
+        return KeyringPlatformPolicy.INSTANCE.securePath(requested, createParent);
     }
-    @SuppressWarnings("PMD.PreserveStackTrace")
     /* default */ static void validateExistingFile(Path file, UserPrincipal expectedOwner) throws IOException {
-        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(file)) {
-            throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-        }
-        validateOwnerOnly(file, false);
-        PosixFileAttributes attributes = Files.readAttributes(file, PosixFileAttributes.class,
-                LinkOption.NOFOLLOW_LINKS);
-        if (!attributes.owner().equals(expectedOwner)) {
-            throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-        }
-        try {
-            Object links = Files.getAttribute(file, "unix:nlink", LinkOption.NOFOLLOW_LINKS);
-            if (!(links instanceof Number number) || number.longValue() != 1L) {
-                throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-            }
-        } catch (UnsupportedOperationException exception) {
-            throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-        }
+        KeyringPlatformPolicy.INSTANCE.validateExistingFile(file, expectedOwner);
     }
     /* default */ static void validateOwnerOnly(Path path, boolean directory) throws IOException {
-        PosixFileAttributes attributes = Files.readAttributes(path, PosixFileAttributes.class,
-                LinkOption.NOFOLLOW_LINKS);
-        Set<PosixFilePermission> expected = directory ? KeyringStore.DIRECTORY_PERMISSIONS : KeyringStore.FILE_PERMISSIONS;
-        if (!attributes.permissions().equals(expected)) {
-            throw new KeyringException(Code.KEYRING_FILESYSTEM_UNSUPPORTED);
-        }
+        KeyringPlatformPolicy.INSTANCE.validateOwnerOnly(path, directory);
     }
     /* default */ static long readNonceReservation(Path keyring, UserPrincipal owner, byte[] expectedStoreId,
             int expectedPrefix, byte[] nonceReservationMacKey) throws IOException, GeneralSecurityException {

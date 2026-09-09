@@ -135,6 +135,7 @@ public final class KemDataContentBuilder implements DataContentBuilder<DataConte
     /**
      * Returns a new {@code KemDataContentBuilder}.
      *
+     * @param session active session used to create cryptographic contexts
      * @return fresh builder instance
      */
     public static KemDataContentBuilder builder(ZeroEchoSession session) {

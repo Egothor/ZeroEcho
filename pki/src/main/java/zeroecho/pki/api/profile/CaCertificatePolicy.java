@@ -54,13 +54,15 @@ import java.util.Set;
  * @param allowedSubjectKeyAlgorithmIds exact canonical ZeroEcho subject-key
  *                                      algorithm identifiers
  */
+// The algorithm-set component name is an exported accessor and configuration vocabulary term.
+@SuppressWarnings("PMD.LongVariable")
 public record CaCertificatePolicy(boolean basicConstraintsCritical, int pathLengthConstraint, boolean keyUsageCritical,
         Set<CaKeyUsage> keyUsages, Set<String> allowedSubjectKeyAlgorithmIds) implements CertificatePolicy {
 
     /** Maximum supported path-length constraint. */
     public static final int MAXIMUM_PATH_LENGTH = 32;
 
-    private static final Set<String> SUPPORTED_SUBJECT_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448",
+    private static final Set<String> SUPPORTED_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448",
             "SPHINCS+");
 
     /** Validates and constructs the CA policy. */
@@ -83,7 +85,7 @@ public record CaCertificatePolicy(boolean basicConstraintsCritical, int pathLeng
             throw new IllegalArgumentException("CA Key Usage must permit certificate and CRL signing");
         }
         if (allowedSubjectKeyAlgorithmIds.isEmpty()
-                || !SUPPORTED_SUBJECT_KEY_ALGORITHMS.containsAll(allowedSubjectKeyAlgorithmIds)) {
+                || !SUPPORTED_KEY_ALGORITHMS.containsAll(allowedSubjectKeyAlgorithmIds)) {
             throw new IllegalArgumentException("At least one supported CA subject-key algorithm is required");
         }
     }

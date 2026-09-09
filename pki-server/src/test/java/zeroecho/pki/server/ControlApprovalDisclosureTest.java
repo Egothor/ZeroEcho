@@ -56,7 +56,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.impl.fs.PosixTransactionalMetadataStore;
+import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 
 /** Durable control, approval, break-glass, audit-view and disclosure tests. */
 class ControlApprovalDisclosureTest {
@@ -76,7 +76,7 @@ class ControlApprovalDisclosureTest {
                     Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED));
             opened.store().validateAll();
         }
-        try (ServerControlStore reopened = new ServerControlStore(PosixTransactionalMetadataStore.open(log,
+        try (ServerControlStore reopened = new ServerControlStore(DurableTransactionalMetadataStore.open(log,
                 OptionalLong.of(1_048_576)))) {
             reopened.validateAll();
             assertEquals("officer", reopened.requirePrincipal("officer").principalId());

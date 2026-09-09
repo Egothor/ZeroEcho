@@ -80,6 +80,8 @@ import zeroecho.pki.api.attr.AttributeSet;
  *                                      except the canonical CSR transport
  *                                      attribute
  */
+// The SAN-presence component name is an exported accessor and distinguishes presence from content.
+@SuppressWarnings("PMD.LongVariable")
 public record ParsedCertificationRequest(PkiId requestId, FormatId formatId, SubjectRef subjectRef,
         EncodedObject publicKeyInfo, Optional<Validity> requestedValidity, Optional<String> requestedProfileId,
         List<SubjectRdn> subjectRdns, List<SubjectAlternativeName> subjectAlternativeNames,

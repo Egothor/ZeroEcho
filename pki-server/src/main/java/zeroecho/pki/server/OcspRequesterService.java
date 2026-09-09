@@ -34,8 +34,10 @@
 package zeroecho.pki.server;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -53,19 +55,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-import org.bouncycastle.asn1.ASN1Primitive;
-import org.bouncycastle.asn1.DERNull;
-import org.bouncycastle.asn1.nist.NISTObjectIdentifiers;
-import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
-import org.bouncycastle.asn1.pkcs.RSASSAPSSparams;
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.operator.ContentVerifier;
-import org.bouncycastle.operator.ContentVerifierProvider;
-import org.bouncycastle.operator.DefaultDigestAlgorithmIdentifierFinder;
-import org.bouncycastle.operator.bc.BcECContentVerifierProviderBuilder;
-import org.bouncycastle.operator.bc.BcEdDSAContentVerifierProviderBuilder;
-import org.bouncycastle.operator.bc.BcRSAContentVerifierProviderBuilder;
+import zeroecho.pkix.AlgorithmIdentifier;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.sign.ContentVerifier;
 
 import zeroecho.core.alg.BootstrapAlgorithmIdentities;
 import zeroecho.pki.api.PkiId;
@@ -87,8 +79,22 @@ import zeroecho.pki.application.PkiRepositoryContent;
         "PMD.DataClass" })
 public final class OcspRequesterService {
     private static final int MAXIMUM_CERTIFICATE_BYTES = 1_048_576;
+    private static final String OID_SHA256 = "2.16.840.1.101.3.4.2.1";
+    private static final String OID_MGF1 = "1.2.840.113549.1.1.8";
+    private static final String OID_RSA_PSS = "1.2.840.113549.1.1.10";
+    private static final byte[] DER_NULL = { 0x05, 0x00 };
+    /** Canonical DER of the approved RSASSA-PSS parameters (SHA-256, MGF1-SHA-256, salt 32). */
+    private static final byte[] PSS_SHA256_PARAMETERS = pssSha256Parameters();
 
-    /** Exact bounded cryptographic fields retained from one canonical request. */
+    /**
+     * Exact bounded cryptographic fields retained from one canonical request.
+     *
+     * @param tbsRequest canonical to-be-signed request DER
+     * @param requestorName canonical requestor-name DER
+     * @param signatureAlgorithm canonical signature algorithm identifier DER
+     * @param signature request signature bytes
+     * @param certificates bounded requester certificate chain
+     */
     public record SignedRequest(byte[] tbsRequest, byte[] requestorName, byte[] signatureAlgorithm,
             byte[] signature, List<byte[]> certificates) {
         /** Snapshots all security-sensitive input bytes. */
@@ -103,16 +109,30 @@ public final class OcspRequesterService {
             }
             certificates = List.copyOf(exact);
         }
+        /** Returns a defensive copy of canonical to-be-signed request DER.
+         * @return copied DER bytes */
         @Override public byte[] tbsRequest() { return tbsRequest.clone(); }
+        /** Returns a defensive copy of canonical requestor-name DER.
+         * @return copied DER bytes */
         @Override public byte[] requestorName() { return requestorName.clone(); }
+        /** Returns a defensive copy of the signature algorithm identifier DER.
+         * @return copied DER bytes */
         @Override public byte[] signatureAlgorithm() { return signatureAlgorithm.clone(); }
+        /** Returns a defensive copy of the request signature.
+         * @return copied signature bytes */
         @Override public byte[] signature() { return signature.clone(); }
+        /** Returns immutable defensive copies of the requester certificates.
+         * @return immutable list of copied certificate encodings */
         @Override public List<byte[]> certificates() {
             return certificates.stream().map(byte[]::clone).toList();
         }
     }
 
-    /** Safe successful authentication result. */
+    /**
+     * Safe successful authentication result.
+     *
+     * @param principalId authenticated enabled principal identifier
+     */
     public record Authorized(String principalId) {
         /** Validates the mapped principal identity. */
         public Authorized { Permission.requirePrincipal(principalId); }
@@ -121,6 +141,7 @@ public final class OcspRequesterService {
     /** Safe authentication or authorization rejection. */
     public static final class UnauthorizedException extends RuntimeException {
         private static final long serialVersionUID = 1L;
+        /** Safe non-secret rejection classification. */
         private final String classification;
         /** Creates a redacted rejection. */
         public UnauthorizedException() { this("UNSPECIFIED"); }
@@ -128,7 +149,11 @@ public final class OcspRequesterService {
             super("OCSP requester is unauthorized");
             this.classification = classification;
         }
-        /** @return safe non-secret internal rejection classification */
+        /**
+         * Returns the rejection classification.
+         *
+         * @return safe non-secret internal rejection classification
+         */
         public String classification() { return classification; }
     }
 
@@ -142,7 +167,12 @@ public final class OcspRequesterService {
     private final ServerRealmContext realm;
     private final Clock clock;
 
-    /** Creates one realm-bound requester authentication service. */
+    /**
+     * Creates one realm-bound requester authentication service.
+     *
+     * @param realm owning realm context
+     * @param clock authoritative server clock
+     */
     public OcspRequesterService(ServerRealmContext realm, Clock clock) {
         this.realm = Objects.requireNonNull(realm, "realm");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -151,6 +181,11 @@ public final class OcspRequesterService {
     /**
      * Authenticates and authorizes every CertID in one signed request. Any failure
      * rejects the whole request without revealing the failed entry.
+     *
+     * @param responder exact responder configuration
+     * @param request canonical signed request fields
+     * @param requests certificate identifiers authorized as one unit
+     * @return authenticated enabled requester principal
      */
     public Authorized authenticate(OcspResponderService.Responder responder, SignedRequest request,
             List<OcspResponseService.CertId> requests) {
@@ -249,42 +284,29 @@ public final class OcspRequesterService {
     }
 
     private void verifySignature(OcspResponderService.RequesterTrustPolicy policy, X509Certificate signer,
-            SignedRequest request) throws IOException {
-        AlgorithmIdentifier algorithm = AlgorithmIdentifier.getInstance(ASN1Primitive.fromByteArray(
-                request.signatureAlgorithm()));
+            SignedRequest request) {
+        AlgorithmIdentifier algorithm = Pkix.parseAlgorithmIdentifier(request.signatureAlgorithm());
         X509AlgorithmBinding selected = null;
         for (OcspResponderService.RequestSignatureBinding reference : policy.signatureBindings()) {
             X509AlgorithmBinding binding = realm.session().algorithmBindings().require(reference.bindingId(),
                     reference.commitment());
             if (binding.role() == X509AlgorithmBinding.Role.OCSP_REQUEST_SIGNATURE
-                    && binding.oid().equals(algorithm.getAlgorithm().getId()) && parametersMatch(binding, algorithm)) {
+                    && binding.oid().equals(algorithm.oid()) && parametersMatch(binding, algorithm)) {
                 if (selected != null) throw new UnauthorizedException("BINDING_AMBIGUOUS");
                 selected = binding;
             }
         }
         if (selected == null || !supported(selected)) throw new UnauthorizedException("BINDING_REJECTED");
+        ContentVerifier verifier;
         try {
-            ContentVerifier verifier = verifier(selected, signer).get(algorithm);
-            verifier.getOutputStream().write(request.tbsRequest());
-            verifier.getOutputStream().close();
-            if (!verifier.verify(request.signature())) throw new UnauthorizedException("SIGNATURE_INVALID");
-        } catch (org.bouncycastle.operator.OperatorCreationException | CertificateException failure) {
+            verifier = Pkix.verifier(signer.getPublicKey(), algorithm);
+            try (OutputStream stream = verifier.contentStream()) {
+                stream.write(request.tbsRequest());
+            }
+        } catch (IOException | RuntimeException failure) {
             throw new UnauthorizedException("SIGNATURE_PROVIDER");
         }
-    }
-
-    private static ContentVerifierProvider verifier(X509AlgorithmBinding binding, X509Certificate signer)
-            throws CertificateException, IOException, org.bouncycastle.operator.OperatorCreationException {
-        X509CertificateHolder holder = new X509CertificateHolder(signer.getEncoded());
-        if (binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.ECDSA_SHA256)) {
-            return new BcECContentVerifierProviderBuilder(DefaultDigestAlgorithmIdentifierFinder.INSTANCE)
-                    .build(holder);
-        }
-        if (binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.ED25519_SIGNATURE)) {
-            return new BcEdDSAContentVerifierProviderBuilder().build(holder);
-        }
-        return new BcRSAContentVerifierProviderBuilder(DefaultDigestAlgorithmIdentifierFinder.INSTANCE)
-                .build(holder);
+        if (!verifier.verify(request.signature())) throw new UnauthorizedException("SIGNATURE_INVALID");
     }
 
     private static boolean supported(X509AlgorithmBinding binding) {
@@ -296,29 +318,81 @@ public final class OcspRequesterService {
 
     private static boolean parametersMatch(X509AlgorithmBinding binding, AlgorithmIdentifier algorithm) {
         return switch (binding.parameterRule()) {
-            case ABSENT -> algorithm.getParameters() == null;
-            case DER_NULL -> DERNull.INSTANCE.equals(algorithm.getParameters());
+            case ABSENT -> algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.ABSENT;
+            case DER_NULL -> algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.DER_NULL;
             case STRUCTURED_DER -> strictPss(binding, algorithm);
         };
     }
 
     private static boolean strictPss(X509AlgorithmBinding binding, AlgorithmIdentifier algorithm) {
-        if (!binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.RSA_PSS_SHA256)
-                || !PKCSObjectIdentifiers.id_RSASSA_PSS.equals(algorithm.getAlgorithm())
-                || algorithm.getParameters() == null) return false;
-        try {
-            RSASSAPSSparams parameters = RSASSAPSSparams.getInstance(algorithm.getParameters());
-            AlgorithmIdentifier hash = parameters.getHashAlgorithm();
-            AlgorithmIdentifier mask = parameters.getMaskGenAlgorithm();
-            AlgorithmIdentifier maskHash = AlgorithmIdentifier.getInstance(mask.getParameters());
-            return NISTObjectIdentifiers.id_sha256.equals(hash.getAlgorithm())
-                    && DERNull.INSTANCE.equals(hash.getParameters())
-                    && PKCSObjectIdentifiers.id_mgf1.equals(mask.getAlgorithm())
-                    && NISTObjectIdentifiers.id_sha256.equals(maskHash.getAlgorithm())
-                    && DERNull.INSTANCE.equals(maskHash.getParameters())
-                    && BigInteger.valueOf(32).equals(parameters.getSaltLength())
-                    && BigInteger.ONE.equals(parameters.getTrailerField());
-        } catch (RuntimeException failure) { return false; }
+        return binding.algorithmIdentity().equals(BootstrapAlgorithmIdentities.RSA_PSS_SHA256)
+                && OID_RSA_PSS.equals(algorithm.oid())
+                && algorithm.parameterForm() == AlgorithmIdentifier.ParameterForm.EXACT_DER
+                && Arrays.equals(algorithm.parameters(), PSS_SHA256_PARAMETERS);
+    }
+
+    private static byte[] pssSha256Parameters() {
+        byte[] sha256 = derSequence(derOid(OID_SHA256), DER_NULL);
+        byte[] mgf1 = derSequence(derOid(OID_MGF1), sha256);
+        return derSequence(derExplicit(0, sha256), derExplicit(1, mgf1), derExplicit(2, derInteger(32)));
+    }
+
+    private static byte[] derOid(String oid) {
+        String[] parts = oid.split("\\.");
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(Integer.parseInt(parts[0]) * 40 + Integer.parseInt(parts[1]));
+        for (int index = 2; index < parts.length; index++) {
+            writeBase128(body, Long.parseLong(parts[index]));
+        }
+        return derTag(0x06, body.toByteArray());
+    }
+
+    private static void writeBase128(ByteArrayOutputStream out, long value) {
+        byte[] buffer = new byte[10];
+        int index = buffer.length;
+        buffer[--index] = (byte) (value & 0x7f);
+        long remaining = value >>> 7;
+        while (remaining > 0) {
+            buffer[--index] = (byte) ((remaining & 0x7f) | 0x80);
+            remaining >>>= 7;
+        }
+        out.write(buffer, index, buffer.length - index);
+    }
+
+    private static byte[] derInteger(int value) {
+        return derTag(0x02, new byte[] { (byte) value });
+    }
+
+    private static byte[] derExplicit(int tagNumber, byte[] content) {
+        return derTag(0xA0 | tagNumber, content);
+    }
+
+    private static byte[] derSequence(byte[]... elements) {
+        ByteArrayOutputStream content = new ByteArrayOutputStream();
+        for (byte[] element : elements) {
+            content.writeBytes(element);
+        }
+        return derTag(0x30, content.toByteArray());
+    }
+
+    private static byte[] derTag(int tag, byte[] content) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(tag);
+        if (content.length < 128) {
+            out.write(content.length);
+        } else {
+            byte[] buffer = new byte[4];
+            int index = buffer.length;
+            int length = content.length;
+            while (length > 0) {
+                buffer[--index] = (byte) (length & 0xff);
+                length >>>= 8;
+            }
+            out.write(0x80 | (buffer.length - index));
+            out.write(buffer, index, buffer.length - index);
+        }
+        out.writeBytes(content);
+        return out.toByteArray();
     }
 
     private String mapPrincipal(OcspResponderService.RequesterTrustPolicy policy, X509Certificate signer)
@@ -374,14 +448,14 @@ public final class OcspRequesterService {
         try {
             byte[] name = MessageDigest.getInstance(certId.hash() == OcspResponseService.CertIdHash.SHA1
                     ? "SHA-1" : "SHA-256").digest(issuer.getSubjectX500Principal().getEncoded());
-            X509CertificateHolder holder = new X509CertificateHolder(issuer.getEncoded());
+            byte[] publicKeyBits = Pkix.subjectPublicKeyBytes(Pkix.subjectPublicKeyInfo(issuer));
             byte[] key = MessageDigest.getInstance(certId.hash() == OcspResponseService.CertIdHash.SHA1
-                    ? "SHA-1" : "SHA-256").digest(holder.getSubjectPublicKeyInfo().getPublicKeyData().getBytes());
+                    ? "SHA-1" : "SHA-256").digest(publicKeyBits);
             if (!MessageDigest.isEqual(name, certId.issuerNameHash())
                     || !MessageDigest.isEqual(key, certId.issuerKeyHash())) {
                 throw new UnauthorizedException("ISSUER_SCOPE");
             }
-        } catch (CertificateException | IOException | NoSuchAlgorithmException failure) {
+        } catch (NoSuchAlgorithmException failure) {
             throw new UnavailableException();
         }
     }

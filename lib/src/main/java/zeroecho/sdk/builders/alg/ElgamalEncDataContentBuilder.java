@@ -135,6 +135,7 @@ public final class ElgamalEncDataContentBuilder implements DataContentBuilder<Da
      * ElgamalEncDataContentBuilder b = ElgamalEncDataContentBuilder.builder();
      * }</pre>
      *
+     * @param session active session used to create cryptographic contexts
      * @return a new {@code ElgamalEncDataContentBuilder} instance
      */
     public static ElgamalEncDataContentBuilder builder(ZeroEchoSession session) {

@@ -1,6 +1,39 @@
+/*******************************************************************************
+ * Copyright (C) 2025, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+
 plugins {
     id 'buildlogic.java-application-conventions'
-    id 'com.palantir.git-version'
 }
 
 group='org.egothor'
@@ -18,6 +51,150 @@ application {
     mainClass = 'zeroecho.pki.PkiApplication'
 }
 
+sourceSets {
+    signingPerformance {
+        java.srcDir 'src/signingPerformance/java'
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+    signingPerformanceTest {
+        java.srcDir 'src/signingPerformanceTest/java'
+        compileClasspath += sourceSets.main.output + sourceSets.signingPerformance.output
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+configurations {
+    signingPerformanceImplementation.extendsFrom implementation
+    signingPerformanceRuntimeOnly.extendsFrom runtimeOnly
+    signingPerformanceTestImplementation.extendsFrom testImplementation, signingPerformanceImplementation
+    signingPerformanceTestRuntimeOnly.extendsFrom testRuntimeOnly, signingPerformanceRuntimeOnly
+}
+
+tasks.register('signingPerformanceBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Runs the explicitly opt-in open-loop signing persistence macrobenchmark.'
+    dependsOn tasks.named('signingPerformanceClasses')
+    classpath = sourceSets.signingPerformance.runtimeClasspath
+    mainClass = 'zeroecho.pki.performance.SigningPerformanceBenchmark'
+    maxHeapSize = providers.gradleProperty('signingBenchmarkHeap').getOrElse('4g')
+    jvmArgs '-XX:+UseG1GC'
+
+    // Opt-in Java Flight Recorder capture for bottleneck analysis; inert unless requested.
+    providers.gradleProperty('signingBenchmarkJfr').orNull?.with { jfrFile ->
+        jvmArgs "-XX:StartFlightRecording=settings=profile,dumponexit=true,filename=${jfrFile}"
+    }
+
+    def benchmarkProperties = [
+        'profile', 'target', 'cellId', 'cellMode', 'retainedPopulation', 'activePopulation', 'groupSize',
+        'residentIndexBudgetBytes', 'compactionTransientBudgetBytes',
+        'warmupSeconds', 'durationSeconds', 'rate', 'lanes',
+        'queueCapacity', 'providerMeanMillis', 'providerJitterMillis',
+        'payloadBytes', 'sampleCapacity', 'drainSeconds', 'seed', 'output',
+        'workRoot', 'diagnosticEnvironmentOverride'
+    ]
+    benchmarkProperties.each { propertyName ->
+        providers.gradleProperty("signingBenchmark${propertyName.capitalize()}").orNull?.with { value ->
+            args "--${propertyName}=${value}"
+        }
+    }
+}
+
+tasks.register('signingActiveWalBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Runs the opt-in active-WAL group-commit characterization.'
+    dependsOn tasks.named('signingPerformanceClasses')
+    classpath = sourceSets.signingPerformance.runtimeClasspath
+    mainClass = 'zeroecho.pki.impl.fs.SigningActiveWalBenchmark'
+    maxHeapSize = providers.gradleProperty('signingActiveWalBenchmarkHeap').getOrElse('4g')
+
+    def benchmarkProperties = [
+        'warmupSeconds', 'durationSeconds', 'rate', 'fakeForce', 'output', 'workRoot'
+    ]
+    benchmarkProperties.each { propertyName ->
+        providers.gradleProperty("signingActiveWalBenchmark${propertyName.capitalize()}").orNull?.with { value ->
+            args "--${propertyName}=${value}"
+        }
+    }
+}
+
+tasks.register('signingRecoveryBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Prepares or reopens the opt-in controlled production-ledger recovery image.'
+    dependsOn tasks.named('signingPerformanceClasses')
+    classpath = sourceSets.signingPerformance.runtimeClasspath
+    mainClass = 'zeroecho.pki.impl.fs.SigningRecoveryBenchmark'
+    maxHeapSize = providers.gradleProperty('signingRecoveryBenchmarkHeap').getOrElse('4g')
+    jvmArgs '-XX:+UseG1GC'
+
+    ['mode', 'retainedPopulation', 'activePopulation', 'sealedSegments', 'suffixFrames',
+     'createdAtEpochMilli', 'output', 'workRoot'].each { propertyName ->
+        providers.gradleProperty("signingRecoveryBenchmark${propertyName.capitalize()}").orNull?.with { value ->
+            args "--${propertyName}=${value}"
+        }
+    }
+}
+
+tasks.register('signingDueSelectionBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Runs the opt-in production-ledger due-selection diagnostic.'
+    dependsOn tasks.named('signingPerformanceClasses')
+    classpath = sourceSets.signingPerformance.runtimeClasspath
+    mainClass = 'zeroecho.pki.impl.fs.SigningDueSelectionBenchmark'
+    maxHeapSize = providers.gradleProperty('signingDueSelectionBenchmarkHeap').getOrElse('4g')
+    jvmArgs '-XX:+UseG1GC'
+
+    ['activePopulation', 'selectionBound', 'subsequentInProcessSamples',
+     'environmentEvidenceSha256', 'output', 'workRoot'].each { propertyName ->
+        providers.gradleProperty("signingDueSelectionBenchmark${propertyName.capitalize()}").orNull?.with { value ->
+            args "--${propertyName}=${value}"
+        }
+    }
+}
+
+tasks.register('signingDirectMaintenanceBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Runs the opt-in direct signing-ledger maintenance diagnostic.'
+    dependsOn tasks.named('signingPerformanceClasses')
+    classpath = sourceSets.signingPerformance.runtimeClasspath
+    mainClass = 'zeroecho.pki.impl.fs.SigningDirectMaintenanceBenchmark'
+    maxHeapSize = providers.gradleProperty('signingDirectMaintenanceBenchmarkHeap').getOrElse('4g')
+    jvmArgs '-XX:+UseG1GC'
+
+    ['liveRecords', 'sourceGenerations', 'sealedSegments', 'firstGenerationIdentity',
+     'checkpointIdentity', 'nextActiveIdentity', 'output', 'workRoot'].each { propertyName ->
+        providers.gradleProperty("signingDirectMaintenanceBenchmark${propertyName.capitalize()}").orNull?.with { value ->
+            args "--${propertyName}=${value}"
+        }
+    }
+}
+
+tasks.register('signingPerformanceAggregate', JavaExec) {
+    group = 'verification'
+    description = 'Verifies the fixed Increment-13 signing evidence bundle without running benchmarks.'
+    dependsOn tasks.named('signingPerformanceClasses')
+    classpath = sourceSets.signingPerformance.runtimeClasspath
+    mainClass = 'zeroecho.pki.performance.SigningPerformanceEvidenceAggregator'
+
+    [evidenceRoot: 'signingEvidenceRoot', output: 'signingEvidenceOutput'].each { argumentName, propertyName ->
+        providers.gradleProperty(propertyName).orNull?.with { value ->
+            args "--${argumentName}=${value}"
+        }
+    }
+}
+
+tasks.register('signingPerformanceSmoke', Test) {
+    group = 'verification'
+    description = 'Runs the fast deterministic contract test for the signing macrobenchmark.'
+    testClassesDirs = sourceSets.signingPerformanceTest.output.classesDirs
+    classpath = sourceSets.signingPerformanceTest.runtimeClasspath
+    useJUnitPlatform()
+    shouldRunAfter tasks.named('test')
+}
+
+// pki is consumed as a library (by pki-server and app); its jar must be a thin
+// module jar. Dependencies (BouncyCastle, jackson, lib, ...) are resolved from the
+// module/class path, never bundled here.
 jar {
     manifest {
         attributes(
@@ -26,34 +203,8 @@ jar {
             'Implementation-Version': "${version}"
         )
     }
-
-    from sourceSets.main.output
-
-    dependsOn configurations.runtimeClasspath
-
-    // Include each JAR dependency
-    configurations.runtimeClasspath.findAll { it.exists() && it.name.endsWith('.jar') }.each { jarFile ->
-        def jarName = jarFile.name.replaceAll(/\.jar$/, '')
-
-        from(zipTree(jarFile)) {
-            // Exclude signature-related files
-            exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
-
-            // Rename license/notice files to avoid conflicts
-            eachFile { file ->
-                if (file.path ==~ /META-INF\/(LICENSE|NOTICE)(\..*)?/) {
-                    file.path = "META-INF/licenses-from-${jarName}/${file.name}"
-                }
-            }
-
-            includeEmptyDirs = false
-        }
-    }
-
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 javadoc {
     options.links("https://www.egothor.org/javadoc/zeroecho/lib")
 }
-

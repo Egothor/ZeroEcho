@@ -34,6 +34,7 @@
 package zeroecho.pki.spi.crypto;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -63,7 +64,7 @@ final class SignRequestCleanupTest {
         String second = fingerprint(MessageDigest.getInstance("SHA-256"), cleared);
         System.out.println("...fingerprint=" + first.substring(0, 20) + "...");
         assertEquals(first, second);
-        assertEquals(2, cleared.size());
+        assertEquals(4, cleared.size());
         assertTrue(cleared.stream().allMatch(SignRequestCleanupTest::isCleared));
         System.out.println("fingerprintClearsDigestCopiesWithoutMaterializingContent...ok");
     }
@@ -73,18 +74,46 @@ final class SignRequestCleanupTest {
         System.out.println("fingerprintFailureCreatesNoPayloadCopy");
         List<byte[]> cleared = new ArrayList<>();
         assertThrows(IllegalStateException.class, () -> fingerprint(new FailingDigest(), cleared));
-        assertEquals(0, cleared.size());
+        assertEquals(1, cleared.size());
         System.out.println("...clearedBuffers=" + cleared.size());
         System.out.println("fingerprintFailureCreatesNoPayloadCopy...ok");
+    }
+
+    @Test
+    void fingerprintBindsExactCommitmentAndNotContentIdentifier() {
+        AccessContext context = new AccessContext(new Principal("SYSTEM", "commitment"), new Purpose("SIGN"),
+                Optional.empty(), Optional.empty());
+        SignatureWorkflow.ContentCommitment first = SignatureWorkflow.ContentCommitment
+                .sha256(new byte[] { 1, 2, 3 });
+        SignatureWorkflow.ContentCommitment second = SignatureWorkflow.ContentCommitment
+                .sha256(new byte[] { 1, 2, 4 });
+        SignatureWorkflow.ConfigurationCommitment configuration = configurationCommitment(1);
+        String firstFingerprint = SignatureWorkflow.SignRequest.fingerprint(configuration, "store.provider", context,
+                new KeyRef("provider:key"), "SHA256withRSA", first, Optional.of(Encoding.BINARY), Optional.empty());
+        String secondFingerprint = SignatureWorkflow.SignRequest.fingerprint(configuration, "store.provider", context,
+                new KeyRef("provider:key"), "SHA256withRSA", second, Optional.of(Encoding.BINARY), Optional.empty());
+        assertTrue(firstFingerprint.startsWith("signfp:v3:"));
+        assertNotEquals(firstFingerprint, secondFingerprint);
+        assertNotEquals(firstFingerprint, SignatureWorkflow.SignRequest.fingerprint(configurationCommitment(2),
+                "store.provider", context, new KeyRef("provider:key"), "SHA256withRSA", first,
+                Optional.of(Encoding.BINARY), Optional.empty()));
     }
 
     private static String fingerprint(MessageDigest digest, List<byte[]> cleared) {
         AccessContext context = new AccessContext(new Principal("SYSTEM", "cleanup"), new Purpose("SIGN"),
                 Optional.of(new PkiId("cleanup-operation")), Optional.empty());
-        return SignatureWorkflow.SignRequest.fingerprintWithDigest("cleanup.namespace", context,
+        return SignatureWorkflow.SignRequest.fingerprintWithDigest(configurationCommitment(1),
+                "cleanup.namespace", context,
                 new KeyRef("provider:key"), "SHA256withRSA",
-                new ImmutableByteContent(new byte[] { 1, 2, 3, 4 }), Optional.of(Encoding.BINARY),
+                SignatureWorkflow.ContentCommitment.sha256(new byte[] { 1, 2, 3, 4 }),
+                Optional.of(Encoding.BINARY),
                 Optional.of(Instant.parse("2026-08-01T00:00:00Z")), digest, cleared::add);
+    }
+
+    private static SignatureWorkflow.ConfigurationCommitment configurationCommitment(int marker) {
+        byte[] bytes = new byte[SignatureWorkflow.ConfigurationCommitment.BYTE_LENGTH];
+        bytes[0] = (byte) marker;
+        return new SignatureWorkflow.ConfigurationCommitment(bytes);
     }
 
     private static boolean isCleared(byte[] bytes) {

@@ -51,6 +51,7 @@ import tools.jackson.core.json.JsonFactory;
 import tools.jackson.core.json.JsonFactoryBuilder;
 import tools.jackson.core.json.JsonReadFeature;
 import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.server.PkiServerConfiguration;
 
 /** Strict bounded UTF-8 JSON framing shared by server configuration and HTTP. */
 @SuppressWarnings("PMD")
@@ -63,7 +64,14 @@ public final class StrictJson {
     private StrictJson() {
     }
 
-    /** Parses exactly one complete strict JSON value with duplicate detection. */
+    /**
+     * Parses exactly one complete strict JSON value with duplicate detection.
+     *
+     * @param document non-empty UTF-8 JSON without a byte-order mark
+     * @param maximumBytes positive caller limit, no greater than {@link #MAXIMUM_DOCUMENT_BYTES}
+     * @return immutable operation-value representation
+     * @throws IllegalArgumentException if framing, size, encoding, or JSON syntax is invalid
+     */
     public static PkiOperationValue parse(byte[] document, int maximumBytes) {
         if (document == null || document.length == 0 || maximumBytes < 1
                 || maximumBytes > MAXIMUM_DOCUMENT_BYTES || document.length > maximumBytes || hasBom(document)) {
@@ -80,7 +88,13 @@ public final class StrictJson {
         }
     }
 
-    /** Encodes one safe operation value deterministically as UTF-8 JSON. */
+    /**
+     * Encodes one safe operation value deterministically as UTF-8 JSON.
+     *
+     * @param value safe operation value to encode
+     * @return newly allocated UTF-8 JSON bytes
+     * @throws IllegalStateException if the in-memory response cannot be encoded
+     */
     public static byte[] encode(PkiOperationValue value) {
         try {
             ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -151,7 +165,8 @@ public final class StrictJson {
     private static JsonFactory createFactory() {
         StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(16)
                 .maxDocumentLength(MAXIMUM_DOCUMENT_BYTES).maxTokenCount(65_536).maxNumberLength(20)
-                .maxStringLength(16_384).maxNameLength(128).build();
+                .maxStringLength(PkiServerConfiguration.Listener.MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS)
+                .maxNameLength(128).build();
         JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
                 .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
         for (JsonReadFeature feature : JsonReadFeature.values()) builder.disable(feature);

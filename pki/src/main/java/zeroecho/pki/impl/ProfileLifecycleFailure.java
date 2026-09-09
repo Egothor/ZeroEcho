@@ -42,25 +42,63 @@ public final class ProfileLifecycleFailure extends PkiException {
     private static final long serialVersionUID = -6689413907385449245L;
 
     /** Closed profile lifecycle failure codes. */
+    // These names are emitted as stable sanitized failure codes and asserted by external callers.
+    @SuppressWarnings("PMD.LongVariable")
     public enum Code {
-        PROFILE_DOCUMENT_INVALID, PROFILE_IMPORT_VALIDATION_FAILED, BUILT_IN_PROFILE_INVALID, PROFILE_VERSION_CONFLICT,
-        PROFILE_KIND_CONFLICT, PROFILE_VERSION_CORRUPT, PROFILE_ACTIVE_POINTER_CORRUPT, PROFILE_HASH_MISMATCH,
-        PROFILE_STORE_FAILURE, PROFILE_DURABILITY_UNCONFIRMED, PROFILE_IMPORT_FAILED, PROFILE_STATE_CORRUPT,
-        PROFILE_VERSION_NOT_FOUND, PROFILE_ACTIVATION_FAILED, PROFILE_NOT_ACTIVE,
+        /** Supplied profile document is structurally or semantically invalid. */
+        PROFILE_DOCUMENT_INVALID,
+        /** Imported profile failed closed validation. */
+        PROFILE_IMPORT_VALIDATION_FAILED,
+        /** A built-in profile definition is invalid. */
+        BUILT_IN_PROFILE_INVALID,
+        /** An existing profile version has different canonical content. */
+        PROFILE_VERSION_CONFLICT,
+        /** Versions of one logical profile disagree on certificate kind. */
+        PROFILE_KIND_CONFLICT,
+        /** Persisted profile-version metadata is corrupt. */
+        PROFILE_VERSION_CORRUPT,
+        /** Persisted active-profile pointer is corrupt. */
+        PROFILE_ACTIVE_POINTER_CORRUPT,
+        /** Persisted content does not match its profile hash. */
+        PROFILE_HASH_MISMATCH,
+        /** Profile storage operation failed. */
+        PROFILE_STORE_FAILURE,
+        /** Store could not confirm durable profile persistence. */
+        PROFILE_DURABILITY_UNCONFIRMED,
+        /** Profile import failed without a more specific classification. */
+        PROFILE_IMPORT_FAILED,
+        /** Persisted profile lifecycle state is inconsistent. */
+        PROFILE_STATE_CORRUPT,
+        /** Requested imported profile version does not exist. */
+        PROFILE_VERSION_NOT_FOUND,
+        /** Profile activation failed. */
+        PROFILE_ACTIVATION_FAILED,
+        /** No active version exists for the requested profile. */
+        PROFILE_NOT_ACTIVE,
         // Stable public code is intentionally longer than PMD's naming threshold.
+        /** Historical activation evidence is unavailable or invalid. */
         @SuppressWarnings("PMD.LongVariable")
         PROFILE_ACTIVATION_HISTORY_UNAVAILABLE
     }
 
+    /** Stable sanitized failure classification. */
     private final Code code;
 
-    /** Creates one cause-free failure with a stable code. */
+    /**
+     * Creates one cause-free failure with a stable code.
+     *
+     * @param code stable sanitized failure classification
+     */
     public ProfileLifecycleFailure(Code code) {
         super("Profile lifecycle operation failed: code=" + code);
         this.code = code;
     }
 
-    /** @return stable failure classification */
+    /**
+     * Returns the stable failure classification.
+     *
+     * @return stable sanitized code
+     */
     public Code code() {
         return code;
     }

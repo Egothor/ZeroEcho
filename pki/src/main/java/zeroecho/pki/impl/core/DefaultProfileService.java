@@ -79,7 +79,12 @@ public final class DefaultProfileService implements ProfileService {
     private final Optional<String> crlBinding;
     private final Optional<String> publicKeyBinding;
 
-    /** Creates a profile service using one authoritative clock. */
+    /**
+     * Creates a profile service using one authoritative clock.
+     * @param store authoritative PKI store
+     * @param clock authoritative lifecycle clock
+     * @param auditSink audit destination
+     */
     public DefaultProfileService(PkiStore store, Clock clock, AuditSink auditSink) {
         this(store, clock, auditSink, defaultBindings());
     }
@@ -97,7 +102,17 @@ public final class DefaultProfileService implements ProfileService {
         this(store, clock, auditSink, algorithmBindings, false, Optional.empty(), Optional.empty(), Optional.empty());
     }
 
-    /** Creates a profile service with the session's explicit signing bindings. */
+    /**
+     * Creates a profile service with the session's explicit signing bindings.
+     * @param store authoritative PKI store
+     * @param clock authoritative lifecycle clock
+     * @param auditSink audit destination
+     * @param algorithmBindings active immutable binding registry
+     * @param signingConfigured whether signing capabilities are enabled
+     * @param certificateBinding optional explicit certificate-signature binding
+     * @param crlBinding optional explicit CRL-signature binding
+     * @param publicKeyBinding optional explicit subject-public-key binding
+     */
     public DefaultProfileService(PkiStore store, Clock clock, AuditSink auditSink,
             X509AlgorithmBindingRegistry algorithmBindings, boolean signingConfigured,
             Optional<String> certificateBinding, Optional<String> crlBinding, Optional<String> publicKeyBinding) {

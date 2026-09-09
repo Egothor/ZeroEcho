@@ -34,38 +34,35 @@
 package zeroecho.pki.impl.framework.x509.bc;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
+import java.math.BigInteger;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
+import java.util.List;
 import java.util.Optional;
 
-import org.bouncycastle.asn1.ASN1EncodableVector;
-import org.bouncycastle.asn1.ASN1Integer;
-import org.bouncycastle.asn1.DERSequence;
-import org.bouncycastle.asn1.DERTaggedObject;
-import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
-import org.bouncycastle.asn1.x509.CRLReason;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.Extensions;
-import org.bouncycastle.asn1.x509.Time;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
+import zeroecho.pkix.Pkix;
+import zeroecho.pkix.crl.CrlBuilder;
+import zeroecho.pkix.crl.CrlReason;
+import zeroecho.pkix.ocsp.CertStatus;
+import zeroecho.pkix.ocsp.ResponderId;
 
 import zeroecho.core.io.CancellationSignal;
-import zeroecho.core.io.ContentSlice;
-import zeroecho.core.io.ImmutableByteContent;
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.revocation.RevocationReason;
@@ -74,13 +71,10 @@ import zeroecho.pki.api.status.StatusObjectGenerateCommand;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.impl.core.async.PkiSigningBus;
-import zeroecho.pki.impl.framework.x509.StreamingDerWriter;
-import zeroecho.pki.impl.framework.x509.StreamingDerReader;
-import zeroecho.pki.impl.framework.x509.StreamingDerReader.SignedObjectKind;
-import zeroecho.pki.impl.framework.x509.StreamingDerReader.SignedObjectLayout;
-import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
-import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
-import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.impl.core.async.DomainCommandEncoding;
+import zeroecho.pki.impl.core.async.DomainContinuationTemplate;
+import zeroecho.pki.impl.core.async.DomainAttributeEncoding;
+import zeroecho.pki.spi.store.DomainContinuationStore;
 import zeroecho.pki.impl.framework.x509.X509SignedObjectCompletion;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.framework.CrlEntry;
@@ -90,81 +84,16 @@ import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pki.spi.store.TemporaryUniqueIndex;
 
 /**
- * Bouncy Castle backed generator of X.509 status objects.
- *
- * <p>
- * The current implementation supports only generation of X.509 certificate
- * revocation lists (CRLs). It assembles a version 2 CRL from issuer-side wiring
- * attributes, structured {@link CrlEntry} values, and delegated signing
- * performed via {@link PkiSigningBus}.
- * </p>
- *
- * <p>
- * The generator expects the following framework-specific issuer attributes to
- * be present in the supplied {@link StatusObjectGenerateCommand}:
- * </p>
- * <ul>
- * <li>{@link BcX509Attributes#ISSUER_CERT_DER} as an
- * {@link AttributeValue.BytesValue} containing the issuer certificate in DER
- * form,</li>
- * <li>{@link BcX509Attributes#ISSUER_KEYREF} as an
- * {@link AttributeValue.StringValue} identifying the issuer signing key.</li>
- * </ul>
- *
- * <p>
- * The produced {@link StatusObject} always carries:
- * </p>
- * <ul>
- * <li>type {@link StatusObjectType#CRL},</li>
- * <li>format {@link BcX509CredentialFramework#FORMAT_ID},</li>
- * <li>DER-encoded CRL content,</li>
- * <li>a deterministic object identifier derived from the SHA-256 digest of the
- * resulting CRL bytes.</li>
- * </ul>
- *
- * <h2>Revoked-entry handling</h2>
- * <p>
- * Structured entries preserve the full positive {@code BigInteger} serial,
- * authoritative transition instant, and exact supported revocation reason.
- * X.509 {@code Date} carries millisecond precision; this generator deliberately
- * truncates each transition instant to whole seconds only at the DER CRL-entry
- * boundary.
- * </p>
- *
- * <h2>Update semantics</h2>
- * <p>
- * The generated CRL uses the current instant as {@code thisUpdate} and a fixed
- * {@code nextUpdate} of seven days later.
- * </p>
- *
- * <h2>Signing model</h2>
- * <p>
- * This class never accesses private key material directly. Signing is delegated
- * to {@link PkiSigningBus} through {@link PkiBusContentSigner}.
- * </p>
- *
- * <h2>Security considerations</h2>
- * <ul>
- * <li>Issuer certificate bytes, issuer key references, and revoked-serial input
- * values are operationally sensitive and must not be logged unsafely.</li>
- * <li>This generator produces CRL content only. It does not evaluate revocation
- * policy, validate issuer authorization, or determine revoked serials on its
- * own.</li>
- * <li>The correctness of the produced CRL depends on the validity of issuer
- * wiring attributes and on the downstream signing boundary honoring the
- * requested signature algorithm.</li>
- * </ul>
- *
- * <h2>Thread-safety</h2>
- * <p>
- * This class is immutable and safe for concurrent use provided that the
- * supplied {@link PkiSigningBus} is safe for the intended runtime model.
- * </p>
+ * Generator of X.509 status objects (CRLs and single-certificate OCSP responses),
+ * routed through the ZeroEcho PKIX library and signed via {@link PkiSigningBus}.
  */
+// The generator centralizes the finite CRL and OCSP ASN.1 variants behind one framework boundary.
+@SuppressWarnings("PMD.CyclomaticComplexity")
 public final class BcX509StatusObjectGenerator implements StatusObjectGenerator {
     private static final int MAXIMUM_CERTIFICATE_BYTES = 1024 * 1024;
-
-    private static final long EMPTY_CONTENT_LENGTH = 0L;
+    private static final String SHA1_OID = "1.3.14.3.2.26";
+    private static final String OCSP_GOOD = "GOOD";
+    private static final String OCSP_REVOKED = "REVOKED";
 
     private final PkiSigningBus signingBus;
     private final AlgorithmIdentity signatureIdentity;
@@ -174,15 +103,9 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
     /**
      * Creates the X.509 status object generator.
      *
-     * @param signingBus           signing bus used to delegate CRL signing; must
-     *                             not be {@code null}
-     * @param signatureAlgorithmId non-blank signature algorithm identifier in JCA
-     *                             naming form; must not be {@code null} or blank
-     * @param signingTtl           positive maximum signing TTL used for delegated
-     *                             signing operations; must not be {@code null},
-     *                             zero, or negative
-     * @throws IllegalArgumentException if any argument violates the described
-     *                                  contract
+     * @param signingBus           signing bus used to delegate signing; must not be {@code null}
+     * @param signatureAlgorithmId non-blank signature algorithm identifier; must not be blank
+     * @param signingTtl           positive maximum signing TTL; must be positive
      */
     public BcX509StatusObjectGenerator(PkiSigningBus signingBus, String signatureAlgorithmId, Duration signingTtl) {
         this(signingBus, signingBus.authority().resolveIdentity(signatureAlgorithmId), signingTtl);
@@ -200,7 +123,14 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         this(signingBus, signatureIdentity, Optional.empty(), signingTtl);
     }
 
-    /** Creates a generator with an optional explicit CRL-signature binding. */
+    /**
+     * Creates a generator with an optional explicit signature binding.
+     *
+     * @param signingBus signing bus used to delegate status-object signing
+     * @param signatureIdentity exact provider-independent signature identity
+     * @param signatureBindingId optional explicit status-object signature binding identifier
+     * @param signingTtl positive maximum duration allowed for delegated signing
+     */
     public BcX509StatusObjectGenerator(PkiSigningBus signingBus, AlgorithmIdentity signatureIdentity,
             Optional<String> signatureBindingId, Duration signingTtl) {
         if (signingBus == null) {
@@ -218,70 +148,53 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         this.signingTtl = signingTtl;
     }
 
-    /**
-     * Generates an X.509 CRL status object.
-     *
-     * <p>
-     * The supplied command must request {@link StatusObjectType#CRL} and must use
-     * the X.509 format identifier {@link BcX509CredentialFramework#FORMAT_ID}. The
-     * method validates the command, resolves issuer material, assembles the CRL,
-     * adds revoked entries and authority key identifier, delegates signing, and
-     * returns the resulting status object.
-     * </p>
-     *
-     * <p>
-     * The returned {@link StatusObject} contains:
-     * </p>
-     * <ul>
-     * <li>a deterministic identifier of the form
-     * {@code crl:&lt;sha256-of-crl-der&gt;},</li>
-     * <li>the original issuer CA identifier from the command,</li>
-     * <li>the current instant as {@code thisUpdate},</li>
-     * <li>a {@code nextUpdate} seven days later,</li>
-     * <li>the DER-encoded CRL,</li>
-     * <li>the original command attributes unchanged.</li>
-     * </ul>
-     *
-     * @param command    status object generation command; must not be {@code null}
-     * @param crlEntries structured current CRL entries; must not be {@code null}
-     * @return generated CRL status object
-     * @throws IllegalArgumentException if {@code command} is {@code null}, if the
-     *                                  requested status object type is unsupported,
-     *                                  or if the requested format identifier is
-     *                                  unsupported
-     * @throws PkiException             if issuer wiring attributes are missing or
-     *                                  invalid, if the issuer certificate cannot be
-     *                                  parsed, if CRL extension construction fails,
-     *                                  if signing fails, or if CRL encoding fails
-     */
     @Override
     public X509SignedObjectCompletion generate(StatusObjectGenerateCommand command, CrlEntrySource crlEntries) {
+        return generate(command, crlEntries, CancellationSignal.NONE);
+    }
+
+    @Override
+    public X509SignedObjectCompletion generate(StatusObjectGenerateCommand command, CrlEntrySource crlEntries,
+            CancellationSignal cancellation) {
         validateCommandOrThrow(command);
         if (crlEntries == null) {
             throw new IllegalArgumentException("crlEntries must not be null");
         }
-
         IssuerMaterial issuerMaterial = extractIssuerMaterialOrThrow(command.attributes());
+        if (command.type() == StatusObjectType.OCSP) {
+            return generateOcsp(command, issuerMaterial, cancellation);
+        }
+        BigInteger crlNumber = requiredCrlNumber(command.attributes(), BcX509Attributes.CRL_NUMBER, "CRL number");
+        Optional<BigInteger> baseCrlNumber = command.type() == StatusObjectType.DELTA_CRL
+                ? Optional.of(requiredCrlNumber(command.attributes(), BcX509Attributes.BASE_CRL_NUMBER,
+                        "base CRL number"))
+                : Optional.empty();
         Instant thisUpdate = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         Instant nextUpdate = thisUpdate.plus(Duration.ofDays(7));
-        DurableContentReference entries = null;
-        DurableContentReference tbs = null;
         DurableContentReference crl = null;
+        DurableContentReference entriesRef = null;
         boolean accepted = false;
         try {
-            entries = encodeEntries(crlEntries);
+            List<zeroecho.pkix.crl.CrlEntry> entries = collectEntries(crlEntries);
+            entriesRef = stageEntries(entries);
+            DomainContinuationTemplate domain = DomainCommandEncoding.template(
+                    DomainContinuationStore.Kind.STATUS, "GENERATE_STATUS",
+                    command.issuerCaId().value(), command.type().name(), command.formatId().value(),
+                    thisUpdate.toString(), nextUpdate.toString(), issuerMaterial.keyRef().value(),
+                    entriesRef.contentId(), entriesRef.sha256(), DomainAttributeEncoding.encode(command.attributes()));
             X509SignedObjectCompletion completion;
-            try (PkiBusContentSigner signer = signatureBindingId.isPresent()
-                    ? new PkiBusContentSigner(signingBus, issuerMaterial.keyRef(), signatureIdentity,
-                            signatureBindingId.orElseThrow(), signingTtl)
-                    : new PkiBusContentSigner(signingBus, issuerMaterial.keyRef(), signatureIdentity, signingTtl)) {
-                byte[] algorithm = signer.getAlgorithmIdentifier().getEncoded();
-                tbs = encodeTbs(issuerMaterial.issuerHolder(), thisUpdate, nextUpdate, entries, algorithm);
-                copyToSigner(tbs, signer);
-                byte[] signature = signer.getSignature();
-                crl = encodeOuter(tbs, algorithm, signature);
-                requireValidResult(crl, tbs, signer.executionPlan(), signer.getAlgorithmIdentifier(), signature,
-                        issuerMaterial.issuerHolder());
+            try (PkiBusContentSigner signer = signer(issuerMaterial.keyRef(), cancellation, domain)) {
+                java.security.cert.X509CRL builtCrl = buildCrl(issuerMaterial.certificate(), thisUpdate, nextUpdate,
+                        entries, crlNumber, baseCrlNumber, signer);
+                byte[] crlDer;
+                try {
+                    crlDer = builtCrl.getEncoded();
+                } catch (java.security.cert.CRLException exception) {
+                    throw new PkiException("CRL encoding failed: code=STATUS_OBJECT_GENERATION_FAILED", exception);
+                }
+                crl = persistDer(crlDer);
+                Arrays.fill(crlDer, (byte) 0);
+                requireValidCrl(crl, signer, issuerMaterial.certificate(), thisUpdate, nextUpdate);
                 StatusObject result = new StatusObject(new PkiId("crl:" + crl.sha256()), command.formatId(),
                         command.issuerCaId(), command.type(), thisUpdate, Optional.of(nextUpdate), crl,
                         command.attributes());
@@ -289,82 +202,50 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
             }
             accepted = true;
             return completion;
-        } catch (IOException | ArithmeticException exception) {
+        } catch (IOException exception) {
             throw new PkiException("CRL generation failed: code=SPOOL_STORAGE_FAILED", exception);
         } finally {
+            releaseTemporary(entriesRef);
             if (!accepted) {
                 releaseTemporary(crl);
             }
-            releaseTemporary(tbs);
-            releaseTemporary(entries);
         }
     }
 
-    private void requireValidResult(DurableContentReference crl, DurableContentReference tbs,
-            X509ExecutionPlan<SignatureWorkflow> signingPlan,
-            org.bouncycastle.asn1.x509.AlgorithmIdentifier algorithm, byte[] signature, X509CertificateHolder issuer)
-            throws IOException {
-        requireAuthorizedSigningPlan(signingBus.authority(), signingPlan, signatureIdentity);
-        try (RepeatableContent complete = signingBus.openContent(crl)) {
-            StreamingDerReader reader = new StreamingDerReader();
-            SignedObjectLayout layout = reader.inspectSignedObject(complete, SignedObjectKind.CRL,
-                    CancellationSignal.NONE);
-            byte[] expectedAlgorithm = algorithm.getEncoded();
-            ContentComparison.requireExactSlice(complete, layout.tbsAlgorithmOffset(), layout.tbsAlgorithmLength(),
-                    expectedAlgorithm, "CRL TBS binding mismatch");
-            ContentComparison.requireExactSlice(complete, layout.outerAlgorithmOffset(), layout.outerAlgorithmLength(),
-                    expectedAlgorithm, "CRL outer binding mismatch");
-            ContentComparison.requireExactSlice(complete, layout.signatureOffset(), layout.signatureLength(), signature,
-                    "CRL signature result mismatch");
-            try (RepeatableContent expectedTbs = signingBus.openContent(tbs)) {
-                if (!ContentComparison.contentEquals(complete, layout.tbsOffset(), layout.tbsLength(), expectedTbs)) {
-                    throw new PkiException("CRL TBS substitution: code=BACKEND_RESULT_SUBSTITUTION");
-                }
-            }
-
-            BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(signingBus.authority().bindings());
-            AlgorithmIdentity actualSignature = adapter.decode(algorithm, X509AlgorithmRole.SIGNATURE_ALGORITHM);
-            if (!signingPlan.selection().requested().equals(actualSignature)) {
-                throw new PkiException("CRL binding mismatch: code=STATUS_OBJECT_BINDING_MISMATCH");
-            }
-            AlgorithmIdentity issuerKey = adapter.decode(issuer.getSubjectPublicKeyInfo().getAlgorithm(),
-                    X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
-            X509ExecutionPlan<BcX509VerificationExecutor> plan = signingBus.authority().plan(actualSignature,
-                    issuerKey, AlgorithmExecutionCapability.Direction.VERIFY,
-                    Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "crl-postcondition",
-                    signingBus.authority().bindings().bindingId(BcX509AlgorithmAdapter.fromBc(algorithm),
-                            X509AlgorithmRole.SIGNATURE_ALGORITHM),
-                    BcX509VerificationExecutor.class);
-            try (RepeatableContent signedContent = new ContentSlice(complete, layout.tbsOffset(),
-                    layout.tbsLength())) {
-                if (!plan.executor().verify(signingBus.authority(), plan, issuer.getSubjectPublicKeyInfo(), algorithm,
-                        signedContent, signature)) {
-                    throw new PkiException("CRL signature invalid: code=SIGNATURE_VERIFICATION_FAILED");
-                }
-            }
-        } catch (java.security.GeneralSecurityException | org.bouncycastle.operator.OperatorCreationException ex) {
-            throw new PkiException("CRL verification failed: code=SIGNATURE_VERIFICATION_FAILED", ex);
-        }
-    }
-
-    /*
-     * The status-object postcondition accepts only the exact live plan minted by
-     * its runtime authority. An equal public fingerprint cannot substitute for
-     * opaque process-local provenance.
-     */
-    /* default */ static void requireAuthorizedSigningPlan(X509AuthoritySnapshot authority,
-            X509ExecutionPlan<SignatureWorkflow> signingPlan, AlgorithmIdentity expectedIdentity) {
-        authority.authorize(signingPlan, signingPlan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
-        if (!expectedIdentity.equals(signingPlan.selection().requested())) {
-            throw new PkiException("CRL signing-plan substitution: code=BACKEND_RESULT_SUBSTITUTION");
-        }
-    }
-
-    private DurableContentReference encodeEntries(CrlEntrySource source) throws IOException {
+    private DurableContentReference stageEntries(List<zeroecho.pkix.crl.CrlEntry> entries) throws IOException {
         try (ContentSink sink = signingBus.beginContent(Encoding.DER, DurableContentReference.Lifecycle.TEMPORARY);
-                OutputStream output = sink.outputStream();
-                CrlEntrySource.Cursor cursor = source.openCursor();
-                TemporaryUniqueIndex serials = signingBus.beginUniqueIndex()) {
+                OutputStream output = sink.outputStream()) {
+            for (zeroecho.pkix.crl.CrlEntry entry : entries) {
+                output.write((entry.serialNumber().toString() + '|' + entry.revocationTime().getEpochSecond() + '|'
+                        + entry.reason().code() + '\n').getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            return sink.complete();
+        }
+    }
+
+    private PkiBusContentSigner signer(KeyRef keyRef, CancellationSignal cancellation,
+            DomainContinuationTemplate domain) {
+        return signatureBindingId.isPresent()
+                ? new PkiBusContentSigner(signingBus, keyRef, signatureIdentity, signatureBindingId.orElseThrow(),
+                        signingTtl, cancellation, domain)
+                : new PkiBusContentSigner(signingBus, keyRef, signatureIdentity, signingTtl, cancellation, domain);
+    }
+
+    private java.security.cert.X509CRL buildCrl(X509Certificate issuer, Instant thisUpdate, Instant nextUpdate,
+            List<zeroecho.pkix.crl.CrlEntry> entries, BigInteger crlNumber, Optional<BigInteger> baseCrlNumber,
+            PkiBusContentSigner signer) {
+        CrlBuilder builder = Pkix.crlBuilder().issuer(issuer.getSubjectX500Principal())
+                .thisUpdate(thisUpdate).nextUpdate(nextUpdate).crlNumber(crlNumber)
+                .authorityKeyIdentifier(Pkix.subjectKeyIdentifier(issuer.getPublicKey()));
+        baseCrlNumber.ifPresent(builder::deltaCrlIndicator);
+        builder.addEntries(entries.iterator());
+        return builder.build(signer);
+    }
+
+    private List<zeroecho.pkix.crl.CrlEntry> collectEntries(CrlEntrySource source) throws IOException {
+        List<zeroecho.pkix.crl.CrlEntry> entries = new ArrayList<>();
+        try (CrlEntrySource.Cursor cursor = source.openCursor(); TemporaryUniqueIndex serials =
+                signingBus.beginUniqueIndex()) {
             long expectedOrdinal = 0L;
             while (cursor.next()) {
                 if (cursor.ordinal() != expectedOrdinal) {
@@ -374,11 +255,12 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
                 if (!serials.add(unsignedSerial(entry))) {
                     throw new PkiException("Duplicate CRL serial: code=MALFORMED_SIGNED_OBJECT");
                 }
-                output.write(encodeEntry(entry));
+                entries.add(new zeroecho.pkix.crl.CrlEntry(entry.serialNumber(),
+                        entry.transitionTime().truncatedTo(ChronoUnit.SECONDS), toCrlReason(entry.reason())));
                 expectedOrdinal = Math.addExact(expectedOrdinal, 1L);
             }
-            return sink.complete();
         }
+        return entries;
     }
 
     private static byte[] unsignedSerial(CrlEntry entry) {
@@ -389,104 +271,169 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         return encoded;
     }
 
-    private static byte[] encodeEntry(CrlEntry entry) throws IOException {
-        if (entry == null) {
-            throw new IllegalArgumentException("CRL entry must not be null");
-        }
-        ASN1EncodableVector values = new ASN1EncodableVector(3);
-        values.add(new ASN1Integer(entry.serialNumber()));
-        values.add(new Time(Date.from(entry.transitionTime().truncatedTo(ChronoUnit.SECONDS))));
-        int reason = CrlReasonAdapter.code(entry.reason());
-        if (reason != CRLReason.unspecified) {
-            Extension reasonExtension = Extension.create(Extension.reasonCode, false, CRLReason.lookup(reason));
-            values.add(new Extensions(reasonExtension));
-        }
-        return new DERSequence(values).getEncoded();
-    }
-
-    private DurableContentReference encodeTbs(X509CertificateHolder issuer, Instant thisUpdate, Instant nextUpdate,
-            DurableContentReference entries, byte[] algorithm) throws IOException {
-        byte[] version = new ASN1Integer(1L).getEncoded();
-        byte[] issuerName = issuer.getSubject().getEncoded();
-        byte[] thisUpdateDer = new Time(Date.from(thisUpdate)).getEncoded();
-        byte[] nextUpdateDer = new Time(Date.from(nextUpdate)).getEncoded();
-        byte[] extensions = crlExtensions(issuer);
-        long entriesLength = entries.length() == EMPTY_CONTENT_LENGTH
-                ? EMPTY_CONTENT_LENGTH : StreamingDerWriter.encodedLength(entries.length());
-        long valueLength = checkedSum(version.length, algorithm.length, issuerName.length, thisUpdateDer.length,
-                nextUpdateDer.length, entriesLength, extensions.length);
-        try (ContentSink sink = signingBus.beginContent(Encoding.DER, DurableContentReference.Lifecycle.TEMPORARY);
-                OutputStream output = sink.outputStream()) {
-            StreamingDerWriter.writeTagAndLength(output, StreamingDerWriter.SEQUENCE_TAG, valueLength);
-            output.write(version);
-            output.write(algorithm);
-            output.write(issuerName);
-            output.write(thisUpdateDer);
-            output.write(nextUpdateDer);
-            if (entries.length() != EMPTY_CONTENT_LENGTH) {
-                StreamingDerWriter.writeTagAndLength(output, StreamingDerWriter.SEQUENCE_TAG, entries.length());
-                try (RepeatableContent content = signingBus.openContent(entries);
-                        InputStream input = content.openStream()) {
-                    requireLength(entries.length(),
-                            StreamingDerWriter.copy(input, output, CancellationSignal.NONE));
-                }
-            }
-            output.write(extensions);
-            return sink.complete();
+    private void requireValidCrl(DurableContentReference crl, PkiBusContentSigner signer, X509Certificate issuer,
+            Instant thisUpdate, Instant nextUpdate) throws IOException {
+        requireAuthorizedSigningPlan(signingBus.authority(), signer.executionPlan(), signatureIdentity);
+        try (RepeatableContent content = signingBus.openContent(crl)) {
+            new BcX509SignedObjectValidator(signingBus.authority()).validateGeneratedCrl(content,
+                    signer.executionPlan(), issuer, thisUpdate, Optional.of(nextUpdate), CancellationSignal.NONE);
         }
     }
 
-    private static byte[] crlExtensions(X509CertificateHolder issuer) {
+    /*
+     * The status-object postcondition accepts only the exact live plan minted by its runtime authority.
+     */
+    /* default */ static void requireAuthorizedSigningPlan(X509AuthoritySnapshot authority,
+            X509ExecutionPlan<SignatureWorkflow> signingPlan, AlgorithmIdentity expectedIdentity) {
+        authority.authorize(signingPlan, signingPlan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
+        if (!expectedIdentity.equals(signingPlan.selection().requested())) {
+            throw new PkiException("CRL signing-plan substitution: code=BACKEND_RESULT_SUBSTITUTION");
+        }
+    }
+
+    private X509SignedObjectCompletion generateOcsp(StatusObjectGenerateCommand command, IssuerMaterial issuerMaterial,
+            CancellationSignal cancellation) {
+        BigInteger serial = requiredCrlNumber(command.attributes(), BcX509Attributes.OCSP_TARGET_SERIAL,
+                "OCSP target serial");
+        if (serial.signum() <= 0) {
+            throw new PkiException("Invalid OCSP target serial");
+        }
+        OcspTargetStatus target = resolveOcspTargetStatus(command.attributes());
+        Instant thisUpdate = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        Instant nextUpdate = thisUpdate.plus(Duration.ofDays(7));
+        byte[] algorithm = probeSignatureAlgorithm(issuerMaterial.keyRef(), cancellation);
+        DomainContinuationTemplate domain = DomainCommandEncoding.template(
+                DomainContinuationStore.Kind.STATUS, "GENERATE_STATUS",
+                command.issuerCaId().value(), command.type().name(), command.formatId().value(),
+                thisUpdate.toString(), nextUpdate.toString(), issuerMaterial.keyRef().value(),
+                "", "", DomainAttributeEncoding.encode(command.attributes()),
+                java.util.HexFormat.of().formatHex(algorithm));
+        DurableContentReference response = null;
+        boolean accepted = false;
         try {
-            AuthorityKeyIdentifier authorityKeyIdentifier = new JcaX509ExtensionUtils()
-                    .createAuthorityKeyIdentifier(issuer.getSubjectPublicKeyInfo());
-            Extensions extensions = new Extensions(
-                    Extension.create(Extension.authorityKeyIdentifier, false, authorityKeyIdentifier));
-            return new DERTaggedObject(true, 0, extensions).getEncoded();
-        } catch (Exception exception) {
-            throw new PkiException("Failed to build CRL extensions", exception);
+            X509SignedObjectCompletion completion;
+            try (PkiBusContentSigner signer = signer(issuerMaterial.keyRef(), cancellation, domain)) {
+                zeroecho.pkix.ocsp.CertId certId = Pkix.computeCertId(issuerMaterial.certificate(), serial, SHA1_OID);
+                CertStatus status = target.revoked()
+                        ? CertStatus.revoked(target.revocationTime().orElseThrow(), target.reason().orElseThrow())
+                        : CertStatus.good();
+                byte[] der = Pkix.ocspResponseBuilder()
+                        .responderId(ResponderId.byName(issuerMaterial.certificate().getSubjectX500Principal()))
+                        .producedAt(thisUpdate).addResponse(certId, status, thisUpdate, nextUpdate)
+                        .build(signer, List.of());
+                response = persistDer(der);
+                requireAuthorizedSigningPlan(signingBus.authority(), signer.executionPlan(), signatureIdentity);
+                try (RepeatableContent content = signingBus.openContent(response)) {
+                    new BcX509SignedObjectValidator(signingBus.authority()).validateGeneratedOcsp(content,
+                            signer.executionPlan(), issuerMaterial.certificate(), thisUpdate,
+                            Optional.of(nextUpdate), CancellationSignal.NONE);
+                }
+                StatusObject result = new StatusObject(new PkiId("status:" + response.sha256()), command.formatId(),
+                        command.issuerCaId(), command.type(), thisUpdate, Optional.of(nextUpdate), response,
+                        command.attributes());
+                completion = signingBus.authority().completeStatusObject(result, signer.executionPlan());
+            }
+            accepted = true;
+            return completion;
+        } catch (IOException exception) {
+            throw new PkiException("OCSP status generation failed: code=SPOOL_STORAGE_FAILED", exception);
+        } finally {
+            if (!accepted) {
+                releaseTemporary(response);
+            }
         }
     }
 
-    private void copyToSigner(DurableContentReference tbs, PkiBusContentSigner signer) throws IOException {
-        try (RepeatableContent content = signingBus.openContent(tbs);
-                InputStream input = content.openStream();
-                OutputStream output = signer.getOutputStream()) {
-            requireLength(tbs.length(), StreamingDerWriter.copy(input, output, CancellationSignal.NONE));
+    // Resolves the DER-encoded signature AlgorithmIdentifier without submitting a signing operation, so it
+    // can be frozen into the durable OCSP command before the real signer runs.
+    private byte[] probeSignatureAlgorithm(KeyRef keyRef, CancellationSignal cancellation) {
+        try (PkiBusContentSigner probe = signatureBindingId.isPresent()
+                ? new PkiBusContentSigner(signingBus, keyRef, signatureIdentity,
+                        signatureBindingId.orElseThrow(), signingTtl, cancellation)
+                : new PkiBusContentSigner(signingBus, keyRef, signatureIdentity, signingTtl, cancellation)) {
+            return Pkix.encodeAlgorithmIdentifier(probe.algorithm());
         }
     }
 
-    private DurableContentReference encodeOuter(DurableContentReference tbs, byte[] algorithm, byte[] signature)
-            throws IOException {
-        long bitStringValueLength = Math.addExact(1L, signature.length);
-        long valueLength = checkedSum(tbs.length(), algorithm.length,
-                StreamingDerWriter.encodedLength(bitStringValueLength));
+    private DurableContentReference persistDer(byte[] der) throws IOException {
         try (ContentSink sink = signingBus.beginContent(Encoding.DER, DurableContentReference.Lifecycle.PERSISTED);
                 OutputStream output = sink.outputStream()) {
-            StreamingDerWriter.writeTagAndLength(output, StreamingDerWriter.SEQUENCE_TAG, valueLength);
-            try (RepeatableContent content = signingBus.openContent(tbs);
-                    InputStream input = content.openStream()) {
-                requireLength(tbs.length(), StreamingDerWriter.copy(input, output, CancellationSignal.NONE));
-            }
-            output.write(algorithm);
-            StreamingDerWriter.writeTagAndLength(output, StreamingDerWriter.BIT_STRING_TAG, bitStringValueLength);
-            output.write(0);
-            output.write(signature);
+            output.write(der);
             return sink.complete();
         }
     }
 
-    private static long checkedSum(long... values) {
-        long total = 0L;
-        for (long value : values) {
-            total = Math.addExact(total, value);
-        }
-        return total;
+    private static CrlReason toCrlReason(RevocationReason reason) {
+        return switch (reason) {
+            case UNSPECIFIED -> CrlReason.UNSPECIFIED;
+            case KEY_COMPROMISE -> CrlReason.KEY_COMPROMISE;
+            case CA_COMPROMISE -> CrlReason.CA_COMPROMISE;
+            case AFFILIATION_CHANGED -> CrlReason.AFFILIATION_CHANGED;
+            case SUPERSEDED -> CrlReason.SUPERSEDED;
+            case CESSATION_OF_OPERATION -> CrlReason.CESSATION_OF_OPERATION;
+            case CERTIFICATE_HOLD -> CrlReason.CERTIFICATE_HOLD;
+            case REMOVE_FROM_CRL -> throw new IllegalArgumentException("REMOVE_FROM_CRL is not an active CRL entry");
+            case PRIVILEGE_WITHDRAWN -> CrlReason.PRIVILEGE_WITHDRAWN;
+            case AA_COMPROMISE -> CrlReason.AA_COMPROMISE;
+        };
     }
 
-    private static void requireLength(long expected, long actual) throws IOException {
-        if (expected != actual) {
-            throw new IOException("Staged content length changed");
+    private static OcspTargetStatus resolveOcspTargetStatus(AttributeSet attributes) {
+        String status = requiredString(attributes, BcX509Attributes.OCSP_CERT_STATUS, "OCSP certificate status");
+        if (OCSP_GOOD.equals(status)) {
+            return new OcspTargetStatus(false, Optional.empty(), Optional.empty());
+        }
+        if (!OCSP_REVOKED.equals(status)) {
+            throw new PkiException("Invalid OCSP certificate status");
+        }
+        Instant time = requiredInstant(attributes, BcX509Attributes.OCSP_REVOCATION_TIME, "OCSP revocation time")
+                .truncatedTo(ChronoUnit.SECONDS);
+        RevocationReason reason = requiredReason(attributes);
+        return new OcspTargetStatus(true, Optional.of(time), Optional.of(ocspReason(reason)));
+    }
+
+    private static String requiredString(AttributeSet attributes, AttributeId id, String label) {
+        return attributes.get(id).filter(AttributeValue.StringValue.class::isInstance)
+                .map(AttributeValue.StringValue.class::cast).map(AttributeValue.StringValue::value)
+                .orElseThrow(() -> new PkiException("Missing " + label));
+    }
+
+    private static Instant requiredInstant(AttributeSet attributes, AttributeId id, String label) {
+        return attributes.get(id).filter(AttributeValue.InstantValue.class::isInstance)
+                .map(AttributeValue.InstantValue.class::cast).map(AttributeValue.InstantValue::value)
+                .orElseThrow(() -> new PkiException("Missing " + label));
+    }
+
+    private static RevocationReason requiredReason(AttributeSet attributes) {
+        String reason = requiredString(attributes, BcX509Attributes.OCSP_REVOCATION_REASON, "OCSP revocation reason");
+        try {
+            return RevocationReason.valueOf(reason);
+        } catch (IllegalArgumentException ex) {
+            throw new PkiException("Invalid OCSP revocation reason", ex);
+        }
+    }
+
+    private static CrlReason ocspReason(RevocationReason reason) {
+        return toCrlReason(reason == RevocationReason.REMOVE_FROM_CRL ? RevocationReason.UNSPECIFIED : reason);
+    }
+
+    /** Immutable resolved OCSP target status snapshot conveyed from the core service. */
+    private record OcspTargetStatus(boolean revoked, Optional<Instant> revocationTime, Optional<CrlReason> reason) {
+    }
+
+    private static BigInteger requiredCrlNumber(AttributeSet attributes, AttributeId id, String label) {
+        Optional<AttributeValue> value = attributes.get(id);
+        if (value.isEmpty() || !(value.orElseThrow() instanceof AttributeValue.StringValue text)) {
+            throw new PkiException("Missing " + label);
+        }
+        try {
+            BigInteger number = new BigInteger(text.value());
+            if (number.signum() < 0) {
+                throw new PkiException("Invalid " + label);
+            }
+            return number;
+        } catch (NumberFormatException ex) {
+            throw new PkiException("Invalid " + label, ex);
         }
     }
 
@@ -496,166 +443,49 @@ public final class BcX509StatusObjectGenerator implements StatusObjectGenerator 
         }
     }
 
-    /**
-     * Validates the high-level command contract for CRL generation.
-     *
-     * @param command command to validate; must not be {@code null}
-     * @throws IllegalArgumentException if {@code command} is {@code null}, if the
-     *                                  requested status object type is unsupported,
-     *                                  or if the requested format identifier is
-     *                                  unsupported
-     */
     private static void validateCommandOrThrow(StatusObjectGenerateCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("command must not be null");
         }
-        if (command.type() != StatusObjectType.CRL) {
+        if (command.type() != StatusObjectType.CRL && command.type() != StatusObjectType.DELTA_CRL
+                && command.type() != StatusObjectType.OCSP) {
             throw new IllegalArgumentException("Unsupported status object type: " + command.type());
         }
-
         FormatId formatId = command.formatId();
         if (!BcX509CredentialFramework.FORMAT_ID.equals(formatId)) {
             throw new IllegalArgumentException("Unsupported formatId: " + formatId.value());
         }
     }
 
-    /**
-     * Resolves issuer material required for CRL generation from framework
-     * attributes.
-     *
-     * @param attributes source attributes; must not be {@code null}
-     * @return resolved issuer material
-     * @throws PkiException if required issuer attributes are missing, use an
-     *                      unexpected type, or contain an invalid issuer
-     *                      certificate
-     */
     @SuppressWarnings("PMD.PreserveStackTrace")
     private IssuerMaterial extractIssuerMaterialOrThrow(AttributeSet attributes) {
         Optional<AttributeValue> issuerCertAttr = attributes.get(BcX509Attributes.ISSUER_CERT_DER);
         Optional<AttributeValue> issuerKeyAttr = attributes.get(BcX509Attributes.ISSUER_KEYREF);
-
         if (issuerCertAttr.isEmpty() || !(issuerCertAttr.get() instanceof AttributeValue.BytesValue)) {
             throw new PkiException("Missing issuer certificate");
         }
         if (issuerKeyAttr.isEmpty() || !(issuerKeyAttr.get() instanceof AttributeValue.StringValue)) {
             throw new PkiException("Missing issuer keyRef");
         }
-
         byte[] issuerDer = ((AttributeValue.BytesValue) issuerCertAttr.get()).value().clone();
         if (issuerDer.length > MAXIMUM_CERTIFICATE_BYTES) {
             throw new PkiException("Invalid issuer certificate");
         }
         KeyRef keyRef = new KeyRef(((AttributeValue.StringValue) issuerKeyAttr.get()).value());
-
-        X509CertificateHolder issuerHolder;
+        X509Certificate issuer;
         try {
             new BcX509SignedObjectValidator(signingBus.authority()).validateCertificate(
-                    new ImmutableByteContent(issuerDer), Optional.empty(), CancellationSignal.NONE);
-            issuerHolder = new X509CertificateHolder(issuerDer);
+                    new zeroecho.core.io.ImmutableByteContent(issuerDer), Optional.empty(), CancellationSignal.NONE);
+            issuer = Pkix.parseCertificate(issuerDer);
         } catch (IOException | IllegalArgumentException ex) {
             throw new PkiException("Invalid issuer certificate");
         } finally {
             Arrays.fill(issuerDer, (byte) 0);
         }
-
-        return new IssuerMaterial(issuerHolder, keyRef);
+        return new IssuerMaterial(issuer, keyRef);
     }
 
-    /**
-     * Immutable issuer-side material required for CRL generation.
-     *
-     * @param issuerHolder parsed issuer certificate holder
-     * @param keyRef       issuer signing key reference
-     */
-    private record IssuerMaterial(X509CertificateHolder issuerHolder, KeyRef keyRef) {
-    }
-
-    /**
-     * Maps one bounded revocation-reason element to the standard CRL code.
-     */
-    private static final class CrlReasonAdapter {
-        private static int code(RevocationReason reason) {
-            return switch (reason) {
-                case UNSPECIFIED -> CRLReason.unspecified;
-                case KEY_COMPROMISE -> CRLReason.keyCompromise;
-                case CA_COMPROMISE -> CRLReason.cACompromise;
-                case AFFILIATION_CHANGED -> CRLReason.affiliationChanged;
-                case SUPERSEDED -> CRLReason.superseded;
-                case CESSATION_OF_OPERATION -> CRLReason.cessationOfOperation;
-                case CERTIFICATE_HOLD -> CRLReason.certificateHold;
-                case REMOVE_FROM_CRL ->
-                    throw new IllegalArgumentException("REMOVE_FROM_CRL is not an active CRL entry");
-                case PRIVILEGE_WITHDRAWN -> CRLReason.privilegeWithdrawn;
-                case AA_COMPROMISE -> CRLReason.aACompromise;
-            };
-        }
-    }
-
-    /**
-     * Incremental comparison of immutable signed-object slices.
-     */
-    private static final class ContentComparison {
-        private static final int BUFFER_LENGTH = 8192;
-
-        private static void requireExactSlice(RepeatableContent content, long offset, long length, byte[] expected,
-                String message) throws IOException {
-            if (length != expected.length) {
-                throw new PkiException(message + ": code=STATUS_OBJECT_BINDING_MISMATCH");
-            }
-            try (InputStream input = new ContentSlice(content, offset, length).openStream()) {
-                byte[] buffer = new byte[BUFFER_LENGTH];
-                int expectedOffset = 0;
-                while (expectedOffset != expected.length) {
-                    int count = input.read(buffer, 0, Math.min(buffer.length, expected.length - expectedOffset));
-                    if (count < 0 || !Arrays.equals(buffer, 0, count, expected, expectedOffset,
-                            expectedOffset + count)) {
-                        throw new PkiException(message + ": code=STATUS_OBJECT_BINDING_MISMATCH");
-                    }
-                    expectedOffset += count;
-                }
-                if (input.read() >= 0) {
-                    throw new PkiException(message + ": code=STATUS_OBJECT_BINDING_MISMATCH");
-                }
-            }
-        }
-
-        private static boolean contentEquals(RepeatableContent content, long offset, long length,
-                RepeatableContent expected) throws IOException {
-            if (expected.length().isEmpty() || length != expected.length().getAsLong()) {
-                return false;
-            }
-            try (InputStream left = new ContentSlice(content, offset, length).openStream();
-                    InputStream right = expected.openStream()) {
-                byte[] leftBuffer = new byte[BUFFER_LENGTH];
-                byte[] rightBuffer = new byte[BUFFER_LENGTH];
-                while (true) {
-                    int leftCount = readBlock(left, leftBuffer);
-                    int rightCount = readBlock(right, rightBuffer);
-                    if (leftCount != rightCount) {
-                        return false;
-                    }
-                    if (leftCount < 0) {
-                        return true;
-                    }
-                    if (!Arrays.equals(leftBuffer, 0, leftCount, rightBuffer, 0, rightCount)) {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        private static int readBlock(InputStream input, byte[] buffer) throws IOException {
-            int total = 0;
-            while (total != buffer.length) {
-                int count = input.read(buffer, total, buffer.length - total);
-                if (count < 0) {
-                    return total == 0 ? -1 : total;
-                }
-                if (count != 0) {
-                    total += count;
-                }
-            }
-            return total;
-        }
+    /** Immutable issuer-side material required for status generation. */
+    private record IssuerMaterial(X509Certificate certificate, KeyRef keyRef) {
     }
 }

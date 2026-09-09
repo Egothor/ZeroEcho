@@ -99,6 +99,15 @@ public final class JpegExifEmbedder {
     private final List<Slot> slots = new ArrayList<>();
 
     /**
+     * Creates an embedder with no configured EXIF slots.
+     *
+     * <p>{@link #setSlots(List)} must be called before embedding or extraction.</p>
+     */
+    public JpegExifEmbedder() {
+        // Slot configuration is supplied explicitly by the caller.
+    }
+
+    /**
      * Configures the list of EXIF slots to be used for payload embedding and
      * extraction. The order determines the splitting/joining order of the payload.
      * Slots must be unique and have positive capacities.

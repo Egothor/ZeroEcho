@@ -210,8 +210,10 @@ public abstract class TailStrippingInputStream extends InputStream {
      * @throws IOException               if an I/O error occurs or if the stream is
      *                                   closed
      */
+    // The branches preserve InputStream zero-length, EOF, withheld-tail, and buffered-output semantics.
+    @SuppressWarnings("PMD.CyclomaticComplexity")
     @Override
-    public int read(byte[] b, int off, int len) throws IOException { // NOPMD
+    public int read(byte[] b, int off, int len) throws IOException {
         if (closed) {
             throw new IOException("stream closed");
         }

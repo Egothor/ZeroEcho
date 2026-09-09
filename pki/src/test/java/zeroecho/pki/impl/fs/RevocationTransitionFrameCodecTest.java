@@ -78,6 +78,16 @@ final class RevocationTransitionFrameCodecTest {
     Path temporaryDirectory;
 
     @Test
+    void decodeScratchHasExactCapacityAndDropsStorageOnClose() {
+        RevocationTransitionFrameCodec.DecodeScratch scratch =
+                new RevocationTransitionFrameCodec.DecodeScratch();
+        assertEquals(16 * 1024, scratch.capacity());
+        scratch.close();
+        assertThrows(IllegalStateException.class, scratch::capacity);
+        scratch.close();
+    }
+
+    @Test
     void canonicalRoundTripPreservesEveryTransitionField() throws Exception {
         System.out.print("canonicalRoundTripPreservesEveryTransitionField ");
         SimpleAttributeSet attributes = new SimpleAttributeSet(List.of(

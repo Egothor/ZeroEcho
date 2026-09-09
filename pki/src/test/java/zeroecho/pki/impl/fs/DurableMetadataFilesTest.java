@@ -95,6 +95,7 @@ final class DurableMetadataFilesTest {
     }
 
     @Test
+    @RequiresSymlinkCreation
     void secureOpenRejectsSymlinkAndFaultsExplicitly(@TempDir Path directory) throws Exception {
         System.out.println("secureOpenRejectsSymlinkAndFaultsExplicitly");
         Path external = directory.resolve("external.bin");

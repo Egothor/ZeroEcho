@@ -42,6 +42,7 @@ import java.util.logging.Logger;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreProvider;
+import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
 
 /**
  * {@link PkiStoreProvider} for the filesystem-backed {@link PkiStore}.
@@ -51,6 +52,9 @@ import zeroecho.pki.spi.store.PkiStoreProvider;
  * </p>
  * <ul>
  * <li>{@code root} - store root directory (required)</li>
+ * <li>{@code signing-evidence-audit} - {@code true} to record per-signing terminal-outcome
+ * (CA key-usage) audit evidence at the cost of an extra durable commit per terminal signing
+ * outcome (optional, default {@code false})</li>
  * </ul>
  */
 public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
@@ -70,7 +74,7 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
 
     @Override
     public Set<String> supportedKeys() {
-        return Set.of("root");
+        return Set.of("root", "signing-evidence-audit");
     }
 
     /**
@@ -106,13 +110,23 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
 
     @Override
     public PkiStore allocate(final ProviderConfig config) {
+        return allocate(config, PkiStoreRuntimeDependencies.systemUtc());
+    }
+
+    @Override
+    public PkiStore allocate(final ProviderConfig config, final PkiStoreRuntimeDependencies dependencies) {
         Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(dependencies, "dependencies");
         validateConfig(config);
 
         String rootString = config.require("root");
         Path root = Path.of(rootString);
 
-        FsPkiStoreOptions options = FsPkiStoreOptions.defaults();
-        return new FilesystemPkiStore(root, options);
+        // Signing (CA key-usage) audit evidence is an operator opt-in (default off) because it costs one
+        // additional durable force per terminal signing outcome; enable it with "signing-evidence-audit=true".
+        boolean signingEvidenceAudit = config.get("signing-evidence-audit")
+                .map(value -> Boolean.parseBoolean(value.trim())).orElse(false);
+        FsPkiStoreOptions options = FsPkiStoreOptions.defaults().withSigningEvidenceAudit(signingEvidenceAudit);
+        return new FilesystemPkiStore(root, options, dependencies.clock());
     }
 }

@@ -85,6 +85,7 @@ import zeroecho.pki.impl.framework.x509.bc.BcX509StatusObjectGenerator;
 import zeroecho.pki.impl.framework.x509.bc.BcX509ProofOfPossessionVerifier;
 import zeroecho.pki.impl.framework.x509.bc.BcX509VerificationExecutor;
 import zeroecho.pki.impl.fs.FilesystemPkiStore;
+import zeroecho.pki.impl.fs.FilesystemPkiStoreTestAccess;
 import zeroecho.pki.impl.fs.FsPkiStoreOptions;
 import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.framework.CredentialFramework;
@@ -281,9 +282,9 @@ public final class PkiTestRuntime implements AutoCloseable {
 
         this.certificationRequestService = new DefaultCertificationRequestService(store, framework);
         importAndActivate(H7ProfileDocuments.defaultProfile());
-        this.issuanceService = new DefaultIssuanceService(store, framework, issuerBackend, auditSink, statusResolver,
-                profileService, clock);
         this.revocationService = new DefaultRevocationService(store, clock, auditSink);
+        this.issuanceService = new DefaultIssuanceService(store, framework, issuerBackend, auditSink, statusResolver,
+                profileService, clock, this.revocationService);
         this.statusObjectService = new DefaultStatusObjectService(store, framework, auditSink, statusResolver,
                 signingBus.authority());
 
@@ -317,6 +318,26 @@ public final class PkiTestRuntime implements AutoCloseable {
         return create(rootDir, busFile, keyPairs, publicKeys, Optional.empty(), options);
     }
 
+    /** Creates a runtime with a deterministic signing-work capacity for admission tests. */
+    public static PkiTestRuntime createWithMaximumSigningWork(Path rootDir, Path busFile,
+            Map<KeyRef, KeyPair> keyPairs, int maximumSigningWork) {
+        Map<KeyRef, PublicKey> publicKeys = new HashMap<>();
+        for (Map.Entry<KeyRef, KeyPair> entry : keyPairs.entrySet()) {
+            publicKeys.put(entry.getKey(), entry.getValue().getPublic());
+        }
+        FilesystemPkiStore store = FilesystemPkiStoreTestAccess.open(rootDir.resolve("store"), maximumSigningWork);
+        try {
+            return create(store, busFile, keyPairs, publicKeys, Optional.empty());
+        } catch (RuntimeException failure) {
+            try {
+                store.close();
+            } catch (IOException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
+    }
+
     /**
      * Creates a test runtime with independently controlled signing keys, resolved
      * public keys, and proof verifier.
@@ -343,8 +364,12 @@ public final class PkiTestRuntime implements AutoCloseable {
         Objects.requireNonNull(resolvedKeys, "resolvedKeys");
         Objects.requireNonNull(proofVerifier, "proofVerifier");
 
-        Path storeRoot = rootDir.resolve("store");
-        FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, opts);
+        FilesystemPkiStore store = new FilesystemPkiStore(rootDir.resolve("store"), opts);
+        return create(store, busFile, keyPairs, resolvedKeys, proofVerifier);
+    }
+
+    private static PkiTestRuntime create(FilesystemPkiStore store, Path busFile, Map<KeyRef, KeyPair> keyPairs,
+            Map<KeyRef, PublicKey> resolvedKeys, Optional<ProofOfPossessionVerifier> proofVerifier) {
 
         Map<String, KeyPair> byRef = new HashMap<>();
         for (Map.Entry<KeyRef, KeyPair> e : keyPairs.entrySet()) {
@@ -475,6 +500,69 @@ public final class PkiTestRuntime implements AutoCloseable {
 
     private static String workflowImplementationId(SignatureWorkflow workflow) {
         return "workflow." + workflow.id();
+    }
+
+    /**
+     * Composes a test authority binding several signing workflows (one executor per
+     * workflow under its {@code "workflow."+id} implementation) plus a shared X.509
+     * verification executor. Used by per-CA signing-routing tests where different
+     * authorities route to different signing services.
+     *
+     * @param workflows signing workflows to bind, each a distinct service identity
+     * @return an authority owning every supplied workflow for the {@code SIGN} direction
+     */
+    public static X509AuthoritySnapshot multiSigningAuthority(List<SignatureWorkflow> workflows) {
+        Objects.requireNonNull(workflows, "workflows");
+        BcX509VerificationExecutor verification = new BcX509VerificationExecutor();
+        List<AlgorithmExecutionCapabilityProvider> providers = new ArrayList<>();
+        List<X509AuthoritySnapshot.ExecutorBinding> executors = new ArrayList<>();
+        for (SignatureWorkflow workflow : workflows) {
+            Set<String> supported = Set.copyOf(
+                    Objects.requireNonNull(workflow.supportedAlgorithms(), "workflow.supportedAlgorithms"));
+            Set<AlgorithmIdentity> exact = BootstrapAlgorithmIdentities.catalog().identities().stream()
+                    .filter(identity -> identity.kind() == AlgorithmIdentity.Kind.SIGNATURE)
+                    .filter(identity -> supported.contains(identity.canonicalForm())
+                            || BootstrapAlgorithmIdentities.compatibilityAliases().entrySet().stream()
+                                    .anyMatch(entry -> entry.getValue().equals(identity)
+                                            && supported.contains(entry.getKey())))
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            String implementationId = workflowImplementationId(workflow);
+            AlgorithmExecutionCapability capability = new AlgorithmExecutionCapability() {
+                @Override
+                public String implementationId() {
+                    return implementationId;
+                }
+
+                @Override
+                public String domainFingerprint() {
+                    return "test-workflow-v1:" + workflow.id() + ":" + exact.stream()
+                            .map(AlgorithmIdentity::canonicalForm).sorted().reduce("", (left, right) -> left + right);
+                }
+
+                @Override
+                public boolean supports(AlgorithmIdentity identity, AlgorithmSuite suite, Direction direction) {
+                    return direction == Direction.SIGN && exact.contains(identity) && identity.equals(suite.signature());
+                }
+            };
+            providers.add(() -> List.of(capability));
+            executors.add(X509AuthoritySnapshot.bindExecutor(implementationId,
+                    AlgorithmExecutionCapability.Direction.SIGN, workflow));
+        }
+        providers.add(verification);
+        executors.add(X509AuthoritySnapshot.bindExecutor(BcX509VerificationExecutor.IMPLEMENTATION_ID,
+                AlgorithmExecutionCapability.Direction.VERIFY, verification));
+        X509AlgorithmResolver.Policy policy = new X509AlgorithmResolver.Policy() {
+            @Override
+            public boolean permits(AlgorithmSuite suite, AlgorithmExecutionCapability.Direction direction) {
+                return true;
+            }
+
+            @Override
+            public String semanticFingerprint() {
+                return "pki-test-runtime-policy-v1:allow-authorized-capability";
+            }
+        };
+        return X509AuthoritySnapshot.compose(List.of(), providers, executors, policy);
     }
 
     private EncodedObject resolvePublicKeyInfo(KeyRef keyRef) {
@@ -617,7 +705,7 @@ public final class PkiTestRuntime implements AutoCloseable {
     public IssuanceService issuanceService(CredentialIssuerBackend backend,
             EffectiveCredentialStatusResolver resolver) {
         return new DefaultIssuanceService(store, framework, Objects.requireNonNull(backend, "backend"), auditSink,
-                Objects.requireNonNull(resolver, "resolver"), profileService, Clock.systemUTC());
+                Objects.requireNonNull(resolver, "resolver"), profileService, Clock.systemUTC(), revocationService);
     }
 
     public RevocationService revocationService() {

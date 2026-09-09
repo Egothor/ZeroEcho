@@ -42,7 +42,16 @@ import java.util.Objects;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 
-/** Immutable authority record for one concrete CA issuer generation. */
+/**
+ * Immutable authority record for one concrete CA issuer generation.
+ * @param issuerId deterministic generation identifier
+ * @param authorityId owning logical authority
+ * @param credentialId exact CA credential for this generation
+ * @param signingKeyRef managed signing-key reference
+ * @param state immutable generation lifecycle state
+ * @param profilePolicyCommitment lowercase SHA-256 profile-policy commitment
+ * @param x509BindingCommitment lowercase SHA-256 X.509-binding commitment
+ */
 public record IssuerGeneration(PkiId issuerId, PkiId authorityId, PkiId credentialId, KeyRef signingKeyRef,
         IssuerGenerationState state, String profilePolicyCommitment, String x509BindingCommitment) {
 
@@ -60,7 +69,12 @@ public record IssuerGeneration(PkiId issuerId, PkiId authorityId, PkiId credenti
         }
     }
 
-    /** Returns the canonical identity for an authority credential generation. */
+    /**
+     * Returns the canonical identity for an authority credential generation.
+     * @param authorityId owning logical authority
+     * @param credentialId exact CA credential
+     * @return deterministic issuer-generation identifier
+     */
     public static PkiId idFor(PkiId authorityId, PkiId credentialId) {
         Objects.requireNonNull(authorityId, "authorityId");
         Objects.requireNonNull(credentialId, "credentialId");

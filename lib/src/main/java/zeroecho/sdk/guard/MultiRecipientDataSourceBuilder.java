@@ -115,6 +115,7 @@ public final class MultiRecipientDataSourceBuilder
      * Callers can customize these parameters before building the final data source.
      * </p>
      *
+     * @param session active session used to create recipient cryptographic contexts
      * @return a fresh {@code MultiRecipientDataSourceBuilder} instance with default
      *         settings
      */

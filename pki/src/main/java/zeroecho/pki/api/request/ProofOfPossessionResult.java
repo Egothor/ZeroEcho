@@ -39,28 +39,60 @@ import java.util.Optional;
  * Result of proof-of-possession (PoP) verification.
  *
  * <p>
- * The {@code details} field is intended for operator diagnostics and must not
- * contain secrets.
+ * The stable {@link ProofOfPossessionReason} carries the machine-readable outcome;
+ * the {@link #status()} is derived from it. The optional {@code details} field is
+ * intended for operator diagnostics only, must not contain secrets, and carries no
+ * machine semantics — callers must branch on {@link #reason()}, never on the text.
  * </p>
  *
- * @param status  verification outcome status
+ * @param reason  stable machine-readable verification reason
  * @param details optional non-sensitive diagnostic information
  */
-public record ProofOfPossessionResult(ProofOfPossessionStatus status, Optional<String> details) {
+public record ProofOfPossessionResult(ProofOfPossessionReason reason, Optional<String> details) {
 
     /**
      * Creates a PoP verification result.
      *
-     * @param status  outcome status
+     * @param reason  stable verification reason
      * @param details optional diagnostic details (non-sensitive)
-     * @throws IllegalArgumentException if {@code status} or {@code details} is null
+     * @throws IllegalArgumentException if {@code reason} or {@code details} is null
      */
     public ProofOfPossessionResult {
-        if (status == null) {
-            throw new IllegalArgumentException("status must not be null");
+        if (reason == null) {
+            throw new IllegalArgumentException("reason must not be null");
         }
         if (details == null) {
             throw new IllegalArgumentException("details must not be null");
         }
+    }
+
+    /**
+     * Creates a result with no diagnostic details.
+     *
+     * @param reason stable verification reason
+     * @return a result carrying only the reason
+     */
+    public static ProofOfPossessionResult of(ProofOfPossessionReason reason) {
+        return new ProofOfPossessionResult(reason, Optional.empty());
+    }
+
+    /**
+     * Creates a result with non-sensitive diagnostic details.
+     *
+     * @param reason  stable verification reason
+     * @param details non-sensitive operator diagnostic text
+     * @return a result carrying the reason and details
+     */
+    public static ProofOfPossessionResult of(ProofOfPossessionReason reason, String details) {
+        return new ProofOfPossessionResult(reason, Optional.of(details));
+    }
+
+    /**
+     * Returns the verification status implied by this result's reason.
+     *
+     * @return the derived proof-of-possession status
+     */
+    public ProofOfPossessionStatus status() {
+        return reason.status();
     }
 }

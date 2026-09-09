@@ -60,6 +60,12 @@ import zeroecho.core.alg.common.eddsa.AbstractEdDSAKeyGenBuilder;
  */
 public final class Ed25519KeyGenBuilder extends AbstractEdDSAKeyGenBuilder<Ed25519KeyGenSpec> {
 
+    /** Creates a stateless Ed25519 key-pair generator. */
+    public Ed25519KeyGenBuilder() {
+        super();
+        // Stateless generator.
+    }
+
     /**
      * Returns the canonical JCA algorithm name for Ed25519 key-pair generation.
      *

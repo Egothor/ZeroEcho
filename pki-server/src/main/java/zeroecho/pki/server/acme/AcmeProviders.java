@@ -48,14 +48,30 @@ import zeroecho.pki.spi.ProviderConfig;
 public final class AcmeProviders {
     private AcmeProviders() { }
 
-    /** Resolves only explicitly configured challenge-provider identities. */
+    /**
+     * Resolves only explicitly configured challenge-provider identities.
+     *
+     * @param enabled explicit provider configurations in any input order
+     * @param loader class loader from which provider services are discovered
+     * @return immutable providers keyed by configured identity
+     * @throws IllegalArgumentException if a configured provider is unavailable or duplicated
+     * @throws IllegalStateException if discovery yields duplicate provider identities
+     */
     public static Map<String, AcmeChallengeProvider> challenges(List<ProviderConfig> enabled,
             ClassLoader loader) {
         return resolve(enabled, ServiceLoader.load(AcmeChallengeProvider.class, loader).stream()
                 .map(ServiceLoader.Provider::get).toList(), AcmeChallengeProvider::id);
     }
 
-    /** Resolves only explicitly configured EAB-provider identities. */
+    /**
+     * Resolves only explicitly configured EAB-provider identities.
+     *
+     * @param enabled explicit provider configurations in any input order
+     * @param loader class loader from which provider services are discovered
+     * @return immutable providers keyed by configured identity
+     * @throws IllegalArgumentException if a configured provider is unavailable or duplicated
+     * @throws IllegalStateException if discovery yields duplicate provider identities
+     */
     public static Map<String, AcmeExternalAccountBindingProvider> eab(List<ProviderConfig> enabled,
             ClassLoader loader) {
         return resolve(enabled, ServiceLoader.load(AcmeExternalAccountBindingProvider.class, loader).stream()

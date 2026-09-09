@@ -59,15 +59,15 @@
  * The package sits between the PKI core service layer and the generic async
  * utility layer. It adapts PKI concepts such as {@code PkiId},
  * {@code Principal}, {@code EncodedObject}, key references, and signing
- * workflow state to the durable bus abstractions used by the runtime.
+ * workflow state to the signing store used by the runtime.
  * </p>
  *
  * <p>
  * The main orchestration entry point is the signing bus, which persists
- * workflow-state metadata through {@link zeroecho.pki.spi.store.PkiStore} and
- * uses the durable async bus infrastructure from
- * {@code zeroecho.pki.util.async} to track submission, execution progress,
- * terminal state, and result consumption. Operation identifiers are normalized
+ * submission, execution progress, terminal state, recovery, and result
+ * consumption through {@link zeroecho.pki.spi.store.SignWorkflowStore} as one
+ * authoritative state. Generic async persistence remains separate for
+ * non-signing consumers. Operation identifiers are normalized
  * to a canonical base form so that re-attach and lookup remain deterministic
  * even when human-readable display suffixes are present.
  * </p>
@@ -78,11 +78,9 @@
  * the client-provided operation identifier.</li>
  * <li>Display-oriented suffixes may be appended for operator readability, but
  * backend persistence and lookup use only the canonical base identifier.</li>
- * <li>Workflow continuation state is persisted separately from async status
- * transitions so that in-flight operations can be re-attached after
- * restart.</li>
- * <li>Result encoding and identifier encoding are intentionally stable and
- * text-safe for use with append-only line stores and durable store
+ * <li>Fenced signing records contain continuation, status, and terminal evidence
+ * needed to re-attach after restart without a redundant projection.</li>
+ * <li>Result and identifier encodings are intentionally stable for durable store
  * records.</li>
  * </ul>
  *
@@ -91,15 +89,15 @@
  * <li>Classes in this package orchestrate signing but do not directly expose or
  * handle private key material.</li>
  * <li>Sensitive operational payloads, including to-be-signed content and raw
- * signature results, may transit through encoded workflow state and durable
- * async result channels; implementations and callers must therefore avoid
+ * signature results, may transit through authoritative signing records;
+ * implementations and callers must therefore avoid
  * unsafe logging and must treat persisted payloads according to the applicable
  * durability and data-protection policy.</li>
  * <li>Canonical operation identifiers are designed to avoid owner collisions
  * and escaping ambiguities in persistence keys.</li>
  * <li>The assurance of the overall signing workflow depends on the configured
  * {@link zeroecho.pki.spi.crypto.SignatureWorkflow},
- * {@link zeroecho.pki.spi.store.PkiStore}, and async durability layer honoring
+ * {@link zeroecho.pki.spi.store.PkiStore}, and signing durability layer honoring
  * their respective contracts.</li>
  * </ul>
  *

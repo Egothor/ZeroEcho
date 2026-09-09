@@ -57,7 +57,7 @@ final class MetadataMutationPayloadCodec {
     private static final int COMMON_BYTES = Short.BYTES + Byte.BYTES + Byte.BYTES
             + Short.BYTES + Short.BYTES;
     private static final int VALUE_SCALAR_BYTES = Long.BYTES;
-    private static final int EXPECTED_AND_VALUE_SCALAR_BYTES = Long.BYTES + Long.BYTES;
+    private static final int EXPECTED_VALUE_SCALAR_BYTES = Long.BYTES + Long.BYTES;
     private static final int MAXIMUM_IDENTITY_BYTES = MetadataKey.MAXIMUM_NAMESPACE_UTF8_BYTES
             + MetadataKey.MAXIMUM_KEY_UTF8_BYTES;
     private static final int TRANSFER_BUFFER_BYTES = 8192;
@@ -385,7 +385,7 @@ final class MetadataMutationPayloadCodec {
 
         private static int scalarLength(MutationKind kind) {
             return kind == MutationKind.REPLACE
-                    ? EXPECTED_AND_VALUE_SCALAR_BYTES
+                    ? EXPECTED_VALUE_SCALAR_BYTES
                     : VALUE_SCALAR_BYTES;
         }
     }

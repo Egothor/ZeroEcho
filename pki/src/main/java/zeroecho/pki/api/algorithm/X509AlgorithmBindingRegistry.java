@@ -46,7 +46,11 @@ import zeroecho.core.spec.AlgorithmIdentity;
  */
 public interface X509AlgorithmBindingRegistry {
 
-    /** @return deterministic immutable binding order */
+    /**
+     * Returns all active bindings in deterministic order.
+     *
+     * @return deterministic immutable binding order
+     */
     List<X509AlgorithmBinding> bindings();
 
     /**
@@ -66,7 +70,11 @@ public interface X509AlgorithmBindingRegistry {
      */
     Optional<X509AlgorithmBinding> standard(AlgorithmIdentity identity, X509AlgorithmBinding.Role role);
 
-    /** @return deterministic SHA-256 commitment to the complete active set */
+    /**
+     * Returns the commitment to the active registry.
+     *
+     * @return deterministic SHA-256 commitment to the complete active set
+     */
     String commitment();
 
     /**

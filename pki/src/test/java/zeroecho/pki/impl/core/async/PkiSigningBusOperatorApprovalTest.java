@@ -81,8 +81,10 @@ public final class PkiSigningBusOperatorApprovalTest {
                 Map.of(keyRef.value(), pair.getPrivate()))) {
             AccessContext access = new AccessContext(new Principal("USER", "late"), new Purpose("ISSUANCE"),
                     Optional.empty(), Optional.empty());
+            byte[] payload = { 1 };
             SignatureWorkflow.SignRequest request = SignatureWorkflow.SignRequest.create(new PkiId("late-approval"),
-                    "test", 1L, access, keyRef, "SHA256withRSA", new ImmutableByteContent(new byte[] { 1 }),
+                    "test", signer.configurationCommitment(), 1L, access, keyRef, "SHA256withRSA",
+                    SignatureWorkflow.ContentCommitment.sha256(payload), new ImmutableByteContent(payload),
                     Optional.of(Encoding.BINARY), Optional.of(Instant.EPOCH));
 
             SignatureWorkflow.CallControl control = new SignatureWorkflow.CallControl(Instant.MAX,
@@ -112,7 +114,7 @@ public final class PkiSigningBusOperatorApprovalTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(100), Map.of(keyRef.value(), kp.getPrivate()));
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile, signingAuthority(signer))) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, signingAuthority(signer))) {
 
             Principal owner = new Principal("USER", "alice");
             PkiId clientOpId = new PkiId("approve-1");
@@ -174,7 +176,7 @@ public final class PkiSigningBusOperatorApprovalTest {
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, options);
                 DurableOperatorApprovalSignatureWorkflow signer = new DurableOperatorApprovalSignatureWorkflow(wfRoot,
                         Duration.ofSeconds(10), Duration.ofMillis(0), Map.of(keyRef.value(), kp.getPrivate()));
-                PkiSigningBus bus = new PkiSigningBus(store, signer, busFile, signingAuthority(signer))) {
+                PkiSigningBus bus = new PkiSigningBus(store, signer, signingAuthority(signer))) {
 
             Principal owner = new Principal("USER", "bob");
             PkiId clientOpId = new PkiId("deny-1");
@@ -241,11 +243,10 @@ public final class PkiSigningBusOperatorApprovalTest {
         while (Instant.now().isBefore(deadline)) {
             bus.sweep(Instant.now());
 
-            String base = opId.value().split("#")[0];
-            Optional<zeroecho.pki.api.orch.WorkflowStateRecord> wsOpt = store.getWorkflowState(new PkiId(base));
-            if (wsOpt.isPresent() && wsOpt.get().payload().isPresent()) {
+            Optional<zeroecho.pki.spi.store.SignWorkflowStore.Record> record = store.getSignRecord(opId);
+            if (record.isPresent()) {
                 PkiSigningBus.SignContinuation cont = PkiSigningBus.SignContinuation
-                        .decode(wsOpt.get().payload().get(), store.stagedContent());
+                        .decode(record.orElseThrow().request(), store.stagedContent());
                 if (cont.signerOpId().isPresent()) {
                     return cont.signerOpId().get();
                 }

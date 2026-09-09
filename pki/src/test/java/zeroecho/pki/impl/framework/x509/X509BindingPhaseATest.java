@@ -134,10 +134,10 @@ public final class X509BindingPhaseATest {
                 BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY,
                 AlgorithmExecutionCapability.Direction.VERIFY, Optional.empty(), "explicit", signatureBinding,
                 BcX509VerificationExecutor.class);
-        SubjectPublicKeyInfo wrapped = new BcX509PublicKeyAdapter(authority.bindings()).wrap(
-                keyPair.getPublic().getEncoded(), BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY,
-                publicKeyBinding);
-        AlgorithmIdentifier identifier = BcX509AlgorithmAdapter.toBc(authority.bindings().resolve(signatureBinding,
+        SubjectPublicKeyInfo wrapped = SubjectPublicKeyInfo.getInstance(
+                new BcX509PublicKeyAdapter(authority.bindings()).wrap(keyPair.getPublic().getEncoded(),
+                        BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY, publicKeyBinding));
+        AlgorithmIdentifier identifier = toBc(authority.bindings().resolve(signatureBinding,
                 BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
         byte[] payload = "ZeroEcho private X.509 binding".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Signature signer = Signature.getInstance("SPHINCS+", new BouncyCastlePQCProvider());
@@ -145,7 +145,7 @@ public final class X509BindingPhaseATest {
         signer.update(payload);
         byte[] signature = signer.sign();
         try (RepeatableContent content = content(payload)) {
-            assertTrue(verifier.verify(authority, plan, wrapped, identifier, content, signature));
+            assertTrue(verifier.verify(authority, plan, wrapped.getEncoded(), lib(identifier), content, signature));
         }
 
         AlgorithmIdentifier csrIdentifier = privateIdentifier(authority,
@@ -171,7 +171,8 @@ public final class X509BindingPhaseATest {
             assertEquals(BootstrapAlgorithmIdentities.SPHINCS_PLUS_PUBLIC_KEY, validated.subjectPublicKey());
         }
         try (RepeatableContent tbs = content(certificate.toASN1Structure().getTBSCertificate().getEncoded())) {
-            assertTrue(verifier.verify(authority, plan, wrapped, identifier, tbs, certificate.getSignature()));
+            assertTrue(verifier.verify(authority, plan, wrapped.getEncoded(), lib(identifier), tbs,
+                    certificate.getSignature()));
         }
 
         AlgorithmIdentifier crlIdentifier = privateIdentifier(authority,
@@ -185,12 +186,12 @@ public final class X509BindingPhaseATest {
                 AlgorithmExecutionCapability.Direction.VERIFY, Optional.empty(), "explicit",
                 "zeroecho.private.sphincs-plus-default.crl-signature.v1", BcX509VerificationExecutor.class);
         try (RepeatableContent tbs = content(crl.toASN1Structure().getTBSCertList().getEncoded())) {
-            assertTrue(verifier.verify(authority, crlPlan, wrapped, crlIdentifier, tbs,
+            assertTrue(verifier.verify(authority, crlPlan, wrapped.getEncoded(), lib(crlIdentifier), tbs,
                     crl.toASN1Structure().getSignature().getOctets()));
         }
         assertThrows(IllegalArgumentException.class,
                 () -> new BcX509AlgorithmAdapter(authority.bindings()).decode(
-                        new AlgorithmIdentifier(identifier.getAlgorithm(), DERNull.INSTANCE),
+                        zeroecho.pkix.AlgorithmIdentifier.derNull(identifier.getAlgorithm().getId()),
                         X509AlgorithmRole.SIGNATURE_ALGORITHM));
         System.out.println("...oid=" + identifier.getAlgorithm().getId() + ", signature-bytes=" + signature.length);
         System.out.println("...ok");
@@ -214,7 +215,7 @@ public final class X509BindingPhaseATest {
         KeyPair pair = generator.generateKeyPair();
         SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(pair.getPublic().getEncoded());
         String bindingId = "test.ed25519.certificate.v1";
-        AlgorithmIdentifier identifier = BcX509AlgorithmAdapter.toBc(authority.bindings().resolve(bindingId,
+        AlgorithmIdentifier identifier = toBc(authority.bindings().resolve(bindingId,
                 BootstrapAlgorithmIdentities.ED25519_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
         X500Name name = new X500Name("CN=Deployer Binding");
         Instant start = Instant.parse("2026-08-04T00:00:00Z");
@@ -226,7 +227,8 @@ public final class X509BindingPhaseATest {
                 AlgorithmExecutionCapability.Direction.VERIFY, Optional.empty(), "explicit", bindingId,
                 BcX509VerificationExecutor.class);
         try (RepeatableContent tbs = content(certificate.toASN1Structure().getTBSCertificate().getEncoded())) {
-            assertTrue(verifier.verify(authority, plan, spki, identifier, tbs, certificate.getSignature()));
+            assertTrue(verifier.verify(authority, plan, spki.getEncoded(), lib(identifier), tbs,
+                    certificate.getSignature()));
         }
         System.out.println("...oid=" + identifier.getAlgorithm().getId());
         System.out.println("...ok");
@@ -329,18 +331,17 @@ public final class X509BindingPhaseATest {
     void bcBoundaryPreservesExactParametersAndRejectsSha1() {
         System.out.println("bcBoundaryPreservesExactParametersAndRejectsSha1");
         BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(StandardX509Bindings.catalog());
-        AlgorithmIdentifier rsa = adapter.encode(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+        zeroecho.pkix.AlgorithmIdentifier rsa = adapter.encode(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
                 X509AlgorithmRole.SIGNATURE_ALGORITHM);
-        assertEquals(DERNull.INSTANCE, rsa.getParameters());
+        assertEquals(zeroecho.pkix.AlgorithmIdentifier.ParameterForm.DER_NULL, rsa.parameterForm());
         assertEquals(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
                 adapter.decode(rsa, X509AlgorithmRole.SIGNATURE_ALGORITHM));
         assertThrows(IllegalArgumentException.class,
-                () -> adapter.decode(new AlgorithmIdentifier(
-                        new org.bouncycastle.asn1.ASN1ObjectIdentifier("1.2.840.113549.1.1.5"), DERNull.INSTANCE),
+                () -> adapter.decode(zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.5"),
                         X509AlgorithmRole.SIGNATURE_ALGORITHM));
         assertArrayEquals(new byte[] { 0x05, 0x00 },
-                BcX509AlgorithmAdapter.fromBc(rsa).parameters());
-        System.out.println("...oid=" + rsa.getAlgorithm().getId());
+                BcX509AlgorithmAdapter.fromLib(rsa).parameters());
+        System.out.println("...oid=" + rsa.oid());
         System.out.println("...ok");
     }
 
@@ -476,32 +477,32 @@ public final class X509BindingPhaseATest {
         KeyPair rsa = rsaGenerator.generateKeyPair();
         SubjectPublicKeyInfo rsaSpki = SubjectPublicKeyInfo.getInstance(rsa.getPublic().getEncoded());
         BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(authority.bindings());
-        AlgorithmIdentifier correct = adapter.encode(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+        zeroecho.pkix.AlgorithmIdentifier correct = adapter.encode(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
                 X509AlgorithmRole.SIGNATURE_ALGORITHM);
-        AlgorithmIdentifier wrongSignature = adapter.encode(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384,
-                X509AlgorithmRole.SIGNATURE_ALGORITHM);
-        AlgorithmIdentifier wrongParameters = new AlgorithmIdentifier(
-                new ASN1ObjectIdentifier(StandardX509Bindings.OID_RSA_SHA256));
-        AlgorithmIdentifier sha1 = new AlgorithmIdentifier(
-                new ASN1ObjectIdentifier("1.2.840.113549.1.1.5"), DERNull.INSTANCE);
+        zeroecho.pkix.AlgorithmIdentifier wrongSignature = adapter.encode(
+                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384, X509AlgorithmRole.SIGNATURE_ALGORITHM);
+        zeroecho.pkix.AlgorithmIdentifier wrongParameters =
+                zeroecho.pkix.AlgorithmIdentifier.absent(StandardX509Bindings.OID_RSA_SHA256);
+        zeroecho.pkix.AlgorithmIdentifier sha1 =
+                zeroecho.pkix.AlgorithmIdentifier.derNull("1.2.840.113549.1.1.5");
 
         assertThrows(IllegalArgumentException.class,
-                () -> executor.verify(authority, plan, rsaSpki, wrongSignature,
+                () -> executor.verify(authority, plan, rsaSpki.getEncoded(), wrongSignature,
                         new ImmutableByteContent(new byte[0]), new byte[0]));
         assertThrows(IllegalArgumentException.class,
-                () -> executor.verify(authority, plan, rsaSpki, wrongParameters,
+                () -> executor.verify(authority, plan, rsaSpki.getEncoded(), wrongParameters,
                         new ImmutableByteContent(new byte[0]), new byte[0]));
         assertThrows(IllegalArgumentException.class,
-                () -> executor.verify(authority, plan, rsaSpki, sha1, new ImmutableByteContent(new byte[0]),
-                        new byte[0]));
+                () -> executor.verify(authority, plan, rsaSpki.getEncoded(), sha1,
+                        new ImmutableByteContent(new byte[0]), new byte[0]));
 
         KeyPairGenerator ecGenerator = KeyPairGenerator.getInstance("EC");
         ecGenerator.initialize(256);
         SubjectPublicKeyInfo ecSpki = SubjectPublicKeyInfo
                 .getInstance(ecGenerator.generateKeyPair().getPublic().getEncoded());
         assertThrows(IllegalArgumentException.class,
-                () -> executor.verify(authority, plan, ecSpki, correct, new ImmutableByteContent(new byte[0]),
-                        new byte[0]));
+                () -> executor.verify(authority, plan, ecSpki.getEncoded(), correct,
+                        new ImmutableByteContent(new byte[0]), new byte[0]));
         System.out.println("...mismatches=4");
         System.out.println("...ok");
     }
@@ -566,9 +567,22 @@ public final class X509BindingPhaseATest {
         };
     }
 
-    private static AlgorithmIdentifier privateIdentifier(X509AuthoritySnapshot authority, String bindingId) {
-        return BcX509AlgorithmAdapter.toBc(authority.bindings().resolve(bindingId,
+    private static AlgorithmIdentifier privateIdentifier(X509AuthoritySnapshot authority, String bindingId)
+            throws IOException {
+        return toBc(authority.bindings().resolve(bindingId,
                 BootstrapAlgorithmIdentities.SPHINCS_PLUS_SIGNATURE, X509AlgorithmRole.SIGNATURE_ALGORITHM));
+    }
+
+    // Test-local structural conversion from the provider-neutral identifier to a BouncyCastle
+    // AlgorithmIdentifier, used to drive the test's own BC certificate/CRL/CSR builders.
+    private static AlgorithmIdentifier toBc(zeroecho.pki.impl.framework.x509.X509AlgorithmIdentifier id)
+            throws IOException {
+        return AlgorithmIdentifier.getInstance(org.bouncycastle.asn1.ASN1Primitive.fromByteArray(
+                zeroecho.pkix.Pkix.encodeAlgorithmIdentifier(BcX509AlgorithmAdapter.toLib(id))));
+    }
+
+    private static zeroecho.pkix.AlgorithmIdentifier lib(AlgorithmIdentifier identifier) throws IOException {
+        return zeroecho.pkix.Pkix.parseAlgorithmIdentifier(identifier.getEncoded());
     }
 
     private static ContentSigner contentSigner(PrivateKey privateKey, AlgorithmIdentifier identifier) {

@@ -80,7 +80,7 @@ public final class ZeroEchoLibSignatureWorkflowVerifyEncodedEcdsaTest {
 
         try (ZeroEchoLibSignatureWorkflow wf = new ZeroEchoLibSignatureWorkflow("wf", keyring,
                 tempDir.resolve("operations"), Clock.systemUTC(), Duration.ofDays(90), "zeroecho-lib:", true,
-                TestKeyringUnlocks.provider())) {
+                TestKeyringUnlocks.provider(), TestKeyringUnlocks.configurationCommitment())) {
             KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
             kpg.initialize(new ECGenParameterSpec("secp256r1"));
             KeyPair kp = kpg.generateKeyPair();

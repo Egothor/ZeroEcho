@@ -1,0 +1,131 @@
+###############################################################################
+# ZeroEcho PKI UI site — TLS server block (envsubst template).
+#
+# Rendered at container start by the official nginx entrypoint: only ${NGINX_*}
+# and ${PKI_*} placeholders are substituted (NGINX_ENVSUBST_FILTER); runtime
+# nginx variables written as $name are left untouched.
+#
+# Configurable via environment:
+#   NGINX_SERVER_NAME  public UI hostname (e.g. pki.example.com)
+#   NGINX_HTTPS_PORT   TLS listen port inside the container (default 8443)
+#   PKI_UPSTREAM       pki-server admin host:port (e.g. pki-server:8443)
+#   PKI_PROXY_SSL_NAME SNI / cert name expected on the pki-server TLS cert
+###############################################################################
+
+upstream pki_admin {
+    server ${PKI_UPSTREAM};
+    keepalive 16;
+}
+
+# Redirect plain HTTP to HTTPS (defence in depth; the UI is HTTPS-only).
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${NGINX_SERVER_NAME};
+    return 308 https://$host$request_uri;
+}
+
+server {
+    listen ${NGINX_HTTPS_PORT} ssl;
+    listen [::]:${NGINX_HTTPS_PORT} ssl;
+    http2 on;
+    server_name ${NGINX_SERVER_NAME};
+
+    # --- Server (edge) TLS identity presented to the browser -----------------
+    ssl_certificate     /etc/nginx/tls/edge/edge.crt;
+    ssl_certificate_key /etc/nginx/tls/edge/edge.key;
+    ssl_protocols       TLSv1.3 TLSv1.2;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_timeout 10m;
+    ssl_session_cache   shared:SSL:10m;
+
+    # --- Browser mutual-TLS: terminate the ADMIN client certificate ----------
+    # This trust bundle is the SAME administrators' trust anchor set that
+    # pki-server's `administrativeClientTrust` uses to authorise the forwarded
+    # identity. Only certificates chaining to it complete the handshake.
+    ssl_client_certificate /etc/nginx/tls/admin-trust/admin-ca-bundle.pem;
+    ssl_verify_client      on;
+    ssl_verify_depth       3;
+
+    # Hard body cap at the edge (admin API bodies are small JSON documents).
+    client_max_body_size 1m;
+
+    # --- Strict security headers at the UI origin ----------------------------
+    # CSP DECISION: script-src 'self' (Vite emits only hashed external module
+    # scripts — no inline <script>). style-src allows 'unsafe-inline' because
+    # MUI/Emotion inject styles at runtime via the CSSOM; see deploy/README.md
+    # for the rationale and the nonce alternative.
+    add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'" always;
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+
+    # --- Reverse proxy to pki-server over mTLS -------------------------------
+    # Common proxy settings applied to every API location below.
+    # nginx authenticates to pki-server with ITS OWN transport client cert; the
+    # verified browser identity travels in the RFC 9440 Client-Cert header.
+    location @deny_spoofed { return 400; }
+
+    # /admin, /public, /health, /account are the pki-server route prefixes.
+    location ~ ^/(admin|public|health|account)(/|$) {
+        proxy_pass https://pki_admin;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+
+        # Upstream mTLS: present nginx's transport client identity and verify
+        # the pki-server server certificate.
+        proxy_ssl_certificate         /etc/nginx/tls/upstream/proxy-client.crt;
+        proxy_ssl_certificate_key     /etc/nginx/tls/upstream/proxy-client.key;
+        proxy_ssl_trusted_certificate /etc/nginx/tls/upstream/pki-server-ca.pem;
+        proxy_ssl_verify        on;
+        proxy_ssl_verify_depth  3;
+        proxy_ssl_server_name   on;
+        proxy_ssl_name          ${PKI_PROXY_SSL_NAME};
+        proxy_ssl_protocols     TLSv1.3 TLSv1.2;
+
+        # Forward the verified browser leaf as RFC 9440 Client-Cert.
+        proxy_set_header Client-Cert $rfc9440_client_cert;
+        # Anti-spoofing: an empty proxy_set_header value makes nginx DROP the
+        # field, so any client-supplied Client-Cert-Chain / nginx-format header
+        # is stripped and never reaches pki-server.
+        proxy_set_header Client-Cert-Chain "";
+        proxy_set_header X-ZeroEcho-Client-Cert "";
+
+        proxy_connect_timeout 5s;
+        proxy_read_timeout    120s;
+        proxy_send_timeout    120s;
+    }
+
+    # --- Static SPA bundle ---------------------------------------------------
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Hashed, content-addressed assets are immutable and cache-forever.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    # The app shell must always be revalidated so new deploys are picked up.
+    location = /index.html {
+        add_header Cache-Control "no-cache" always;
+        # Re-emit the security headers (add_header does not inherit once a nested
+        # location sets its own).
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'" always;
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Frame-Options "DENY" always;
+    }
+
+    # SPA history fallback: unknown non-API paths return the app shell.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

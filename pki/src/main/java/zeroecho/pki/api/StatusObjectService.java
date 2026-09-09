@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.api;
 
+import zeroecho.core.io.CancellationSignal;
+
 import java.util.List;
 import java.util.Optional;
 
@@ -60,6 +62,18 @@ public interface StatusObjectService {
      * @throws PkiException             if generation fails
      */
     StatusObject generate(StatusObjectGenerateCommand command);
+
+    /**
+     * Generates a signed status object with originating cancellation.
+     *
+     * @param command validated generation command
+     * @param cancellation originating cooperative cancellation signal
+     * @return generated signed status object
+     */
+    default StatusObject generate(StatusObjectGenerateCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, "cancellation");
+        return generate(command);
+    }
 
     /**
      * Retrieves the latest status object of a given type for an issuer CA.

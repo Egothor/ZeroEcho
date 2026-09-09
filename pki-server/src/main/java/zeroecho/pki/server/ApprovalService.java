@@ -54,11 +54,27 @@ import java.util.Set;
 public final class ApprovalService {
     /** Approval lifecycle states. */
     public enum State {
-        PENDING(1), APPROVED(2), REJECTED(3), EXPIRED(4), CANCELLED(5), EXECUTING(6), EXECUTED(7);
+        /** Awaiting sufficient attributable decisions. */ PENDING(1),
+        /** Approval threshold was satisfied. */ APPROVED(2),
+        /** An eligible approver rejected the request. */ REJECTED(3),
+        /** The request exceeded its approval lifetime. */ EXPIRED(4),
+        /** The requester cancelled the request. */ CANCELLED(5),
+        /** The approved operation is durably claimed for execution. */ EXECUTING(6),
+        /** Execution completed and its safe classification is linked. */ EXECUTED(7);
         private final int code;
         State(int code) { this.code = code; }
-        /** @return stable persistence code */ public int code() { return code; }
-        /** Resolves a stable persistence code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable persistence code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted approval-state code
+         * @return corresponding approval state
+         */
         public static State fromCode(int code) {
             for (State candidate : values()) if (candidate.code == code) return candidate;
             throw new IllegalArgumentException("Unknown approval-state code");
@@ -67,11 +83,22 @@ public final class ApprovalService {
 
     /** Individual immutable approval choice. */
     public enum Choice {
-        APPROVE(1), REJECT(2);
+        /** Supports execution of the exact requested operation. */ APPROVE(1),
+        /** Rejects execution of the exact requested operation. */ REJECT(2);
         private final int code;
         Choice(int code) { this.code = code; }
-        /** @return stable persistence code */ public int code() { return code; }
-        /** Resolves a stable persistence code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable persistence code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted approval-choice code
+         * @return corresponding approval choice
+         */
         public static Choice fromCode(int code) {
             return switch (code) { case 1 -> APPROVE; case 2 -> REJECT;
                 default -> throw new IllegalArgumentException("Unknown approval-choice code"); };
@@ -110,7 +137,11 @@ public final class ApprovalService {
             }
         }
 
-        /** Returns a stable commitment for this policy. */
+        /**
+         * Returns a stable commitment for this policy.
+         *
+         * @return lowercase SHA-256 commitment to the complete policy
+         */
         public String commitment() {
             List<String> approvers = eligibleApprovers.stream().sorted().toList();
             List<String> roles = requiredRoleTemplateIds.stream().sorted().toList();
@@ -120,7 +151,14 @@ public final class ApprovalService {
         }
     }
 
-    /** One attributable immutable decision. */
+    /**
+     * One attributable immutable decision.
+     *
+     * @param principalId deciding principal identifier
+     * @param choice approval or rejection
+     * @param justification bounded operator justification
+     * @param decidedAt server-authoritative decision time
+     */
     public record Decision(String principalId, Choice choice, String justification, Instant decidedAt) {
         /** Validates the decision. */
         public Decision {
@@ -180,14 +218,30 @@ public final class ApprovalService {
     private final Clock clock;
     private final SafeAudit audit;
 
-    /** Creates a durable approval service over one server-control authority. */
+    /**
+     * Creates a durable approval service over one server-control authority.
+     *
+     * @param store durable server-control store
+     * @param clock authoritative server clock
+     * @param auditSink required safe audit sink
+     */
     public ApprovalService(ServerControlStore store, Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink) {
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.audit = new SafeAudit(clock, auditSink);
     }
 
-    /** Creates a new pending exact-operation request. */
+    /**
+     * Creates a new pending exact-operation request.
+     *
+     * @param approvalId stable approval identifier
+     * @param operationId stable typed operation identifier
+     * @param operationCommitment exact safe operation commitment
+     * @param scope exact security scope
+     * @param requesterPrincipalId requesting principal identifier
+     * @param policy frozen approval policy
+     * @return new durable pending approval request
+     */
     public synchronized Request request(String approvalId, String operationId, String operationCommitment,
             Permission.Scope scope, String requesterPrincipalId, Policy policy) {
         store.requirePrincipal(requesterPrincipalId);
@@ -196,11 +250,21 @@ public final class ApprovalService {
                 now, now.plus(policy.lifetime()), policy, policy.commitment(), State.PENDING, List.of(),
                 Optional.empty());
         store.createApproval(request);
-        audit.record("APPROVAL_REQUEST", requesterPrincipalId, Optional.empty(), Map.of("state", "PENDING"));
+        audit.record("APPROVAL_REQUEST", requesterPrincipalId, Optional.empty(),
+                Map.of("state", "PENDING", "approvalId", approvalId, "opCommitment", operationCommitment,
+                        "policyCommitment", policy.commitment()));
         return request;
     }
 
-    /** Records one distinct qualified decision and advances the durable state. */
+    /**
+     * Records one distinct qualified decision and advances the durable state.
+     *
+     * @param approvalId stable approval identifier
+     * @param principalId deciding principal identifier
+     * @param choice approval or rejection
+     * @param justification bounded operator justification
+     * @return durably updated approval request
+     */
     public synchronized Request decide(String approvalId, String principalId,
             Choice choice, String justification) {
         SecurityPrincipal principal = store.requirePrincipal(principalId);
@@ -232,11 +296,19 @@ public final class ApprovalService {
                         >= current.policy().threshold() ? State.APPROVED : State.PENDING;
         Request updated = copy(current, state, decisions, Optional.empty());
         store.replaceApproval(current, updated);
-        audit.record("APPROVAL_DECISION", principal.principalId(), Optional.empty(), Map.of("state", state.name()));
+        audit.record("APPROVAL_DECISION", principal.principalId(), Optional.empty(),
+                Map.of("state", state.name(), "approvalId", approvalId, "choice", choice.name(),
+                        "opCommitment", current.operationCommitment()));
         return updated;
     }
 
-    /** Cancels a pending request by its requester. */
+    /**
+     * Cancels a pending request by its requester.
+     *
+     * @param approvalId stable approval identifier
+     * @param requesterPrincipalId requesting principal identifier
+     * @return durably cancelled request
+     */
     public synchronized Request cancel(String approvalId, String requesterPrincipalId) {
         Request current = requireCurrent(approvalId);
         requirePending(current);
@@ -245,11 +317,20 @@ public final class ApprovalService {
         }
         Request updated = copy(current, State.CANCELLED, current.decisions(), Optional.empty());
         store.replaceApproval(current, updated);
-        audit.record("APPROVAL_CANCEL", requesterPrincipalId, Optional.empty(), Map.of("state", "CANCELLED"));
+        audit.record("APPROVAL_CANCEL", requesterPrincipalId, Optional.empty(),
+                Map.of("state", "CANCELLED", "approvalId", approvalId, "opCommitment", current.operationCommitment()));
         return updated;
     }
 
-    /** Validates and durably claims an approved operation before dispatch. */
+    /**
+     * Validates and durably claims an approved operation before dispatch.
+     *
+     * @param approvalId stable approval identifier
+     * @param operationId stable typed operation identifier
+     * @param operationCommitment exact safe operation commitment
+     * @param scope exact security scope
+     * @return durably claimed executing request
+     */
     public synchronized Request claim(String approvalId, String operationId, String operationCommitment,
             Permission.Scope scope) {
         Request current = requireCurrent(approvalId);
@@ -264,7 +345,13 @@ public final class ApprovalService {
         return executing;
     }
 
-    /** Durably links the safe result of one claimed execution. */
+    /**
+     * Durably links the safe result of one claimed execution.
+     *
+     * @param approvalId stable approval identifier
+     * @param safeResultClassification safe linked execution result
+     * @return durably executed request
+     */
     public synchronized Request complete(String approvalId, String safeResultClassification) {
         Request current = requireCurrent(approvalId);
         if (current.state() != State.EXECUTING) throw new IllegalStateException("Approval is not executing");
@@ -272,11 +359,17 @@ public final class ApprovalService {
                 Optional.of(Permission.requireBounded(safeResultClassification, 256, "result classification")));
         store.replaceApproval(current, executed);
         audit.record("APPROVAL_EXECUTION", current.requesterPrincipalId(), Optional.empty(),
-                Map.of("result", safeResultClassification));
+                Map.of("result", safeResultClassification, "approvalId", approvalId,
+                        "opCommitment", current.operationCommitment()));
         return executed;
     }
 
-    /** Returns the current record, applying durable expiry when necessary. */
+    /**
+     * Returns the current record, applying durable expiry when necessary.
+     *
+     * @param approvalId stable approval identifier
+     * @return current request after applying expiry
+     */
     public synchronized Request requireCurrent(String approvalId) {
         Request current = store.requireApproval(approvalId);
         return expireIfNecessary(current);
@@ -288,7 +381,8 @@ public final class ApprovalService {
             Request expired = copy(current, State.EXPIRED, current.decisions(), Optional.empty());
             store.replaceApproval(current, expired);
             audit.record("APPROVAL_EXPIRY", current.requesterPrincipalId(), Optional.empty(),
-                    Map.of("state", "EXPIRED"));
+                    Map.of("state", "EXPIRED", "approvalId", current.approvalId(),
+                            "opCommitment", current.operationCommitment()));
             return expired;
         }
         return current;
@@ -313,7 +407,12 @@ public final class ApprovalService {
                 source.policyCommitment(), state, decisions, result);
     }
 
-    /** Computes a deterministic SHA-256 hexadecimal commitment. */
+    /**
+     * Computes a deterministic SHA-256 hexadecimal commitment.
+     *
+     * @param canonical canonical non-secret value to commit
+     * @return lowercase SHA-256 commitment
+     */
     public static String digest(String canonical) {
         Objects.requireNonNull(canonical, "canonical");
         try {

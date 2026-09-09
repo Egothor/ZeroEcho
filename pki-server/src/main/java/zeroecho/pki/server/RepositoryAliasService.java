@@ -59,13 +59,26 @@ public final class RepositoryAliasService {
         /** Stable route to one explicit immutable CRL. */
         CURRENT_CRL(1),
         /** Stable route to one explicit immutable issuer chain path. */
-        CURRENT_CHAIN(2);
+        CURRENT_CHAIN(2),
+        /** Stable route to one explicit immutable delta CRL. */
+        CURRENT_DELTA_CRL(3);
         private final int code;
         Type(int code) { this.code = code; }
-        /** @return stable persistence code */ public int code() { return code; }
-        /** Resolves a stable persistence code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable persistence code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted alias-type code
+         * @return corresponding alias type
+         */
         public static Type fromCode(int code) {
             return switch (code) { case 1 -> CURRENT_CRL; case 2 -> CURRENT_CHAIN;
+                case 3 -> CURRENT_DELTA_CRL;
                 default -> throw new IllegalArgumentException("Unknown repository alias type"); };
         }
     }
@@ -76,15 +89,41 @@ public final class RepositoryAliasService {
         /** Alias has been deliberately removed. */ REMOVED(2);
         private final int code;
         State(int code) { this.code = code; }
-        /** @return stable persistence code */ public int code() { return code; }
-        /** Resolves a stable persistence code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return stable persistence code
+         */
+        public int code() { return code; }
+        /**
+         * Resolves a stable persistence code.
+         *
+         * @param code persisted alias-state code
+         * @return corresponding alias state
+         */
         public static State fromCode(int code) {
             return switch (code) { case 1 -> ACTIVE; case 2 -> REMOVED;
                 default -> throw new IllegalArgumentException("Unknown repository alias state"); };
         }
     }
 
-    /** Immutable finite alias metadata; no content bytes or filesystem paths. */
+    /**
+     * Immutable finite alias metadata; no content bytes or filesystem paths.
+     *
+     * @param aliasId deterministic alias identifier
+     * @param realmId owning security realm
+     * @param authorityId exact logical authority
+     * @param type alias type
+     * @param targetObjectId exact immutable target object
+     * @param issuerId exact issuer generation for chain aliases
+     * @param pathId exact chain path for chain aliases
+     * @param targetCommitment immutable target commitment
+     * @param createdAt server-authoritative creation time
+     * @param updatedAt server-authoritative last-update time
+     * @param actorPrincipalId principal responsible for the last mutation
+     * @param state durable alias state
+     * @param recordCommitment commitment to the complete alias record
+     */
     public record Record(String aliasId, RealmId realmId, PkiId authorityId, Type type, PkiId targetObjectId,
             Optional<PkiId> issuerId, Optional<PkiId> pathId, String targetCommitment, Instant createdAt,
             Instant updatedAt, String actorPrincipalId, State state, String recordCommitment) {
@@ -124,7 +163,16 @@ public final class RepositoryAliasService {
     private final Clock clock;
     private final SafeAudit audit;
 
-    /** Creates a repository alias authority over one realm control store. */
+    /**
+     * Creates a repository alias authority over one realm control store.
+     *
+     * @param realmId owning security realm
+     * @param store durable server-control store
+     * @param repository authoritative PKI repository
+     * @param disclosure effective disclosure-policy service
+     * @param clock authoritative server clock
+     * @param auditSink required safe audit sink
+     */
     public RepositoryAliasService(RealmId realmId, ServerControlStore store, PkiRepository repository,
             DisclosureService disclosure, Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink) {
         this.realmId = Objects.requireNonNull(realmId, "realmId");
@@ -135,17 +183,37 @@ public final class RepositoryAliasService {
         this.audit = new SafeAudit(clock, auditSink);
     }
 
-    /** Returns an exact alias, including a durable removed record. */
+    /**
+     * Returns an exact alias, including a durable removed record.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param type repository alias type
+     * @return exact durable alias including removed state
+     */
     public Record require(PkiId authorityId, Type type) {
         return store.requireRepositoryAlias(idFor(realmId, authorityId, type));
     }
 
-    /** Returns a bounded alias page. */
+    /**
+     * Returns a bounded alias page.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return bounded alias page
+     */
     public ServerControlStore.Page<Record> list(int offset, int limit) {
         return store.repositoryAliases(offset, limit);
     }
 
-    /** Atomically publishes a validated current-CRL alias. */
+    /**
+     * Atomically publishes a validated current-CRL alias.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param statusObjectId exact immutable status-object identifier
+     * @param expected optional expected current alias commitment
+     * @param actorPrincipalId authenticated audit actor
+     * @return durably active current-CRL alias
+     */
     public Record setCurrentCrl(PkiId authorityId, PkiId statusObjectId, Optional<String> expected,
             String actorPrincipalId) {
         StatusObject status = repository.statusObject(statusObjectId)
@@ -153,12 +221,42 @@ public final class RepositoryAliasService {
         if (!authorityId.equals(status.issuerCaId()) || status.type() != StatusObjectType.CRL) {
             throw new IllegalArgumentException("Current CRL target is invalid");
         }
-        requirePublic(statusObjectId, DisclosureService.ObjectType.CRL, true);
+        requirePublic(statusObjectId, DisclosureService.ObjectType.CRL, "CRL is not public");
         return set(authorityId, Type.CURRENT_CRL, statusObjectId, Optional.empty(), Optional.empty(),
                 status.content().sha256(), expected, actorPrincipalId);
     }
 
-    /** Atomically publishes one exact current public chain path. */
+    /**
+     * Atomically publishes a validated current-delta-CRL alias.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param statusObjectId exact immutable status-object identifier
+     * @param expected optional expected current alias commitment
+     * @param actorPrincipalId authenticated audit actor
+     * @return durably active current-delta-CRL alias
+     */
+    public Record setCurrentDeltaCrl(PkiId authorityId, PkiId statusObjectId, Optional<String> expected,
+            String actorPrincipalId) {
+        StatusObject status = repository.statusObject(statusObjectId)
+                .orElseThrow(() -> new IllegalArgumentException("Status object is unavailable"));
+        if (!authorityId.equals(status.issuerCaId()) || status.type() != StatusObjectType.DELTA_CRL) {
+            throw new IllegalArgumentException("Current delta-CRL target is invalid");
+        }
+        requirePublic(statusObjectId, DisclosureService.ObjectType.DELTA_CRL, "Delta CRL is not public");
+        return set(authorityId, Type.CURRENT_DELTA_CRL, statusObjectId, Optional.empty(), Optional.empty(),
+                status.content().sha256(), expected, actorPrincipalId);
+    }
+
+    /**
+     * Atomically publishes one exact current public chain path.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param issuerId exact issuer generation
+     * @param pathId exact issuer chain path
+     * @param expected optional expected current alias commitment
+     * @param actorPrincipalId authenticated audit actor
+     * @return durably active current-chain alias
+     */
     public Record setCurrentChain(PkiId authorityId, PkiId issuerId, PkiId pathId, Optional<String> expected,
             String actorPrincipalId) {
         IssuerGeneration issuer = repository.issuer(issuerId)
@@ -170,13 +268,21 @@ public final class RepositoryAliasService {
             throw new IllegalArgumentException("Current chain target is outside the authority");
         }
         for (PkiId credentialId : path.orderedCredentialIds()) {
-            requirePublic(credentialId, DisclosureService.ObjectType.CA_CERTIFICATE, false);
+            requirePublic(credentialId, DisclosureService.ObjectType.CA_CERTIFICATE, "Chain credential is not public");
         }
         return set(authorityId, Type.CURRENT_CHAIN, pathId, Optional.of(issuerId), Optional.of(pathId),
                 path.pathCommitment(), expected, actorPrincipalId);
     }
 
-    /** Atomically removes an alias without deleting its target. */
+    /**
+     * Atomically removes an alias without deleting its target.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param type repository alias type
+     * @param expectedCommitment required current alias commitment
+     * @param actorPrincipalId authenticated audit actor
+     * @return durably removed alias record
+     */
     public Record remove(PkiId authorityId, Type type, String expectedCommitment, String actorPrincipalId) {
         Record current = require(authorityId, type);
         if (current.state() == State.REMOVED) {
@@ -220,11 +326,11 @@ public final class RepositoryAliasService {
         return value;
     }
 
-    private void requirePublic(PkiId objectId, DisclosureService.ObjectType type, boolean crl) {
+    private void requirePublic(PkiId objectId, DisclosureService.ObjectType type, String errorMessage) {
         DisclosureService.Policy effective = store.findDisclosure(objectId).map(DisclosureService.Record::policy)
                 .orElseGet(() -> disclosure.defaultPolicy(type, false, false));
         if (effective != DisclosureService.Policy.PUBLIC) {
-            throw new SecurityException(crl ? "CRL is not public" : "Chain credential is not public");
+            throw new SecurityException(errorMessage);
         }
     }
 
@@ -236,7 +342,14 @@ public final class RepositoryAliasService {
                 targetCommitment, createdAt, updatedAt, actor, state, commitment);
     }
 
-    /** Returns the deterministic alias ID for one realm, authority, and type. */
+    /**
+     * Returns the deterministic alias ID for one realm, authority, and type.
+     *
+     * @param realmId owning security realm
+     * @param authorityId exact logical authority identifier
+     * @param type repository alias type
+     * @return deterministic alias identifier
+     */
     public static String idFor(RealmId realmId, PkiId authorityId, Type type) {
         return "repository-alias-" + digest(realmId.value() + "\n" + authorityId.value() + "\n" + type.name())
                 .substring(0, 32);

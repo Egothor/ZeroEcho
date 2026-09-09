@@ -49,10 +49,12 @@ import zeroecho.pki.server.ServerControlOperationOutcome;
 @SuppressWarnings("PMD")
 final class HttpResponses {
     record Response(int statusCode, byte[] body, boolean oneTimeSensitive,
-            java.util.Optional<String> capabilityId) {
+            java.util.Optional<String> capabilityId, java.util.Optional<String> statusLocation) {
         Response { body = Objects.requireNonNull(body, "body").clone();
-            capabilityId = Objects.requireNonNull(capabilityId, "capabilityId"); }
-        Response(int statusCode, byte[] body) { this(statusCode, body, false, java.util.Optional.empty()); }
+            capabilityId = Objects.requireNonNull(capabilityId, "capabilityId");
+            statusLocation = Objects.requireNonNull(statusLocation, "statusLocation"); }
+        Response(int statusCode, byte[] body) { this(statusCode, body, false,
+                java.util.Optional.empty(), java.util.Optional.empty()); }
         @Override public byte[] body() { return body.clone(); }
         void clearSensitiveBody() { if (oneTimeSensitive) java.util.Arrays.fill(body, (byte) 0); }
     }
@@ -90,7 +92,8 @@ final class HttpResponses {
                     zeroecho.pki.server.DisclosureService.bearerCredential(capabilityId, token)));
             Response encoded = encode(200, requestId, operation, "SUCCEEDED",
                     new PkiOperationValue.ObjectValue(result.values()), null);
-            return new Response(encoded.statusCode(), encoded.body(), true, java.util.Optional.of(capabilityId));
+            return new Response(encoded.statusCode(), encoded.body(), true, java.util.Optional.of(capabilityId),
+                    java.util.Optional.empty());
         } finally {
             java.util.Arrays.fill(token, (byte) 0);
         }
@@ -114,9 +117,16 @@ final class HttpResponses {
 
     private static Response backend(String requestId, String operation, PkiOperationOutcome outcome) {
         return switch (outcome) {
-            case PkiOperationOutcome.Success success -> encode(200, requestId, operation, "SUCCEEDED",
+            case PkiOperationOutcome.Completed success -> encode(200, requestId, operation, "SUCCEEDED",
                     new PkiOperationValue.ObjectValue(success.result().fields()), null);
-            case PkiOperationOutcome.Failure failure -> {
+            case PkiOperationOutcome.Pending pending -> {
+                PkiOperationValue result = new PkiOperationValue.ObjectValue(java.util.Map.of(
+                        "operationId", new PkiOperationValue.Text(pending.operationId().value())));
+                Response encoded = encode(202, requestId, operation, "PENDING", result, null);
+                yield new Response(encoded.statusCode(), encoded.body(), false, java.util.Optional.empty(),
+                        java.util.Optional.of("/admin/v1/signing-operations/" + pending.operationId().value()));
+            }
+            case PkiOperationOutcome.Failed failure -> {
                 int status = status(failure.classification());
                 boolean recovery = failure.classification() == PkiOperationFailure.RECOVERY_REQUIRED;
                 boolean reconciliation = failure.classification() == PkiOperationFailure.EXTERNAL_OUTCOME_UNKNOWN;
@@ -124,6 +134,19 @@ final class HttpResponses {
                         failure.code(), recovery, reconciliation);
             }
         };
+    }
+
+    static Response signingOperation(String requestId, PkiOperationOutcome outcome) {
+        Response encoded = backend(requestId, "signing.operation", outcome);
+        return new Response(encoded.statusCode(), encoded.body(), true,
+                java.util.Optional.empty(), encoded.statusLocation());
+    }
+
+    static Response signingNotFound(String requestId) {
+        Response encoded = failure(404, requestId, "operation", "NOT_FOUND", "OPERATION_NOT_FOUND",
+                "OPERATION_NOT_FOUND", false, false);
+        return new Response(encoded.statusCode(), encoded.body(), true,
+                java.util.Optional.empty(), java.util.Optional.empty());
     }
 
     private static Response successLikeFailure(int status, String requestId, String operation,
@@ -143,6 +166,7 @@ final class HttpResponses {
             case RECOVERY_REQUIRED, RESOURCE_FAILURE -> 503;
             case EXTERNAL_OUTCOME_UNKNOWN -> 409;
             case CANCELLED -> 504;
+            case OVERLOADED -> 429;
             case INTERNAL_FAILURE -> 500;
         };
     }

@@ -66,8 +66,6 @@ import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
  * <ul>
  * <li>{@code keyringPath} (required): filesystem path to the KeyringStore
  * file</li>
- * <li>{@code operationRoot} (required): exclusively owned durable signing
- * operation directory</li>
  * <li>{@code operationHorizon} (optional ISO-8601 duration, default
  * {@code P90D})</li>
  * <li>{@code keyRefPrefix} (optional, default {@code "zeroecho-lib:"})</li>
@@ -83,8 +81,10 @@ import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
 public final class ZeroEchoLibSignatureWorkflowProvider
         implements SignatureWorkflowProvider, AlgorithmExecutionCapabilityProvider {
     /** Stable failure code for a missing explicit keyring unlock provider. */
+    @SuppressWarnings("PMD.LongVariable")
     public static final String DC_KEYRING_UNLOCK_PROVIDER_REQUIRED = "KEYRING_UNLOCK_PROVIDER_REQUIRED";
     /** Stable failure code for an unlock-provider acquisition failure. */
+    @SuppressWarnings("PMD.LongVariable")
     public static final String DC_KEYRING_UNLOCK_PROVIDER_FAILED = "KEYRING_UNLOCK_PROVIDER_FAILED";
     /** Stable failure code for an I/O failure while opening the keyring. */
     public static final String DC_KEYRING_OPEN_FAILED = "KEYRING_OPEN_FAILED";
@@ -92,7 +92,6 @@ public final class ZeroEchoLibSignatureWorkflowProvider
     private static final Logger LOG = Logger.getLogger(ZeroEchoLibSignatureWorkflowProvider.class.getName());
 
     private static final String KEY_KEYRING_PATH = "keyringPath";
-    private static final String KEY_OPERATION_ROOT = "operationRoot";
     private static final String KEY_OPERATION_HORIZON = "operationHorizon";
     private static final String KEY_KEYREF_PREFIX = "keyRefPrefix";
     private static final String KEY_REQUIRE_SUFFIX = "requireComponentSuffix";
@@ -129,7 +128,7 @@ public final class ZeroEchoLibSignatureWorkflowProvider
 
     @Override
     public Set<String> supportedKeys() {
-        return Set.of(KEY_KEYRING_PATH, KEY_OPERATION_ROOT, KEY_OPERATION_HORIZON, KEY_KEYREF_PREFIX,
+        return Set.of(KEY_KEYRING_PATH, KEY_OPERATION_HORIZON, KEY_KEYREF_PREFIX,
                 KEY_REQUIRE_SUFFIX);
     }
 
@@ -182,7 +181,9 @@ public final class ZeroEchoLibSignatureWorkflowProvider
         SignatureWorkflowProvider.super.validateConfig(config);
         String keyringPath = config.require(KEY_KEYRING_PATH);
         Path.of(keyringPath);
-        Path.of(config.require(KEY_OPERATION_ROOT));
+        if (config.properties().containsKey("operationRoot")) {
+            throw new IllegalArgumentException("Configuration key 'operationRoot' is not supported");
+        }
         config.get(KEY_OPERATION_HORIZON).ifPresent(value -> {
             Duration horizon = Duration.parse(value);
             if (horizon.isZero() || horizon.isNegative()) {
@@ -214,7 +215,7 @@ public final class ZeroEchoLibSignatureWorkflowProvider
         if (provider == null) {
             throw new PkiException(DC_KEYRING_UNLOCK_PROVIDER_REQUIRED);
         }
-        return allocate(config, provider);
+        throw new PkiException("LOCAL_SIGNING_LEDGER_REQUIRED");
     }
 
     /**
@@ -233,23 +234,25 @@ public final class ZeroEchoLibSignatureWorkflowProvider
         if (provider == null) {
             throw new PkiException(DC_KEYRING_UNLOCK_PROVIDER_REQUIRED);
         }
-        return allocate(config, provider);
+        zeroecho.pki.spi.crypto.LocalSigningLedgerParticipant participant = dependencies
+                .localSigningLedgerParticipant()
+                .orElseThrow(() -> new PkiException("LOCAL_SIGNING_LEDGER_REQUIRED"));
+        return allocate(config, provider, participant);
     }
 
-    // Cleanup must cover every constructor failure, including unchecked failures.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    private SignatureWorkflow allocate(final ProviderConfig config, KeyringUnlockProvider unlockProvider) {
+    private SignatureWorkflow allocate(final ProviderConfig config, KeyringUnlockProvider unlockProvider,
+            zeroecho.pki.spi.crypto.LocalSigningLedgerParticipant participant) {
         validateConfig(config);
         String keyringPath = config.require(KEY_KEYRING_PATH);
-        Path operationRoot = Path.of(config.require(KEY_OPERATION_ROOT));
         Duration operationHorizon = config.get(KEY_OPERATION_HORIZON).map(Duration::parse).orElse(Duration.ofDays(90));
         String prefix = config.get(KEY_KEYREF_PREFIX).orElse("zeroecho-lib:");
         boolean requireSuffix = config.get(KEY_REQUIRE_SUFFIX).map(Boolean::parseBoolean).orElse(Boolean.TRUE);
 
         KeyringStore keyring = openKeyring(Path.of(keyringPath), unlockProvider);
         try {
-            return new ZeroEchoLibSignatureWorkflow(id(), Path.of(keyringPath), operationRoot, Clock.systemUTC(),
-                    operationHorizon, prefix, requireSuffix, unlockProvider, keyring);
+            return new ZeroEchoLibSignatureWorkflow(id(), Path.of(keyringPath), Clock.systemUTC(),
+                    operationHorizon, prefix, requireSuffix, unlockProvider, keyring, participant);
         } catch (RuntimeException | Error failure) {
             keyring.close();
             throw failure;

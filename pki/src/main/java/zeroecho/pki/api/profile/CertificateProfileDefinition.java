@@ -34,15 +34,19 @@
 package zeroecho.pki.api.profile;
 
 import java.time.Duration;
+import java.util.Optional;
 
 import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 
 /**
  * Immutable, versioned certificate-profile configuration.
  *
  * <p>
- * Schema version 3 adds explicit immutable X.509 algorithm-binding selection to
- * the closed pre-release profile shape. The certificate kind and its closed
+ * Schema version 4 adds an exact immutable confirmation policy to end-entity
+ * profiles in the closed pre-release profile shape. Schema version 5 adds an
+ * explicit {@link IssuanceApprovalRequirement} that selects the multi-party
+ * approval control applied to issuance. The certificate kind and its closed
  * policy variant are immutable across the definition.
  * Runtime activation state is deliberately excluded.
  * </p>
@@ -53,24 +57,89 @@ import zeroecho.pki.api.FormatId;
  * @param formatId          framework/format identifier
  * @param displayName       human-readable profile name
  * @param maximumValidity   positive maximum validity
+ * @param approvalRequirement multi-party approval requirement for issuance
  * @param subjectPolicy     complete subject policy
  * @param certificatePolicy closed certificate-specific policy variant
  * @param algorithmBindingPolicy explicit X.509 representation policy
+ * @param confirmationPolicy exact leaf confirmation policy; absent for CA profiles
  */
+// The record is the stable closed schema; replacing components with containers would change its public contract.
+@SuppressWarnings("PMD.ExcessiveParameterList")
 public record CertificateProfileDefinition(CertificateProfileKind certificateType, String profileId,
         long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
-        SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy,
-        X509AlgorithmBindingPolicy algorithmBindingPolicy) {
+        IssuanceApprovalRequirement approvalRequirement, SubjectPolicy subjectPolicy,
+        CertificatePolicy certificatePolicy, X509AlgorithmBindingPolicy algorithmBindingPolicy,
+        Optional<CredentialConfirmationPolicy> confirmationPolicy) {
 
     /** Current certificate-profile document schema version. */
-    public static final int SCHEMA_VERSION = 3;
+    public static final int SCHEMA_VERSION = 5;
 
-    /** Creates a standard-only profile definition. */
+    /**
+     * Creates a standard-only CA profile definition without an issuance approval requirement.
+     *
+     * @param certificateType CA certificate kind governed by the profile
+     * @param profileId nonblank stable profile identifier
+     * @param profileVersion positive imported profile version
+     * @param formatId credential framework and encoding format
+     * @param displayName nonblank human-readable profile name
+     * @param maximumValidity positive maximum credential validity
+     * @param subjectPolicy complete CA subject policy
+     * @param certificatePolicy closed CA certificate policy
+     */
     public CertificateProfileDefinition(CertificateProfileKind certificateType, String profileId,
             long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
             SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy) {
-        this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity, subjectPolicy,
-                certificatePolicy, X509AlgorithmBindingPolicy.standardOnly());
+        this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity,
+                IssuanceApprovalRequirement.NONE, subjectPolicy, certificatePolicy,
+                X509AlgorithmBindingPolicy.standardOnly(), Optional.empty());
+    }
+
+    /**
+     * Creates a profile without a leaf confirmation policy; valid only for CA profiles.
+     *
+     * @param certificateType CA certificate kind governed by the profile
+     * @param profileId nonblank stable profile identifier
+     * @param profileVersion positive imported profile version
+     * @param formatId credential framework and encoding format
+     * @param displayName nonblank human-readable profile name
+     * @param maximumValidity positive maximum credential validity
+     * @param subjectPolicy complete CA subject policy
+     * @param certificatePolicy closed CA certificate policy
+     * @param algorithmBindingPolicy explicit X.509 representation policy
+     */
+    public CertificateProfileDefinition(CertificateProfileKind certificateType, String profileId,
+            long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
+            SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy,
+            X509AlgorithmBindingPolicy algorithmBindingPolicy) {
+        this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity,
+                IssuanceApprovalRequirement.NONE, subjectPolicy, certificatePolicy, algorithmBindingPolicy,
+                Optional.empty());
+    }
+
+    /**
+     * Creates a profile with the pre-approval-requirement component order, defaulting
+     * issuance approval to {@link IssuanceApprovalRequirement#NONE}. Retained so existing
+     * programmatic callers stay source-compatible across the schema-5 field addition.
+     *
+     * @param certificateType certificate kind governed by the profile
+     * @param profileId nonblank stable profile identifier
+     * @param profileVersion positive imported profile version
+     * @param formatId credential framework and encoding format
+     * @param displayName nonblank human-readable profile name
+     * @param maximumValidity positive maximum credential validity
+     * @param subjectPolicy complete subject policy
+     * @param certificatePolicy closed certificate-specific policy
+     * @param algorithmBindingPolicy explicit X.509 representation policy
+     * @param confirmationPolicy exact leaf confirmation policy; absent for CA profiles
+     */
+    public CertificateProfileDefinition(CertificateProfileKind certificateType, String profileId,
+            long profileVersion, FormatId formatId, String displayName, Duration maximumValidity,
+            SubjectPolicy subjectPolicy, CertificatePolicy certificatePolicy,
+            X509AlgorithmBindingPolicy algorithmBindingPolicy,
+            Optional<CredentialConfirmationPolicy> confirmationPolicy) {
+        this(certificateType, profileId, profileVersion, formatId, displayName, maximumValidity,
+                IssuanceApprovalRequirement.NONE, subjectPolicy, certificatePolicy, algorithmBindingPolicy,
+                confirmationPolicy);
     }
 
     /**
@@ -98,12 +167,19 @@ public record CertificateProfileDefinition(CertificateProfileKind certificateTyp
         if (maximumValidity == null || maximumValidity.isZero() || maximumValidity.isNegative()) {
             throw new IllegalArgumentException("maximumValidity must be positive");
         }
-        if (subjectPolicy == null || certificatePolicy == null || algorithmBindingPolicy == null) {
+        if (subjectPolicy == null || certificatePolicy == null || algorithmBindingPolicy == null
+                || confirmationPolicy == null) {
             throw new IllegalArgumentException("profile policies must not be null");
+        }
+        if (approvalRequirement == null) {
+            throw new IllegalArgumentException("approvalRequirement must not be null");
         }
         boolean leaf = certificatePolicy instanceof LeafCertificatePolicy;
         if (certificateType == CertificateProfileKind.END_ENTITY != leaf) {
             throw new IllegalArgumentException("certificate type and policy variant do not match");
+        }
+        if (leaf != confirmationPolicy.isPresent()) {
+            throw new IllegalArgumentException("confirmation policy is required exactly for end-entity profiles");
         }
         if (certificateType != CertificateProfileKind.END_ENTITY
                 && (subjectPolicy.allowEmpty() || subjectPolicy.rules().isEmpty()

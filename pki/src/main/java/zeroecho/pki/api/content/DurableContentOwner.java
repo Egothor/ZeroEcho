@@ -102,7 +102,11 @@ public record DurableContentOwner(Category category, String identifier) {
         return new DurableContentOwner(Category.CREDENTIAL_RECORD, credentialId.value());
     }
 
-    /** Returns a deterministic persistence token containing no path or payload. */
+    /**
+     * Returns a deterministic persistence token containing no path or payload.
+     *
+     * @return canonical category and identifier token
+     */
     public String canonicalForm() {
         return category.name() + ":" + identifier;
     }

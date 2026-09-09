@@ -34,17 +34,22 @@
 package zeroecho.pki.server.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Base64;
 
 import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.server.AdministrativeOperation;
 import zeroecho.pki.server.OperationSecurityDescriptors;
+import zeroecho.pki.server.PkiServerConfiguration;
 import zeroecho.pki.server.RealmId;
 import zeroecho.pki.server.ServerControlOperation;
+import zeroecho.pki.application.PkiOperation;
 
 /** Strict HTTPS decoding coverage for the closed server-control operation family. */
 class HttpServerControlOperationCodecTest {
@@ -92,26 +97,165 @@ class HttpServerControlOperationCodecTest {
     }
 
     @Test
-    void decodesDirectoryRegistrationWithClosedPolicy() {
-        System.out.println("decodesDirectoryRegistrationWithClosedPolicy");
+    void decodesExplicitCredentialPublicationEnrollmentWithoutPolicyInputs() {
+        String json = "{\"version\":1,\"arguments\":{\"credentialId\":\"credential-a\","
+                + "\"ownerPrincipalId\":\"owner-a\"}}";
+
+        HttpOperationCodec.Decoded decoded = decode(
+                ServerControlOperation.EnrollCredentialPublication.NAME, json);
+        ServerControlOperation.EnrollCredentialPublication operation = assertInstanceOf(
+                ServerControlOperation.EnrollCredentialPublication.class,
+                ((AdministrativeOperation.Control) decoded.operation()).operation());
+
+        assertEquals("credential-a", operation.credentialId().value());
+        assertEquals("owner-a", operation.ownerPrincipalId().orElseThrow());
+        assertEquals("credential-a", decoded.resource().objectId().orElseThrow().value());
+        assertEquals(java.util.Optional.empty(), decoded.resource().scope().authorityId());
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                ServerControlOperation.EnrollCredentialPublication.NAME,
+                "{\"version\":1,\"arguments\":{\"credentialId\":\"credential-a\","
+                        + "\"policy\":\"PUBLIC\"}}"));
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                ServerControlOperation.EnrollCredentialPublication.NAME,
+                "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{"
+                        + "\"credentialId\":\"credential-a\"}}"));
+    }
+
+    @Test
+    void decodesDirectoryRegistrationWithoutClientSelectedConfirmationPolicy() {
+        System.out.println("decodesDirectoryRegistrationWithoutClientSelectedConfirmationPolicy");
         String json = "{\"version\":1,\"authorityId\":\"ca:internal\",\"arguments\":{"
                 + "\"alias\":\"internal\",\"authorityId\":\"ca:internal\",\"profileId\":\"tls\","
                 + "\"dnsNamespaces\":[\"example.test\"],\"maximumValidityMillis\":86400000,"
                 + "\"publicKeyAlgorithms\":[\"ECDSA\"],\"x509BindingPolicies\":[\"STANDARD_ONLY\"],"
                 + "\"challengeTypes\":[\"DNS_01\"],\"challengeProviderIds\":[\"zeroecho.dns-01.jndi.v1\"],"
-                + "\"eabRequired\":false,\"disclosurePolicy\":\"OWNER_ONLY\"}}";
+                + "\"eabRequired\":false}}";
         HttpOperationCodec.Decoded decoded = decode(ServerControlOperation.RegisterAcmeDirectory.NAME, json);
         ServerControlOperation.RegisterAcmeDirectory operation = assertInstanceOf(
                 ServerControlOperation.RegisterAcmeDirectory.class,
                 ((AdministrativeOperation.Control) decoded.operation()).operation());
         assertEquals("internal", operation.registration().alias());
         assertEquals("tls", operation.registration().profileId());
-        System.out.println("...directory-policy=closed");
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                ServerControlOperation.RegisterAcmeDirectory.NAME,
+                json.replace("\"eabRequired\":false", "\"eabRequired\":false,"
+                        + "\"disclosurePolicy\":\"OWNER_ONLY\"")));
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                ServerControlOperation.RegisterAcmeDirectory.NAME,
+                json.replace("\"eabRequired\":false", "\"eabRequired\":false,"
+                        + "\"expectedProfileVersion\":1,\"expectedPolicyCommitment\":\""
+                        + "1".repeat(64) + "\"")));
+        System.out.println("...directory-policy=profile-owned");
         System.out.println("...ok");
     }
 
+    @Test
+    void decodesBoundedAuthorityScopedPendingConfirmationQuery() {
+        String json = "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{"
+                + "\"profileId\":\"server-tls\","
+                + "\"cutoffInclusive\":\"2026-08-30T12:00:00Z\",\"limit\":100}}";
+        HttpOperationCodec.Decoded decoded = decode(
+                PkiOperation.ListPendingCredentialConfirmations.NAME, json);
+        PkiOperation.ListPendingCredentialConfirmations operation = assertInstanceOf(
+                PkiOperation.ListPendingCredentialConfirmations.class,
+                ((AdministrativeOperation.Pki) decoded.operation()).operation());
+        assertEquals("ca-a", operation.authorityId().value());
+        assertEquals("server-tls", operation.profileId().orElseThrow());
+        assertEquals(java.util.Optional.empty(), operation.afterExclusive());
+        assertEquals(java.util.Optional.of("server-tls"), decoded.resource().scope().profileId());
+        assertEquals(java.util.Optional.empty(), decoded.resource().objectId());
+        OperationSecurityDescriptors.Descriptor descriptor = DESCRIPTORS.require(operation.name());
+        assertEquals(zeroecho.pki.server.Permission.Action.CERTIFICATE_SEARCH, descriptor.action());
+        assertEquals(zeroecho.pki.server.Permission.DataView.METADATA_REDACTED, descriptor.dataView());
+        assertEquals(OperationSecurityDescriptors.ApprovalCategory.NONE, descriptor.approvalCategory());
+
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                PkiOperation.ListPendingCredentialConfirmations.NAME,
+                "{\"version\":1,\"arguments\":{\"cutoffInclusive\":"
+                        + "\"2026-08-30T12:00:00Z\",\"limit\":100}}"));
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                PkiOperation.ListPendingCredentialConfirmations.NAME,
+                json.replace("\"limit\":100", "\"limit\":1001")));
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                PkiOperation.ListPendingCredentialConfirmations.NAME,
+                json.replace("\"limit\":100", "\"afterExclusive\":\"bad!\",\"limit\":100")));
+    }
+
+    @Test
+    void decodesChallengeIssuanceWithOnlyCredentialAndMandatoryOuterAuthority() {
+        String json = "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{"
+                + "\"credentialId\":\"credential-a\"}}";
+        HttpOperationCodec.Decoded decoded = decode(
+                PkiOperation.IssueCredentialConfirmationChallenge.NAME, json);
+        PkiOperation.IssueCredentialConfirmationChallenge operation = assertInstanceOf(
+                PkiOperation.IssueCredentialConfirmationChallenge.class,
+                ((AdministrativeOperation.Pki) decoded.operation()).operation());
+        assertEquals("credential-a", operation.credentialId().value());
+        assertEquals("ca-a", decoded.resource().scope().authorityId().orElseThrow().value());
+        assertEquals(java.util.Optional.empty(), decoded.resource().scope().profileId());
+        assertEquals("credential-a", decoded.resource().objectId().orElseThrow().value());
+        OperationSecurityDescriptors.Descriptor descriptor = DESCRIPTORS.require(operation.name());
+        assertEquals(zeroecho.pki.server.Permission.Action.CERTIFICATE_PUBLICATION_CHANGE,
+                descriptor.action());
+        assertEquals(zeroecho.pki.server.Permission.DataView.METADATA_REDACTED,
+                descriptor.dataView());
+        assertEquals(true, descriptor.mutating());
+        assertEquals(OperationSecurityDescriptors.ApprovalCategory.NONE,
+                descriptor.approvalCategory());
+
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                PkiOperation.IssueCredentialConfirmationChallenge.NAME,
+                "{\"version\":1,\"arguments\":{\"credentialId\":\"credential-a\"}}"));
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                PkiOperation.IssueCredentialConfirmationChallenge.NAME,
+                json.replace("\"credentialId\":\"credential-a\"",
+                        "\"credentialId\":\"credential-a\",\"nonce\":\"forbidden\"")));
+    }
+
+    @Test
+    void decodesOnlyCanonicalBoundedProofCompletionResponse() {
+        byte[] maximum = new byte[zeroecho.pki.spi.confirmation.KeyPossessionProofResponse.MAXIMUM_BYTES];
+        Arrays.fill(maximum, (byte) 0xa5);
+        String canonical = Base64.getUrlEncoder().withoutPadding().encodeToString(maximum);
+        assertEquals(PkiServerConfiguration.Listener.MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS,
+                canonical.length());
+
+        HttpOperationCodec.Decoded decoded = decode(
+                PkiOperation.CompleteCredentialConfirmationProof.NAME, completionJson(canonical));
+        PkiOperation.CompleteCredentialConfirmationProof operation = assertInstanceOf(
+                PkiOperation.CompleteCredentialConfirmationProof.class,
+                ((AdministrativeOperation.Pki) decoded.operation()).operation());
+        assertArrayEquals(maximum, operation.submission().response());
+        assertEquals("credential-a", operation.submission().proofCas().credentialId().value());
+        assertEquals(java.util.Optional.of("ca-a"), decoded.resource().scope().authorityId()
+                .map(zeroecho.pki.api.PkiId::value));
+
+        byte[] over = new byte[maximum.length + 1];
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                PkiOperation.CompleteCredentialConfirmationProof.NAME,
+                completionJson(Base64.getUrlEncoder().withoutPadding().encodeToString(over))));
+        for (String invalid : java.util.List.of("", "AQ==", "AQ ", "+A", "AR",
+                "A".repeat(PkiServerConfiguration.Listener.MAXIMUM_PROOF_RESPONSE_BASE64URL_CHARACTERS + 1))) {
+            assertThrows(IllegalArgumentException.class, () -> decode(
+                    PkiOperation.CompleteCredentialConfirmationProof.NAME, completionJson(invalid)));
+        }
+        assertThrows(IllegalArgumentException.class, () -> decode(
+                PkiOperation.CompleteCredentialConfirmationProof.NAME,
+                completionJson("AQ").replace("\"response\":\"AQ\"",
+                        "\"response\":\"AQ\",\"nonce\":\"forbidden\"")));
+    }
+
+    private static String completionJson(String response) {
+        return "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{"
+                + "\"credentialId\":\"credential-a\",\"expectedLifecycleRevision\":1,"
+                + "\"expectedLifecycleRecordCommitment\":\"" + "a".repeat(64) + "\","
+                + "\"expectedChallengeRecordCommitment\":\"" + "b".repeat(64) + "\","
+                + "\"response\":\"" + response + "\"}}";
+    }
+
     private static HttpOperationCodec.Decoded decode(String operation, String json) {
-        return HttpOperationCodec.decode(operation, json.getBytes(StandardCharsets.UTF_8), 16_384,
+        return HttpOperationCodec.decode(operation, json.getBytes(StandardCharsets.UTF_8),
+                PkiServerConfiguration.Listener.MINIMUM_BODY_BYTES,
                 REALM, DESCRIPTORS::require);
     }
 }

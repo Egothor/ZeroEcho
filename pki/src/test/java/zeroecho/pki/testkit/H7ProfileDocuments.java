@@ -61,6 +61,10 @@ public final class H7ProfileDocuments {
     private static final String URI_ONE = "{\"type\":\"URI\",\"minimumOccurrences\":1,\"maximumOccurrences\":1,"
             + "\"allowedSchemes\":[\"https\"]}";
     private static final String RFC822_ONE = "{\"type\":\"RFC822_NAME\",\"minimumOccurrences\":1,\"maximumOccurrences\":1}";
+    private static final String CONFIRMATION_POLICY = "{\"disclosurePolicy\":\"OWNER_ONLY\","
+            + "\"confirmationWindow\":\"PT24H\",\"proofSuiteId\":\"zeroecho.signature-pop.v1\","
+            + "\"proofSuiteCommitment\":\"5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11\","
+            + "\"policyCommitment\":\"4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30\"}";
 
     private H7ProfileDocuments() {
     }
@@ -229,10 +233,12 @@ public final class H7ProfileDocuments {
             List<String> sanRules, boolean noKeyEncipherment, List<String> eku) {
         String keyUsage = noKeyEncipherment ? "[\"DIGITAL_SIGNATURE\"]"
                 : "[\"DIGITAL_SIGNATURE\",\"KEY_ENCIPHERMENT\"]";
-        String json = "{\"schemaVersion\":3,\"certificateType\":\"END_ENTITY\",\"profileId\":\"" + id
+        String json = "{\"schemaVersion\":5,\"certificateType\":\"END_ENTITY\",\"profileId\":\"" + id
                 + "\",\"profileVersion\":1,\"formatId\":\"" + formatId + "\",\"displayName\":\"H7 Test Profile\","
+                + "\"maxValidity\":\"PT8760H\",\"approvalRequirement\":\"NONE\","
                 + "\"algorithmBindings\":{\"mode\":\"STANDARD_ONLY\"},"
-                + "\"maxValidity\":\"PT8760H\",\"subject\":{\"allowEmpty\":" + allowEmpty + ",\"rules\":["
+                + "\"confirmationPolicy\":" + CONFIRMATION_POLICY
+                + ",\"subject\":{\"allowEmpty\":" + allowEmpty + ",\"rules\":["
                 + String.join(",", subjectRules) + "]}," + "\"subjectAlternativeNames\":{\"minimumTotal\":"
                 + minimumTotal + ",\"maximumTotal\":" + maximumTotal + ",\"serviceIdentityRequired\":" + serviceIdentity
                 + ",\"emailIdentityRequired\":" + emailIdentity + ",\"criticalWhenSubjectNonEmpty\":" + critical

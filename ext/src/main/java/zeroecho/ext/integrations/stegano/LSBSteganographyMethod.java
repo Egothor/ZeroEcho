@@ -100,8 +100,13 @@ import javax.imageio.ImageIO;
 public class LSBSteganographyMethod implements SteganographyMethod {
     private static final int LENGTH_PREFIX_BYTES = Integer.BYTES;
     private static final int LENGTH_PREFIX_BITS = LENGTH_PREFIX_BYTES * Byte.SIZE;
-    private static final int CARRIER_BITS_PER_PAYLOAD_BYTE = Byte.SIZE;
+    private static final int BITS_PER_PAYLOAD_BYTE = Byte.SIZE;
     private static final Logger LOG = Logger.getLogger(LSBSteganographyMethod.class.getName());
+
+    /** Creates a stateless least-significant-bit steganography processor. */
+    public LSBSteganographyMethod() {
+        // Stateless implementation.
+    }
 
     /**
      * Embeds the provided message into the least significant bits of the image and
@@ -255,7 +260,7 @@ public class LSBSteganographyMethod implements SteganographyMethod {
         if (availableBits < 0) {
             throw new IOException("LSB carrier is too small.");
         }
-        long maximumPayloadBytes = availableBits / CARRIER_BITS_PER_PAYLOAD_BYTE;
+        long maximumPayloadBytes = availableBits / BITS_PER_PAYLOAD_BYTE;
         if (maximumPayloadBytes >= Integer.MAX_VALUE) {
             throw new IOException("LSB carrier capacity exceeds supported range.");
         }
@@ -273,7 +278,7 @@ public class LSBSteganographyMethod implements SteganographyMethod {
     private static long requiredCarrierBits(int payloadBytes) throws IOException {
         try {
             return Math.addExact(LENGTH_PREFIX_BITS,
-                    Math.multiplyExact((long) payloadBytes, CARRIER_BITS_PER_PAYLOAD_BYTE));
+                    Math.multiplyExact((long) payloadBytes, BITS_PER_PAYLOAD_BYTE));
         } catch (ArithmeticException exception) {
             throw new IOException("LSB payload capacity is invalid.", exception);
         }

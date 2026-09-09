@@ -57,7 +57,13 @@ public final class RoleTemplateCatalog {
     private static final int MAXIMUM_RESOURCE_BYTES = 131_072;
     private static final TokenStreamFactory JSON = JsonFactory.builder().build();
 
-    /** Immutable role template that has no authority until scoped assignment. */
+    /**
+     * Immutable role template that has no authority until scoped assignment.
+     *
+     * @param templateId stable template identifier
+     * @param version positive template version
+     * @param actions finite permission actions supplied by the template
+     */
     public record Template(String templateId, int version, Set<Permission.Action> actions) {
         /** Validates the stable template. */
         public Template {
@@ -68,7 +74,17 @@ public final class RoleTemplateCatalog {
         }
     }
 
-    /** Persistable scoped role assignment; the template itself grants nothing. */
+    /**
+     * Persistable scoped role assignment; the template itself grants nothing.
+     *
+     * @param assignmentId stable assignment identifier
+     * @param principalId grantee principal
+     * @param templateId exact template identifier
+     * @param templateVersion exact template version
+     * @param scope non-wildcard realm and optional subscopes
+     * @param expiresAt optional mandatory assignment expiry
+     * @param enabled whether the assignment participates in authorization
+     */
     public record Assignment(String assignmentId, String principalId, String templateId,
             int templateVersion, Permission.Scope scope, java.util.Optional<java.time.Instant> expiresAt,
             boolean enabled) {
@@ -82,7 +98,16 @@ public final class RoleTemplateCatalog {
             expiresAt = Objects.requireNonNull(expiresAt, "expiresAt");
         }
 
-        /** Creates an assignment without an expiry for existing embedded callers. */
+        /**
+         * Creates an assignment without an expiry for existing embedded callers.
+         *
+         * @param assignmentId stable assignment identifier
+         * @param principalId grantee principal
+         * @param templateId exact template identifier
+         * @param templateVersion exact template version
+         * @param scope non-wildcard realm and optional subscopes
+         * @param enabled whether the assignment participates in authorization
+         */
         public Assignment(String assignmentId, String principalId, String templateId,
                 int templateVersion, Permission.Scope scope, boolean enabled) {
             this(assignmentId, principalId, templateId, templateVersion, scope, java.util.Optional.empty(), enabled);
@@ -153,12 +178,22 @@ public final class RoleTemplateCatalog {
         }
     }
 
-    /** @return immutable templates ordered by stable ID */
+    /**
+     * Returns the built-in templates.
+     *
+     * @return immutable templates ordered by stable ID
+     */
     public List<Template> templates() {
         return templates;
     }
 
-    /** Resolves one exact template. */
+    /**
+     * Resolves one exact template.
+     *
+     * @param templateId stable template identifier
+     * @param version exact positive template version
+     * @return matching immutable template
+     */
     public Template require(String templateId, int version) {
         return templates.stream().filter(item -> item.templateId().equals(templateId) && item.version() == version)
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("Role template is unavailable"));
@@ -207,7 +242,8 @@ public final class RoleTemplateCatalog {
 
     private static Permission.Relationship relationship(Template template, Permission.Action action) {
         boolean requesterCredential = "requester".equals(template.templateId())
-                && action.name().startsWith("CERTIFICATE_");
+                && action.name().startsWith("CERTIFICATE_")
+                && action != Permission.Action.CERTIFICATE_CONFIRM;
         return action.name().endsWith("_OWN") || requesterCredential
                 ? Permission.Relationship.OWN : Permission.Relationship.ANY;
     }

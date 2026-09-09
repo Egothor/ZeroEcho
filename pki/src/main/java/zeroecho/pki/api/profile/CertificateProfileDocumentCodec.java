@@ -61,9 +61,12 @@ import tools.jackson.core.json.JsonFactoryBuilder;
 import tools.jackson.core.json.JsonReadFeature;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
+import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
+import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
 
 /**
- * Strict JSON parser and canonical writer for version 2 certificate-profile
+ * Strict JSON parser and canonical writer for version 4 certificate-profile
  * documents.
  *
  * <p>
@@ -83,10 +86,10 @@ public final class CertificateProfileDocumentCodec {
     private static final int MAXIMUM_DEPTH = 16;
     private static final int MAXIMUM_ARRAY_ELEMENTS = 128;
     private static final int MAXIMUM_STRING_UTF8_BYTES = 4_096;
-    private static final int MAXIMUM_PROFILE_ID_UTF8_BYTES = 128;
-    private static final int MAXIMUM_DISPLAY_NAME_UTF8_BYTES = 256;
+    private static final int MAX_PROFILE_ID_UTF8_BYTES = 128;
+    private static final int MAX_DISPLAY_NAME_UTF8_BYTES = 256;
     private static final int MAXIMUM_FORMAT_ID_UTF8_BYTES = 128;
-    private static final int MAXIMUM_URI_SCHEME_ASCII_BYTES = 32;
+    private static final int MAX_URI_SCHEME_ASCII_BYTES = 32;
     private static final int READ_BUFFER_BYTES = 8_192;
     private static final int MAXIMUM_ASCII_VALUE = 127;
 
@@ -186,7 +189,7 @@ public final class CertificateProfileDocumentCodec {
      * @return newly allocated canonical JSON bytes without a BOM or trailing
      *         whitespace
      * @throws PkiException if the definition cannot be represented by schema
-     *                      version 2
+     *                      version 4
      */
     public static byte[] writeCanonical(CertificateProfileDefinition definition) {
         validateDefinition(definition);
@@ -237,16 +240,16 @@ public final class CertificateProfileDocumentCodec {
             requireValue(parser, "$." + field);
             readDocumentField(parser, field, document);
         }
-        requireAll(document.seen, 9, "$");
+        requireAll(document.seen, 10, "$");
         if (document.schemaVersion != CertificateProfileDefinition.SCHEMA_VERSION) {
             throw failure("SCHEMA_VERSION_UNSUPPORTED", "$.schemaVersion");
         }
         if (document.profileVersion <= 0) {
             throw failure("PROFILE_VERSION_INVALID", "$.profileVersion");
         }
-        validateProfileString(document.profileId, MAXIMUM_PROFILE_ID_UTF8_BYTES, "$.profileId", "TOKEN_INVALID");
+        validateProfileString(document.profileId, MAX_PROFILE_ID_UTF8_BYTES, "$.profileId", "TOKEN_INVALID");
         validateProfileString(document.formatId, MAXIMUM_FORMAT_ID_UTF8_BYTES, "$.formatId", "TOKEN_INVALID");
-        validateProfileString(document.displayName, MAXIMUM_DISPLAY_NAME_UTF8_BYTES, "$.displayName", "TOKEN_INVALID");
+        validateProfileString(document.displayName, MAX_DISPLAY_NAME_UTF8_BYTES, "$.displayName", "TOKEN_INVALID");
         requirePolicyFields(document.certificateType, document.seen);
         return constructDefinition(document);
     }
@@ -264,7 +267,7 @@ public final class CertificateProfileDocumentCodec {
             }
             case "profileId" -> {
                 document.seen = mark(document.seen, 2, "$.profileId");
-                document.profileId = readBoundedString(parser, "$.profileId", MAXIMUM_PROFILE_ID_UTF8_BYTES);
+                document.profileId = readBoundedString(parser, "$.profileId", MAX_PROFILE_ID_UTF8_BYTES);
             }
             case "profileVersion" -> {
                 document.seen = mark(document.seen, 3, "$.profileVersion");
@@ -276,11 +279,15 @@ public final class CertificateProfileDocumentCodec {
             }
             case "displayName" -> {
                 document.seen = mark(document.seen, 5, "$.displayName");
-                document.displayName = readBoundedString(parser, "$.displayName", MAXIMUM_DISPLAY_NAME_UTF8_BYTES);
+                document.displayName = readBoundedString(parser, "$.displayName", MAX_DISPLAY_NAME_UTF8_BYTES);
             }
             case "maxValidity" -> {
                 document.seen = mark(document.seen, 6, "$.maxValidity");
                 document.maximumValidity = readDuration(parser, "$.maxValidity");
+            }
+            case "approvalRequirement" -> {
+                document.seen = mark(document.seen, 9, "$.approvalRequirement");
+                document.approvalRequirement = readApprovalRequirement(parser, "$.approvalRequirement");
             }
             case "subject" -> {
                 document.seen = mark(document.seen, 7, "$.subject");
@@ -290,6 +297,7 @@ public final class CertificateProfileDocumentCodec {
                 document.seen = mark(document.seen, 8, "$.algorithmBindings");
                 document.algorithmBindings = readAlgorithmBindings(parser, "$.algorithmBindings");
             }
+            case "confirmationPolicy" -> readDocumentConfirmation(parser, document);
             case "subjectAlternativeNames" -> readDocumentSan(parser, document);
             case "leafCertificate" -> readDocumentLeaf(parser, document);
             case "caCertificate" -> readDocumentCa(parser, document);
@@ -297,11 +305,21 @@ public final class CertificateProfileDocumentCodec {
         }
     }
 
+    private static void readDocumentConfirmation(JsonParser parser, DocumentFields document)
+            throws JacksonException {
+        if (document.certificateType != null
+                && document.certificateType != CertificateProfileKind.END_ENTITY) {
+            throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.confirmationPolicy");
+        }
+        document.seen = mark(document.seen, 13, "$.confirmationPolicy");
+        document.confirmation = readConfirmationPolicy(parser, "$.confirmationPolicy");
+    }
+
     private static void readDocumentSan(JsonParser parser, DocumentFields document) throws JacksonException {
         if (document.certificateType != null && document.certificateType != CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.subjectAlternativeNames");
         }
-        document.seen = mark(document.seen, 9, "$.subjectAlternativeNames");
+        document.seen = mark(document.seen, 10, "$.subjectAlternativeNames");
         document.san = readSan(parser, "$.subjectAlternativeNames");
     }
 
@@ -309,7 +327,7 @@ public final class CertificateProfileDocumentCodec {
         if (document.certificateType != null && document.certificateType != CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.leafCertificate");
         }
-        document.seen = mark(document.seen, 10, "$.leafCertificate");
+        document.seen = mark(document.seen, 11, "$.leafCertificate");
         document.leaf = readLeaf(parser, "$.leafCertificate");
     }
 
@@ -317,23 +335,24 @@ public final class CertificateProfileDocumentCodec {
         if (document.certificateType == CertificateProfileKind.END_ENTITY) {
             throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.caCertificate");
         }
-        document.seen = mark(document.seen, 11, "$.caCertificate");
+        document.seen = mark(document.seen, 12, "$.caCertificate");
         document.ca = readCa(parser, "$.caCertificate");
     }
 
     private static void requirePolicyFields(CertificateProfileKind certificateType, long seen) {
-        boolean hasSan = isSeen(seen, 9);
-        boolean hasLeaf = isSeen(seen, 10);
-        boolean hasCa = isSeen(seen, 11);
+        boolean hasSan = isSeen(seen, 10);
+        boolean hasLeaf = isSeen(seen, 11);
+        boolean hasCa = isSeen(seen, 12);
+        boolean hasConfirmation = isSeen(seen, 13);
         if (certificateType == CertificateProfileKind.END_ENTITY) {
             if (hasCa) {
                 throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$.caCertificate");
             }
-            if (!hasSan || !hasLeaf) {
+            if (!hasSan || !hasLeaf || !hasConfirmation) {
                 throw failure("MISSING_FIELD", "$");
             }
         } else {
-            if (hasSan || hasLeaf) {
+            if (hasSan || hasLeaf || hasConfirmation) {
                 throw failure("FIELD_FORBIDDEN_FOR_CERTIFICATE_TYPE", "$");
             }
             if (!hasCa) {
@@ -351,6 +370,7 @@ public final class CertificateProfileDocumentCodec {
         try {
             SubjectPolicy subjectPolicy = new SubjectPolicy(document.subject.allowEmpty(), document.subject.rules());
             CertificatePolicy policy;
+            Optional<CredentialConfirmationPolicy> confirmationPolicy = Optional.empty();
             if (document.certificateType == CertificateProfileKind.END_ENTITY) {
                 SubjectAlternativeNamePolicy sanPolicy = new SubjectAlternativeNamePolicy(document.san.minimumTotal(),
                         document.san.maximumTotal(), document.san.rules(), document.san.wildcardAllowed(),
@@ -363,6 +383,16 @@ public final class CertificateProfileDocumentCodec {
                         document.leaf.extendedKeyUsage(), document.leaf.keyUsageCritical(),
                         document.leaf.extendedKeyUsageCritical(), document.leaf.basicConstraintsCritical(),
                         document.leaf.allowedKeyAlgorithms());
+                CredentialConfirmationPolicy confirmation = new CredentialConfirmationPolicy(
+                        document.confirmation.disclosurePolicy(),
+                        document.confirmation.confirmationWindow(),
+                        new ConfirmationProofSuiteRef(document.confirmation.proofSuiteId(),
+                                document.confirmation.proofSuiteCommitment()));
+                if (!confirmation.configurationCommitment().equals(
+                        document.confirmation.policyCommitment())) {
+                    throw new IllegalArgumentException("Confirmation policy commitment differs");
+                }
+                confirmationPolicy = Optional.of(confirmation);
             } else {
                 policy = new CaCertificatePolicy(document.ca.basicConstraintsCritical(),
                         document.ca.pathLengthConstraint(), document.ca.keyUsageCritical(), document.ca.keyUsages(),
@@ -370,10 +400,55 @@ public final class CertificateProfileDocumentCodec {
             }
             return new CertificateProfileDefinition(document.certificateType, document.profileId,
                     document.profileVersion, new FormatId(document.formatId), document.displayName,
-                    document.maximumValidity, subjectPolicy, policy, document.algorithmBindings);
+                    document.maximumValidity, document.approvalRequirement, subjectPolicy, policy,
+                    document.algorithmBindings, confirmationPolicy);
         } catch (IllegalArgumentException | ArithmeticException ex) {
             throw failure("SEMANTIC_INVALID", "$");
         }
+    }
+
+    private static ConfirmationSection readConfirmationPolicy(JsonParser parser, String path)
+            throws JacksonException {
+        requireToken(parser.currentToken(), JsonToken.START_OBJECT, path);
+        long seen = 0L;
+        ConfirmationDisclosurePolicy disclosurePolicy = null;
+        Duration confirmationWindow = null;
+        String proofSuiteId = null;
+        String proofSuiteCommitment = null;
+        String policyCommitment = null;
+        while (parser.nextToken() != JsonToken.END_OBJECT) {
+            requireToken(parser.currentToken(), JsonToken.PROPERTY_NAME, path);
+            String field = parser.currentName();
+            requireValue(parser, path + "." + field);
+            switch (field) {
+                case "disclosurePolicy" -> {
+                    seen = mark(seen, 0, path + ".disclosurePolicy");
+                    disclosurePolicy = readEnum(parser, ConfirmationDisclosurePolicy.class,
+                            path + ".disclosurePolicy");
+                }
+                case "confirmationWindow" -> {
+                    seen = mark(seen, 1, path + ".confirmationWindow");
+                    confirmationWindow = readDuration(parser, path + ".confirmationWindow");
+                }
+                case "proofSuiteId" -> {
+                    seen = mark(seen, 2, path + ".proofSuiteId");
+                    proofSuiteId = readBoundedString(parser, path + ".proofSuiteId", 128);
+                }
+                case "proofSuiteCommitment" -> {
+                    seen = mark(seen, 3, path + ".proofSuiteCommitment");
+                    proofSuiteCommitment = readBoundedString(
+                            parser, path + ".proofSuiteCommitment", 64);
+                }
+                case "policyCommitment" -> {
+                    seen = mark(seen, 4, path + ".policyCommitment");
+                    policyCommitment = readBoundedString(parser, path + ".policyCommitment", 64);
+                }
+                default -> throw failure("UNKNOWN_FIELD", path + ".?");
+            }
+        }
+        requireAll(seen, 5, path);
+        return new ConfirmationSection(disclosurePolicy, confirmationWindow, proofSuiteId,
+                proofSuiteCommitment, policyCommitment);
     }
 
     private static SubjectSection readSubject(JsonParser parser, String path) throws JacksonException {
@@ -695,7 +770,7 @@ public final class CertificateProfileDocumentCodec {
         Set<String> values = new LinkedHashSet<>();
         while (parser.nextToken() != JsonToken.END_ARRAY) {
             checkArrayBound(values.size(), path);
-            String value = readBoundedString(parser, path + "[" + values.size() + "]", MAXIMUM_URI_SCHEME_ASCII_BYTES);
+            String value = readBoundedString(parser, path + "[" + values.size() + "]", MAX_URI_SCHEME_ASCII_BYTES);
             if (!isAscii(value) || !value.equals(value.toLowerCase(java.util.Locale.ROOT)) || !values.add(value)) {
                 throw failure("TOKEN_INVALID", path);
             }
@@ -872,7 +947,11 @@ public final class CertificateProfileDocumentCodec {
         generator.writeStringProperty("formatId", definition.formatId().value());
         generator.writeStringProperty("displayName", definition.displayName());
         generator.writeStringProperty("maxValidity", definition.maximumValidity().toString());
+        generator.writeStringProperty("approvalRequirement", definition.approvalRequirement().name());
         writeAlgorithmBindings(generator, definition.algorithmBindingPolicy());
+        if (definition.confirmationPolicy().isPresent()) {
+            writeConfirmationPolicy(generator, definition.confirmationPolicy().orElseThrow());
+        }
         writeSubject(generator, definition.subjectPolicy());
         if (definition.certificateType() == CertificateProfileKind.END_ENTITY) {
             LeafCertificatePolicy leaf = definition.leafPolicy();
@@ -881,6 +960,18 @@ public final class CertificateProfileDocumentCodec {
         } else {
             writeCa(generator, definition.caPolicy());
         }
+        generator.writeEndObject();
+    }
+
+    private static void writeConfirmationPolicy(JsonGenerator generator,
+            CredentialConfirmationPolicy policy) throws JacksonException {
+        generator.writeObjectPropertyStart("confirmationPolicy");
+        generator.writeStringProperty("disclosurePolicy", policy.disclosurePolicy().name());
+        generator.writeStringProperty("confirmationWindow", policy.confirmationWindow().toString());
+        generator.writeStringProperty("proofSuiteId", policy.proofSuite().suiteId());
+        generator.writeStringProperty("proofSuiteCommitment",
+                policy.proofSuite().configurationCommitment());
+        generator.writeStringProperty("policyCommitment", policy.configurationCommitment());
         generator.writeEndObject();
     }
 
@@ -994,11 +1085,11 @@ public final class CertificateProfileDocumentCodec {
         if (definition == null) {
             throw failure("CANONICALIZATION_FAILED", "$");
         }
-        validateProfileString(definition.profileId(), MAXIMUM_PROFILE_ID_UTF8_BYTES, "$.profileId",
+        validateProfileString(definition.profileId(), MAX_PROFILE_ID_UTF8_BYTES, "$.profileId",
                 "CANONICALIZATION_FAILED");
         validateProfileString(definition.formatId().value(), MAXIMUM_FORMAT_ID_UTF8_BYTES, "$.formatId",
                 "CANONICALIZATION_FAILED");
-        validateProfileString(definition.displayName(), MAXIMUM_DISPLAY_NAME_UTF8_BYTES, "$.displayName",
+        validateProfileString(definition.displayName(), MAX_DISPLAY_NAME_UTF8_BYTES, "$.displayName",
                 "CANONICALIZATION_FAILED");
         validateWritableString(definition.maximumValidity().toString(), MAXIMUM_STRING_UTF8_BYTES, "$.maxValidity");
         if (definition.subjectPolicy().rules().size() > MAXIMUM_ARRAY_ELEMENTS) {
@@ -1025,7 +1116,7 @@ public final class CertificateProfileDocumentCodec {
             throw failure("CANONICALIZATION_FAILED", "$");
         }
         for (String scheme : leaf.subjectAlternativeNamePolicy().allowedUriSchemes()) {
-            validateWritableString(scheme, MAXIMUM_URI_SCHEME_ASCII_BYTES,
+            validateWritableString(scheme, MAX_URI_SCHEME_ASCII_BYTES,
                     "$.subjectAlternativeNames.rules.allowedSchemes");
             if (!isAscii(scheme)) {
                 throw failure("CANONICALIZATION_FAILED", "$.subjectAlternativeNames.rules.allowedSchemes");
@@ -1124,6 +1215,16 @@ public final class CertificateProfileDocumentCodec {
         }
     }
 
+    private static IssuanceApprovalRequirement readApprovalRequirement(JsonParser parser, String path)
+            throws JacksonException {
+        String token = readString(parser, path);
+        try {
+            return IssuanceApprovalRequirement.valueOf(token);
+        } catch (IllegalArgumentException ex) {
+            throw failure("APPROVAL_REQUIREMENT_UNSUPPORTED", path);
+        }
+    }
+
     private static boolean parseSubjectSource(String source, String path) {
         if (REQUESTER_SOURCE.equals(source)) {
             return false;
@@ -1217,6 +1318,10 @@ public final class CertificateProfileDocumentCodec {
         return value.length >= 3 && value[0] == (byte) 0xef && value[1] == (byte) 0xbb && value[2] == (byte) 0xbf;
     }
 
+    // Jackson signals a STRICT_DUPLICATE_DETECTION violation only through its message;
+    // the library exposes no typed duplicate-field exception. This narrow, stable
+    // third-party marker is matched deliberately and is not internal control flow that
+    // parses one of our own machine-coded exception messages.
     private static boolean isDuplicateFailure(JacksonException exception) {
         String message = exception.getMessage();
         return message != null && message.contains("Duplicate");
@@ -1236,11 +1341,18 @@ public final class CertificateProfileDocumentCodec {
         private String formatId;
         private String displayName;
         private Duration maximumValidity;
+        private IssuanceApprovalRequirement approvalRequirement;
         private X509AlgorithmBindingPolicy algorithmBindings;
+        private ConfirmationSection confirmation;
         private SubjectSection subject;
         private SanSection san;
         private LeafSection leaf;
         private CaSection ca;
+    }
+
+    private record ConfirmationSection(ConfirmationDisclosurePolicy disclosurePolicy,
+            Duration confirmationWindow, String proofSuiteId, String proofSuiteCommitment,
+            String policyCommitment) {
     }
 
     private record SubjectSection(boolean allowEmpty, List<SubjectRdnRule> rules) {

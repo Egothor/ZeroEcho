@@ -185,8 +185,12 @@ public final class HttpServerTestSupport {
                 new ProviderConfig("fs", Map.of("root", directory.resolve("pki-store").toString())),
                 new ProviderConfig("memory", Map.of("size", "128")), Optional.empty(), List.of(), List.of());
         ServerRealmConfiguration realm = new ServerRealmConfiguration(ServerTestSupport.REALM, "Production",
-                session, new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES,
-                        Set.of(), true), ServerTestSupport.DIGEST, approval.commitment(), ServerTestSupport.DIGEST,
+                ServerTestSupport.CONFIRMATION_PROOF_POLICY, session,
+                new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES,
+                        Set.of(), true), ServerTestSupport.DIGEST, approval.commitment(),
+                ServerRealmConfiguration.extendedApprovalCommitment(
+                        Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval)),
+                ServerTestSupport.DIGEST,
                 DisclosureService.Defaults.recommended(), directory.resolve("control.log"),
                 new MetadataStoreId("fedcba9876543210fedcba9876543210"),
                 Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, approval));

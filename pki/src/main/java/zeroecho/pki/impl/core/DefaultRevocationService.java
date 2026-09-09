@@ -36,14 +36,16 @@ package zeroecho.pki.impl.core;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.List;
+import java.util.EnumSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.PkiFailureReason;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.RevocationService;
 import zeroecho.pki.api.audit.AuditEvent;
@@ -57,6 +59,7 @@ import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.RevocationHistory;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationTransitionFeed;
 
 /**
  * Store-backed authoritative revocation transition service.
@@ -65,10 +68,20 @@ public final class DefaultRevocationService implements RevocationService {
     private static final Instant UNKNOWN_AUDIT_TIME = Instant.EPOCH;
     private static final Principal SYSTEM_PKI = new Principal("SYSTEM", "pki");
     private static final Purpose REVOCATION_PURPOSE = new Purpose("REVOCATION");
-    private static final List<String> SAFE_STORE_CODES = List.of("REVOCATION_CREDENTIAL_NOT_FOUND",
-            "REVOCATION_TRANSITION_ILLEGAL", "REVOCATION_TERMINAL", "REVOCATION_TRANSITION_CONFLICT",
-            "REVOCATION_STATE_CORRUPT", "REVOCATION_PERSIST_FAILED", "REVOCATION_DURABILITY_UNCONFIRMED",
-            "REVOCATION_RECOVERY_REQUIRED", "STORE_DURABILITY_UNCONFIRMED");
+    // Store failures are hostile boundaries: only these enumerated typed reasons are
+    // preserved from a store exception; every other failure is reduced to the opaque
+    // REVOCATION_STATE_UPDATE_FAILED reason.
+    private static final Set<PkiFailureReason> SAFE_STORE_REASONS = EnumSet.of(
+            PkiFailureReason.REVOCATION_CREDENTIAL_NOT_FOUND,
+            PkiFailureReason.REVOCATION_TRANSITION_ILLEGAL,
+            PkiFailureReason.REVOCATION_TERMINAL,
+            PkiFailureReason.REVOCATION_TRANSITION_CONFLICT,
+            PkiFailureReason.REVOCATION_STATE_CORRUPT,
+            PkiFailureReason.REVOCATION_PERSIST_FAILED,
+            PkiFailureReason.REVOCATION_RECOVERY_REQUIRED,
+            PkiFailureReason.STORE_DURABILITY_UNCONFIRMED,
+            PkiFailureReason.CONFIRMATION_REVOCATION_CONFLICT,
+            PkiFailureReason.CONFIRMATION_REVOCATION_RECOVERY_REQUIRED);
 
     private final PkiStore store;
     private final Clock clock;
@@ -104,6 +117,24 @@ public final class DefaultRevocationService implements RevocationService {
 
     @Override
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    public RevocationRecord revokeOverduePendingConfirmation(
+            RevocationCommand.RevokePermanently command) {
+        RevocationCommand.RevokePermanently exact = Objects.requireNonNull(command, "command");
+        try {
+            RevocationRecord record = store.revokeOverduePendingCredentialConfirmation(exact);
+            auditSuccess(record.transition().time(), record,
+                    "REVOKE_OVERDUE_PENDING_CONFIRMATION");
+            return record;
+        } catch (RuntimeException failure) {
+            PkiException sanitized = sanitized(failure);
+            auditRejected(safeAuditTime(), exact.credentialId(),
+                    "REVOKE_OVERDUE_PENDING_CONFIRMATION", codeOf(sanitized), currentState(exact));
+            throw sanitized;
+        }
+    }
+
+    @Override
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public Optional<RevocationRecord> get(PkiId credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
         try {
@@ -119,6 +150,17 @@ public final class DefaultRevocationService implements RevocationService {
         Objects.requireNonNull(credentialId, "credentialId");
         try {
             return store.openRevocationHistory(credentialId);
+        } catch (RuntimeException failure) {
+            throw sanitized(failure);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    public RevocationTransitionFeed feed(Optional<RevocationTransitionFeed.Position> afterExclusive) {
+        Objects.requireNonNull(afterExclusive, "afterExclusive");
+        try {
+            return store.openRevocationTransitionFeed(afterExclusive);
         } catch (RuntimeException failure) {
             throw sanitized(failure);
         }
@@ -145,7 +187,8 @@ public final class DefaultRevocationService implements RevocationService {
             return record;
         } catch (RuntimeException failure) {
             PkiException sanitized = time == null
-                    ? new PkiException("Revocation operation failed: code=REVOCATION_TIME_UNAVAILABLE")
+                    ? new PkiException("Revocation operation failed: code=REVOCATION_TIME_UNAVAILABLE",
+                            PkiFailureReason.REVOCATION_TIME_UNAVAILABLE)
                     : sanitized(failure);
             auditRejected(time == null ? UNKNOWN_AUDIT_TIME : time, command.credentialId(), operation,
                     codeOf(sanitized), time == null ? Optional.empty() : currentState(command));
@@ -178,6 +221,15 @@ public final class DefaultRevocationService implements RevocationService {
         }
     }
 
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private Instant safeAuditTime() {
+        try {
+            return Objects.requireNonNull(clock.instant(), "clock instant");
+        } catch (RuntimeException unavailable) {
+            return UNKNOWN_AUDIT_TIME;
+        }
+    }
+
     private void auditSuccess(Instant time, RevocationRecord record, String operation) {
         RevocationTransition latest = record.transition();
         audit(time, record.credentialId(), operation, Map.of("result", "COMMITTED", "state", latest.state().name(),
@@ -204,24 +256,22 @@ public final class DefaultRevocationService implements RevocationService {
         }
     }
 
-    // Store failures are hostile boundaries. Preserve only enumerated stable codes,
-    // never raw messages or causes.
+    // Store failures are hostile boundaries. Preserve only the typed reason from the
+    // enumerated safe set, never a raw message or cause; anything else collapses to
+    // the opaque REVOCATION_STATE_UPDATE_FAILED reason.
     private static PkiException sanitized(RuntimeException failure) {
-        String message = failure.getMessage();
-        if (message != null) {
-            for (String code : SAFE_STORE_CODES) {
-                if (message.contains("code=" + code)) {
-                    return new PkiException("Revocation operation failed: code=" + code);
-                }
-            }
+        PkiFailureReason reason = failure instanceof PkiException pkiFailure
+                ? pkiFailure.failureReason().filter(SAFE_STORE_REASONS::contains).orElse(null)
+                : null;
+        if (reason != null) {
+            return new PkiException("Revocation operation failed: code=" + reason.name(), reason);
         }
-        return new PkiException("Revocation operation failed: code=REVOCATION_STATE_UPDATE_FAILED");
+        return new PkiException("Revocation operation failed: code=REVOCATION_STATE_UPDATE_FAILED",
+                PkiFailureReason.REVOCATION_STATE_UPDATE_FAILED);
     }
 
     private static String codeOf(PkiException failure) {
-        String message = failure.getMessage();
-        int marker = message.indexOf("code=");
-        return marker < 0 ? "REVOCATION_STATE_UPDATE_FAILED" : message.substring(marker + 5);
+        return failure.failureReason().map(PkiFailureReason::name).orElse("REVOCATION_STATE_UPDATE_FAILED");
     }
 
     /** Query-filtered ownership wrapper over one stable store snapshot. */

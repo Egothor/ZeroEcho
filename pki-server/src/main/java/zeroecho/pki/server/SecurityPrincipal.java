@@ -63,12 +63,22 @@ public record SecurityPrincipal(String principalId, Type type, String displayNam
             this.code = code;
         }
 
-        /** @return stable persistence code */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return encoded principal-type code
+         */
         public int code() {
             return code;
         }
 
-        /** Resolves one stable persistence code. */
+        /**
+         * Resolves one stable persistence code.
+         *
+         * @param code encoded principal-type code
+         * @return corresponding principal type
+         * @throws IllegalArgumentException if {@code code} is unknown
+         */
         public static Type fromCode(int code) {
             return switch (code) {
                 case 1 -> USER;

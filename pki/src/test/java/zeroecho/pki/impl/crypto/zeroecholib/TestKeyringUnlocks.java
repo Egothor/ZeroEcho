@@ -35,6 +35,7 @@ package zeroecho.pki.impl.crypto.zeroecholib;
 
 import zeroecho.core.spi.KeyringUnlockProvider;
 import zeroecho.core.storage.KeyringPassword;
+import zeroecho.pki.spi.crypto.SignatureWorkflow;
 
 public final class TestKeyringUnlocks {
     private TestKeyringUnlocks() {
@@ -42,5 +43,10 @@ public final class TestKeyringUnlocks {
 
     public static KeyringUnlockProvider provider() {
         return () -> new KeyringPassword(new char[] { 'p', 'k', 'i', '-', 't', 'e', 's', 't', '-', 'k', 'e', 'y' });
+    }
+
+    /* default */ static SignatureWorkflow.ConfigurationCommitment configurationCommitment() {
+        return new SignatureWorkflow.ConfigurationCommitment(
+                new byte[SignatureWorkflow.ConfigurationCommitment.BYTE_LENGTH]);
     }
 }

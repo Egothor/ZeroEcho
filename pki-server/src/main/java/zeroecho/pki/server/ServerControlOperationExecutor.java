@@ -42,6 +42,10 @@ import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.core.io.CancellationSignal;
+import zeroecho.pki.api.audit.AuditEvent;
+import zeroecho.pki.api.audit.AuditIntegrityReport;
+import zeroecho.pki.api.audit.AuditIntegrityService;
+import zeroecho.pki.api.audit.AuditService;
 import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationResult;
@@ -51,7 +55,7 @@ import zeroecho.pki.server.acme.AcmeState;
 
 /** Sole closed dispatcher for transport-neutral server-control operations. */
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.ExcessiveParameterList",
-        "PMD.ControlStatementBraces" })
+        "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
 public final class ServerControlOperationExecutor {
     private final RealmId realmId;
     private final AuthorityExposurePolicy exposure;
@@ -61,18 +65,40 @@ public final class ServerControlOperationExecutor {
     private final ApprovalService approvals;
     private final BreakGlassService breakGlass;
     private final DisclosureService disclosure;
+    private final CredentialPublicationGate credentialPublication;
     private final AuditorViews auditorViews;
     private final Optional<RepositoryAliasService> repositoryAliases;
     private final OperationSecurityDescriptors descriptors;
     private final Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies;
     private final java.util.concurrent.atomic.AtomicReference<AcmeService> acme = new java.util.concurrent.atomic.AtomicReference<>();
     private final java.util.concurrent.atomic.AtomicReference<OcspResponderService> ocsp = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<AuditService> auditSearch = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<AuditIntegrityService> auditIntegrity = new java.util.concurrent.atomic.AtomicReference<>();
 
-    /** Creates the one control dispatcher over existing durable authorities. */
+    /**
+     * Creates the one control dispatcher over existing durable authorities.
+     *
+     * <p>The credential-publication gate must use the same disclosure service
+     * supplied to this constructor.</p>
+     *
+     * @param realmId exact realm identity
+     * @param exposure authority exposure policy for the realm
+     * @param store durable server-control store
+     * @param roles role-template catalog
+     * @param authorization authorization engine
+     * @param approvals durable approval service
+     * @param breakGlass emergency-access service
+     * @param disclosure durable disclosure service
+     * @param credentialPublication authoritative credential-publication gate
+     * @param auditorViews audit-view service
+     * @param repositoryAliases optional repository-alias capability
+     * @param descriptors closed operation-security descriptor catalog
+     * @param approvalPolicies approval policy by operation category
+     */
     public ServerControlOperationExecutor(RealmId realmId, AuthorityExposurePolicy exposure,
             ServerControlStore store, RoleTemplateCatalog roles, AuthorizationEngine authorization,
             ApprovalService approvals, BreakGlassService breakGlass, DisclosureService disclosure,
-            AuditorViews auditorViews,
+            CredentialPublicationGate credentialPublication, AuditorViews auditorViews,
             Optional<RepositoryAliasService> repositoryAliases,
             OperationSecurityDescriptors descriptors,
             Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies) {
@@ -84,24 +110,46 @@ public final class ServerControlOperationExecutor {
         this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.breakGlass = Objects.requireNonNull(breakGlass, "breakGlass");
         this.disclosure = Objects.requireNonNull(disclosure, "disclosure");
+        this.credentialPublication = Objects.requireNonNull(credentialPublication, "credentialPublication");
         this.auditorViews = Objects.requireNonNull(auditorViews, "auditorViews");
         this.repositoryAliases = Objects.requireNonNull(repositoryAliases, "repositoryAliases");
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.approvalPolicies = Map.copyOf(Objects.requireNonNull(approvalPolicies, "approvalPolicies"));
     }
 
-    /** Executes exactly one already-authorized control operation synchronously. */
+    /**
+     * Executes exactly one already-authorized control operation synchronously.
+     *
+     * @param operation exact control operation
+     * @param actorPrincipalId authenticated actor identity
+     * @param authorizedResource resource proven by gateway authorization
+     * @param approvalId optional approval identity presented for the operation
+     * @param cancellation cancellation signal checked before dispatch
+     * @return finite control-operation outcome
+     */
     public ServerControlOperationOutcome execute(ServerControlOperation operation, String actorPrincipalId,
             Permission.Resource authorizedResource, Optional<String> approvalId, CancellationSignal cancellation) {
+        return executeAuthorized(operation, actorPrincipalId, authorizedResource, approvalId, Optional.empty(),
+                cancellation);
+    }
+
+    /** Executes one gateway-authorized control operation with proven target approval eligibility. */
+    /* default */ ServerControlOperationOutcome executeAuthorized(ServerControlOperation operation,
+            String actorPrincipalId,
+            Permission.Resource authorizedResource, Optional<String> approvalId,
+            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory,
+            CancellationSignal cancellation) {
         Objects.requireNonNull(operation, "operation");
         Permission.requirePrincipal(actorPrincipalId);
         Objects.requireNonNull(authorizedResource, "authorizedResource");
+        Optional<OperationSecurityDescriptors.ApprovalCategory> exactTargetCategory = Objects.requireNonNull(
+                approvedTargetCategory, "approvedTargetCategory");
         if (Objects.requireNonNull(cancellation, "cancellation").isCancelled()) {
             return failure(operation, PkiOperationFailure.CANCELLED, "CONTROL_OPERATION_CANCELLED");
         }
         try {
             return dispatch(operation, actorPrincipalId, authorizedResource,
-                    Objects.requireNonNull(approvalId, "approvalId"));
+                    Objects.requireNonNull(approvalId, "approvalId"), exactTargetCategory);
         } catch (IllegalArgumentException unavailable) {
             return failure(operation, PkiOperationFailure.NOT_FOUND, "CONTROL_OBJECT_UNAVAILABLE");
         } catch (SecurityException denied) {
@@ -111,18 +159,54 @@ public final class ServerControlOperationExecutor {
         }
     }
 
-    /** Installs the explicitly configured ACME capability exactly once before listener readiness. */
+    /**
+     * Installs the explicitly configured ACME capability exactly once before listener readiness.
+     *
+     * @param service realm-owned ACME service
+     * @throws IllegalStateException if an ACME service is already installed
+     */
     public void installAcme(AcmeService service) {
         if (!acme.compareAndSet(null, Objects.requireNonNull(service, "service"))) {
             throw new IllegalStateException("ACME administration capability is already installed");
         }
     }
 
-    /** Installs the realm-owned durable OCSP responder capability exactly once. */
+    /**
+     * Installs the realm-owned durable OCSP responder capability exactly once.
+     *
+     * @param service realm-owned OCSP responder service
+     * @throws IllegalStateException if an OCSP service is already installed
+     */
     public void installOcsp(OcspResponderService service) {
         if (!ocsp.compareAndSet(null, Objects.requireNonNull(service, "service"))) {
             throw new IllegalStateException("OCSP administration capability is already installed");
         }
+    }
+
+    /**
+     * Installs the queryable/verifiable audit capability exactly once.
+     *
+     * <p>Only invoked when the configured audit sink supports bounded search and
+     * hash-chain verification; otherwise the audit admin operations fail closed as
+     * unsupported.</p>
+     *
+     * @param search bounded audit-log search capability
+     * @param integrity audit-log integrity-verification capability
+     */
+    public void installAudit(AuditService search, AuditIntegrityService integrity) {
+        Objects.requireNonNull(search, "search");
+        Objects.requireNonNull(integrity, "integrity");
+        if (!auditSearch.compareAndSet(null, search)) {
+            throw new IllegalStateException("Audit query capability is already installed");
+        }
+        auditIntegrity.set(integrity);
+    }
+
+    /** Resolves the authoritative credential authorization resource before admission. */
+    /* default */ Permission.Resource credentialPublicationResource(
+            ServerControlOperation.EnrollCredentialPublication operation) {
+        return credentialPublication.publicationResource(realmId, operation.credentialId(),
+                operation.ownerPrincipalId().map(DisclosureService.Owner::principal));
     }
 
     /** Resolves exact ACME authority/profile scope from durable records. */
@@ -144,8 +228,17 @@ public final class ServerControlOperationExecutor {
                 Optional.of(directory.profile().profileId()));
     }
 
+    /** Resolves the exact active profile precondition before approval canonicalization. */
+    /* default */ ServerControlOperation.RegisterAcmeDirectory bindAcmeDirectoryRegistration(
+            ServerControlOperation.RegisterAcmeDirectory operation) {
+        AcmeService service = acme();
+        return new ServerControlOperation.RegisterAcmeDirectory(operation.registration(),
+                Optional.of(service.resolveDirectoryProfilePrecondition(operation.registration())));
+    }
+
     private ServerControlOperationOutcome dispatch(ServerControlOperation operation, String actor,
-            Permission.Resource authorizedResource, Optional<String> approvalId) {
+            Permission.Resource authorizedResource, Optional<String> approvalId,
+            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory) {
         return switch (operation) {
             case ServerControlOperation.RegisterPrincipal value -> ordinary(operation, register(value));
             case ServerControlOperation.InspectPrincipal value -> ordinary(operation,
@@ -175,7 +268,8 @@ public final class ServerControlOperationExecutor {
                             Permission.Grant::scope, ServerControlOperationExecutor::grant));
             case ServerControlOperation.RevokeGrant value -> ordinary(operation, grant(revokeGrant(value.grantId())));
             case ServerControlOperation.EvaluateAuthorization value -> ordinary(operation, evaluate(value));
-            case ServerControlOperation.RequestApproval value -> ordinary(operation, approval(request(value, actor)));
+            case ServerControlOperation.RequestApproval value -> ordinary(operation,
+                    approval(request(value, actor, approvedTargetCategory)));
             case ServerControlOperation.InspectApproval value -> ordinary(operation,
                     approval(approvals.requireCurrent(value.approvalId())));
             case ServerControlOperation.ListApprovals value -> ordinary(operation,
@@ -200,11 +294,17 @@ public final class ServerControlOperationExecutor {
                     disclosure(store.requireDisclosure(value.objectId())));
             case ServerControlOperation.SetDisclosure value -> ordinary(operation,
                     disclosure(disclosure.change(value.objectId(), value.policy(), true, approvalId.isPresent(), actor)));
+            case ServerControlOperation.EnrollCredentialPublication value -> ordinary(operation,
+                    disclosure(credentialPublication.register(value.credentialId(),
+                            value.ownerPrincipalId().map(DisclosureService.Owner::principal),
+                            new CredentialPublicationGate.AuditActor(actor))));
             case ServerControlOperation.IssueCapability value -> capability(operation,
                     disclosure.issueCapability(value.objectId(), value.expiresAt(), actor));
             case ServerControlOperation.RevokeCapability value -> ordinary(operation,
                     capability(disclosure.revokeCapability(value.capabilityId(), actor)));
             case ServerControlOperation.InspectAuditView value -> ordinary(operation, auditView(value, actor));
+            case ServerControlOperation.SearchAudit value -> ordinary(operation, auditSearch(value));
+            case ServerControlOperation.VerifyAuditIntegrity value -> ordinary(operation, auditVerify(value));
             case ServerControlOperation.InspectRepositoryAlias value -> ordinary(operation,
                     alias(aliases().require(value.authorityId(), value.type())));
             case ServerControlOperation.ListRepositoryAliases value -> ordinary(operation,
@@ -214,7 +314,9 @@ public final class ServerControlOperationExecutor {
             case ServerControlOperation.RemoveRepositoryAlias value -> ordinary(operation,
                     alias(aliases().remove(value.authorityId(), value.type(), value.expectedCurrentCommitment(), actor)));
             case ServerControlOperation.RegisterAcmeDirectory value -> ordinary(operation,
-                    directory(acme().registerDirectory(value.registration())));
+                    directory(acme().registerDirectory(value.registration(), value.profilePrecondition()
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "ACME directory profile precondition is unresolved")))));
             case ServerControlOperation.InspectAcmeDirectory value -> ordinary(operation,
                     directory(acme().directory(value.directoryId())));
             case ServerControlOperation.ListAcmeDirectories value -> ordinary(operation,
@@ -259,6 +361,8 @@ public final class ServerControlOperationExecutor {
             String actor) {
         return switch (value.type()) {
             case CURRENT_CRL -> aliases().setCurrentCrl(value.authorityId(), value.targetObjectId(),
+                    value.expectedCurrentCommitment(), actor);
+            case CURRENT_DELTA_CRL -> aliases().setCurrentDeltaCrl(value.authorityId(), value.targetObjectId(),
                     value.expectedCurrentCommitment(), actor);
             case CURRENT_CHAIN -> aliases().setCurrentChain(value.authorityId(),
                     value.issuerId().orElseThrow(() -> new IllegalArgumentException("issuerId is required")),
@@ -319,12 +423,15 @@ public final class ServerControlOperationExecutor {
         return object("allowed", bool(decision.allowed()), "code", text(decision.code().name()));
     }
 
-    private ApprovalService.Request request(ServerControlOperation.RequestApproval value, String actor) {
+    private ApprovalService.Request request(ServerControlOperation.RequestApproval value, String actor,
+            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory) {
         OperationSecurityDescriptors.Descriptor descriptor = descriptors.require(value.targetOperation());
-        if (!descriptor.mutating() || descriptor.approvalCategory() == OperationSecurityDescriptors.ApprovalCategory.NONE) {
+        OperationSecurityDescriptors.ApprovalCategory approvalCategory = approvedTargetCategory
+                .orElseThrow(() -> new SecurityException("Target approval eligibility was not proven"));
+        if (!descriptor.mutating() || approvalCategory == OperationSecurityDescriptors.ApprovalCategory.NONE) {
             throw new IllegalStateException("Target operation does not require approval");
         }
-        ApprovalService.Policy policy = approvalPolicies.get(descriptor.approvalCategory());
+        ApprovalService.Policy policy = approvalPolicies.get(approvalCategory);
         if (policy == null) throw new IllegalStateException("Approval policy is unavailable");
         String commitment = descriptors.commitment(realmId, value.targetOperation(), value.targetResource());
         return approvals.request(value.approvalId(), value.targetOperation().name(), commitment,
@@ -359,9 +466,51 @@ public final class ServerControlOperationExecutor {
         fields.put("view", text(value.view().name())); return new PkiOperationValue.ObjectValue(fields);
     }
 
+    private PkiOperationValue auditSearch(ServerControlOperation.SearchAudit value) {
+        AuditService service = auditSearch.get();
+        if (service == null) {
+            throw new IllegalStateException("Audit search is not supported by the configured audit sink");
+        }
+        List<PkiOperationValue> events = service.search(value.query()).stream()
+                .map(ServerControlOperationExecutor::auditEventValue).map(PkiOperationValue.class::cast).toList();
+        Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
+        fields.put("count", integer(events.size()));
+        fields.put("events", new PkiOperationValue.ListValue(events));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
+    private PkiOperationValue auditVerify(ServerControlOperation.VerifyAuditIntegrity value) {
+        AuditIntegrityService service = auditIntegrity.get();
+        if (service == null) {
+            throw new IllegalStateException("Audit integrity verification is not supported by the configured sink");
+        }
+        AuditIntegrityReport report = service.verifyIntegrity(value.expectedHead());
+        Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
+        fields.put("status", text(report.status().name()));
+        fields.put("recordCount", integer(report.recordCount()));
+        report.firstBrokenSequence().ifPresent(sequence -> fields.put("firstBrokenSequence", integer(sequence)));
+        fields.put("headSequence", integer(report.head().sequence()));
+        fields.put("headRecordHash", text(report.head().recordHash()));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
+    // Payload-free safe projection of one audit event: scalar metadata only, never the free-form details map.
+    private static PkiOperationValue auditEventValue(AuditEvent event) {
+        Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
+        fields.put("time", text(event.time().toString()));
+        fields.put("category", text(event.category()));
+        fields.put("action", text(event.action()));
+        fields.put("principalType", text(event.principal().type()));
+        fields.put("principalName", text(event.principal().name()));
+        fields.put("purpose", text(event.purpose().value()));
+        event.objectId().ifPresent(objectId -> fields.put("objectId", text(objectId.value())));
+        event.formatId().ifPresent(formatId -> fields.put("formatId", text(formatId.value())));
+        return new PkiOperationValue.ObjectValue(fields);
+    }
+
     private static ServerControlOperationOutcome ordinary(ServerControlOperation operation,
             PkiOperationValue value) {
-        return new ServerControlOperationOutcome.Ordinary(new PkiOperationOutcome.Success(
+        return new ServerControlOperationOutcome.Ordinary(new PkiOperationOutcome.Completed(
                 new PkiOperationResult(operation.name(), Map.of("value", value))));
     }
 
@@ -381,7 +530,7 @@ public final class ServerControlOperationExecutor {
 
     private static ServerControlOperationOutcome failure(ServerControlOperation operation,
             PkiOperationFailure failure, String code) {
-        return new ServerControlOperationOutcome.Ordinary(new PkiOperationOutcome.Failure(
+        return new ServerControlOperationOutcome.Ordinary(new PkiOperationOutcome.Failed(
                 operation.name(), failure, code));
     }
 

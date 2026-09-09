@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.spi.store;
 
+import java.util.Objects;
+
 import zeroecho.pki.spi.ConfigurableProvider;
 import zeroecho.pki.spi.ProviderConfig;
 
@@ -58,6 +60,19 @@ import zeroecho.pki.spi.ProviderConfig;
  * </p>
  */
 public interface PkiStoreProvider extends ConfigurableProvider<PkiStore> {
+    /**
+     * Opens a store with explicit process-local runtime dependencies.
+     * Providers without runtime requirements may rely on this default adapter.
+     *
+     * @param config structural provider configuration
+     * @param dependencies authoritative process-local runtime dependencies
+     * @return opened store
+     */
+    default PkiStore allocate(ProviderConfig config, PkiStoreRuntimeDependencies dependencies) {
+        Objects.requireNonNull(dependencies, "dependencies");
+        return allocate(config);
+    }
+
     /**
      * Opens a new {@link PkiStore} instance using the provided configuration.
      *

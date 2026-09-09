@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+.gradle/
+playwright-report/
+test-results/
+*.local
+.DS_Store

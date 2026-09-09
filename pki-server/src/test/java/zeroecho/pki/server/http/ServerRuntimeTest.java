@@ -34,13 +34,17 @@
 package zeroecho.pki.server.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
@@ -48,6 +52,137 @@ import zeroecho.pki.server.PkiServerConfiguration;
 
 /** Deterministic bounded-admission, queue, cancellation and worker-close tests. */
 class ServerRuntimeTest {
+    @Test
+    void queuedCancellationAndRejectionRetireExactOperationTracking() throws Exception {
+        ServerRuntime runtime = new ServerRuntime(configuration());
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger queuedInvocations = new AtomicInteger();
+        try {
+            ServerRuntime.Submitted<String> active = runtime.submit(cancellation -> {
+                started.countDown();
+                release.await();
+                return "active";
+            });
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+
+            ServerRuntime.Submitted<String> queued = runtime.submit(cancellation -> {
+                queuedInvocations.incrementAndGet();
+                return "queued";
+            });
+            assertEquals(2, runtime.trackedOperationFutures());
+            assertEquals(2, runtime.trackedCancellationTokens());
+            assertTrue(queued.future().cancel(false));
+            queued.finish();
+            assertEquals(0, runtime.operationQueueSize());
+            assertEquals(1, runtime.trackedOperationFutures());
+            assertEquals(1, runtime.trackedCancellationTokens());
+
+            for (int iteration = 0; iteration < 16; iteration++) {
+                ServerRuntime.Submitted<String> cancelled = runtime.submit(cancellation -> {
+                    queuedInvocations.incrementAndGet();
+                    return "unexpected";
+                });
+                assertTrue(cancelled.future().cancel(false));
+                cancelled.finish();
+                assertEquals(1, runtime.trackedOperationFutures());
+                assertEquals(1, runtime.trackedCancellationTokens());
+            }
+
+            ServerRuntime.Submitted<String> fullQueue = runtime.submit(cancellation -> "full");
+            assertThrows(RejectedExecutionException.class,
+                    () -> runtime.submit(cancellation -> "rejected"));
+            assertEquals(2, runtime.trackedOperationFutures());
+            assertEquals(2, runtime.trackedCancellationTokens());
+            assertTrue(fullQueue.future().cancel(false));
+            fullQueue.finish();
+
+            release.countDown();
+            assertEquals("active", active.future().get(2, TimeUnit.SECONDS));
+            active.finish();
+            assertEquals(0, queuedInvocations.get());
+            assertEquals(0, runtime.trackedOperationFutures());
+            assertEquals(0, runtime.trackedCancellationTokens());
+        } finally {
+            release.countDown();
+            runtime.close();
+        }
+    }
+
+    @Test
+    void shutdownCancelsQueuedOperationsAndCleansTracking() throws Exception {
+        ServerRuntime runtime = new ServerRuntime(configuration());
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicBoolean queuedInvoked = new AtomicBoolean();
+        runtime.submit(cancellation -> {
+            started.countDown();
+            while (!cancellation.isCancelled()) {
+                try {
+                    TimeUnit.MILLISECONDS.sleep(10L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return null;
+        });
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+        runtime.submit(cancellation -> {
+            queuedInvoked.set(true);
+            return null;
+        });
+
+        runtime.close();
+
+        assertFalse(queuedInvoked.get());
+        assertEquals(0, runtime.trackedOperationFutures());
+        assertEquals(0, runtime.trackedCancellationTokens());
+    }
+
+    @Test
+    void challengeCancellationRejectionAndShutdownRetireExactTracking() throws Exception {
+        ServerRuntime.ChallengeRuntime runtime = new ServerRuntime.ChallengeRuntime(configuration());
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger queuedInvocations = new AtomicInteger();
+        try {
+            Future<String> active = runtime.submit(() -> {
+                started.countDown();
+                release.await();
+                return "active";
+            });
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+            Future<String> queued = runtime.submit(() -> {
+                queuedInvocations.incrementAndGet();
+                return "queued";
+            });
+            assertEquals(2, runtime.trackedFutures());
+            assertTrue(queued.cancel(false));
+            assertEquals(1, runtime.trackedFutures());
+
+            for (int iteration = 0; iteration < 16; iteration++) {
+                Future<String> cancelled = runtime.submit(() -> {
+                    queuedInvocations.incrementAndGet();
+                    return "unexpected";
+                });
+                assertTrue(cancelled.cancel(false));
+                assertEquals(1, runtime.trackedFutures());
+            }
+
+            Future<String> fullQueue = runtime.submit(() -> "full");
+            assertThrows(RejectedExecutionException.class, () -> runtime.submit(() -> "rejected"));
+            assertEquals(2, runtime.trackedFutures());
+            assertTrue(fullQueue.cancel(false));
+            release.countDown();
+            assertEquals("active", active.get(2, TimeUnit.SECONDS));
+            runtime.close();
+            assertEquals(0, queuedInvocations.get());
+            assertEquals(0, runtime.trackedFutures());
+        } finally {
+            release.countDown();
+            runtime.close();
+        }
+    }
+
     @Test
     void enforcesFixedWorkersBoundedQueueAndPermitRelease() throws Exception {
         System.out.println("enforcesFixedWorkersBoundedQueueAndPermitRelease");
@@ -82,18 +217,72 @@ class ServerRuntimeTest {
     }
 
     @Test
-    void closesFromOperationWorkerWithoutWaitingForItself() throws Exception {
-        System.out.println("closesFromOperationWorkerWithoutWaitingForItself");
+    void operationWorkerCloseReportsTimeoutAndRemainsRetryable() throws Exception {
+        System.out.println("operationWorkerCloseReportsTimeoutAndRemainsRetryable");
         ServerRuntime runtime = new ServerRuntime(configuration());
-        ServerRuntime.Submitted<Boolean> submitted = runtime.submit(cancellation -> {
-            runtime.close();
-            return Thread.currentThread().isInterrupted();
+        ServerRuntime.Submitted<String> submitted = runtime.submit(cancellation -> {
+            try {
+                runtime.close();
+                return "unexpected-success";
+            } catch (IllegalStateException timeout) {
+                return timeout.getMessage();
+            }
         });
-        submitted.future().get(2, TimeUnit.SECONDS);
+        assertTrue(submitted.future().get(2, TimeUnit.SECONDS).contains("SERVER_EXECUTION_SHUTDOWN_TIMEOUT"));
         submitted.finish();
+        runtime.close();
         assertEquals(false, runtime.accepting());
-        System.out.println("...self-wait=false");
+        assertTrue(runtime.transportExecutor().isTerminated());
+        System.out.println("...retry-close=true");
         System.out.println("...ok");
+    }
+
+    @Test
+    void forcedTimeoutKeepsCancellationVisibleUntilRetry() throws Exception {
+        ServerRuntime runtime = new ServerRuntime(configuration());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ServerRuntime.Submitted<Void> submitted = runtime.submit(cancellation -> {
+            entered.countDown();
+            while (release.getCount() != 0L) {
+                try {
+                    release.await();
+                } catch (InterruptedException ignored) {
+                    // Deliberately non-cooperative until the test releases it.
+                }
+            }
+            return null;
+        });
+        assertTrue(entered.await(2, TimeUnit.SECONDS));
+
+        IllegalStateException timeout = assertThrows(IllegalStateException.class, runtime::close);
+        assertTrue(timeout.getMessage().contains("SERVER_EXECUTION_SHUTDOWN_TIMEOUT"));
+        assertTrue(submitted.cancellation().isCancelled());
+        release.countDown();
+        runtime.close();
+        submitted.finish();
+        assertTrue(runtime.transportExecutor().isTerminated());
+    }
+
+    @Test
+    void marksOperationAndValidationWorkersWithoutUsingNames() throws Exception {
+        assertFalse(ServerRuntime.isWorkerThread());
+        ServerRuntime runtime = new ServerRuntime(configuration());
+        ServerRuntime.ChallengeRuntime validation = new ServerRuntime.ChallengeRuntime(configuration());
+        try {
+            ServerRuntime.Submitted<Boolean> operation = runtime.submit(cancellation ->
+                    ServerRuntime.isWorkerThread());
+            Future<Boolean> transport = runtime.transportExecutor().submit(ServerRuntime::isWorkerThread);
+            Future<Boolean> challenge = validation.submit(ServerRuntime::isWorkerThread);
+            assertTrue(operation.future().get(2, TimeUnit.SECONDS));
+            assertTrue(transport.get(2, TimeUnit.SECONDS));
+            assertTrue(challenge.get(2, TimeUnit.SECONDS));
+            operation.finish();
+        } finally {
+            validation.close();
+            runtime.close();
+        }
+        assertFalse(ServerRuntime.isWorkerThread());
     }
 
     private static PkiServerConfiguration.Execution configuration() {

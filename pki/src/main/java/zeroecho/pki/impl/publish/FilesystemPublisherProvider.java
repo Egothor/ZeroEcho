@@ -47,6 +47,11 @@ public final class FilesystemPublisherProvider implements PublisherProvider {
     private static final String ROOT = "root";
     private static final String TARGET_ID = "targetId";
 
+    /** Creates a filesystem publisher provider descriptor. */
+    public FilesystemPublisherProvider() {
+        // Stateless provider descriptor.
+    }
+
     @Override
     public String id() {
         return "filesystem";

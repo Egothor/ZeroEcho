@@ -69,10 +69,18 @@ public final class VerifiedIssuanceCandidate {
     private final PkiId issuerCaId;
     private final String profileId;
     private final Optional<Validity> validityOverride;
+    private final boolean csrTransport;
 
     /* default */ VerifiedIssuanceCandidate(ParsedCertificationRequest request, PkiId fingerprint,
             EncodedObject exactPublicKey, ProofOfPossessionStatus proofKind, IssueEndEntityCommand command) {
-        this.request = snapshot(Objects.requireNonNull(request, "request"));
+        this(request, fingerprint, exactPublicKey, proofKind, command, true);
+    }
+
+    private VerifiedIssuanceCandidate(ParsedCertificationRequest request, PkiId fingerprint,
+            EncodedObject exactPublicKey, ProofOfPossessionStatus proofKind, IssueEndEntityCommand command,
+            boolean csrTransport) {
+        this.csrTransport = csrTransport;
+        this.request = snapshot(Objects.requireNonNull(request, "request"), csrTransport);
         this.fingerprint = Objects.requireNonNull(fingerprint, "fingerprint");
         this.exactPublicKey = copy(Objects.requireNonNull(exactPublicKey, "exactPublicKey"));
         this.proofKind = Objects.requireNonNull(proofKind, "proofKind");
@@ -83,12 +91,25 @@ public final class VerifiedIssuanceCandidate {
     }
 
     /**
+     * Creates a candidate for a request reconstructed from an already-issued
+     * certificate (renewal or reissue), which carries no CSR transport attribute.
+     * The inherited proof status is {@link ProofOfPossessionStatus#VERIFIED}: the
+     * subject public key is unchanged from the predecessor and was proven at
+     * original issuance.
+     */
+    /* default */ static VerifiedIssuanceCandidate reconstructed(ParsedCertificationRequest request, PkiId fingerprint,
+            EncodedObject exactPublicKey, IssueEndEntityCommand command) {
+        return new VerifiedIssuanceCandidate(request, fingerprint, exactPublicKey,
+                ProofOfPossessionStatus.VERIFIED, command, false);
+    }
+
+    /**
      * Returns an immutable snapshot of the cryptographically verified request.
      *
      * @return verified request snapshot, never {@code null}
      */
     public ParsedCertificationRequest request() {
-        return snapshot(request);
+        return snapshot(request, csrTransport);
     }
 
     /**
@@ -146,11 +167,15 @@ public final class VerifiedIssuanceCandidate {
     }
 
     /* default */ static ParsedCertificationRequest snapshot(ParsedCertificationRequest source) {
+        return snapshot(source, true);
+    }
+
+    private static ParsedCertificationRequest snapshot(ParsedCertificationRequest source, boolean csrTransport) {
         Objects.requireNonNull(source, "source");
         return new ParsedCertificationRequest(source.requestId(), source.formatId(), source.subjectRef(),
                 copy(source.publicKeyInfo()), source.requestedValidity(), source.requestedProfileId(),
                 source.subjectRdns(), source.subjectAlternativeNames(), source.subjectAlternativeNamePresent(),
-                snapshotCsrAttribute(source.attributes()));
+                csrTransport ? snapshotCsrAttribute(source.attributes()) : snapshotAttributes(source.attributes()));
     }
 
     private static EncodedObject copy(EncodedObject source) {

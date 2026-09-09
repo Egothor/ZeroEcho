@@ -40,6 +40,7 @@ import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.api.revocation.RevocationQuery;
 import zeroecho.pki.spi.store.RevocationHistory;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationTransitionFeed;
 
 /**
  * Authoritative revocation transition, current-state, and history administration.
@@ -71,6 +72,15 @@ public interface RevocationService {
     RevocationRecord revokePermanently(RevocationCommand.RevokePermanently command);
 
     /**
+     * Atomically re-evaluates and permanently revokes one overdue pending
+     * credential confirmation using the store's authoritative clock.
+     *
+     * @param command exact permanent command with reason {@code UNSPECIFIED}
+     * @return committed authoritative revocation record
+     */
+    RevocationRecord revokeOverduePendingConfirmation(RevocationCommand.RevokePermanently command);
+
+    /**
      * Retrieves the validated current state for one credential.
      *
      * @param credentialId credential identifier
@@ -85,6 +95,21 @@ public interface RevocationService {
      * @return closeable bounded-memory history cursor
      */
     RevocationHistory history(PkiId credentialId);
+
+    /**
+     * Opens the append-ordered authoritative transition feed at a captured head.
+     * A malformed, foreign, or structurally out-of-head position is rejected at
+     * open. A same-store, structurally plausible position opens in constant time;
+     * exact authoritative-log continuity and commitment are validated lazily by
+     * the first {@link RevocationTransitionFeed#next()} before it yields or
+     * advances, with inconsistency reported as a {@link java.io.IOException}.
+     *
+     * @param afterExclusive optional opaque exclusive resume position
+     * @return closeable bounded-memory feed
+     * @throws IllegalArgumentException if the position is malformed, foreign, or structurally
+     *         outside the captured head
+     */
+    RevocationTransitionFeed feed(Optional<RevocationTransitionFeed.Position> afterExclusive);
 
     /**
      * Searches a stable ordered population view by current transition.

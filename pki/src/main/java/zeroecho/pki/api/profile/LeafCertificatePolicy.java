@@ -47,12 +47,14 @@ import java.util.Set;
  * @param allowedSubjectKeyAlgorithmIds exact canonical ZeroEcho key algorithm
  *                                      identifiers
  */
+// The algorithm-set component name is an exported accessor and configuration vocabulary term.
+@SuppressWarnings("PMD.LongVariable")
 public record LeafCertificatePolicy(SubjectAlternativeNamePolicy subjectAlternativeNamePolicy,
         Set<LeafKeyUsage> keyUsages, Set<ExtendedKeyUsageId> extendedKeyUsages, boolean keyUsageCritical,
         boolean extendedKeyUsageCritical, boolean basicConstraintsCritical, Set<String> allowedSubjectKeyAlgorithmIds)
         implements CertificatePolicy {
 
-    private static final Set<String> SUPPORTED_SUBJECT_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448",
+    private static final Set<String> SUPPORTED_KEY_ALGORITHMS = Set.of("RSA", "ECDSA", "Ed25519", "Ed448",
             "SPHINCS+");
 
     /**
@@ -67,7 +69,7 @@ public record LeafCertificatePolicy(SubjectAlternativeNamePolicy subjectAlternat
         extendedKeyUsages = Set.copyOf(extendedKeyUsages);
         allowedSubjectKeyAlgorithmIds = Set.copyOf(allowedSubjectKeyAlgorithmIds);
         if (allowedSubjectKeyAlgorithmIds.isEmpty()
-                || !SUPPORTED_SUBJECT_KEY_ALGORITHMS.containsAll(allowedSubjectKeyAlgorithmIds)) {
+                || !SUPPORTED_KEY_ALGORITHMS.containsAll(allowedSubjectKeyAlgorithmIds)) {
             throw new IllegalArgumentException("At least one supported subject key algorithm is required");
         }
         if ((keyUsages.contains(LeafKeyUsage.ENCIPHER_ONLY) || keyUsages.contains(LeafKeyUsage.DECIPHER_ONLY))

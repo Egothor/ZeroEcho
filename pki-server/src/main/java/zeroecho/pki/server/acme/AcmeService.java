@@ -60,26 +60,40 @@ import zeroecho.pki.api.IssuanceService;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.Validity;
-import zeroecho.pki.api.attr.AttributeId;
-import zeroecho.pki.api.attr.AttributeSet;
-import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.ca.IssuerChainPath;
+import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
+import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
+import zeroecho.pki.api.confirmation.CredentialConfirmationLifecycle;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofCas;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofChallenge;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofChallengeRequest;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofResult;
+import zeroecho.pki.api.confirmation.CredentialConfirmationProofSubmission;
 import zeroecho.pki.api.credential.CredentialBundle;
+import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.issuance.IssueEndEntityCommand;
 import zeroecho.pki.api.issuance.IssuanceIntent;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileKind;
+import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.SubjectAlternativeName;
-import zeroecho.pki.api.revocation.RevocationCommand;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationRecord;
+import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiSession;
+import zeroecho.pki.application.PkiOperationOutcome;
+import zeroecho.pki.application.PkiOperationValue;
+import zeroecho.pki.application.RevocationEvidenceExecutor;
+import zeroecho.pki.application.RevocationExecutionEvidence;
+import zeroecho.pki.application.SigningIssuanceBinding;
+import zeroecho.pki.server.CredentialPublicationGate;
 import zeroecho.pki.server.DisclosureService;
 import zeroecho.pki.server.ServerControlStore;
+import zeroecho.pki.server.ServerControlOperation;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.AcmeChallengeProvider;
 import zeroecho.pki.server.spi.AcmeExternalAccountBindingProvider;
@@ -91,11 +105,14 @@ import zeroecho.pki.spi.ProviderConfig;
  * <p>Account identity is protocol-scoped. No method accepts an administrative
  * principal or permission as issuance authority. Directory activation freezes
  * one exact authority, profile, issuer generation, chain path, provider set, and
- * disclosure policy. External validators return evidence only.</p>
+ * profile-owned confirmation policy. External validators return evidence only.</p>
  */
 @SuppressWarnings("PMD")
 public final class AcmeService {
     private static final String ZERO = "0".repeat(64);
+    private static final CredentialPublicationGate.AuditActor PUBLICATION_AUDIT_ACTOR =
+            new CredentialPublicationGate.AuditActor("acme-service");
+    private static final ThreadLocal<FinalizeFaultInjector> FINALIZE_FAULTS = new ThreadLocal<>();
     private final ServerRealmContext realm;
     private final AcmeControlStore store;
     private final Clock clock;
@@ -104,13 +121,25 @@ public final class AcmeService {
     private final Map<String, ProviderConfig> providerConfigurations;
     private final Map<String, AcmeExternalAccountBindingProvider> eabProviders;
     private final Map<String, ProviderConfig> eabProviderConfigurations;
+    private final Runnable reconciliationWake;
 
-    /** Creates a realm-bound ACME service from explicitly enabled providers. */
+    /**
+     * Creates a realm-bound ACME service from explicitly enabled providers.
+     *
+     * @param realm realm context owning all ACME state
+     * @param clock authoritative server clock
+     * @param random cryptographically secure identifier source
+     * @param providers explicitly enabled challenge providers keyed by identifier
+     * @param providerConfigurations validated configuration for each challenge provider
+     * @param eabProviders explicitly enabled external-account-binding providers
+     * @param eabProviderConfigurations validated configuration for each EAB provider
+     * @param reconciliationWake callback that promptly wakes durable signing reconciliation
+     */
     public AcmeService(ServerRealmContext realm, Clock clock, SecureRandom random,
             Map<String, AcmeChallengeProvider> providers,
             Map<String, ProviderConfig> providerConfigurations,
             Map<String, AcmeExternalAccountBindingProvider> eabProviders,
-            Map<String, ProviderConfig> eabProviderConfigurations) {
+            Map<String, ProviderConfig> eabProviderConfigurations, Runnable reconciliationWake) {
         this.realm = Objects.requireNonNull(realm, "realm");
         this.store = realm.acmeControl(); this.clock = Objects.requireNonNull(clock, "clock");
         this.random = Objects.requireNonNull(random, "random");
@@ -120,6 +149,7 @@ public final class AcmeService {
         this.eabProviders = Map.copyOf(Objects.requireNonNull(eabProviders, "eabProviders"));
         this.eabProviderConfigurations = Map.copyOf(Objects.requireNonNull(eabProviderConfigurations,
                 "eabProviderConfigurations"));
+        this.reconciliationWake = Objects.requireNonNull(reconciliationWake, "reconciliationWake");
         if (!this.providers.keySet().equals(this.providerConfigurations.keySet())
                 || this.providers.entrySet().stream().anyMatch(entry -> !entry.getKey().equals(entry.getValue().id()))) {
             throw new IllegalArgumentException("ACME provider composition is inconsistent");
@@ -132,7 +162,35 @@ public final class AcmeService {
         validateRecoveredState();
     }
 
-    /** Creates an ACME service without EAB providers. */
+    /**
+     * Creates a realm-bound ACME service with periodic-only reconciliation compatibility.
+     *
+     * @param realm realm context owning all ACME state
+     * @param clock authoritative server clock
+     * @param random cryptographically secure identifier source
+     * @param providers explicitly enabled challenge providers keyed by identifier
+     * @param providerConfigurations validated configuration for each challenge provider
+     * @param eabProviders explicitly enabled external-account-binding providers
+     * @param eabProviderConfigurations validated configuration for each EAB provider
+     */
+    public AcmeService(ServerRealmContext realm, Clock clock, SecureRandom random,
+            Map<String, AcmeChallengeProvider> providers,
+            Map<String, ProviderConfig> providerConfigurations,
+            Map<String, AcmeExternalAccountBindingProvider> eabProviders,
+            Map<String, ProviderConfig> eabProviderConfigurations) {
+        this(realm, clock, random, providers, providerConfigurations, eabProviders, eabProviderConfigurations,
+                () -> { });
+    }
+
+    /**
+     * Creates an ACME service without EAB providers.
+     *
+     * @param realm realm context owning all ACME state
+     * @param clock authoritative server clock
+     * @param random cryptographically secure identifier source
+     * @param providers explicitly enabled challenge providers keyed by identifier
+     * @param providerConfigurations validated configuration for each challenge provider
+     */
     public AcmeService(ServerRealmContext realm, Clock clock, SecureRandom random,
             Map<String, AcmeChallengeProvider> providers,
             Map<String, ProviderConfig> providerConfigurations) {
@@ -144,17 +202,7 @@ public final class AcmeService {
         do {
             ServerControlStore.Page<AcmeState.Directory> page = store.page(AcmeState.Directory.class, offset, 256);
             for (AcmeState.Directory directory : page.values()) {
-                if (directory.status() == AcmeState.DirectoryStatus.ACTIVE) {
-                    validateFrozenDirectory(directory);
-                    if (directory.eabRequired() && directory.eabProviderId().isEmpty()) {
-                        throw new IllegalStateException("Required ACME EAB provider is unavailable");
-                    }
-                    directory.eabProviderId().ifPresent(id -> {
-                        if (!eabProviders.containsKey(id)) {
-                            throw new IllegalStateException("ACME EAB provider is unavailable");
-                        }
-                    });
-                }
+                validateFrozenDirectory(directory);
             }
             if (!page.hasMore()) {
                 return;
@@ -163,12 +211,25 @@ public final class AcmeService {
         } while (true);
     }
 
-    /** Safe immutable directory-registration input. */
+    /**
+     * Safe immutable directory-registration input.
+     *
+     * @param alias unique public directory alias
+     * @param authorityId exact logical authority identifier
+     * @param profileId active end-entity profile identifier
+     * @param dnsNamespaces permitted DNS namespace suffixes
+     * @param maximumValidity maximum issued credential validity
+     * @param publicKeyAlgorithms accepted public-key algorithm identifiers
+     * @param x509BindingPolicies accepted X.509 binding-policy identifiers
+     * @param challengeTypes enabled challenge types
+     * @param challengeProviderIds enabled challenge-provider identifiers
+     * @param eabProviderId optional external-account-binding provider
+     * @param eabRequired whether external account binding is mandatory
+     */
     public record DirectoryRegistration(String alias, PkiId authorityId, String profileId,
             Set<String> dnsNamespaces, Duration maximumValidity, Set<String> publicKeyAlgorithms,
             Set<String> x509BindingPolicies, Set<AcmeState.ChallengeType> challengeTypes,
-            Set<String> challengeProviderIds, Optional<String> eabProviderId, boolean eabRequired,
-            DisclosureService.Policy disclosurePolicy) {
+            Set<String> challengeProviderIds, Optional<String> eabProviderId, boolean eabRequired) {
         /** Validates required registration input before PKI resolution. */
         public DirectoryRegistration {
             Objects.requireNonNull(alias, "alias"); Objects.requireNonNull(authorityId, "authorityId");
@@ -177,18 +238,53 @@ public final class AcmeService {
             publicKeyAlgorithms = Set.copyOf(publicKeyAlgorithms); x509BindingPolicies = Set.copyOf(x509BindingPolicies);
             challengeTypes = Set.copyOf(challengeTypes); challengeProviderIds = Set.copyOf(challengeProviderIds);
             eabProviderId = Objects.requireNonNull(eabProviderId, "eabProviderId");
-            Objects.requireNonNull(disclosurePolicy, "disclosurePolicy");
         }
     }
 
-    /** Registers one immutable inactive directory revision. */
-    public synchronized AcmeState.Directory registerDirectory(DirectoryRegistration registration) {
+    /**
+     * Resolves the active profile precondition that must be bound into approval.
+     *
+     * @param registration validated directory registration input
+     * @return authoritative profile and policy precondition
+     */
+    public ServerControlOperation.AcmeDirectoryProfilePrecondition resolveDirectoryProfilePrecondition(
+            DirectoryRegistration registration) {
+        DirectoryRegistration exact = Objects.requireNonNull(registration, "registration");
+        ActiveCertificateProfile active = realm.session().profiles().requireActiveProfile(exact.profileId());
+        if (active.definition().certificateType() != CertificateProfileKind.END_ENTITY) {
+            throw new IllegalArgumentException("ACME profile must be an active end-entity profile");
+        }
+        CredentialConfirmationPolicy confirmation = active.definition().confirmationPolicy()
+                .orElseThrow(() -> new IllegalArgumentException("ACME profile confirmation policy is unavailable"));
+        return new ServerControlOperation.AcmeDirectoryProfilePrecondition(active.reference(),
+                confirmation.configurationCommitment());
+    }
+
+    /**
+     * Registers one immutable inactive directory revision from an approval-bound profile precondition.
+     *
+     * @param registration validated directory registration input
+     * @param profilePrecondition approval-bound authoritative profile precondition
+     * @return durably registered inactive directory revision
+     */
+    public synchronized AcmeState.Directory registerDirectory(DirectoryRegistration registration,
+            ServerControlOperation.AcmeDirectoryProfilePrecondition profilePrecondition) {
         Objects.requireNonNull(registration, "registration");
+        ServerControlOperation.AcmeDirectoryProfilePrecondition expected =
+                Objects.requireNonNull(profilePrecondition, "profilePrecondition");
         requireExposed(registration.authorityId());
         PkiSession session = realm.session();
         CaRecord authority = session.repository().authority(registration.authorityId())
                 .orElseThrow(() -> new IllegalArgumentException("ACME authority is unavailable"));
+        requireActiveAuthority(authority);
         ActiveCertificateProfile profile = session.profiles().requireActiveProfile(registration.profileId());
+        CredentialConfirmationPolicy confirmationPolicy = profile.definition().confirmationPolicy()
+                .orElseThrow(() -> new IllegalArgumentException("ACME profile confirmation policy is unavailable"));
+        if (!profile.reference().equals(expected.expectedProfile())
+                || !confirmationPolicy.configurationCommitment()
+                        .equals(expected.expectedPolicyCommitment())) {
+            throw new IllegalStateException("ACME approval-bound profile precondition changed");
+        }
         if (profile.definition().certificateType() != CertificateProfileKind.END_ENTITY
                 || registration.maximumValidity().compareTo(profile.definition().maximumValidity()) > 0) {
             throw new IllegalArgumentException("ACME profile or validity policy is invalid");
@@ -208,7 +304,7 @@ public final class AcmeService {
         });
         int revision = nextDirectoryRevision(registration.alias());
         String directoryId = "directory:" + registration.alias() + ":r" + revision;
-        String policy = directoryPolicyCommitment(registration, profile, authority, path);
+        String policy = directoryPolicyCommitment(registration, profile, confirmationPolicy, authority, path);
         AcmeState.Directory unsealed = new AcmeState.Directory(directoryId, registration.alias(), revision,
                 realm.configuration().realmId(), authority.caId(), profile.reference(),
                 authority.currentIssuanceIssuerId(), path.pathId(), path.pathCommitment(),
@@ -216,15 +312,32 @@ public final class AcmeService {
                 registration.maximumValidity(), registration.publicKeyAlgorithms(),
                 registration.x509BindingPolicies(), registration.challengeTypes(),
                 registration.challengeProviderIds(), registration.eabProviderId(), registration.eabRequired(),
-                registration.disclosurePolicy(), AcmeState.DirectoryStatus.INACTIVE, policy, clock.instant(), ZERO);
+                confirmationPolicy, confirmationPolicy.configurationCommitment(),
+                AcmeState.DirectoryStatus.INACTIVE, policy, clock.instant(), ZERO);
         return store.create(unsealed);
     }
 
-    /** Activates one exact directory revision after revalidating all frozen PKI authority. */
+    /**
+     * Registers directly after resolving the same exact active-profile precondition.
+     *
+     * @param registration validated directory registration input
+     * @return durably registered inactive directory revision
+     */
+    public synchronized AcmeState.Directory registerDirectory(DirectoryRegistration registration) {
+        return registerDirectory(registration, resolveDirectoryProfilePrecondition(registration));
+    }
+
+    /**
+     * Activates one exact directory revision after revalidating all frozen PKI authority.
+     *
+     * @param directoryId stable directory identifier
+     * @return active directory revision
+     */
     public synchronized AcmeState.Directory activateDirectory(String directoryId) {
         AcmeState.Directory current = requireDirectory(directoryId);
         if (current.status() == AcmeState.DirectoryStatus.ACTIVE) return current;
         validateFrozenDirectory(current);
+        requireAdmissionCapabilities(current);
         for (AcmeState.Directory other : directoriesForAlias(current.alias())) {
             if (other.status() == AcmeState.DirectoryStatus.ACTIVE) {
                 throw new IllegalStateException("Another ACME directory revision is active");
@@ -234,7 +347,12 @@ public final class AcmeService {
         return (AcmeState.Directory) store.replace(List.of(new AcmeControlStore.Replacement(current, updated))).get(0);
     }
 
-    /** Deactivates new account/order admission while existing unexpired orders remain usable. */
+    /**
+     * Deactivates new account/order admission while existing unexpired orders remain usable.
+     *
+     * @param directoryId stable directory identifier
+     * @return inactive directory revision
+     */
     public synchronized AcmeState.Directory deactivateDirectory(String directoryId) {
         AcmeState.Directory current = requireDirectory(directoryId);
         if (current.status() == AcmeState.DirectoryStatus.INACTIVE) return current;
@@ -242,7 +360,12 @@ public final class AcmeService {
         return (AcmeState.Directory) store.replace(List.of(new AcmeControlStore.Replacement(current, updated))).get(0);
     }
 
-    /** Resolves the sole active directory revision for one public alias. */
+    /**
+     * Resolves the sole active directory revision for one public alias.
+     *
+     * @param alias public directory alias
+     * @return sole active directory revision
+     */
     public AcmeState.Directory activeDirectory(String alias) {
         List<AcmeState.Directory> active = directoriesForAlias(alias).stream()
                 .filter(value -> value.status() == AcmeState.DirectoryStatus.ACTIVE).toList();
@@ -250,19 +373,97 @@ public final class AcmeService {
         return active.get(0);
     }
 
-    /** Returns one exact directory revision for administrative and protocol inspection. */
+    /**
+     * Returns the canonical nonce scope for one known directory alias.
+     *
+     * @param alias public directory alias
+     * @return canonical nonce scope
+     */
+    public String nonceScope(String alias) {
+        List<AcmeState.Directory> known = directoriesForAlias(alias);
+        if (known.isEmpty()) {
+            throw new IllegalArgumentException("ACME directory alias is unavailable");
+        }
+        return known.get(0).alias();
+    }
+
+    /**
+     * Returns one exact directory revision for administrative and protocol inspection.
+     *
+     * @param directoryId stable directory identifier
+     * @return exact directory revision
+     */
     public AcmeState.Directory directory(String directoryId) { return requireDirectory(directoryId); }
 
-    /** Returns a deterministic bounded page of directory revisions. */
+    /**
+     * Resolves the exact frozen directory for one existing account resource.
+     *
+     * @param accountId stable account identifier
+     * @return account's frozen directory revision
+     */
+    public AcmeState.Directory accountDirectory(String accountId) {
+        return requireDirectory(requireAccount(accountId).directoryId());
+    }
+
+    /**
+     * Resolves the exact frozen directory for one existing order resource.
+     *
+     * @param orderId stable order identifier
+     * @return order's frozen directory revision
+     */
+    public AcmeState.Directory orderDirectory(String orderId) {
+        return requireDirectory(requireOrder(orderId).directoryId());
+    }
+
+    /**
+     * Resolves the exact frozen directory for one existing authorization resource.
+     *
+     * @param authorizationId stable authorization identifier
+     * @return authorization's frozen directory revision
+     */
+    public AcmeState.Directory authorizationDirectory(String authorizationId) {
+        AcmeState.Authorization authorization = requireAuthorization(authorizationId);
+        return orderDirectory(authorization.orderId());
+    }
+
+    /**
+     * Resolves the exact frozen directory for one existing challenge resource.
+     *
+     * @param challengeId stable challenge identifier
+     * @return challenge's frozen directory revision
+     */
+    public AcmeState.Directory challengeDirectory(String challengeId) {
+        AcmeState.Challenge challenge = requireChallenge(challengeId);
+        return authorizationDirectory(challenge.authorizationId());
+    }
+
+    /**
+     * Returns a deterministic bounded page of directory revisions.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return deterministic bounded directory page
+     */
     public ServerControlStore.Page<AcmeState.Directory> directories(int offset, int limit) {
         return store.page(AcmeState.Directory.class, offset, limit);
     }
 
-    /** Creates or returns an account under one exact active directory. */
+    /**
+     * Creates or returns an account under one exact active directory.
+     *
+     * @param directory exact frozen directory revision
+     * @param keyThumbprint authenticated account-key thumbprint
+     * @param publicKeySpki canonical subject-public-key information
+     * @param contacts bounded account contact URIs
+     * @param termsAgreed whether current terms were accepted
+     * @param eabPolicyCommitment optional external-account-binding policy commitment
+     * @param onlyReturnExisting whether account creation must be refused
+     * @return existing or newly created account
+     */
     public synchronized AcmeState.Account createAccount(AcmeState.Directory directory, String keyThumbprint,
             byte[] publicKeySpki, List<String> contacts, boolean termsAgreed,
             Optional<String> eabPolicyCommitment, boolean onlyReturnExisting) {
-        requireActiveExact(directory);
+        requireActiveAdmission(directory);
         Optional<AcmeState.Account> existing = accountByThumbprint(directory.directoryId(), keyThumbprint);
         if (existing.isPresent()) return existing.orElseThrow();
         if (onlyReturnExisting) throw new IllegalArgumentException("ACME account does not exist");
@@ -271,19 +472,32 @@ public final class AcmeService {
         }
         Instant now = clock.instant();
         AcmeState.Account account = new AcmeState.Account(id("account"), directory.directoryId(),
-                directory.revision(), directory.commitment(), keyThumbprint, publicKeySpki,
+                directory.revision(), directory.policyCommitment(), keyThumbprint, publicKeySpki,
                 AcmeState.AccountStatus.VALID, contacts, termsAgreed, eabPolicyCommitment, now, now, ZERO);
         AcmeState.Account created = store.create(account);
         audit("ACME_ACCOUNT_CREATED", created.accountId(), Map.of("directory", created.directoryId()));
         return created;
     }
 
-    /** Resolves an account by its authenticated key identity within one directory. */
+    /**
+     * Resolves an account by its authenticated key identity within one directory.
+     *
+     * @param directoryId stable directory identifier
+     * @param keyThumbprint authenticated account-key thumbprint
+     * @return matching account, or empty when unknown
+     */
     public Optional<AcmeState.Account> accountByKey(String directoryId, String keyThumbprint) {
         return accountByThumbprint(directoryId, keyThumbprint);
     }
 
-    /** Verifies EAB inside its explicit secret-confining provider and returns only a safe commitment. */
+    /**
+     * Verifies EAB inside its explicit secret-confining provider and returns only a safe commitment.
+     *
+     * @param directory exact frozen directory revision
+     * @param keyThumbprint authenticated account-key thumbprint
+     * @param nestedJws optional nested EAB JWS document
+     * @return safe policy commitment, or empty when EAB is unused
+     */
     public Optional<String> verifyExternalAccountBinding(AcmeState.Directory directory, String keyThumbprint,
             Optional<byte[]> nestedJws) {
         Objects.requireNonNull(nestedJws, "nestedJws");
@@ -312,7 +526,13 @@ public final class AcmeService {
         return Optional.of(binding.policyCommitment());
     }
 
-    /** Resolves one active account key for strict KID authentication. */
+    /**
+     * Resolves one active account key for strict KID authentication.
+     *
+     * @param accountId stable account identifier
+     * @param kid exact account key identifier
+     * @return validated account key and record commitment
+     */
     public AcmeJwsVerifier.AccountKey accountKey(String accountId, String kid) {
         AcmeState.Account account = requireAccount(accountId);
         if (account.status() != AcmeState.AccountStatus.VALID) throw new IllegalArgumentException("ACME account unavailable");
@@ -325,15 +545,31 @@ public final class AcmeService {
         }
     }
 
-    /** Returns one account record without exposing contact data through transport automatically. */
+    /**
+     * Returns one account record without exposing contact data through transport automatically.
+     *
+     * @param accountId stable account identifier
+     * @return exact account record
+     */
     public AcmeState.Account account(String accountId) { return requireAccount(accountId); }
 
-    /** Durably changes account status while preserving its key and history commitment. */
+    /**
+     * Durably changes account status while preserving its key and history commitment.
+     *
+     * @param accountId stable account identifier
+     * @return durably deactivated account
+     */
     public synchronized AcmeState.Account deactivateAccount(String accountId) {
         return deactivateAccount(requireAccount(accountId));
     }
 
-    /** Durably changes account status after exact account-key authority revalidation. */
+    /**
+     * Durably changes account status after exact account-key authority revalidation.
+     *
+     * @param accountId stable account identifier
+     * @param expectedCommitment expected current account-record commitment
+     * @return durably deactivated account
+     */
     public synchronized AcmeState.Account deactivateAccount(String accountId, String expectedCommitment) {
         return deactivateAccount(requireAuthenticatedAccount(accountId, expectedCommitment));
     }
@@ -341,7 +577,7 @@ public final class AcmeService {
     private AcmeState.Account deactivateAccount(AcmeState.Account current) {
         if (current.status() == AcmeState.AccountStatus.DEACTIVATED) return current;
         AcmeState.Account updated = new AcmeState.Account(current.accountId(), current.directoryId(),
-                current.directoryRevision(), current.directoryCommitment(), current.keyThumbprint(),
+                current.directoryRevision(), current.directoryPolicyCommitment(), current.keyThumbprint(),
                 current.publicKeySpki(), AcmeState.AccountStatus.DEACTIVATED, current.contacts(),
                 current.termsAgreed(), current.eabPolicyCommitment(), current.createdAt(), clock.instant(), ZERO);
         AcmeState.Account deactivated = (AcmeState.Account) store.replace(
@@ -350,7 +586,14 @@ public final class AcmeService {
         return deactivated;
     }
 
-    /** Atomically replaces bounded account contact metadata without changing key authority. */
+    /**
+     * Atomically replaces bounded account contact metadata without changing key authority.
+     *
+     * @param accountId stable account identifier
+     * @param expectedCommitment expected current account-record commitment
+     * @param contacts bounded account contact URIs
+     * @return durably updated account
+     */
     public synchronized AcmeState.Account updateAccountContacts(String accountId, String expectedCommitment,
             List<String> contacts) {
         AcmeState.Account current = requireAuthenticatedAccount(accountId, expectedCommitment);
@@ -358,7 +601,7 @@ public final class AcmeService {
             throw new IllegalStateException("ACME account is unavailable");
         }
         AcmeState.Account updated = new AcmeState.Account(current.accountId(), current.directoryId(),
-                current.directoryRevision(), current.directoryCommitment(), current.keyThumbprint(),
+                current.directoryRevision(), current.directoryPolicyCommitment(), current.keyThumbprint(),
                 current.publicKeySpki(), current.status(), contacts, current.termsAgreed(),
                 current.eabPolicyCommitment(), current.createdAt(), clock.instant(), ZERO);
         AcmeState.Account replaced = (AcmeState.Account) store.replace(
@@ -367,7 +610,15 @@ public final class AcmeService {
         return replaced;
     }
 
-    /** Atomically replaces one account key after exact old-record authentication. */
+    /**
+     * Atomically replaces one account key after exact old-record authentication.
+     *
+     * @param accountId stable account identifier
+     * @param expectedCommitment expected current account-record commitment
+     * @param replacementThumbprint replacement account-key thumbprint
+     * @param replacementSpki canonical replacement public key
+     * @return account with the replacement key
+     */
     public synchronized AcmeState.Account rolloverAccount(String accountId, String expectedCommitment,
             String replacementThumbprint, byte[] replacementSpki) {
         AcmeState.Account current = requireAccount(accountId);
@@ -378,7 +629,7 @@ public final class AcmeService {
             throw new SecurityException("ACME account key rollover is unavailable");
         }
         AcmeState.Account updated = new AcmeState.Account(current.accountId(), current.directoryId(),
-                current.directoryRevision(), current.directoryCommitment(), replacementThumbprint,
+                current.directoryRevision(), current.directoryPolicyCommitment(), replacementThumbprint,
                 replacementSpki, current.status(), current.contacts(), current.termsAgreed(),
                 current.eabPolicyCommitment(), current.createdAt(), clock.instant(), ZERO);
         AcmeState.Account replaced = (AcmeState.Account) store.replace(
@@ -387,19 +638,37 @@ public final class AcmeService {
         return replaced;
     }
 
-    /** Returns a deterministic bounded page of accounts for administrative inspection. */
+    /**
+     * Returns a deterministic bounded page of accounts for administrative inspection.
+     *
+     * @param offset zero-based page offset
+     * @param limit positive page-size limit
+     * @return deterministic bounded account page
+     */
     public ServerControlStore.Page<AcmeState.Account> accounts(int offset, int limit) {
         return store.page(AcmeState.Account.class, offset, limit);
     }
 
-    /** Atomically creates one account-owned order, authorization, and challenge graph. */
+    /**
+     * Atomically creates one account-owned order, authorization, and challenge graph.
+     *
+     * @param accountId stable account identifier
+     * @param expectedAccountCommitment expected current account-record commitment
+     * @param directory exact frozen directory revision
+     * @param requested requested certificate identifiers
+     * @param notBefore optional requested validity start
+     * @param notAfter optional requested validity end
+     * @param orderLifetime positive order lifetime
+     * @return durably created order
+     */
     public synchronized AcmeState.Order createOrder(String accountId, String expectedAccountCommitment,
             AcmeState.Directory directory,
             List<AcmeState.Identifier> requested, Optional<Instant> notBefore, Optional<Instant> notAfter,
             Duration orderLifetime) {
         AcmeState.Account account = requireAuthenticatedAccount(accountId, expectedAccountCommitment);
         requireAccountDirectory(account, directory);
-        requireActiveExact(directory); List<AcmeState.Identifier> identifiers = canonicalIdentifiers(requested, directory);
+        requireActiveAdmission(directory);
+        List<AcmeState.Identifier> identifiers = canonicalIdentifiers(requested, directory);
         Instant now = clock.instant(); Instant expires = now.plus(orderLifetime);
         List<AcmeState.Authorization> authorizations = new ArrayList<>();
         List<AcmeState.Challenge> challenges = new ArrayList<>();
@@ -421,17 +690,23 @@ public final class AcmeService {
                 orderId, value.accountId(), value.identifier(), value.status(), value.challengeIds(), value.expiresAt(),
                 value.evidenceId(), ZERO)).toList();
         AcmeState.Order order = new AcmeState.Order(orderId, accountId, directory.directoryId(), directory.revision(),
-                directory.commitment(), directory.authorityId(), directory.profile(), directory.issuerId(),
+                directory.policyCommitment(), directory.authorityId(), directory.profile(), directory.issuerId(),
                 directory.issuancePathId(), directory.issuancePathCommitment(), identifiers, notBefore, notAfter,
                 AcmeState.OrderStatus.PENDING, authorizations.stream().map(AcmeState.Authorization::authorizationId).toList(),
-                Optional.empty(), now, expires, ZERO);
+                Optional.empty(), Optional.empty(), Optional.empty(), now, expires, ZERO);
         AcmeState.Order created = store.createOrderGraph(order, authorizations, challenges).order();
         audit("ACME_ORDER_CREATED", accountId, Map.of("order", created.orderId(),
                 "directory", created.directoryId()));
         return created;
     }
 
-    /** Counts pending nonterminal orders up to a caller-supplied finite bound. */
+    /**
+     * Counts pending nonterminal orders up to a caller-supplied finite bound.
+     *
+     * @param accountId stable account identifier
+     * @param stopAt positive early-stop bound
+     * @return number of pending orders, capped by the supplied bound
+     */
     public int pendingOrderCount(String accountId, int stopAt) {
         if (stopAt <= 0) throw new IllegalArgumentException("ACME pending-order bound is invalid");
         int offset = 0; int count = 0;
@@ -446,12 +721,21 @@ public final class AcmeService {
         }
     }
 
-    /** Revokes one certificate issued to the authenticated account through the bound directory. */
+    /**
+     * Revokes one certificate issued to the authenticated account through the bound directory.
+     *
+     * @param accountId stable account identifier
+     * @param expectedAccountCommitment expected current account-record commitment
+     * @param directory exact frozen directory revision
+     * @param certificateDer canonical certificate DER
+     * @param reason permanent revocation reason
+     * @param requestId stable request correlation identifier
+     * @return committed revocation record
+     */
     public synchronized RevocationRecord revokeCertificate(String accountId, String expectedAccountCommitment,
-            AcmeState.Directory directory,
-            byte[] certificateDer, RevocationReason reason) {
+            AcmeState.Directory directory, byte[] certificateDer, RevocationReason reason, String requestId) {
         Objects.requireNonNull(certificateDer, "certificateDer"); Objects.requireNonNull(reason, "reason");
-        requireAuthenticatedAccount(accountId, expectedAccountCommitment);
+        AcmeState.Account account = requireAuthenticatedAccount(accountId, expectedAccountCommitment);
         String digest = digestBytes(certificateDer); AcmeState.Order owning = null; int offset = 0;
         while (owning == null) {
             ServerControlStore.Page<AcmeState.Order> page = store.page(AcmeState.Order.class, offset, 256);
@@ -467,19 +751,34 @@ public final class AcmeService {
             offset = page.nextOffset();
         }
         if (owning == null) throw new SecurityException("ACME certificate is unavailable");
-        RevocationRecord revoked = realm.session().revocations().revokePermanently(new RevocationCommand.RevokePermanently(
-                owning.credentialId().orElseThrow(), reason, EMPTY_ATTRIBUTES));
+        PkiId credentialId = owning.credentialId().orElseThrow();
+        validatePublicationCorrelation(account, owning, directory, credentialId);
+        PkiOperation.RevokeCredential operation = new PkiOperation.RevokeCredential(credentialId, reason);
+        RevocationExecutionEvidence evidence = RevocationExecutionEvidence.acme(accountId,
+                realm.configuration().realmId().value(), requestId);
+        PkiOperationOutcome outcome = RevocationEvidenceExecutor.require(realm.session().operations())
+                .executeRevocation(operation, evidence, CancellationSignal.NONE);
+        if (!(outcome instanceof PkiOperationOutcome.Completed)) {
+            throw new IllegalStateException("ACME revocation did not commit");
+        }
+        signalReconciliation();
+        RevocationRecord revoked = realm.session().revocations().get(credentialId)
+                .orElseThrow(() -> new IllegalStateException("Committed ACME revocation is unavailable"));
         audit("ACME_CERTIFICATE_REVOKED", accountId, Map.of("order", owning.orderId()));
         return revoked;
     }
 
-    private static final AttributeSet EMPTY_ATTRIBUTES = new AttributeSet() {
-        @Override public Set<AttributeId> ids() { return Set.of(); }
-        @Override public Optional<AttributeValue> get(AttributeId id) { Objects.requireNonNull(id); return Optional.empty(); }
-        @Override public List<AttributeValue> getAll(AttributeId id) { Objects.requireNonNull(id); return List.of(); }
-    };
-
-    /** Claims and performs one explicit challenge validation attempt. */
+    /**
+     * Claims and performs one explicit challenge validation attempt.
+     *
+     * @param accountId stable account identifier
+     * @param expectedAccountCommitment expected current account-record commitment
+     * @param challengeId stable challenge identifier
+     * @param accountKeyThumbprint authenticated account-key thumbprint
+     * @param deadline absolute validation deadline
+     * @param cancellation cooperative cancellation signal
+     * @return durably completed challenge attempt
+     */
     public AcmeState.Challenge validateChallenge(String accountId, String expectedAccountCommitment,
             String challengeId, String accountKeyThumbprint, Instant deadline, CancellationSignal cancellation) {
         AcmeState.Challenge current; AcmeState.Authorization authorization;
@@ -495,7 +794,9 @@ public final class AcmeService {
                             Math.addExact(current.attempt(), 1), Optional.empty(), Optional.empty(),
                             current.createdAt(), clock.instant(), ZERO)))).get(0);
         }
-        AcmeState.Order order = requireOrder(authorization.orderId()); AcmeState.Directory directory = requireDirectory(order.directoryId());
+        AcmeState.Order order = requireOrder(authorization.orderId());
+        AcmeState.Directory directory = requireDirectory(order.directoryId());
+        validateFrozenOrder(order, directory);
         String keyAuthorization = current.token() + "." + accountKeyAuthorizationThumbprint(accountKeyThumbprint);
         AcmeChallengeProvider provider = providers.get(current.providerId());
         AcmeChallengeProvider.Result result;
@@ -512,75 +813,311 @@ public final class AcmeService {
                 accountKeyThumbprint, keyAuthorization, result);
     }
 
-    /** Finalizes a ready order through the existing strict CSR and issuance services. */
-    public synchronized CredentialBundle finalizeOrder(String accountId, String expectedAccountCommitment,
+    /**
+     * Finalizes a ready order through the existing strict CSR and issuance services.
+     *
+     * @param accountId stable account identifier
+     * @param expectedAccountCommitment expected current account-record commitment
+     * @param orderId stable order identifier
+     * @param csrDer canonical PKCS#10 request DER
+     * @return current durable order after finalization processing
+     */
+    public synchronized AcmeState.Order finalizeOrder(String accountId, String expectedAccountCommitment,
             String orderId, byte[] csrDer) {
-        requireAuthenticatedAccount(accountId, expectedAccountCommitment);
+        return finalizeOrder(accountId, expectedAccountCommitment, orderId, csrDer, CancellationSignal.NONE);
+    }
+
+    /**
+     * Finalizes a ready order while propagating transport cancellation into signing.
+     *
+     * @param accountId stable account identifier
+     * @param expectedAccountCommitment expected current account-record commitment
+     * @param orderId stable order identifier
+     * @param csrDer canonical PKCS#10 request DER
+     * @param cancellation cooperative cancellation signal
+     * @return current durable order after finalization processing
+     */
+    public synchronized AcmeState.Order finalizeOrder(String accountId, String expectedAccountCommitment,
+            String orderId, byte[] csrDer, CancellationSignal cancellation) {
+        CancellationSignal signal = Objects.requireNonNull(cancellation, "cancellation");
+        AcmeState.Account account = requireAuthenticatedAccount(accountId, expectedAccountCommitment);
         AcmeState.Order order = requireOrder(orderId);
         if (!order.accountId().equals(accountId)) throw new IllegalArgumentException("ACME order unavailable");
         if (clock.instant().isAfter(order.expiresAt())) throw new IllegalStateException("ACME order expired");
         if (order.status() == AcmeState.OrderStatus.VALID) {
-            return realm.session().issuance().orElseThrow().buildBundle(
-                    new zeroecho.pki.api.issuance.BundleCommand(order.credentialId().orElseThrow(),
-                            Optional.empty(), Optional.empty()));
+            AcmeState.Directory directory = requireDirectory(order.directoryId());
+            validatePublicationCorrelation(account, order, directory, order.credentialId().orElseThrow());
+            registerPublication(order.credentialId().orElseThrow(), accountId);
+            return order;
         }
         if (order.status() != AcmeState.OrderStatus.READY && order.status() != AcmeState.OrderStatus.PROCESSING) {
             throw new IllegalStateException("ACME order is not ready");
         }
-        AcmeState.Directory directory = requireDirectory(order.directoryId()); validateFrozenOrder(order, directory);
-        ActiveCertificateProfile profile = realm.session().profiles().requireActiveProfile(order.profile().profileId());
-        if (!profile.reference().equals(order.profile())) throw new IllegalStateException("ACME order profile changed");
+        AcmeState.Directory directory = requireDirectory(order.directoryId());
+        validateFrozenOrder(order, directory);
+        if (order.issuanceCommitment().isEmpty()) {
+            requireActiveAdmission(directory);
+        }
+        ImportedCertificateProfileVersion profile = requireFrozenProfile(directory);
         CertificationRequestService requests = realm.session().requests()
                 .orElseThrow(() -> new IllegalStateException("ACME CSR capability is unavailable"));
         ParsedCertificationRequest parsed = requests.parse(new CertificationRequest(profile.definition().formatId(),
                 new EncodedObject(Encoding.DER, csrDer.clone())));
         requireExactIdentifiers(parsed, order.identifiers());
-        if (order.status() == AcmeState.OrderStatus.READY) {
-            order = (AcmeState.Order) store.replace(List.of(new AcmeControlStore.Replacement(order,
-                    copyOrder(order, AcmeState.OrderStatus.PROCESSING, Optional.empty())))).get(0);
+        String exactIssuanceCommitment = issuanceCommitment(order, parsed);
+        if (order.issuanceCommitment().filter(value -> !value.equals(exactIssuanceCommitment)).isPresent()) {
+            throw new IllegalStateException("ACME order issuance commitment differs");
+        }
+        if (order.issuanceCommitment().isEmpty()) {
+            AcmeState.Order prepared = copyOrder(order, order.status(), order.credentialId(),
+                    order.signingOperationId(), Optional.of(exactIssuanceCommitment));
+            order = (AcmeState.Order) store.replace(List.of(
+                    new AcmeControlStore.Replacement(order, prepared))).get(0);
+        }
+        IssuanceIntent intent = issuanceIntent(order);
+        SigningIssuanceBinding binding = new SigningIssuanceBinding(order.authorityId(), intent);
+        Optional<PkiId> indexedId = realm.session().issuanceSigningOperationId(binding);
+        if (order.signingOperationId().isPresent() && !order.signingOperationId().equals(indexedId)) {
+            throw new IllegalStateException("ACME signing attachment conflicts with its durable correlation");
+        }
+        Optional<PkiId> recoveredId = indexedId;
+        if (recoveredId.isPresent()) {
+            PkiId operationId = recoveredId.orElseThrow();
+            PkiOperationOutcome recovered = realm.session().issuanceSigningOperation(operationId, binding);
+            if (recovered instanceof PkiOperationOutcome.Pending) {
+                if (order.status() != AcmeState.OrderStatus.PROCESSING
+                        || order.signingOperationId().filter(operationId::equals).isEmpty()) {
+                    AcmeState.Order processing = copyOrder(order, AcmeState.OrderStatus.PROCESSING,
+                            Optional.empty(), Optional.of(operationId));
+                    order = (AcmeState.Order) store.replace(List.of(
+                            new AcmeControlStore.Replacement(order, processing))).get(0);
+                }
+                return order;
+            }
+            if (recovered instanceof PkiOperationOutcome.Failed) {
+                AcmeState.Order invalid = copyOrder(order, AcmeState.OrderStatus.INVALID,
+                        Optional.empty(), Optional.of(operationId));
+                return (AcmeState.Order) store.replace(List.of(
+                        new AcmeControlStore.Replacement(order, invalid))).get(0);
+            }
+            return completeRecoveredOrder(order, directory, accountId, operationId,
+                    (PkiOperationOutcome.Completed) recovered);
         }
         IssuanceService issuance = realm.session().issuance()
                 .orElseThrow(() -> new IllegalStateException("ACME issuance capability is unavailable"));
         Optional<Validity> validity = order.notBefore().isPresent()
                 ? Optional.of(new Validity(order.notBefore().orElseThrow(), order.notAfter().orElseThrow()))
                 : Optional.empty();
-        IssuanceIntent intent = new IssuanceIntent(order.orderId(), issuanceCommitment(order, parsed), order.profile(),
-                order.issuerId(), order.issuancePathId(), order.issuancePathCommitment());
-        CredentialBundle bundle = issuance.issueEndEntity(new IssueEndEntityCommand(order.authorityId(), parsed,
-                order.profile().profileId(), validity, Optional.of(intent)));
+        CredentialBundle bundle;
+        try {
+            bundle = issuance.issueEndEntity(new IssueEndEntityCommand(order.authorityId(), parsed,
+                    order.profile().profileId(), validity, Optional.of(intent)), signal);
+        } catch (zeroecho.pki.impl.core.async.PendingSigningOperation pending) {
+            tripFinalizeFault(FinalizeFaultPoint.BEFORE_SIGNING_ATTACHMENT);
+            AcmeState.Order processing = copyOrder(order, AcmeState.OrderStatus.PROCESSING,
+                    Optional.empty(), Optional.of(pending.operationId()));
+            return (AcmeState.Order) store.replace(List.of(
+                    new AcmeControlStore.Replacement(order, processing))).get(0);
+        }
         if (!bundle.credential().issuerRef().issuerId().equals(order.issuerId())
                 || !bundle.credential().issuerRef().chainPathId().equals(order.issuancePathId())) {
             throw new IllegalStateException("ACME issuance selection mismatch");
         }
-        realm.disclosure().registerAcme(bundle.credential().credentialId(), directory.disclosurePolicy(), accountId,
-                directory.policyCommitment());
+        validatePublicationCorrelation(account, order, directory, bundle.credential().credentialId());
+        registerPublication(bundle.credential().credentialId(), accountId);
         AcmeState.Order valid = copyOrder(order, AcmeState.OrderStatus.VALID,
                 Optional.of(bundle.credential().credentialId()));
-        store.replace(List.of(new AcmeControlStore.Replacement(order, valid)));
+        AcmeState.Order committed = (AcmeState.Order) store.replace(List.of(
+                new AcmeControlStore.Replacement(order, valid))).get(0);
         audit("ACME_CERTIFICATE_ISSUED", accountId, Map.of("order", order.orderId(),
                 "credential", bundle.credential().credentialId().value()));
-        return bundle;
+        return committed;
     }
 
-    /** Returns one account-owned order without URL-based authority. */
-    public AcmeState.Order order(String accountId, String orderId) {
+    /**
+     * Returns one account-owned order without URL-based authority.
+     *
+     * @param accountId stable account identifier
+     * @param orderId stable order identifier
+     * @return account-owned order after recovery
+     */
+    public synchronized AcmeState.Order order(String accountId, String orderId) {
         AcmeState.Order order = requireOrder(orderId);
         if (!order.accountId().equals(accountId)) throw new IllegalArgumentException("ACME order unavailable");
-        return order;
+        return recoverPolledOrder(order, accountId);
     }
 
-    /** Returns one account-owned authorization without revealing another account's state. */
+    private AcmeState.Order recoverPolledOrder(AcmeState.Order order, String accountId) {
+        if (order.status() != AcmeState.OrderStatus.READY
+                && order.status() != AcmeState.OrderStatus.PROCESSING
+                || order.issuanceCommitment().isEmpty()) {
+            return order;
+        }
+        AcmeState.Directory directory = requireDirectory(order.directoryId());
+        validateFrozenOrder(order, directory);
+        SigningIssuanceBinding binding = new SigningIssuanceBinding(order.authorityId(), issuanceIntent(order));
+        Optional<PkiId> indexed = realm.session().issuanceSigningOperationId(binding);
+        if (order.signingOperationId().isPresent() && !order.signingOperationId().equals(indexed)) {
+            throw new IllegalStateException("ACME signing attachment conflicts with its durable correlation");
+        }
+        Optional<PkiId> operation = indexed;
+        if (operation.isEmpty()) {
+            return order;
+        }
+        PkiId operationId = operation.orElseThrow();
+        PkiOperationOutcome outcome = realm.session().issuanceSigningOperation(operationId, binding);
+        if (outcome instanceof PkiOperationOutcome.Pending) {
+            if (order.status() == AcmeState.OrderStatus.PROCESSING
+                    && order.signingOperationId().filter(operationId::equals).isPresent()) {
+                return order;
+            }
+            AcmeState.Order processing = copyOrder(order, AcmeState.OrderStatus.PROCESSING,
+                    Optional.empty(), Optional.of(operationId));
+            return (AcmeState.Order) store.replace(List.of(
+                    new AcmeControlStore.Replacement(order, processing))).get(0);
+        }
+        if (outcome instanceof PkiOperationOutcome.Failed) {
+            AcmeState.Order invalid = copyOrder(order, AcmeState.OrderStatus.INVALID,
+                    Optional.empty(), Optional.of(operationId));
+            return (AcmeState.Order) store.replace(List.of(
+                    new AcmeControlStore.Replacement(order, invalid))).get(0);
+        }
+        return completeRecoveredOrder(order, directory, accountId, operationId,
+                (PkiOperationOutcome.Completed) outcome);
+    }
+
+    private AcmeState.Order completeRecoveredOrder(AcmeState.Order order, AcmeState.Directory directory,
+            String accountId, PkiId operationId, PkiOperationOutcome.Completed completed) {
+        PkiOperationValue value = completed.result().field("credentialId")
+                .orElseThrow(() -> new IllegalStateException("Completed issuance lacks its publication identity"));
+        if (!(value instanceof PkiOperationValue.Text text)) {
+            throw new IllegalStateException("Completed issuance publication identity is invalid");
+        }
+        PkiId credentialId = new PkiId(text.value());
+        zeroecho.pki.api.credential.Credential credential = realm.session().repository()
+                .credential(credentialId)
+                .orElseThrow(() -> new IllegalStateException("Completed issuance publication is unavailable"));
+        if (!credential.issuerRef().caId().equals(order.authorityId())
+                || !credential.issuerRef().issuerId().equals(order.issuerId())
+                || !credential.issuerRef().chainPathId().equals(order.issuancePathId())) {
+            throw new IllegalStateException("Completed ACME issuance selection differs");
+        }
+        AcmeState.Account account = requireAccount(accountId);
+        validatePublicationCorrelation(account, order, directory, credentialId);
+        registerPublication(credentialId, accountId);
+        AcmeState.Order valid = copyOrder(order, AcmeState.OrderStatus.VALID,
+                Optional.of(credentialId), Optional.of(operationId));
+        AcmeState.Order committed = (AcmeState.Order) store.replace(List.of(
+                new AcmeControlStore.Replacement(order, valid))).get(0);
+        audit("ACME_CERTIFICATE_ISSUED", accountId,
+                Map.of("order", order.orderId(), "credential", credentialId.value()));
+        return committed;
+    }
+
+    private static IssuanceIntent issuanceIntent(AcmeState.Order order) {
+        return new IssuanceIntent(order.orderId(), order.issuanceCommitment().orElseThrow(), order.profile(),
+                order.issuerId(), order.issuancePathId(), order.issuancePathCommitment());
+    }
+
+    /**
+     * Returns one account-owned authorization without revealing another account's state.
+     *
+     * @param accountId stable account identifier
+     * @param authorizationId stable authorization identifier
+     * @return account-owned authorization
+     */
     public AcmeState.Authorization authorization(String accountId, String authorizationId) {
         AcmeState.Authorization value = requireAuthorization(authorizationId);
         if (!value.accountId().equals(accountId)) throw new IllegalArgumentException("ACME authorization unavailable");
         return value;
     }
 
-    /** Returns one account-owned challenge without URL-derived authority. */
+    /**
+     * Returns one account-owned challenge without URL-derived authority.
+     *
+     * @param accountId stable account identifier
+     * @param challengeId stable challenge identifier
+     * @return account-owned challenge
+     */
     public AcmeState.Challenge challenge(String accountId, String challengeId) {
         AcmeState.Challenge value = requireChallenge(challengeId);
         authorization(accountId, value.authorizationId());
         return value;
+    }
+
+    /**
+     * Issues or exactly replays confirmation proof material for one valid account-owned order.
+     *
+     * @param accountId stable account identifier
+     * @param expectedAccountCommitment expected current account-record commitment
+     * @param orderId stable order identifier
+     * @return issued or replayed confirmation challenge
+     */
+    public CredentialConfirmationProofChallenge issueCredentialConfirmationChallenge(
+            String accountId, String expectedAccountCommitment, String orderId) {
+        ConfirmationOrder confirmation = requireConfirmationOrder(accountId, expectedAccountCommitment, orderId);
+        CredentialConfirmationLifecycle lifecycle = realm.session().confirmations()
+                .get(confirmation.credentialId())
+                .orElseThrow(() -> new IllegalStateException("ACME credential confirmation is unavailable"));
+        validateConfirmationLifecycle(confirmation, lifecycle);
+        if (lifecycle.state() != CredentialConfirmationLifecycle.State.PENDING) {
+            throw new IllegalStateException("ACME credential confirmation is not pending");
+        }
+        return realm.session().confirmations().issueProofChallenge(
+                new CredentialConfirmationProofChallengeRequest(confirmation.credentialId(),
+                        lifecycle.revision(), lifecycle.recordCommitment()));
+    }
+
+    /**
+     * Completes or exactly replays confirmation proof processing for one valid account-owned order.
+     *
+     * @param accountId stable account identifier
+     * @param expectedAccountCommitment expected current account-record commitment
+     * @param orderId stable order identifier
+     * @param expectedLifecycleRevision expected confirmation lifecycle revision
+     * @param expectedLifecycleRecordCommitment expected lifecycle-record commitment
+     * @param expectedChallengeRecordCommitment expected proof-challenge record commitment
+     * @param response suite-defined proof response bytes
+     * @return durable confirmation result
+     */
+    public CredentialConfirmationProofResult completeCredentialConfirmation(
+            String accountId, String expectedAccountCommitment, String orderId,
+            long expectedLifecycleRevision, String expectedLifecycleRecordCommitment,
+            String expectedChallengeRecordCommitment, byte[] response) {
+        ConfirmationOrder confirmation = requireConfirmationOrder(accountId, expectedAccountCommitment, orderId);
+        CredentialConfirmationProofCas proofCas = new CredentialConfirmationProofCas(
+                confirmation.credentialId(), expectedLifecycleRevision,
+                expectedLifecycleRecordCommitment, expectedChallengeRecordCommitment);
+        return realm.session().confirmations().verifyAndComplete(
+                new CredentialConfirmationProofSubmission(proofCas, response));
+    }
+
+    private ConfirmationOrder requireConfirmationOrder(String accountId,
+            String expectedAccountCommitment, String orderId) {
+        AcmeState.Account account = requireAuthenticatedAccount(accountId, expectedAccountCommitment);
+        AcmeState.Order order = requireOrder(orderId);
+        if (!order.accountId().equals(accountId) || order.status() != AcmeState.OrderStatus.VALID
+                || order.credentialId().isEmpty()) {
+            throw new IllegalArgumentException("ACME credential confirmation is unavailable");
+        }
+        AcmeState.Directory directory = requireDirectory(order.directoryId());
+        PkiId credentialId = order.credentialId().orElseThrow();
+        validatePublicationCorrelation(account, order, directory, credentialId);
+        if (directory.confirmationPolicy().disclosurePolicy() == ConfirmationDisclosurePolicy.PUBLIC) {
+            throw new IllegalArgumentException("ACME credential confirmation is not required");
+        }
+        return new ConfirmationOrder(directory, credentialId);
+    }
+
+    private static void validateConfirmationLifecycle(ConfirmationOrder confirmation,
+            CredentialConfirmationLifecycle lifecycle) {
+        AcmeState.Directory directory = confirmation.directory();
+        if (!lifecycle.credentialId().equals(confirmation.credentialId())
+                || !lifecycle.initialPolicyCommitment().equals(directory.confirmationPolicyCommitment())
+                || !lifecycle.proofSuite().equals(directory.confirmationPolicy().proofSuite())
+                || !lifecycle.confirmationRequired()) {
+            throw new IllegalStateException("ACME credential confirmation binding differs");
+        }
     }
 
     private synchronized AcmeState.Challenge completeChallenge(AcmeState.Challenge claimed,
@@ -623,24 +1160,43 @@ public final class AcmeService {
                 .map(this::requireAuthorization).allMatch(value -> value.status() == AcmeState.AuthorizationStatus.VALID);
     }
     private void validateFrozenDirectory(AcmeState.Directory directory) {
-        requireExposed(directory.authorityId()); CaRecord authority = realm.session().repository().authority(directory.authorityId())
-                .orElseThrow(() -> new IllegalStateException("ACME directory authority is unavailable"));
-        if (authority.state() != CaState.ACTIVE || !authority.currentIssuanceIssuerId().equals(directory.issuerId())
-                || !authority.issuanceChainPathId().equals(directory.issuancePathId())) {
-            throw new IllegalStateException("ACME directory issuance selection changed");
+        if (!directory.realmId().equals(realm.configuration().realmId())) {
+            throw new IllegalStateException("ACME directory realm binding differs");
         }
-        IssuerChainPath path = requireCurrentPath(authority);
-        if (!path.pathCommitment().equals(directory.issuancePathCommitment())
-                || !realm.session().profiles().requireActiveProfile(directory.profile().profileId()).reference()
-                        .equals(directory.profile())) {
+        requireExposed(directory.authorityId());
+        realm.session().repository().authority(directory.authorityId())
+                .orElseThrow(() -> new IllegalStateException("ACME directory authority is unavailable"));
+        IssuerChainPath path = realm.session().repository().chainPath(directory.issuancePathId())
+                .orElseThrow(() -> new IllegalStateException("ACME directory issuance path is unavailable"));
+        ImportedCertificateProfileVersion imported = requireFrozenProfile(directory);
+        if (!path.authorityId().equals(directory.authorityId())
+                || !path.issuerId().equals(directory.issuerId())
+                || !path.pathCommitment().equals(directory.issuancePathCommitment())) {
             throw new IllegalStateException("ACME directory frozen policy is unavailable");
         }
-        requireProviders(directory.challengeTypes(), directory.challengeProviderIds());
+        CredentialConfirmationPolicy confirmation = imported.definition().confirmationPolicy()
+                .orElseThrow(() -> new IllegalStateException("ACME directory confirmation policy is unavailable"));
+        if (!confirmation.equals(directory.confirmationPolicy())
+                || !confirmation.configurationCommitment().equals(directory.confirmationPolicyCommitment())) {
+            throw new IllegalStateException("ACME directory confirmation policy changed");
+        }
+    }
+
+    private ImportedCertificateProfileVersion requireFrozenProfile(AcmeState.Directory directory) {
+        ImportedCertificateProfileVersion imported = realm.session().profiles()
+                .getImportedVersion(directory.profile().profileId(), directory.profile().profileVersion())
+                .orElseThrow(() -> new IllegalStateException("ACME directory frozen profile is unavailable"));
+        if (!directory.profile().equals(imported.reference())) {
+            throw new IllegalStateException("ACME directory frozen profile differs");
+        }
+        return imported;
     }
     private void validateFrozenOrder(AcmeState.Order order, AcmeState.Directory directory) {
         if (order.directoryRevision() != directory.revision()
-                || !order.directoryCommitment().equals(directory.commitment())
+                || !order.directoryId().equals(directory.directoryId())
+                || !order.directoryPolicyCommitment().equals(directory.policyCommitment())
                 || !order.authorityId().equals(directory.authorityId())
+                || !order.profile().equals(directory.profile())
                 || !order.issuerId().equals(directory.issuerId())
                 || !order.issuancePathId().equals(directory.issuancePathId())
                 || !order.issuancePathCommitment().equals(directory.issuancePathCommitment())) {
@@ -648,16 +1204,67 @@ public final class AcmeService {
         }
         validateFrozenDirectory(directory);
     }
-    private void requireActiveExact(AcmeState.Directory directory) {
+
+    private void validatePublicationCorrelation(AcmeState.Account account, AcmeState.Order order,
+            AcmeState.Directory directory, PkiId credentialId) {
+        requireAccountDirectory(account, directory);
+        if (!account.accountId().equals(order.accountId())) {
+            throw new IllegalStateException("ACME publication account binding mismatch");
+        }
+        validateFrozenOrder(order, directory);
+        zeroecho.pki.api.credential.Credential credential = realm.session().repository()
+                .credential(credentialId)
+                .orElseThrow(() -> new IllegalStateException("ACME publication credential is unavailable"));
+        if (!credential.credentialId().equals(credentialId)
+                || !credential.issuerRef().caId().equals(order.authorityId())
+                || !credential.issuerRef().issuerId().equals(order.issuerId())
+                || !credential.issuerRef().chainPathId().equals(order.issuancePathId())
+                || !(credential.profileBinding() instanceof EndEntityProfileBinding binding)
+                || !binding.reference().equals(order.profile())) {
+            throw new IllegalStateException("ACME publication credential correlation differs");
+        }
+    }
+
+    private void registerPublication(PkiId credentialId, String accountId) {
+        realm.credentialPublication().register(credentialId,
+                Optional.of(DisclosureService.Owner.acmeAccount(accountId)), PUBLICATION_AUDIT_ACTOR);
+    }
+    private void requireActiveAdmission(AcmeState.Directory directory) {
         AcmeState.Directory exact = requireDirectory(directory.directoryId());
-        if (exact.status() != AcmeState.DirectoryStatus.ACTIVE || !exact.commitment().equals(directory.commitment())) {
+        if (exact.status() != AcmeState.DirectoryStatus.ACTIVE
+                || !exact.commitment().equals(directory.commitment())) {
             throw new IllegalStateException("ACME directory is inactive or changed");
+        }
+        validateFrozenDirectory(exact);
+        requireAdmissionCapabilities(exact);
+    }
+    private void requireAdmissionCapabilities(AcmeState.Directory directory) {
+        CaRecord authority = realm.session().repository().authority(directory.authorityId())
+                .orElseThrow(() -> new IllegalStateException("ACME directory authority is unavailable"));
+        requireActiveAuthority(authority);
+        if (!authority.currentIssuanceIssuerId().equals(directory.issuerId())
+                || !authority.issuanceChainPathId().equals(directory.issuancePathId())) {
+            throw new IllegalStateException("ACME directory issuance selection is no longer current");
+        }
+        requireProviders(directory.challengeTypes(), directory.challengeProviderIds());
+        if (directory.eabRequired() && directory.eabProviderId().isEmpty()) {
+            throw new IllegalStateException("Required ACME EAB provider is unavailable");
+        }
+        directory.eabProviderId().ifPresent(id -> {
+            if (!eabProviders.containsKey(id)) {
+                throw new IllegalStateException("ACME EAB provider is unavailable");
+            }
+        });
+    }
+    private static void requireActiveAuthority(CaRecord authority) {
+        if (authority.state() != CaState.ACTIVE) {
+            throw new IllegalStateException("ACME authority is not active");
         }
     }
     private void requireAccountDirectory(AcmeState.Account account, AcmeState.Directory directory) {
         if (account.status() != AcmeState.AccountStatus.VALID || !account.directoryId().equals(directory.directoryId())
                 || account.directoryRevision() != directory.revision()
-                || !account.directoryCommitment().equals(directory.commitment())) {
+                || !account.directoryPolicyCommitment().equals(directory.policyCommitment())) {
             throw new IllegalArgumentException("ACME account directory mismatch");
         }
     }
@@ -758,12 +1365,20 @@ public final class AcmeService {
     private AcmeState.Order requireOrder(String id) { return store.get(AcmeState.Order.class, id).orElseThrow(() -> new IllegalArgumentException("ACME order unavailable")); }
     private AcmeState.Authorization requireAuthorization(String id) { return store.get(AcmeState.Authorization.class, id).orElseThrow(() -> new IllegalArgumentException("ACME authorization unavailable")); }
     private AcmeState.Challenge requireChallenge(String id) { return store.get(AcmeState.Challenge.class, id).orElseThrow(() -> new IllegalArgumentException("ACME challenge unavailable")); }
-    private AcmeState.Directory copyDirectory(AcmeState.Directory v, AcmeState.DirectoryStatus status) { return new AcmeState.Directory(v.directoryId(), v.alias(), v.revision(), v.realmId(), v.authorityId(), v.profile(), v.issuerId(), v.issuancePathId(), v.issuancePathCommitment(), v.identifierTypes(), v.dnsNamespaces(), v.maximumValidity(), v.publicKeyAlgorithms(), v.x509BindingPolicies(), v.challengeTypes(), v.challengeProviderIds(), v.eabProviderId(), v.eabRequired(), v.disclosurePolicy(), status, v.policyCommitment(), v.createdAt(), ZERO); }
-    private AcmeState.Order copyOrder(AcmeState.Order v, AcmeState.OrderStatus status, Optional<PkiId> credential) { return new AcmeState.Order(v.orderId(), v.accountId(), v.directoryId(), v.directoryRevision(), v.directoryCommitment(), v.authorityId(), v.profile(), v.issuerId(), v.issuancePathId(), v.issuancePathCommitment(), v.identifiers(), v.notBefore(), v.notAfter(), status, v.authorizationIds(), credential, v.createdAt(), v.expiresAt(), ZERO); }
+    private AcmeState.Directory copyDirectory(AcmeState.Directory v, AcmeState.DirectoryStatus status) { return new AcmeState.Directory(v.directoryId(), v.alias(), v.revision(), v.realmId(), v.authorityId(), v.profile(), v.issuerId(), v.issuancePathId(), v.issuancePathCommitment(), v.identifierTypes(), v.dnsNamespaces(), v.maximumValidity(), v.publicKeyAlgorithms(), v.x509BindingPolicies(), v.challengeTypes(), v.challengeProviderIds(), v.eabProviderId(), v.eabRequired(), v.confirmationPolicy(), v.confirmationPolicyCommitment(), status, v.policyCommitment(), v.createdAt(), ZERO); }
+    private AcmeState.Order copyOrder(AcmeState.Order v, AcmeState.OrderStatus status, Optional<PkiId> credential) {
+        return copyOrder(v, status, credential, v.signingOperationId());
+    }
+    private AcmeState.Order copyOrder(AcmeState.Order v, AcmeState.OrderStatus status, Optional<PkiId> credential,
+            Optional<PkiId> signingOperation) {
+        return copyOrder(v, status, credential, signingOperation, v.issuanceCommitment());
+    }
+    private AcmeState.Order copyOrder(AcmeState.Order v, AcmeState.OrderStatus status, Optional<PkiId> credential,
+            Optional<PkiId> signingOperation, Optional<String> issuanceCommitment) { return new AcmeState.Order(v.orderId(), v.accountId(), v.directoryId(), v.directoryRevision(), v.directoryPolicyCommitment(), v.authorityId(), v.profile(), v.issuerId(), v.issuancePathId(), v.issuancePathCommitment(), v.identifiers(), v.notBefore(), v.notAfter(), status, v.authorizationIds(), credential, issuanceCommitment, signingOperation, v.createdAt(), v.expiresAt(), ZERO); }
     private String id(String prefix) { byte[] value = new byte[16]; random.nextBytes(value); return prefix + ":" + java.util.HexFormat.of().formatHex(value); }
     private String token() { byte[] value = new byte[32]; random.nextBytes(value); String result = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(value); java.util.Arrays.fill(value, (byte) 0); return result; }
     private static String directoryPolicyCommitment(DirectoryRegistration r, ActiveCertificateProfile profile,
-            CaRecord ca, IssuerChainPath path) {
+            CredentialConfirmationPolicy confirmationPolicy, CaRecord ca, IssuerChainPath path) {
         return digest(r.alias() + '\n' + ca.caId().value() + '\n' + profile.reference() + '\n'
                 + ca.currentIssuanceIssuerId().value() + '\n' + path.pathId().value() + '\n'
                 + path.pathCommitment() + '\n' + r.dnsNamespaces().stream().sorted().toList() + '\n'
@@ -771,12 +1386,63 @@ public final class AcmeService {
                 + r.x509BindingPolicies().stream().sorted().toList() + '\n'
                 + r.challengeTypes().stream().sorted().toList() + '\n'
                 + r.challengeProviderIds().stream().sorted().toList() + '\n'
-                + r.eabProviderId().orElse("NONE") + '\n' + r.eabRequired() + '\n' + r.disclosurePolicy());
+                + r.eabProviderId().orElse("NONE") + '\n' + r.eabRequired() + '\n'
+                + confirmationPolicy.configurationCommitment());
     }
     private void audit(String action, String actor, Map<String, String> details) {
         realm.auditTransport(action, actor, details);
     }
-    private static String issuanceCommitment(AcmeState.Order order, ParsedCertificationRequest parsed) { return digest(order.commitment() + '\n' + parsed.requestId().value()); }
+    private void signalReconciliation() {
+        try {
+            reconciliationWake.run();
+        } catch (RuntimeException ignored) {
+            // Periodic reconciliation remains authoritative after a failed advisory wake.
+        }
+    }
+    /* default */ static String issuanceCommitment(AcmeState.Order order, ParsedCertificationRequest parsed) {
+        StringBuilder canonical = new StringBuilder("acme-issuance:v1")
+                .append('\n').append(order.orderId())
+                .append('\n').append(order.directoryId())
+                .append('\n').append(order.directoryRevision())
+                .append('\n').append(order.directoryPolicyCommitment())
+                .append('\n').append(order.authorityId().value())
+                .append('\n').append(order.profile().profileId())
+                .append('\n').append(order.profile().profileVersion())
+                .append('\n').append(java.util.HexFormat.of().formatHex(order.profile().canonicalSha256()))
+                .append('\n').append(order.issuerId().value())
+                .append('\n').append(order.issuancePathId().value())
+                .append('\n').append(order.issuancePathCommitment())
+                .append('\n').append(order.notBefore().map(Instant::toString).orElse(""))
+                .append('\n').append(order.notAfter().map(Instant::toString).orElse(""));
+        order.identifiers().stream().map(AcmeState.Identifier::presentation).sorted()
+                .forEach(identifier -> canonical.append('\n').append(identifier));
+        canonical.append('\n').append(parsed.requestId().value());
+        return digest(canonical.toString());
+    }
+
+    /* default */ static void installFinalizeFault(FinalizeFaultInjector faults) {
+        FINALIZE_FAULTS.set(Objects.requireNonNull(faults, "faults"));
+    }
+
+    /* default */ static void clearFinalizeFault() {
+        FINALIZE_FAULTS.remove();
+    }
+
+    private static void tripFinalizeFault(FinalizeFaultPoint point) {
+        FinalizeFaultInjector faults = FINALIZE_FAULTS.get();
+        if (faults != null) {
+            faults.fail(point);
+        }
+    }
+
+    private record ConfirmationOrder(AcmeState.Directory directory, PkiId credentialId) { }
+
+    /** Deterministic finalization crash boundary. */
+    /* default */ enum FinalizeFaultPoint { BEFORE_SIGNING_ATTACHMENT }
+
+    /** Package-local deterministic finalization failure seam. */
+    @FunctionalInterface
+    /* default */ interface FinalizeFaultInjector { void fail(FinalizeFaultPoint point); }
     private static String digest(String value) { try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); } }
     private static String digestBytes(byte[] value) { try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value)); } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); } }
     private static String accountKeyAuthorizationThumbprint(String commitment) {

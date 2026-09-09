@@ -127,6 +127,7 @@ public final class AesDataContentBuilder implements DataContentBuilder<DataConte
      * selected. Use {@link #withKey(SecretKey)} (recommended), or import/generate a
      * key, then select a mode.
      *
+     * @param session active session used to create cryptographic contexts
      * @return a new builder instance
      */
     public static AesDataContentBuilder builder(ZeroEchoSession session) {

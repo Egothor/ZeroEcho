@@ -30,12 +30,13 @@
  * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *******************************************************************************/
+ ******************************************************************************/
 package zeroecho.pki.server.acme;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -62,13 +63,20 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.server.PkiServerConfiguration;
+import zeroecho.pki.server.RealmId;
 import zeroecho.pki.spi.ProviderConfig;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.confirmation.ConfirmationDisclosurePolicy;
+import zeroecho.pki.api.confirmation.ConfirmationProofSuiteRef;
+import zeroecho.pki.api.confirmation.CredentialConfirmationPolicy;
+import zeroecho.pki.api.profile.CertificateProfileRef;
 
 /** Strict replay, JOSE and bounded-admission coverage. */
 class AcmeSecurityPrimitivesTest {
     private static final Instant NOW = Instant.parse("2026-08-05T08:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     private static final String DIRECTORY = "directory:internal:r1";
+    private static final String NONCE_SCOPE = "internal";
     private static final URI URL = URI.create("https://acme.example.test/acme/internal/new-account");
 
     @Test
@@ -76,14 +84,41 @@ class AcmeSecurityPrimitivesTest {
         System.out.println("nonceIsDirectoryBoundOneTimeAndBounded");
         AcmeNonceService service = new AcmeNonceService("listener", Duration.ofMinutes(5), 16,
                 CLOCK, deterministicRandom());
-        String first = service.issue(DIRECTORY);
-        assertFalse(service.consume(first, "directory:other:r1"));
-        assertTrue(service.consume(first, DIRECTORY));
-        assertFalse(service.consume(first, DIRECTORY));
-        for (int index = 0; index < 16; index++) service.issue(DIRECTORY);
-        assertThrows(IllegalStateException.class, () -> service.issue(DIRECTORY));
+        String first = service.issue(NONCE_SCOPE);
+        assertFalse(service.consume(first, "other"));
+        assertTrue(service.consume(first, NONCE_SCOPE));
+        assertFalse(service.consume(first, NONCE_SCOPE));
+        for (int index = 0; index < 16; index++) service.issue(NONCE_SCOPE);
+        assertThrows(IllegalStateException.class, () -> service.issue(NONCE_SCOPE));
         System.out.println("...nonce-length=" + first.length());
         System.out.println("...ok");
+    }
+
+    @Test
+    void completionWireBoundIsExactListenerMinimum() throws Exception {
+        URI external = URI.create("https://acme.example.test");
+        int minimum = AcmeWireBounds.minimumCompletionDocumentBytes(external);
+        String identifier = "a".repeat(128);
+        String alias = "a".repeat(63);
+        String kid = external.resolve("/acme/" + alias + "/account/" + identifier).toASCIIString();
+        String url = external.resolve("/acme/" + alias
+                + "/credential-confirmation/v1/complete/" + identifier).toASCIIString();
+        String protectedJson = "{\"alg\":\"ES256\",\"kid\":\"" + kid
+                + "\",\"nonce\":\"" + "a".repeat(43) + "\",\"url\":\"" + url + "\"}";
+        String payloadJson = "{\"expectedLifecycleRevision\":9223372036854775807,"
+                + "\"expectedLifecycleRecordCommitment\":\"" + "a".repeat(64) + "\","
+                + "\"expectedChallengeRecordCommitment\":\"" + "a".repeat(64) + "\","
+                + "\"response\":\"" + "a".repeat(AcmeWireBounds.MAX_PROOF_B64URL_CHARS) + "\"}";
+        String document = "{\"protected\":\""
+                + Base64.getUrlEncoder().withoutPadding().encodeToString(
+                        protectedJson.getBytes(StandardCharsets.US_ASCII))
+                + "\",\"payload\":\"" + Base64.getUrlEncoder().withoutPadding().encodeToString(
+                        payloadJson.getBytes(StandardCharsets.US_ASCII))
+                + "\",\"signature\":\"" + "a".repeat(86) + "\"}";
+        assertEquals(document.getBytes(StandardCharsets.US_ASCII).length, minimum);
+        assertTrue(minimum > 1_024);
+        assertThrows(IllegalArgumentException.class, () -> listener(external, minimum - 1));
+        assertEquals(minimum, listener(external, minimum).maximumBodyBytes());
     }
 
     @Test
@@ -92,19 +127,19 @@ class AcmeSecurityPrimitivesTest {
         KeyPair key = accountKey();
         AcmeNonceService nonces = new AcmeNonceService("listener", Duration.ofMinutes(5), 16,
                 CLOCK, deterministicRandom());
-        String nonce = nonces.issue(DIRECTORY);
+        String nonce = nonces.issue(NONCE_SCOPE);
         byte[] document = jws(key, nonce, URL, "{}".getBytes(StandardCharsets.UTF_8));
-        AcmeJwsVerifier.Verified verified = new AcmeJwsVerifier().verify(document, 65_536, URL, DIRECTORY,
+        AcmeJwsVerifier.Verified verified = new AcmeJwsVerifier().verify(document, 65_536, URL, NONCE_SCOPE,
                 AcmeJwsVerifier.KeyMode.JWK, nonces, ignored -> { throw new AssertionError(); });
         assertEquals(64, verified.keyThumbprint().length());
         assertThrows(AcmeJwsVerifier.AcmeProblem.class, () -> new AcmeJwsVerifier().verify(document,
-                65_536, URL, DIRECTORY, AcmeJwsVerifier.KeyMode.JWK, nonces,
+                65_536, URL, NONCE_SCOPE, AcmeJwsVerifier.KeyMode.JWK, nonces,
                 ignored -> { throw new AssertionError(); }));
-        String second = nonces.issue(DIRECTORY);
+        String second = nonces.issue(NONCE_SCOPE);
         byte[] wrongUrl = jws(key, second, URI.create("https://wrong.example/acme/internal/new-account"),
                 "{}".getBytes(StandardCharsets.UTF_8));
         assertThrows(AcmeJwsVerifier.AcmeProblem.class, () -> new AcmeJwsVerifier().verify(wrongUrl,
-                65_536, URL, DIRECTORY, AcmeJwsVerifier.KeyMode.JWK, nonces,
+                65_536, URL, NONCE_SCOPE, AcmeJwsVerifier.KeyMode.JWK, nonces,
                 ignored -> { throw new AssertionError(); }));
         System.out.println("...algorithm=ES256");
         System.out.println("...ok");
@@ -134,12 +169,84 @@ class AcmeSecurityPrimitivesTest {
         System.out.println("...ok");
     }
 
+    @Test
+    void processingOrderCodecRetainsExactSigningOperation() {
+        PkiId operationId = new PkiId("signing:acme-restart");
+        AcmeState.Order source = new AcmeState.Order("order:restart", "account:test", DIRECTORY, 1,
+                "1".repeat(64), new PkiId("ca:test"),
+                new CertificateProfileRef("leaf", 1, new byte[32]), new PkiId("issuer:test"),
+                new PkiId("path:test"), "2".repeat(64),
+                List.of(new AcmeState.Identifier(AcmeState.IdentifierType.DNS, "example.test", false)),
+                Optional.empty(), Optional.empty(), AcmeState.OrderStatus.PROCESSING,
+                List.of("authorization:test"), Optional.empty(), Optional.of("3".repeat(64)), Optional.of(operationId),
+                NOW, NOW.plus(Duration.ofHours(1)), "0".repeat(64));
+        AcmeStateCodec codec = new AcmeStateCodec();
+
+        AcmeState.Order sealed = (AcmeState.Order) codec.seal(source);
+        AcmeState.Order decoded = (AcmeState.Order) codec.decode(codec.encode(sealed));
+
+        assertEquals(AcmeState.OrderStatus.PROCESSING, decoded.status());
+        assertEquals(Optional.of("3".repeat(64)), decoded.issuanceCommitment());
+        assertEquals(Optional.of(operationId), decoded.signingOperationId());
+        assertEquals(sealed.commitment(), decoded.commitment());
+    }
+
+    @Test
+    void directoryCodecFreezesExactConfirmationPolicyInCommitment() {
+        CredentialConfirmationPolicy policy = confirmationPolicy(ConfirmationDisclosurePolicy.OWNER_ONLY);
+        AcmeState.Directory source = directory(policy, policy.configurationCommitment());
+        AcmeStateCodec codec = new AcmeStateCodec();
+
+        AcmeState.Directory sealed = (AcmeState.Directory) codec.seal(source);
+        AcmeState.Directory decoded = (AcmeState.Directory) codec.decode(codec.encode(sealed));
+        AcmeState.Directory inactive = (AcmeState.Directory) codec.seal(new AcmeState.Directory(
+                sealed.directoryId(), sealed.alias(), sealed.revision(), sealed.realmId(), sealed.authorityId(),
+                sealed.profile(), sealed.issuerId(), sealed.issuancePathId(), sealed.issuancePathCommitment(),
+                sealed.identifierTypes(), sealed.dnsNamespaces(), sealed.maximumValidity(),
+                sealed.publicKeyAlgorithms(), sealed.x509BindingPolicies(), sealed.challengeTypes(),
+                sealed.challengeProviderIds(), sealed.eabProviderId(), sealed.eabRequired(),
+                sealed.confirmationPolicy(), sealed.confirmationPolicyCommitment(),
+                AcmeState.DirectoryStatus.INACTIVE, sealed.policyCommitment(), sealed.createdAt(),
+                "0".repeat(64)));
+        AcmeState.Directory publicDirectory = (AcmeState.Directory) codec.seal(directory(
+                confirmationPolicy(ConfirmationDisclosurePolicy.PUBLIC),
+                confirmationPolicy(ConfirmationDisclosurePolicy.PUBLIC).configurationCommitment()));
+
+        assertEquals(policy, decoded.confirmationPolicy());
+        assertEquals(policy.configurationCommitment(), decoded.confirmationPolicyCommitment());
+        assertEquals(sealed.commitment(), decoded.commitment());
+        assertEquals(sealed.policyCommitment(), inactive.policyCommitment());
+        assertNotEquals(sealed.commitment(), inactive.commitment());
+        assertNotEquals(sealed.commitment(), publicDirectory.commitment());
+        assertThrows(IllegalArgumentException.class, () -> directory(policy, "8".repeat(64)));
+    }
+
+    private static AcmeState.Directory directory(CredentialConfirmationPolicy policy, String policyCommitment) {
+        return new AcmeState.Directory(DIRECTORY, "internal", 1, new RealmId("realm"), new PkiId("ca:test"),
+                new CertificateProfileRef("leaf", 1, new byte[32]), new PkiId("issuer:test"),
+                new PkiId("path:test"), "1".repeat(64), Set.of(AcmeState.IdentifierType.DNS),
+                Set.of("example.test"), Duration.ofDays(30), Set.of("RSA"), Set.of("STANDARD_ONLY"),
+                Set.of(AcmeState.ChallengeType.HTTP_01), Set.of("http"), Optional.empty(), false,
+                policy, policyCommitment, AcmeState.DirectoryStatus.ACTIVE, "2".repeat(64), NOW,
+                "0".repeat(64));
+    }
+
+    private static CredentialConfirmationPolicy confirmationPolicy(ConfirmationDisclosurePolicy disclosure) {
+        return new CredentialConfirmationPolicy(disclosure, Duration.ofHours(24),
+                new ConfirmationProofSuiteRef("zeroecho.signature-pop.v1", "7".repeat(64)));
+    }
+
     private static PkiServerConfiguration.AcmeListener listener() throws Exception {
+        return listener(URI.create("https://acme.example.test"), 1_048_576);
+    }
+
+    private static PkiServerConfiguration.AcmeListener listener(URI externalBaseUri,
+            int maximumBodyBytes) throws Exception {
         PkiServerConfiguration.Execution execution = new PkiServerConfiguration.Execution(1, 1, 1, 1, 1,
                 Duration.ofSeconds(5), Duration.ofSeconds(5), Duration.ofSeconds(1), Duration.ofSeconds(1));
         return new PkiServerConfiguration.AcmeListener("listener", InetAddress.getLoopbackAddress(), 0,
                 new ProviderConfig("tls-test", Map.of()), PkiServerConfiguration.AcmeTransportMode.DIRECT_TLS,
-                List.of(), Set.of(), URI.create("https://acme.example.test"), 4096, 1_048_576,
+                List.of(), Set.of(), externalBaseUri, 4096, maximumBodyBytes,
                 execution, execution, Duration.ofMinutes(5), 16, 16, 16, Duration.ofMinutes(1),
                 2, 1, 2, 2, 1, List.of(), List.of());
     }

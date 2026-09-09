@@ -59,6 +59,7 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow, Publi
     private final Map<String, KeyPair> keys;
     private final Map<PkiId, OperationStatus> status;
     private final boolean completeImmediately;
+    private final String id;
     private final ConcurrentMap<PkiId, String> fingerprints;
     private final ConcurrentMap<PkiId, Long> fences;
     private final ConcurrentMap<PkiId, Object> operationLocks;
@@ -70,6 +71,19 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow, Publi
     }
 
     public InMemorySignatureWorkflow(Map<String, KeyPair> keys, boolean completeImmediately) {
+        this("test-signer", keys, completeImmediately);
+    }
+
+    /**
+     * Creates a workflow with an explicit stable identity, used where several
+     * distinct in-memory services must coexist (per-CA routing tests).
+     *
+     * @param id stable service identity
+     * @param keys signing key pairs indexed by key-reference value
+     * @param completeImmediately whether submissions complete synchronously
+     */
+    public InMemorySignatureWorkflow(String id, Map<String, KeyPair> keys, boolean completeImmediately) {
+        this.id = Objects.requireNonNull(id, "id");
         this.keys = new HashMap<>(Objects.requireNonNull(keys, "keys"));
         this.status = new HashMap<>();
         this.completeImmediately = completeImmediately;
@@ -82,7 +96,12 @@ public final class InMemorySignatureWorkflow implements SignatureWorkflow, Publi
 
     @Override
     public String id() {
-        return "test-signer";
+        return id;
+    }
+
+    @Override
+    public ConfigurationCommitment configurationCommitment() {
+        return new ConfigurationCommitment(new byte[ConfigurationCommitment.BYTE_LENGTH]);
     }
 
     @Override

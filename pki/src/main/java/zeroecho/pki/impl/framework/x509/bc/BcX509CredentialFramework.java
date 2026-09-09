@@ -125,6 +125,9 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      * {@link #wired(BcX509StatusObjectGenerator)}. Credential issuance is not
      * exposed by the framework facade.
      * </p>
+     *
+     * @param authority trusted authority snapshot used for parsing and proof verification
+     * @param executor algorithm executor used for proof verification
      */
     public BcX509CredentialFramework(X509AuthoritySnapshot authority, BcX509VerificationExecutor executor) {
         this(new BcX509CertificationRequestParser(), new BcX509ProofOfPossessionVerifier(authority, executor),

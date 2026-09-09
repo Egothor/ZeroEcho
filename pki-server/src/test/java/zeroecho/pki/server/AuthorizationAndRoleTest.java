@@ -156,6 +156,10 @@ class AuthorizationAndRoleTest {
         assertTrue(catalog.instantiate(requester).stream()
                 .filter(item -> item.action() == Permission.Action.CERTIFICATE_READ_METADATA)
                 .allMatch(item -> item.relationship() == Permission.Relationship.OWN));
+        assertEquals(Permission.Action.CERTIFICATE_CONFIRM, Permission.Action.fromCode(79));
+        assertTrue(catalog.instantiate(requester).stream()
+                .filter(item -> item.action() == Permission.Action.CERTIFICATE_CONFIRM)
+                .allMatch(item -> item.relationship() == Permission.Relationship.ANY));
         byte[] source;
         try (java.io.InputStream input = getClass().getClassLoader()
                 .getResourceAsStream(RoleTemplateCatalog.RESOURCE)) {

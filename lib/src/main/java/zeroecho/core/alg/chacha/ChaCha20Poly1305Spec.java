@@ -93,6 +93,13 @@ public final class ChaCha20Poly1305Spec implements ChaChaBaseSpec, Describable {
         private SymmetricHeaderCodec header;
 
         /**
+         * Creates a builder with stream-header encoding disabled.
+         */
+        public Builder() {
+            // Null header is the documented default.
+        }
+
+        /**
          * Sets an optional streaming header codec.
          *
          * @param codec header codec to use, or {@code null} to disable headers

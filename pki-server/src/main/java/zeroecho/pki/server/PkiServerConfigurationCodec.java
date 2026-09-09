@@ -48,6 +48,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.application.CredentialConfirmationProofAudience;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSessionConfiguration;
 import zeroecho.pki.server.OperationSecurityDescriptors.ApprovalCategory;
@@ -60,6 +61,8 @@ import zeroecho.pki.spi.store.MetadataStoreId;
 public final class PkiServerConfigurationCodec {
     /** Maximum server configuration document size. */
     public static final int MAXIMUM_CONFIGURATION_BYTES = 1_048_576;
+    private static final long DEFAULT_CONFIRMATION_CHALLENGE_TTL_MILLIS = 300_000L;
+    private static final int DEFAULT_CONFIRMATION_RSA_MAXIMUM_MODULUS_BITS = 8_192;
 
     private PkiServerConfigurationCodec() {
     }
@@ -82,42 +85,80 @@ public final class PkiServerConfigurationCodec {
         return decode(Files.readAllBytes(exact));
     }
 
-    /** Decodes one bounded strict configuration document. */
+    /**
+     * Decodes one bounded strict configuration document.
+     *
+     * @param document encoded configuration, bounded by {@link #MAXIMUM_CONFIGURATION_BYTES}
+     * @return immutable validated server configuration
+     * @throws IllegalArgumentException if framing, schema version, or semantics are invalid
+     */
     public static PkiServerConfiguration decode(byte[] document) {
         Fields root = Fields.of(StrictJson.parse(document, MAXIMUM_CONFIGURATION_BYTES));
         root.allowed(Set.of("version", "serverName", "realm", "listener", "authentication", "execution",
                 "runtime", "publicListener", "acmeListener", "signingReconciliation"));
         int encodedVersion = root.integer("version");
-        if (encodedVersion != 5 && encodedVersion != PkiServerConfiguration.CURRENT_VERSION) {
+        if (encodedVersion != PkiServerConfiguration.CURRENT_VERSION) {
             throw new IllegalArgumentException("Unsupported server schema version");
         }
-        PkiServerConfiguration.SigningReconciliation reconciliation = encodedVersion == 5
-                ? PkiServerConfiguration.SigningReconciliation.defaults()
-                : signingReconciliation(root.object("signingReconciliation"));
         PkiServerConfiguration configuration = new PkiServerConfiguration(PkiServerConfiguration.CURRENT_VERSION,
                 root.text("serverName"), realm(root.object("realm")), listener(root.object("listener")),
                 authentication(root.object("authentication")), execution(root.object("execution")),
                 runtime(root.object("runtime")), publicListener(root.object("publicListener")),
-                acmeListener(root.object("acmeListener")), reconciliation);
+                acmeListener(root.object("acmeListener")),
+                signingReconciliation(root.object("signingReconciliation")));
         root.complete();
         return configuration;
     }
 
     private static ServerRealmConfiguration realm(Fields value) {
-        value.exact("realmId", "displayName", "authorityExposure", "authorizationCommitment",
-                "approvalCommitment", "disclosureCommitment", "disclosureDefaults", "controlLog",
-                "controlStoreId", "approvalPolicy", "pkiSession");
+        value.allowed(Set.of("realmId", "displayName", "confirmationProof", "authorityExposure",
+                "authorizationCommitment", "approvalCommitment", "extendedApprovalCommitment",
+                "disclosureCommitment", "disclosureDefaults", "controlLog", "controlStoreId", "approvalPolicy",
+                "issuanceSingleApprovalPolicy", "issuanceThresholdApprovalPolicy", "pkiSession"));
         AuthorityExposurePolicy exposure = exposure(value.object("authorityExposure"));
         ApprovalService.Policy approval = approval(value.object("approvalPolicy"));
         String approvalCommitment = value.text("approvalCommitment");
         if (!approval.commitment().equals(approvalCommitment)) {
             throw new IllegalArgumentException("Approval policy commitment does not match");
         }
+        Map<ApprovalCategory, ApprovalService.Policy> approvalPolicies = new LinkedHashMap<>();
+        approvalPolicies.put(ApprovalCategory.HIGH_RISK, approval);
+        value.optionalObject("issuanceSingleApprovalPolicy").ifPresent(
+                policy -> approvalPolicies.put(ApprovalCategory.ISSUANCE_SINGLE, approval(policy)));
+        value.optionalObject("issuanceThresholdApprovalPolicy").ifPresent(
+                policy -> approvalPolicies.put(ApprovalCategory.ISSUANCE_THRESHOLD, approval(policy)));
+        String extendedCommitment = ServerRealmConfiguration.extendedApprovalCommitment(approvalPolicies);
+        Optional<String> suppliedExtended = value.optionalText("extendedApprovalCommitment");
+        if (approvalPolicies.size() > 1 && suppliedExtended.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Extended approval commitment is required when issuance approval policies are configured");
+        }
+        if (!extendedCommitment.equals(suppliedExtended.orElse(extendedCommitment))) {
+            throw new IllegalArgumentException("Extended approval policy commitment does not match");
+        }
         ServerRealmConfiguration result = new ServerRealmConfiguration(new RealmId(value.text("realmId")),
-                value.text("displayName"), session(value.object("pkiSession")), exposure,
-                value.text("authorizationCommitment"), approvalCommitment, value.text("disclosureCommitment"),
+                value.text("displayName"), confirmationProof(value.object("confirmationProof")),
+                session(value.object("pkiSession")), exposure,
+                value.text("authorizationCommitment"), approvalCommitment, extendedCommitment,
+                value.text("disclosureCommitment"),
                 disclosure(value.object("disclosureDefaults")), Path.of(value.text("controlLog")),
-                new MetadataStoreId(value.text("controlStoreId")), Map.of(ApprovalCategory.HIGH_RISK, approval));
+                new MetadataStoreId(value.text("controlStoreId")), Map.copyOf(approvalPolicies));
+        value.complete();
+        return result;
+    }
+
+    private static CredentialConfirmationProofPolicy confirmationProof(Fields value) {
+        value.allowed(Set.of("audience", "challengeTtlMillis", "rsaMaximumModulusBits"));
+        long ttlMillis = value.optionalLong("challengeTtlMillis")
+                .orElse(DEFAULT_CONFIRMATION_CHALLENGE_TTL_MILLIS);
+        if (ttlMillis % 1_000L != 0L) {
+            throw new IllegalArgumentException(
+                    "Credential confirmation proof TTL must be a whole number of seconds");
+        }
+        CredentialConfirmationProofPolicy result = new CredentialConfirmationProofPolicy(
+                new CredentialConfirmationProofAudience(value.text("audience")),
+                Duration.ofMillis(ttlMillis), value.optionalInteger("rsaMaximumModulusBits")
+                        .orElse(DEFAULT_CONFIRMATION_RSA_MAXIMUM_MODULUS_BITS));
         value.complete();
         return result;
     }
@@ -174,15 +215,45 @@ public final class PkiServerConfigurationCodec {
     }
 
     private static PkiSessionConfiguration.SigningConfiguration signing(Fields value) {
-        Set<String> allowed = Set.of("workflow", "framework", "busPath", "signatureAlgorithm",
+        Set<String> allowed = Set.of("workflow", "framework", "signatureAlgorithm",
                 "signingTtlMillis", "unlockEnvironmentVariable", "certificateSignatureBinding",
-                "crlSignatureBinding", "subjectPublicKeyBinding");
+                "crlSignatureBinding", "subjectPublicKeyBinding", "laneCount", "queueCapacity",
+                "gracefulDrainMillis", "forcedCancellationMillis", "signingServices", "caRouting");
         value.allowed(allowed);
+        List<PkiSessionConfiguration.SigningServiceConfiguration> signingServices = new ArrayList<>();
+        for (PkiOperationValue item : value.optionalList("signingServices")) {
+            signingServices.add(signingService(Fields.of(item)));
+        }
+        Map<String, String> caRouting = new LinkedHashMap<>();
+        value.optionalObject("caRouting").ifPresent(routing -> {
+            for (Map.Entry<String, PkiOperationValue> entry : routing.remaining().entrySet()) {
+                caRouting.put(entry.getKey(), Fields.text(entry.getValue()));
+            }
+            routing.consumeAll();
+        });
         PkiSessionConfiguration.SigningConfiguration result = new PkiSessionConfiguration.SigningConfiguration(
-                provider(value.object("workflow")), provider(value.object("framework")), value.text("busPath"),
+                provider(value.object("workflow")), provider(value.object("framework")),
                 value.text("signatureAlgorithm"), Duration.ofMillis(value.longValue("signingTtlMillis")),
                 value.optionalText("unlockEnvironmentVariable"), value.optionalText("certificateSignatureBinding"),
-                value.optionalText("crlSignatureBinding"), value.optionalText("subjectPublicKeyBinding"));
+                value.optionalText("crlSignatureBinding"), value.optionalText("subjectPublicKeyBinding"),
+                value.optionalInteger("laneCount").orElse(
+                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_LANE_COUNT),
+                value.optionalInteger("queueCapacity").orElse(
+                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_QUEUE_CAPACITY),
+                Duration.ofMillis(value.optionalLong("gracefulDrainMillis").orElse(
+                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_GRACEFUL_DRAIN.toMillis())),
+                Duration.ofMillis(value.optionalLong("forcedCancellationMillis").orElse(
+                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_FORCED_CANCELLATION.toMillis())),
+                List.copyOf(signingServices), Map.copyOf(caRouting));
+        value.complete();
+        return result;
+    }
+
+    private static PkiSessionConfiguration.SigningServiceConfiguration signingService(Fields value) {
+        value.allowed(Set.of("serviceId", "workflow"));
+        PkiSessionConfiguration.SigningServiceConfiguration result =
+                new PkiSessionConfiguration.SigningServiceConfiguration(value.text("serviceId"),
+                        provider(value.object("workflow")));
         value.complete();
         return result;
     }
@@ -411,8 +482,11 @@ public final class PkiServerConfigurationCodec {
         Optional<String> optionalText(String name) { if (!fields.containsKey(name)) return Optional.empty();
             return Optional.of(text(name)); }
         int integer(String name) { long value = longValue(name); return Math.toIntExact(value); }
+        Optional<Integer> optionalInteger(String name) { return optionalLong(name).map(Math::toIntExact); }
         long longValue(String name) { consumed.add(name); PkiOperationValue value = require(name);
             if (!(value instanceof PkiOperationValue.IntegerValue integer)) throw type(); return integer.value(); }
+        Optional<Long> optionalLong(String name) { if (!fields.containsKey(name)) return Optional.empty();
+            return Optional.of(longValue(name)); }
         boolean bool(String name) { consumed.add(name); PkiOperationValue value = require(name);
             if (!(value instanceof PkiOperationValue.BooleanValue bool)) throw type(); return bool.value(); }
         Fields object(String name) { consumed.add(name); return of(require(name)); }
@@ -420,6 +494,8 @@ public final class PkiServerConfigurationCodec {
             return Optional.of(object(name)); }
         List<PkiOperationValue> list(String name) { consumed.add(name); PkiOperationValue value = require(name);
             if (!(value instanceof PkiOperationValue.ListValue list)) throw type(); return list.values(); }
+        List<PkiOperationValue> optionalList(String name) { if (!fields.containsKey(name)) return List.of();
+            return list(name); }
         Map<String, PkiOperationValue> remaining() { return fields; }
         void consumeAll() { consumed.addAll(fields.keySet()); }
         void complete() { if (!consumed.equals(fields.keySet())) throw new IllegalArgumentException(

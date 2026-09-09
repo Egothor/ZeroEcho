@@ -37,12 +37,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.audit.AuditChainHead;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
@@ -67,7 +69,124 @@ import zeroecho.pki.api.audit.Purpose;
  */
 final class AuditEventCodec {
 
+    /** Domain separation tag for the append-only audit hash chain. */
+    private static final String INTEGRITY_DOMAIN = "ZEROECHO-AUDIT-CHAIN-V1";
+    private static final int MINIMUM_CHAIN_PARTS = 4;
+
     private AuditEventCodec() {
+    }
+
+    /**
+     * One decoded chained audit record: the tamper-evident header plus the event.
+     *
+     * @param sequence     global monotonic record sequence, or {@code -1} for a legacy
+     *                     unchained line
+     * @param previousHash lowercase 64-hex hash linking to the prior record, or the
+     *                     genesis hash for the first record
+     * @param recordHash   lowercase 64-hex hash stored for this record (empty for legacy)
+     * @param event        the decoded audit event payload
+     */
+    /* default */ record ChainedRecord(long sequence, String previousHash, String recordHash, AuditEvent event) {
+        /* default */ boolean chained() {
+            return sequence >= 0L;
+        }
+    }
+
+    /**
+     * Computes the tamper-evident record hash binding the sequence, the previous
+     * record hash, and the canonical event bytes.
+     *
+     * @param sequence     global record sequence (non-negative)
+     * @param previousHash previous record hash (lowercase 64-hex)
+     * @param event        audit event
+     * @return lowercase 64-hex record hash
+     */
+    /* default */ static String recordHash(long sequence, String previousHash, AuditEvent event) {
+        byte[] header = (INTEGRITY_DOMAIN + '\u001f' + sequence + '\u001f' + previousHash + '\u001f')
+                .getBytes(StandardCharsets.UTF_8);
+        byte[] content = canonicalBytes(event);
+        byte[] input = Arrays.copyOf(header, header.length + content.length);
+        System.arraycopy(content, 0, input, header.length, content.length);
+        return toHex(sha256(input));
+    }
+
+    /**
+     * Recomputes the record hash for an already-decoded chained record.
+     *
+     * @param record decoded chained record (must be chained)
+     * @return lowercase 64-hex record hash
+     */
+    /* default */ static String recomputeRecordHash(ChainedRecord record) {
+        return recordHash(record.sequence(), record.previousHash(), record.event());
+    }
+
+    /**
+     * Encodes an event as a chained, newline-terminated line carrying its
+     * tamper-evident header (sequence, previous hash, record hash) followed by the
+     * canonical event encoding.
+     *
+     * @param event        audit event (must not be null)
+     * @param sequence     global record sequence (non-negative)
+     * @param previousHash previous record hash (lowercase 64-hex)
+     * @return encoded chained line
+     * @throws IllegalArgumentException if inputs are invalid
+     */
+    /* default */ static String encodeChainedLine(AuditEvent event, long sequence, String previousHash) {
+        if (event == null) {
+            throw new IllegalArgumentException("event must not be null");
+        }
+        if (isNegative(sequence)) {
+            throw new IllegalArgumentException("sequence must not be negative");
+        }
+        if (previousHash == null || !previousHash.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("previousHash must be lowercase 64-hex");
+        }
+        String recordHash = recordHash(sequence, previousHash, event);
+        return "s=" + sequence + "|ph=" + previousHash + "|rh=" + recordHash + '|' + encodeLine(event);
+    }
+
+    /**
+     * Decodes a chained line produced by {@link #encodeChainedLine} or, for
+     * forward compatibility with pre-chain logs, a legacy line produced by
+     * {@link #encodeLine}. Legacy lines yield a {@link ChainedRecord} with
+     * {@code sequence == -1}.
+     *
+     * @param line encoded line (must not be null/blank)
+     * @return decoded chained record
+     * @throws IllegalArgumentException if the line is malformed
+     */
+    /* default */ static ChainedRecord decodeChainedLine(String line) {
+        if (line == null || line.isBlank()) {
+            throw new IllegalArgumentException("line must not be null/blank");
+        }
+        String trimmed = line.strip();
+        if (!trimmed.startsWith("s=")) {
+            return new ChainedRecord(-1L, AuditChainHead.GENESIS_RECORD_HASH, "", decodeLine(trimmed));
+        }
+        String[] parts = trimmed.split("\\|", -1);
+        if (parts.length < MINIMUM_CHAIN_PARTS) {
+            throw new IllegalArgumentException("Malformed chained audit record");
+        }
+        long sequence = Long.parseLong(chainValue(parts[0], "s"));
+        String previousHash = chainValue(parts[1], "ph");
+        String recordHash = chainValue(parts[2], "rh");
+        if (isNegative(sequence) || !previousHash.matches("[0-9a-f]{64}") || !recordHash.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("Malformed chained audit header");
+        }
+        String eventLine = String.join("|", Arrays.copyOfRange(parts, 3, parts.length));
+        return new ChainedRecord(sequence, previousHash, recordHash, decodeLine(eventLine));
+    }
+
+    private static boolean isNegative(long value) {
+        return value < 0L;
+    }
+
+    private static String chainValue(String part, String key) {
+        String prefix = key + "=";
+        if (!part.startsWith(prefix)) {
+            throw new IllegalArgumentException("Malformed chained audit header");
+        }
+        return part.substring(prefix.length());
     }
 
     /**

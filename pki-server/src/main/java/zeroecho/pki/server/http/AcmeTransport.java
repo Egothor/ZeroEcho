@@ -30,7 +30,7 @@
  * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *******************************************************************************/
+ ******************************************************************************/
 package zeroecho.pki.server.http;
 
 import java.io.IOException;
@@ -72,11 +72,42 @@ public final class AcmeTransport implements AutoCloseable {
         this.validationRuntime = validationRuntime;
     }
 
-    /** Starts one ACME listener over the lifecycle-owned realm and PKI session. */
+    /**
+     * Starts one ACME listener over the lifecycle-owned realm and PKI session.
+     *
+     * @param configuration validated listener configuration
+     * @param realm shared lifecycle-owned realm
+     * @param clock authoritative protocol clock
+     * @param random cryptographically secure entropy source
+     * @param loader provider service class loader
+     * @param ready readiness predicate checked by request handlers
+     * @return started ACME listener lifecycle owner
+     * @throws IllegalStateException if the listener cannot be initialized
+     */
     public static AcmeTransport start(PkiServerConfiguration.AcmeListener configuration,
             ServerRealmContext realm, Clock clock, SecureRandom random, ClassLoader loader,
             BooleanSupplier ready) {
+        return start(configuration, realm, clock, random, loader, ready, () -> { });
+    }
+
+    /**
+     * Starts one ACME listener with a payload-free post-commit reconciliation wake callback.
+     *
+     * @param configuration validated listener configuration
+     * @param realm shared lifecycle-owned realm
+     * @param clock authoritative protocol clock
+     * @param random cryptographically secure entropy source
+     * @param loader provider service class loader
+     * @param ready readiness predicate checked by request handlers
+     * @param reconciliationWake callback invoked after a durable signing-state change
+     * @return started ACME listener lifecycle owner
+     * @throws IllegalStateException if the listener cannot be initialized
+     */
+    public static AcmeTransport start(PkiServerConfiguration.AcmeListener configuration,
+            ServerRealmContext realm, Clock clock, SecureRandom random, ClassLoader loader,
+            BooleanSupplier ready, Runnable reconciliationWake) {
         Objects.requireNonNull(configuration, "configuration");
+        Objects.requireNonNull(reconciliationWake, "reconciliationWake");
         ServerRuntime protocol = null;
         ServerRuntime.ChallengeRuntime validation = null;
         HttpsServer listener = null;
@@ -90,7 +121,7 @@ public final class AcmeTransport implements AutoCloseable {
             Map<String, ProviderConfig> eabConfigurations = configuration.eabProviders().stream()
                     .collect(java.util.stream.Collectors.toUnmodifiableMap(ProviderConfig::backendId, value -> value));
             AcmeService service = new AcmeService(realm, clock, random, providers, providerConfigurations,
-                    eabProviders, eabConfigurations);
+                    eabProviders, eabConfigurations, reconciliationWake);
             realm.gateway().installAcme(service);
             AcmeNonceService nonces = new AcmeNonceService(configuration.listenerId(),
                     configuration.nonceLifetime(), configuration.maximumOutstandingNonces(), clock, random);
@@ -116,13 +147,21 @@ public final class AcmeTransport implements AutoCloseable {
         }
     }
 
-    /** @return actual listener address, including an allocated ephemeral port */
+    /**
+     * Returns the actual listener address, including an allocated ephemeral port.
+     *
+     * @return bound listener address
+     */
     public InetSocketAddress address() { return listener.getAddress(); }
 
     /** Rejects new protocol and validation work. */
     public void quiesce() { protocolRuntime.quiesce(); validationRuntime.quiesce(); }
 
-    /** Stops listener admission and all separately bounded ACME lanes. */
+    /**
+     * Stops listener admission and all separately bounded ACME lanes.
+     *
+     * @param graceful maximum transport drain duration; whole seconds are passed to the listener
+     */
     public void shutdown(Duration graceful) {
         quiesce();
         listener.stop(Math.toIntExact(Math.min(Integer.MAX_VALUE, graceful.toSeconds())));

@@ -33,6 +33,10 @@
  ******************************************************************************/
 package zeroecho.pki.server;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,17 +49,40 @@ import zeroecho.pki.application.PkiOperation;
         "PMD.AvoidDuplicateLiterals" })
 public final class OperationSecurityDescriptors {
     /** Internally fixed execution family; callers cannot select it. */
-    public enum Family { PKI_OPERATION, SERVER_CONTROL_OPERATION }
-    /** Approval treatment for one operation. */
-    public enum ApprovalCategory { NONE, HIGH_RISK }
+    public enum Family {
+        /** Operation belongs to the core PKI application family. */ PKI_OPERATION,
+        /** Operation belongs to the server-control family. */ SERVER_CONTROL_OPERATION
+    }
+    /**
+     * Approval treatment for one operation.
+     *
+     * <p>{@code HIGH_RISK} is the realm-wide dual-control category for
+     * administratively high-risk operations (for example authority creation and
+     * grant-conditioned revocation). {@code ISSUANCE_SINGLE} and
+     * {@code ISSUANCE_THRESHOLD} are selected dynamically per end-entity issuance
+     * from the resolved certificate profile's
+     * {@link zeroecho.pki.api.profile.IssuanceApprovalRequirement}: they are never
+     * attached statically to a descriptor, because whether issuance needs approval
+     * depends on the profile, not the operation identity.</p>
+     */
+    public enum ApprovalCategory {
+        /** No approval workflow is required. */ NONE,
+        /** Realm-wide high-risk dual control applies. */ HIGH_RISK,
+        /** Profile-selected single approval applies. */ ISSUANCE_SINGLE,
+        /** Profile-selected threshold approval applies. */ ISSUANCE_THRESHOLD
+    }
 
     /** Future transport eligibility without defining a transport protocol. */
-    public enum Eligibility { ADMINISTRATIVE, PUBLIC_READ }
+    public enum Eligibility {
+        /** Only the authenticated administrative transport may expose the operation. */ ADMINISTRATIVE,
+        /** A read-only public transport may expose the operation. */ PUBLIC_READ
+    }
 
     /**
      * Immutable operation security descriptor.
      *
      * @param operationId stable typed-operation identity
+     * @param family internally fixed execution family
      * @param action required permission
      * @param resourceType required resource type
      * @param mutating whether the operation may commit state
@@ -77,7 +104,17 @@ public final class OperationSecurityDescriptors {
             Objects.requireNonNull(eligibility, "eligibility");
         }
 
-        /** Creates an existing PKI-family descriptor for embedded callers. */
+        /**
+         * Creates an existing PKI-family descriptor for embedded callers.
+         *
+         * @param operationId stable typed-operation identity
+         * @param action required permission
+         * @param resourceType required resource type
+         * @param mutating whether the operation may commit state
+         * @param dataView required data view
+         * @param approvalCategory approval treatment
+         * @param eligibility transport eligibility
+         */
         public Descriptor(String operationId, Permission.Action action, Permission.ResourceType resourceType,
                 boolean mutating, Permission.DataView dataView, ApprovalCategory approvalCategory,
                 Eligibility eligibility) {
@@ -99,8 +136,46 @@ public final class OperationSecurityDescriptors {
                 read(PkiOperation.InspectProfile.NAME, Permission.Action.PROFILE_READ, Permission.ResourceType.PROFILE),
                 mutate(PkiOperation.ActivateProfile.NAME, Permission.Action.PROFILE_ACTIVATE, Permission.ResourceType.PROFILE, true),
                 read(PkiOperation.InspectCredential.NAME, Permission.Action.CERTIFICATE_READ_METADATA, Permission.ResourceType.CERTIFICATE),
+                read(PkiOperation.ListPendingCredentialConfirmations.NAME,
+                        Permission.Action.CERTIFICATE_SEARCH, Permission.ResourceType.CERTIFICATE),
+                mutate(PkiOperation.IssueCredentialConfirmationChallenge.NAME,
+                        Permission.Action.CERTIFICATE_PUBLICATION_CHANGE,
+                        Permission.ResourceType.CERTIFICATE, false),
+                mutate(PkiOperation.CompleteCredentialConfirmationProof.NAME,
+                        Permission.Action.CERTIFICATE_CONFIRM,
+                        Permission.ResourceType.CERTIFICATE, false),
+                mutate(PkiOperation.RevokePendingCredentialConfirmation.NAME,
+                        Permission.Action.CERTIFICATE_REVOKE,
+                        Permission.ResourceType.CERTIFICATE, false),
                 mutate(PkiOperation.IssueCredential.NAME, Permission.Action.CERTIFICATE_ISSUE, Permission.ResourceType.CERTIFICATE, false),
-                mutate(PkiOperation.RevokeCredential.NAME, Permission.Action.CERTIFICATE_REVOKE, Permission.ResourceType.REVOCATION, false),
+                mutate(PkiOperation.RenewCredential.NAME, Permission.Action.CERTIFICATE_RENEW, Permission.ResourceType.CERTIFICATE, false),
+                mutate(PkiOperation.ReplaceCredential.NAME, Permission.Action.CERTIFICATE_REKEY, Permission.ResourceType.CERTIFICATE, false),
+                mutate(PkiOperation.ReissueCredential.NAME, Permission.Action.CERTIFICATE_ISSUE, Permission.ResourceType.CERTIFICATE, true),
+                mutate(PkiOperation.RolloverCaCertificate.NAME, Permission.Action.ISSUER_CREATE, Permission.ResourceType.AUTHORITY, true),
+                mutate(PkiOperation.RotateCaKey.NAME, Permission.Action.ISSUER_ROTATE, Permission.ResourceType.AUTHORITY, true),
+                read(PkiOperation.InspectRequest.NAME, Permission.Action.REQUEST_READ_ANY, Permission.ResourceType.REQUEST),
+                mutate(PkiOperation.ImportRequest.NAME, Permission.Action.REQUEST_SUBMIT, Permission.ResourceType.REQUEST, false),
+                read(PkiOperation.VerifyRequest.NAME, Permission.Action.REQUEST_READ_ANY, Permission.ResourceType.REQUEST),
+                mutate(PkiOperation.RegisterProfile.NAME, Permission.Action.PROFILE_REGISTER, Permission.ResourceType.PROFILE, false),
+                read(PkiOperation.ValidateConfiguration.NAME, Permission.Action.SERVER_CONFIGURATION_READ, Permission.ResourceType.SERVER_CONFIGURATION),
+                read(PkiOperation.ValidateProfile.NAME, Permission.Action.PROFILE_VALIDATE, Permission.ResourceType.PROFILE),
+                read(PkiOperation.ValidateAlgorithmBindings.NAME, Permission.Action.X509_BINDING_READ, Permission.ResourceType.X509_BINDING),
+                read(PkiOperation.InspectRevocation.NAME, Permission.Action.REVOCATION_HISTORY_READ, Permission.ResourceType.REVOCATION),
+                read(PkiOperation.SnapshotRevocations.NAME, Permission.Action.REVOCATION_HISTORY_READ, Permission.ResourceType.REVOCATION),
+                read(PkiOperation.InspectStatus.NAME, Permission.Action.CRL_DOWNLOAD, Permission.ResourceType.STATUS_OBJECT),
+                read(PkiOperation.ListStatus.NAME, Permission.Action.CRL_DOWNLOAD, Permission.ResourceType.STATUS_OBJECT),
+                read(PkiOperation.ListPublications.NAME, Permission.Action.PUBLICATION_READ, Permission.ResourceType.PUBLICATION),
+                mutate(PkiOperation.RegisterPublication.NAME, Permission.Action.PUBLICATION_REGISTER, Permission.ResourceType.PUBLICATION, false),
+                mutate(PkiOperation.RetryPublication.NAME, Permission.Action.PUBLICATION_RETRY, Permission.ResourceType.PUBLICATION, false),
+                mutate(PkiOperation.ReconcilePublication.NAME, Permission.Action.PUBLICATION_RECONCILE, Permission.ResourceType.PUBLICATION, false),
+                mutate(PkiOperation.CreateIntermediate.NAME, Permission.Action.ISSUER_CREATE, Permission.ResourceType.AUTHORITY, true),
+                mutate(PkiOperation.IssueIntermediateCertificate.NAME, Permission.Action.ISSUER_CREATE, Permission.ResourceType.AUTHORITY, true),
+                read(PkiOperation.InspectIssuerGeneration.NAME, Permission.Action.AUTHORITY_READ, Permission.ResourceType.ISSUER),
+                read(PkiOperation.InspectIssuerChainPath.NAME, Permission.Action.CA_CHAIN_DOWNLOAD, Permission.ResourceType.ISSUER),
+                read(PkiOperation.ListIssuerChainPaths.NAME, Permission.Action.CA_CHAIN_DOWNLOAD, Permission.ResourceType.ISSUER),
+                mutate(PkiOperation.SelectIssuancePath.NAME, Permission.Action.ISSUER_ROTATE, Permission.ResourceType.AUTHORITY, true),
+                mutate(PkiOperation.RegisterIssuerChainPath.NAME, Permission.Action.ISSUER_ROTATE, Permission.ResourceType.AUTHORITY, false),
+                mutate(PkiOperation.RevokeCredential.NAME, Permission.Action.CERTIFICATE_REVOKE, Permission.ResourceType.CERTIFICATE, false),
                 read(PkiOperation.ReadRevocationHistory.NAME, Permission.Action.REVOCATION_HISTORY_READ, Permission.ResourceType.REVOCATION),
                 mutate(PkiOperation.GenerateStatus.NAME, Permission.Action.CRL_GENERATE, Permission.ResourceType.STATUS_OBJECT, false),
                 read(PkiOperation.InspectPublication.NAME, Permission.Action.PUBLICATION_READ, Permission.ResourceType.PUBLICATION),
@@ -136,6 +211,9 @@ public final class OperationSecurityDescriptors {
                 control(ServerControlOperation.RevokeBreakGlass.NAME, Permission.Action.PERMISSION_GRANT, Permission.ResourceType.BREAK_GLASS, true, false),
                 control(ServerControlOperation.InspectDisclosure.NAME, Permission.Action.DISCLOSURE_READ, Permission.ResourceType.DISCLOSURE, false, false),
                 control(ServerControlOperation.SetDisclosure.NAME, Permission.Action.DISCLOSURE_CHANGE, Permission.ResourceType.DISCLOSURE, true, true),
+                control(ServerControlOperation.EnrollCredentialPublication.NAME,
+                        Permission.Action.CERTIFICATE_PUBLICATION_CHANGE,
+                        Permission.ResourceType.CERTIFICATE, true, false),
                 control(ServerControlOperation.IssueCapability.NAME, Permission.Action.DISCLOSURE_CAPABILITY_ISSUE, Permission.ResourceType.CAPABILITY, true, false),
                 control(ServerControlOperation.RevokeCapability.NAME, Permission.Action.DISCLOSURE_CAPABILITY_REVOKE, Permission.ResourceType.CAPABILITY, true, false),
                 control(ServerControlOperation.InspectAuditView.REDACTED, Permission.Action.AUDIT_READ_REDACTED, Permission.ResourceType.AUDIT, false, false),
@@ -174,10 +252,18 @@ public final class OperationSecurityDescriptors {
                 control(ServerControlOperation.SetOcspResponderActive.ACTIVATE, Permission.Action.OCSP_ADMINISTER,
                         Permission.ResourceType.OCSP_RESPONDER, true, true),
                 control(ServerControlOperation.SetOcspResponderActive.DEACTIVATE, Permission.Action.OCSP_ADMINISTER,
-                        Permission.ResourceType.OCSP_RESPONDER, true, false)));
+                        Permission.ResourceType.OCSP_RESPONDER, true, false),
+                control(ServerControlOperation.SearchAudit.NAME, Permission.Action.AUDIT_EXPORT,
+                        Permission.ResourceType.AUDIT, false, false),
+                control(ServerControlOperation.VerifyAuditIntegrity.NAME, Permission.Action.AUDIT_INTEGRITY_VERIFY,
+                        Permission.ResourceType.AUDIT, false, false)));
     }
 
-    /** Creates a registry and rejects duplicate operation identities. */
+    /**
+     * Creates a registry and rejects duplicate operation identities.
+     *
+     * @param values complete finite descriptor set
+     */
     public OperationSecurityDescriptors(List<Descriptor> values) {
         Map<String, Descriptor> copy = new LinkedHashMap<>();
         for (Descriptor descriptor : values) {
@@ -188,7 +274,12 @@ public final class OperationSecurityDescriptors {
         descriptors = Map.copyOf(copy);
     }
 
-    /** Resolves one descriptor or fails closed. */
+    /**
+     * Resolves one PKI descriptor or fails closed.
+     *
+     * @param operation exact typed PKI operation
+     * @return corresponding security descriptor
+     */
     public Descriptor require(PkiOperation operation) {
         Objects.requireNonNull(operation, "operation");
         Descriptor descriptor = descriptors.get(operation.name());
@@ -197,7 +288,12 @@ public final class OperationSecurityDescriptors {
         return descriptor;
     }
 
-    /** Resolves either operation family through the sole descriptor authority. */
+    /**
+     * Resolves either operation family through the sole descriptor authority.
+     *
+     * @param operation exact typed administrative operation
+     * @return corresponding security descriptor
+     */
     public Descriptor require(AdministrativeOperation operation) {
         Objects.requireNonNull(operation, "operation");
         Descriptor descriptor = descriptors.get(operation.name());
@@ -208,12 +304,21 @@ public final class OperationSecurityDescriptors {
         return descriptor;
     }
 
-    /** @return immutable descriptor map keyed by operation ID */
+    /**
+     * Returns the complete descriptor registry.
+     *
+     * @return immutable descriptor map keyed by operation ID
+     */
     public Map<String, Descriptor> descriptors() {
         return descriptors;
     }
 
-    /** Resolves one descriptor by stable ID for strict transport decoding. */
+    /**
+     * Resolves one descriptor by stable ID for strict transport decoding.
+     *
+     * @param operationId stable typed-operation identifier
+     * @return corresponding security descriptor
+     */
     public Descriptor require(String operationId) {
         Permission.requireBounded(operationId, 256, "operation ID");
         Descriptor descriptor = descriptors.get(operationId);
@@ -221,14 +326,28 @@ public final class OperationSecurityDescriptors {
         return descriptor;
     }
 
-    /** Computes an exact deterministic safe operation commitment. */
+    /**
+     * Computes an exact deterministic safe PKI-operation commitment.
+     *
+     * @param realmId owning realm
+     * @param operation exact typed PKI operation
+     * @param resource exact authorized resource
+     * @return lowercase SHA-256 operation commitment
+     */
     public String commitment(RealmId realmId, PkiOperation operation, Permission.Resource resource) {
         Descriptor descriptor = require(operation);
         return ApprovalService.digest(realmId.value() + '|' + descriptor.operationId() + '|'
                 + canonicalArguments(operation) + '|' + canonicalResource(resource));
     }
 
-    /** Computes an exact deterministic commitment for either closed operation family. */
+    /**
+     * Computes an exact deterministic commitment for either closed operation family.
+     *
+     * @param realmId owning realm
+     * @param operation exact typed administrative operation
+     * @param resource exact authorized resource
+     * @return lowercase SHA-256 operation commitment
+     */
     public String commitment(RealmId realmId, AdministrativeOperation operation, Permission.Resource resource) {
         require(operation);
         String arguments = operation instanceof AdministrativeOperation.Pki pki
@@ -237,7 +356,36 @@ public final class OperationSecurityDescriptors {
                 + canonicalResource(resource));
     }
 
-    /** Verifies that caller-supplied security scope matches operation identities. */
+    /**
+     * Resolves the configured policy category for an operation's actual approval requirement.
+     *
+     * <p>Credential revocation is ordinarily approval-free. A matching RBAC grant
+     * may condition that permission on approval, in which case the existing
+     * high-risk approval policy supplies the real approval workflow without
+     * classifying every revocation as high risk.</p>
+     *
+     * @param operation exact typed operation
+     * @param grantApprovalRequired whether the authorizing grant requires approval
+     * @return policy category, or {@link ApprovalCategory#NONE} when approval is not required
+     */
+    public ApprovalCategory approvalPolicyCategory(AdministrativeOperation operation,
+            boolean grantApprovalRequired) {
+        Descriptor descriptor = require(operation);
+        if (descriptor.approvalCategory() != ApprovalCategory.NONE) {
+            return descriptor.approvalCategory();
+        }
+        return grantApprovalRequired && operation instanceof AdministrativeOperation.Pki pki
+                && (pki.operation() instanceof PkiOperation.RevokeCredential
+                        || pki.operation() instanceof PkiOperation.RevokePendingCredentialConfirmation)
+                        ? ApprovalCategory.HIGH_RISK : ApprovalCategory.NONE;
+    }
+
+    /**
+     * Verifies that caller-supplied security scope matches operation identities.
+     *
+     * @param operation exact typed PKI operation
+     * @param resource caller-supplied resource and security scope
+     */
     public void validateResource(PkiOperation operation, Permission.Resource resource) {
         Descriptor descriptor = require(operation);
         if (descriptor.resourceType() != resource.type()) {
@@ -254,12 +402,82 @@ public final class OperationSecurityDescriptors {
             case PkiOperation.ActivateProfile value -> resource.scope().profileId().filter(value.profileId()::equals).isPresent();
             case PkiOperation.InspectCredential value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
                     && resource.scope().authorityId().isPresent();
+            case PkiOperation.ListPendingCredentialConfirmations value ->
+                resource.objectId().isEmpty()
+                    && resource.scope().authorityId().filter(value.authorityId()::equals).isPresent()
+                    && resource.scope().profileId().equals(value.profileId());
+            case PkiOperation.IssueCredentialConfirmationChallenge value ->
+                resource.objectId().filter(value.credentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent()
+                    && resource.scope().profileId().isPresent();
+            case PkiOperation.CompleteCredentialConfirmationProof value ->
+                resource.objectId().filter(value.submission().proofCas().credentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent()
+                    && resource.scope().profileId().isPresent();
+            case PkiOperation.RevokePendingCredentialConfirmation value ->
+                resource.objectId().filter(value.credentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent()
+                    && resource.scope().profileId().isPresent();
             case PkiOperation.IssueCredential value -> resource.scope().authorityId().filter(value.issuerCaId()::equals).isPresent()
                     && resource.scope().profileId().filter(value.profileId()::equals).isPresent();
+            case PkiOperation.RenewCredential value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent();
+            case PkiOperation.ReplaceCredential value -> resource.objectId().filter(value.existingCredentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent()
+                    && resource.scope().profileId().filter(value.profileId()::equals).isPresent();
+            case PkiOperation.ReissueCredential value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent();
+            case PkiOperation.RolloverCaCertificate value -> matchesAuthorityAndObject(resource, value.caId());
+            case PkiOperation.RotateCaKey value -> matchesAuthorityAndObject(resource, value.caId());
+            case PkiOperation.InspectRequest value -> resource.objectId().filter(value.requestId()::equals).isPresent()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.ImportRequest ignored -> resource.objectId().isEmpty()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.VerifyRequest value -> resource.objectId().filter(value.requestId()::equals).isPresent()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.RegisterProfile ignored -> resource.scope().authorityId().isEmpty()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.ValidateConfiguration ignored -> resource.scope().authorityId().isEmpty()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.ValidateProfile ignored -> resource.scope().authorityId().isEmpty()
+                    && resource.objectId().isEmpty();
+            case PkiOperation.ValidateAlgorithmBindings ignored -> resource.scope().authorityId().isEmpty()
+                    && resource.objectId().isEmpty();
             case PkiOperation.RevokeCredential value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
                     && resource.scope().authorityId().isPresent();
             case PkiOperation.ReadRevocationHistory value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
                     && resource.scope().authorityId().isPresent();
+            case PkiOperation.InspectRevocation value -> resource.objectId().filter(value.credentialId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent();
+            case PkiOperation.SnapshotRevocations ignored -> resource.objectId().isEmpty()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.InspectStatus value -> resource.objectId().filter(value.statusObjectId()::equals).isPresent()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.ListStatus value -> resource.objectId().isEmpty()
+                    && resource.scope().authorityId().filter(value.issuerCaId()::equals).isPresent();
+            case PkiOperation.ListPublications ignored -> resource.objectId().isEmpty()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.RegisterPublication value -> resource.objectId().filter(value.publicationId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent();
+            case PkiOperation.RetryPublication value -> resource.objectId().filter(value.publicationId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent();
+            case PkiOperation.ReconcilePublication value -> resource.objectId().filter(value.publicationId()::equals).isPresent()
+                    && resource.scope().authorityId().isPresent();
+            case PkiOperation.CreateIntermediate value -> resource.objectId().isEmpty()
+                    && resource.scope().authorityId().filter(value.issuerCaId()::equals).isPresent()
+                    && resource.scope().profileId().filter(value.profileId()::equals).isPresent();
+            case PkiOperation.IssueIntermediateCertificate value ->
+                resource.objectId().filter(value.subjectCaId()::equals).isPresent()
+                    && resource.scope().authorityId().filter(value.issuerCaId()::equals).isPresent()
+                    && resource.scope().profileId().filter(value.profileId()::equals).isPresent();
+            case PkiOperation.InspectIssuerGeneration value -> resource.objectId().filter(value.issuerId()::equals).isPresent()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.InspectIssuerChainPath value -> resource.objectId().filter(value.pathId()::equals).isPresent()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.ListIssuerChainPaths value -> resource.objectId().filter(value.issuerId()::equals).isPresent()
+                    && resource.scope().authorityId().isEmpty();
+            case PkiOperation.SelectIssuancePath value -> matchesAuthorityAndObject(resource, value.caId());
+            case PkiOperation.RegisterIssuerChainPath value -> matchesAuthorityAndObject(resource, value.caId());
             case PkiOperation.GenerateStatus value -> resource.scope().authorityId().filter(value.issuerCaId()::equals).isPresent();
             case PkiOperation.InspectPublication value -> resource.objectId().filter(value.publicationId()::equals).isPresent()
                     && resource.scope().authorityId().isPresent();
@@ -267,7 +485,6 @@ public final class OperationSecurityDescriptors {
                     && resource.scope().authorityId().isPresent();
             case PkiOperation.ListAlgorithmBindings ignored -> resource.scope().authorityId().isEmpty();
             case PkiOperation.InspectAlgorithmBinding ignored -> resource.scope().authorityId().isEmpty();
-            default -> false;
         };
         if (!valid) throw new SecurityException("Operation security scope does not match typed arguments");
     }
@@ -290,20 +507,82 @@ public final class OperationSecurityDescriptors {
             case PkiOperation.InspectProfile value -> "profile=" + atom(value.profileId()) + ";version=" + value.profileVersion();
             case PkiOperation.ActivateProfile value -> "profile=" + atom(value.profileId()) + ";version=" + value.profileVersion();
             case PkiOperation.InspectCredential value -> "credential=" + atom(value.credentialId().value());
+            case PkiOperation.ListPendingCredentialConfirmations value -> "authority="
+                    + atom(value.authorityId().value()) + ";profile="
+                    + atom(value.profileId().orElse("")) + ";cutoff="
+                    + atom(value.cutoffInclusive().toString()) + ";cursor="
+                    + atom(value.afterExclusive().map(
+                            zeroecho.pki.api.confirmation.CredentialConfirmationReviewCursor::value).orElse(""))
+                    + ";limit=" + value.limit();
+            case PkiOperation.IssueCredentialConfirmationChallenge value ->
+                "credential=" + atom(value.credentialId().value());
+            case PkiOperation.CompleteCredentialConfirmationProof value ->
+                confirmationProofArguments(value);
+            case PkiOperation.RevokePendingCredentialConfirmation value ->
+                "credential=" + atom(value.credentialId().value())
+                    + ";reason=UNSPECIFIED;justificationPresent="
+                    + value.operatorJustification().isPresent() + ";justification="
+                    + atom(value.operatorJustification().orElse(""));
             case PkiOperation.IssueCredential value -> "issuer=" + atom(value.issuerCaId().value()) + ";request="
                     + atom(value.requestId().value()) + ";profile=" + atom(value.profileId());
+            case PkiOperation.RenewCredential value -> "credential=" + atom(value.credentialId().value());
+            case PkiOperation.ReplaceCredential value -> "existing=" + atom(value.existingCredentialId().value())
+                    + ";request=" + atom(value.requestId().value()) + ";profile=" + atom(value.profileId());
+            case PkiOperation.ReissueCredential value -> "credential=" + atom(value.credentialId().value());
+            case PkiOperation.RolloverCaCertificate value -> "ca=" + atom(value.caId().value()) + ";issuer="
+                    + atom(value.issuerCaId().map(zeroecho.pki.api.PkiId::value).orElse(""));
+            case PkiOperation.RotateCaKey value -> "ca=" + atom(value.caId().value()) + ";newKeyRef="
+                    + atom(value.newKeyRef().map(zeroecho.pki.api.KeyRef::value).orElse("")) + ";issuer="
+                    + atom(value.issuerCaId().map(zeroecho.pki.api.PkiId::value).orElse(""));
+            case PkiOperation.InspectRequest value -> "request=" + atom(value.requestId().value());
+            case PkiOperation.ImportRequest value -> "format=" + atom(value.formatId().value()) + ";encoded="
+                    + digestOfBytes(value.encoded().bytes());
+            case PkiOperation.VerifyRequest value -> "request=" + atom(value.requestId().value());
+            case PkiOperation.RegisterProfile value -> "document=" + digestOfBytes(value.document());
+            case PkiOperation.ValidateConfiguration ignored -> "validate=configuration";
+            case PkiOperation.ValidateProfile value -> "document=" + digestOfBytes(value.document());
+            case PkiOperation.ValidateAlgorithmBindings value -> "binding="
+                    + atom(value.bindingId().orElse("")) + ";commitment="
+                    + atom(value.expectedCommitment().orElse(""));
             case PkiOperation.RevokeCredential value -> "credential=" + atom(value.credentialId().value())
-                    + ";reason=" + value.reason().name();
+                    + ";reason=" + value.reason().name() + ";justificationPresent="
+                    + value.operatorJustification().isPresent() + ";justification="
+                    + atom(value.operatorJustification().orElse(""));
             case PkiOperation.ReadRevocationHistory value -> "credential=" + atom(value.credentialId().value())
                     + ";limit=" + value.limit();
+            case PkiOperation.CreateIntermediate value -> "format=" + atom(value.formatId().value()) + ";issuer="
+                    + atom(value.issuerCaId().value()) + ";subject=" + atom(value.subjectRef().value())
+                    + ";profile=" + atom(value.profileId()) + ";keyRef="
+                    + atom(value.keyRef().map(zeroecho.pki.api.KeyRef::value).orElse(""));
+            case PkiOperation.IssueIntermediateCertificate value -> "format=" + atom(value.formatId().value())
+                    + ";issuer=" + atom(value.issuerCaId().value()) + ";subject=" + atom(value.subjectCaId().value())
+                    + ";profile=" + atom(value.profileId()) + ";validity="
+                    + atom(value.requestedValidity().map(v -> v.notBefore() + "/" + v.notAfter()).orElse(""));
+            case PkiOperation.InspectIssuerGeneration value -> "issuer=" + atom(value.issuerId().value());
+            case PkiOperation.InspectIssuerChainPath value -> "path=" + atom(value.pathId().value());
+            case PkiOperation.ListIssuerChainPaths value -> "issuer=" + atom(value.issuerId().value());
+            case PkiOperation.SelectIssuancePath value -> "ca=" + atom(value.caId().value()) + ";issuer="
+                    + atom(value.issuerId().value()) + ";path=" + atom(value.pathId().value()) + ";reason="
+                    + atom(value.reason());
+            case PkiOperation.RegisterIssuerChainPath value -> "ca=" + atom(value.caId().value()) + ";issuer="
+                    + atom(value.issuerId().value()) + ";parentPath=" + atom(value.parentPathId().value());
             case PkiOperation.GenerateStatus value -> "issuer=" + atom(value.issuerCaId().value()) + ";type="
                     + value.type().name() + ";format=" + atom(value.formatId().value());
+            case PkiOperation.InspectRevocation value -> "credential=" + atom(value.credentialId().value());
+            case PkiOperation.SnapshotRevocations value -> "limit=" + value.limit();
+            case PkiOperation.InspectStatus value -> "status=" + atom(value.statusObjectId().value());
+            case PkiOperation.ListStatus value -> "issuer=" + atom(value.issuerCaId().value()) + ";limit=" + value.limit();
+            case PkiOperation.ListPublications value -> "limit=" + value.limit();
+            case PkiOperation.RegisterPublication value -> "publication=" + atom(value.publicationId().value())
+                    + ";sourceType=" + value.sourceType().name() + ";source=" + atom(value.sourceId().value())
+                    + ";targetType=" + value.target().type().name() + ";target=" + atom(value.target().targetId());
+            case PkiOperation.RetryPublication value -> "publication=" + atom(value.publicationId().value());
+            case PkiOperation.ReconcilePublication value -> "publication=" + atom(value.publicationId().value());
             case PkiOperation.InspectPublication value -> "publication=" + atom(value.publicationId().value());
             case PkiOperation.ProcessPublication value -> "publication=" + atom(value.publicationId().value());
             case PkiOperation.ListAlgorithmBindings value -> "origin=" + atom(value.origin().orElse("")) + ";role="
                     + atom(value.role().orElse("")) + ";limit=" + value.limit();
             case PkiOperation.InspectAlgorithmBinding value -> "binding=" + atom(value.bindingId());
-            default -> throw new SecurityException("Operation has no canonical security encoding");
         };
     }
 
@@ -319,6 +598,36 @@ public final class OperationSecurityDescriptors {
 
     private static String atom(String value) {
         return ApprovalService.digest(value);
+    }
+
+    // Deterministic content digest for byte-valued operation arguments (e.g. an imported request or
+    // profile document), so the approval commitment binds the exact submitted bytes.
+    private static String digestOfBytes(byte[] value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static String confirmationProofArguments(
+            PkiOperation.CompleteCredentialConfirmationProof operation) {
+        zeroecho.pki.api.confirmation.CredentialConfirmationProofSubmission submission = operation.submission();
+        zeroecho.pki.api.confirmation.CredentialConfirmationProofCas proofCas = submission.proofCas();
+        byte[] response = submission.response();
+        String responseDigest;
+        try {
+            responseDigest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(response));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        } finally {
+            Arrays.fill(response, (byte) 0);
+        }
+        return "credential=" + atom(proofCas.credentialId().value())
+                + ";lifecycleRevision=" + proofCas.expectedLifecycleRevision()
+                + ";lifecycleCommitment=" + atom(proofCas.expectedLifecycleRecordCommitment())
+                + ";challengeCommitment=" + atom(proofCas.expectedChallengeRecordCommitment())
+                + ";responseSha256=" + responseDigest;
     }
 
     private static Descriptor read(String id, Permission.Action action, Permission.ResourceType type) {
@@ -341,7 +650,8 @@ public final class OperationSecurityDescriptors {
     private static Descriptor control(String id, Permission.Action action, Permission.ResourceType type,
             boolean mutating, boolean highRisk) {
         Permission.DataView view = action == Permission.Action.AUDIT_READ_PII
-                ? Permission.DataView.PII_FULL : action == Permission.Action.AUDIT_READ_FULL
+                ? Permission.DataView.PII_FULL
+                : action == Permission.Action.AUDIT_READ_FULL || action == Permission.Action.AUDIT_EXPORT
                         ? Permission.DataView.METADATA_FULL : Permission.DataView.METADATA_REDACTED;
         return new Descriptor(id, Family.SERVER_CONTROL_OPERATION, action, type, mutating,
                 view, highRisk ? ApprovalCategory.HIGH_RISK
@@ -389,6 +699,9 @@ public final class OperationSecurityDescriptors {
             case ServerControlOperation.InspectDisclosure value -> "object=" + atom(value.objectId().value());
             case ServerControlOperation.SetDisclosure value -> "object=" + atom(value.objectId().value())
                     + ";policy=" + value.policy().name();
+            case ServerControlOperation.EnrollCredentialPublication value -> "credential="
+                    + atom(value.credentialId().value()) + ";owner="
+                    + atom(value.ownerPrincipalId().orElse(""));
             case ServerControlOperation.IssueCapability value -> "object=" + atom(value.objectId().value())
                     + ";expiry=" + value.expiresAt();
             case ServerControlOperation.RevokeCapability value -> "capability=" + atom(value.capabilityId());
@@ -422,7 +735,12 @@ public final class OperationSecurityDescriptors {
                             .collect(java.util.stream.Collectors.joining(",")))
                     + ";eabProvider=" + atom(value.registration().eabProviderId().orElse("NONE"))
                     + ";eabRequired=" + value.registration().eabRequired()
-                    + ";disclosure=" + value.registration().disclosurePolicy().name();
+                    + ";expectedProfile=" + profilePrecondition(value).expectedProfile().profileId()
+                    + ':' + profilePrecondition(value).expectedProfile().profileVersion()
+                    + ':' + HexFormat.of().formatHex(
+                            profilePrecondition(value).expectedProfile().canonicalSha256())
+                    + ";confirmationPolicy="
+                    + profilePrecondition(value).expectedPolicyCommitment();
             case ServerControlOperation.InspectAcmeDirectory value -> "directory=" + atom(value.directoryId());
             case ServerControlOperation.ListAcmeDirectories value -> "offset=" + value.offset() + ";limit=" + value.limit();
             case ServerControlOperation.SetAcmeDirectoryActive value -> "directory="
@@ -441,6 +759,28 @@ public final class OperationSecurityDescriptors {
                     + ";limit=" + value.limit();
             case ServerControlOperation.SetOcspResponderActive value -> "responder="
                     + atom(value.responderId()) + ";active=" + value.active();
+            case ServerControlOperation.SearchAudit value -> auditQueryCommitment(value.query());
+            case ServerControlOperation.VerifyAuditIntegrity value -> "head=" + atom(value.expectedHead()
+                    .map(head -> head.sequence() + ":" + head.recordHash()).orElse(""));
         };
+    }
+
+    private static String auditQueryCommitment(zeroecho.pki.api.audit.AuditQuery query) {
+        String details = query.requiredDetails().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> atom(entry.getKey()) + '=' + atom(entry.getValue()))
+                .collect(java.util.stream.Collectors.joining(","));
+        return "category=" + atom(query.category().orElse("")) + ";action=" + atom(query.action().orElse(""))
+                + ";after=" + atom(query.after().map(java.time.Instant::toString).orElse(""))
+                + ";before=" + atom(query.before().map(java.time.Instant::toString).orElse(""))
+                + ";object=" + atom(query.objectId().map(zeroecho.pki.api.PkiId::value).orElse(""))
+                + ";principal=" + atom(query.principalName().orElse("")) + ";limit=" + query.limit()
+                + ";details=" + atom(details);
+    }
+
+    private static ServerControlOperation.AcmeDirectoryProfilePrecondition profilePrecondition(
+            ServerControlOperation.RegisterAcmeDirectory operation) {
+        return operation.profilePrecondition()
+                .orElseThrow(() -> new IllegalStateException("ACME directory profile precondition is unresolved"));
     }
 }

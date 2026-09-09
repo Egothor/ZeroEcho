@@ -97,6 +97,11 @@ public sealed interface SubjectAlternativeName permits SubjectAlternativeName.Dn
             bytes = bytes.clone();
         }
 
+        /**
+         * Returns a defensive copy of the encoded IP address.
+         *
+         * @return exactly 4 bytes for IPv4 or 16 bytes for IPv6
+         */
         @Override
         public byte[] bytes() {
             return bytes.clone();
@@ -206,7 +211,7 @@ public sealed interface SubjectAlternativeName permits SubjectAlternativeName.Dn
         return canonical;
     }
 
-    // The public exception deliberately redacts parser details.
+    // URI syntax, host canonicalization, and public error redaction form one validation boundary.
     @SuppressWarnings({ "PMD.PreserveStackTrace", "PMD.CyclomaticComplexity" })
     private static String canonicalUri(String supplied) {
         requireAscii(supplied, UriName.MAXIMUM_BYTES, "URI SAN");

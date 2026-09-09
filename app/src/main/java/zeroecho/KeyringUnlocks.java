@@ -68,6 +68,28 @@ final class KeyringUnlocks {
         };
     }
 
+    /**
+     * Returns an unlock provider that reads the keyring password from a named environment variable,
+     * enabling non-interactive/scripted keyring management (mirrors the PKI session's
+     * {@code unlockEnvironmentVariable}). The variable value is copied into a destroyable password and the
+     * transient copy is scrubbed after use.
+     */
+    /* default */ static KeyringUnlockProvider environment(String variable) {
+        String name = java.util.Objects.requireNonNull(variable, "variable");
+        return () -> {
+            String value = System.getenv(name);
+            if (value == null || value.isEmpty()) {
+                throw new IOException("Keyring password environment variable is unavailable");
+            }
+            char[] input = value.toCharArray();
+            try {
+                return new KeyringPassword(input);
+            } finally {
+                Arrays.fill(input, '\0');
+            }
+        };
+    }
+
     /* default */ static KeyringStore open(Path path, KeyringUnlockProvider provider)
             throws IOException, GeneralSecurityException {
         try (KeyringPassword password = acquire(provider)) {

@@ -35,16 +35,23 @@ package zeroecho.pki.impl.fs;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.HashSet;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiId;
@@ -53,11 +60,13 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.RevocationHistory;
 import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationTransitionFeed;
 import zeroecho.pki.spi.store.RevocationView;
 
 /** Store-owned coordination of the authoritative log and its derived state. */
+// Log, index, recovery, and feed collaborators must advance under one ownership boundary.
 @SuppressWarnings({ "PMD.CloseResource", "PMD.UseTryWithResources", "PMD.AvoidSynchronizedAtMethodLevel",
-        "PMD.UnusedAssignment", "PMD.ControlStatementBraces" })
+        "PMD.UnusedAssignment", "PMD.ControlStatementBraces", "PMD.CouplingBetweenObjects" })
 final class FilesystemRevocationAuthority implements AutoCloseable {
 
     private static final FilesystemRevocationCurrentIndex.Configuration INDEX_CONFIGURATION =
@@ -70,6 +79,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
     private final MetadataStoreId storeId;
     private final FilesystemRevocationLog log;
     private final IndexUpdateFaultInjector indexUpdateFaults;
+    private final FeedChannelFactory feedChannels;
     private final ReentrantReadWriteLock lifecycle = new ReentrantReadWriteLock();
     private final Set<OwnedResource> activeResources = new HashSet<>();
     private FilesystemRevocationCurrentIndex index;
@@ -77,12 +87,13 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
 
     private FilesystemRevocationAuthority(FsPaths paths, MetadataStoreId storeId,
             FilesystemRevocationLog log, FilesystemRevocationCurrentIndex index,
-            IndexUpdateFaultInjector indexUpdateFaults) {
+            IndexUpdateFaultInjector indexUpdateFaults, FeedChannelFactory feedChannels) {
         this.paths = paths;
         this.storeId = storeId;
         this.log = log;
         this.index = index;
         this.indexUpdateFaults = indexUpdateFaults;
+        this.feedChannels = feedChannels;
     }
 
     /* default */ static FilesystemRevocationAuthority open(FsPaths paths, MetadataStoreId storeId,
@@ -93,10 +104,17 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
     /* default */ static FilesystemRevocationAuthority open(FsPaths paths, MetadataStoreId storeId,
             FilesystemRevocationLog.CredentialAuthority credentials, boolean create,
             IndexUpdateFaultInjector indexUpdateFaults) throws IOException {
+        return open(paths, storeId, credentials, create, indexUpdateFaults, FeedChannelFactory.DEFAULT);
+    }
+
+    /* default */ static FilesystemRevocationAuthority open(FsPaths paths, MetadataStoreId storeId,
+            FilesystemRevocationLog.CredentialAuthority credentials, boolean create,
+            IndexUpdateFaultInjector indexUpdateFaults, FeedChannelFactory feedChannels) throws IOException {
         Objects.requireNonNull(paths, "paths");
         Objects.requireNonNull(storeId, "storeId");
         Objects.requireNonNull(credentials, "credentials");
         Objects.requireNonNull(indexUpdateFaults, "indexUpdateFaults");
+        Objects.requireNonNull(feedChannels, "feedChannels");
         Path logPath = paths.revocationTransitionLog();
         Files.createDirectories(Objects.requireNonNull(logPath.getParent(), "revocation directory"));
         FilesystemRevocationLog openedLog = create
@@ -109,7 +127,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
                     paths.revocationCurrentIndex(), paths.revocationCheckpointDirectory(), logPath,
                     storeId, INDEX_CONFIGURATION, target);
             FilesystemRevocationAuthority authority = new FilesystemRevocationAuthority(
-                    paths, storeId, openedLog, openedIndex, indexUpdateFaults);
+                    paths, storeId, openedLog, openedIndex, indexUpdateFaults, feedChannels);
             complete = true;
             return authority;
         } finally {
@@ -165,6 +183,16 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         void afterAppend() throws IOException;
     }
 
+    /** Instance-scoped feed-channel seam for deterministic bounded-I/O tests. */
+    /* default */
+    @FunctionalInterface
+    interface FeedChannelFactory {
+        FeedChannelFactory DEFAULT = path -> FileChannel.open(path, StandardOpenOption.READ);
+
+        /** Opens one read-only channel over the authoritative log. */
+        SeekableByteChannel open(Path path) throws IOException;
+    }
+
     /* default */ RevocationHistory history(PkiId credentialId) throws IOException {
         Objects.requireNonNull(credentialId, "credentialId");
         lifecycle.writeLock().lock();
@@ -173,6 +201,20 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             HistoryCursor cursor = new HistoryCursor(this, credentialId, log.recoveryTarget());
             activeResources.add(cursor);
             return cursor;
+        } finally {
+            lifecycle.writeLock().unlock();
+        }
+    }
+
+    /* default */ RevocationTransitionFeed feed(Optional<RevocationTransitionFeed.Position> afterExclusive)
+            throws IOException {
+        Objects.requireNonNull(afterExclusive, "afterExclusive");
+        lifecycle.writeLock().lock();
+        try {
+            requireOperational();
+            TransitionFeed feed = new TransitionFeed(this, log.recoveryTarget(), afterExclusive);
+            activeResources.add(feed);
+            return feed;
         } finally {
             lifecycle.writeLock().unlock();
         }
@@ -236,6 +278,10 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         } finally {
             lifecycle.readLock().unlock();
         }
+    }
+
+    /* default */ long revocationLogScanInvocationCount() {
+        return log.scanInvocationCount();
     }
 
     /* default */ FilesystemRevocationLog.RecoveryTarget copyAuthoritativePrefix(Path target) throws IOException {
@@ -648,6 +694,253 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             if (closed) {
                 throw new IllegalStateException("Revocation cursor is closed");
             }
+        }
+    }
+
+    /**
+     * Single-pass append cursor over one captured authoritative prefix. Each
+     * sequential feed owns and thread-confines exactly one decode scratch buffer.
+     */
+    private static final class TransitionFeed implements RevocationTransitionFeed, OwnedResource {
+        private final FilesystemRevocationAuthority owner;
+        private final FilesystemRevocationLog.RecoveryTarget head;
+        private final HighWatermark highWatermark;
+        private final SeekableByteChannel channel;
+        private final RevocationTransitionFrameCodec codec = new RevocationTransitionFrameCodec();
+        private final RevocationTransitionFrameCodec.DecodeScratch decodeScratch =
+                new RevocationTransitionFrameCodec.DecodeScratch();
+        private long offset;
+        private long globalRevision;
+        private RevocationTransitionFrameCodec.Commitment globalCommitment;
+        private Entry current;
+        private boolean closed;
+
+        private TransitionFeed(FilesystemRevocationAuthority owner,
+                FilesystemRevocationLog.RecoveryTarget head,
+                Optional<Position> afterExclusive) throws IOException {
+            this.owner = owner;
+            this.head = head;
+            highWatermark = new HighWatermark(head.storeId(), head.globalRevision(),
+                    head.globalCommitment().value());
+            channel = owner.feedChannels.open(owner.paths.revocationTransitionLog());
+            boolean initialized = false;
+            try {
+                MetadataStoreId actualStoreId = codec.readPreamble(channel);
+                if (!head.storeId().equals(actualStoreId) || channel.size() < head.boundary()) {
+                    throw new IOException("Revocation feed source does not match its captured head");
+                }
+                if (afterExclusive.isPresent()) {
+                    restore(PositionCodec.decode(afterExclusive.orElseThrow()), afterExclusive.orElseThrow());
+                } else {
+                    offset = RevocationTransitionFrameCodec.PREAMBLE_BYTES;
+                    globalRevision = 0L;
+                    globalCommitment = RevocationTransitionFrameCodec.initialCommitment(actualStoreId);
+                }
+                initialized = true;
+            } finally {
+                if (!initialized) {
+                    decodeScratch.close();
+                    channel.close();
+                }
+            }
+        }
+
+        @Override
+        public HighWatermark highWatermark() {
+            requireOpen();
+            return highWatermark;
+        }
+
+        @Override
+        public boolean next(CancellationSignal cancellation) throws IOException {
+            Objects.requireNonNull(cancellation, "cancellation");
+            requireOpen();
+            if (offset == head.boundary()) {
+                requireExactHead();
+                return false;
+            }
+            if (offset > head.boundary()) {
+                throw new IOException("Revocation feed position exceeds its captured head");
+            }
+            cancellation.throwIfCancelled();
+            RevocationTransitionFrameCodec.ReadResult read = codec.read(channel, offset, decodeScratch);
+            if (read.classification() != RevocationTransitionFrameCodec.Classification.COMPLETE_RECORD) {
+                throw new IOException("Revocation feed contains an incomplete or corrupt frame");
+            }
+            RevocationTransitionFrameCodec.CompleteRecord frame = read.record().orElseThrow();
+            if (frame.recordEnd() > head.boundary()
+                    || frame.data().globalRevision() != Math.addExact(globalRevision, 1L)
+                    || !frame.data().previousGlobalCommitment().equals(globalCommitment)) {
+                throw new IOException("Revocation feed continuity is invalid");
+            }
+            cancellation.throwIfCancelled();
+            Position nextPosition = PositionCodec.encode(head.storeId(), frame.data().globalRevision(),
+                    frame.commitment(), frame.recordEnd());
+            Entry nextEntry = new Entry(head.storeId(), frame.data().globalRevision(), frame.commitment().value(),
+                    nextPosition, record(frame));
+            offset = frame.recordEnd();
+            globalRevision = frame.data().globalRevision();
+            globalCommitment = frame.commitment();
+            current = nextEntry;
+            return true;
+        }
+
+        @Override
+        public Entry current() {
+            requireOpen();
+            if (current == null) {
+                throw new IllegalStateException("Revocation feed is not positioned");
+            }
+            return current;
+        }
+
+        @Override public void close() throws IOException { closeInternal(true); }
+        @Override public void closeFromOwner() throws IOException { closeInternal(false); }
+
+        private void restore(PositionState state, Position supplied) {
+            if (!head.storeId().equals(state.storeId()) || state.globalRevision() <= 0L
+                    || state.globalRevision() > head.globalRevision()
+                    || state.nextBoundary() <= RevocationTransitionFrameCodec.PREAMBLE_BYTES
+                    || state.nextBoundary() > head.boundary()) {
+                throw invalidPosition();
+            }
+            if (state.globalRevision() == head.globalRevision()) {
+                if (state.nextBoundary() != head.boundary()
+                        || !state.commitment().equals(head.globalCommitment())) {
+                    throw invalidPosition();
+                }
+            } else if (state.nextBoundary() >= head.boundary()) {
+                throw invalidPosition();
+            }
+            if (!PositionCodec.encode(state.storeId(), state.globalRevision(), state.commitment(),
+                    state.nextBoundary()).equals(supplied)) {
+                throw invalidPosition();
+            }
+            offset = state.nextBoundary();
+            globalRevision = state.globalRevision();
+            globalCommitment = state.commitment();
+        }
+
+        private void requireExactHead() throws IOException {
+            if (globalRevision != head.globalRevision() || !globalCommitment.equals(head.globalCommitment())) {
+                throw new IOException("Revocation feed does not match its captured head");
+            }
+        }
+
+        private void closeInternal(boolean release) throws IOException {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            current = null;
+            IOException failure = null;
+            try {
+                channel.close();
+            } catch (IOException closeFailure) {
+                failure = closeFailure;
+            } finally {
+                decodeScratch.close();
+                if (release) {
+                    owner.release(this);
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        private void requireOpen() {
+            if (closed) {
+                throw new IllegalStateException("Revocation feed is closed");
+            }
+        }
+
+        private static IllegalArgumentException invalidPosition() {
+            return new IllegalArgumentException("Revocation feed position does not match the authoritative log");
+        }
+    }
+
+    /** Fixed-size opaque position codec; the digest binds every decoded field. */
+    private static final class PositionCodec {
+        private static final int MAGIC = 0x5A455246;
+        private static final short VERSION = 1;
+        private static final short FLAGS = 0;
+        private static final int FIELDS_BYTES = 72;
+        private static final int TOKEN_BYTES = FIELDS_BYTES + 32;
+        private static final byte[] DOMAIN = "ZeroEcho revocation transition feed position v1"
+                .getBytes(StandardCharsets.US_ASCII);
+        private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
+        private static final Base64.Decoder DECODER = Base64.getUrlDecoder();
+        private static final HexFormat HEX = HexFormat.of();
+
+        private static RevocationTransitionFeed.Position encode(MetadataStoreId storeId, long globalRevision,
+                RevocationTransitionFrameCodec.Commitment commitment, long nextBoundary) {
+            ByteBuffer encoded = ByteBuffer.allocate(TOKEN_BYTES).order(ByteOrder.BIG_ENDIAN);
+            encoded.putInt(MAGIC).putShort(VERSION).putShort(FLAGS);
+            encoded.put(HEX.parseHex(storeId.value()));
+            encoded.putLong(globalRevision);
+            encoded.put(HEX.parseHex(commitment.value()));
+            encoded.putLong(nextBoundary);
+            MessageDigest digest = sha256();
+            digest.update(DOMAIN);
+            digest.update(encoded.array(), 0, FIELDS_BYTES);
+            encoded.put(digest.digest());
+            return new RevocationTransitionFeed.Position(ENCODER.encodeToString(encoded.array()));
+        }
+
+        @SuppressWarnings("PMD.PreserveStackTrace")
+        private static PositionState decode(RevocationTransitionFeed.Position position) {
+            byte[] encoded;
+            try {
+                encoded = DECODER.decode(position.value());
+            } catch (IllegalArgumentException malformed) {
+                throw TransitionFeed.invalidPosition();
+            }
+            if (encoded.length != TOKEN_BYTES
+                    || !ENCODER.encodeToString(encoded).equals(position.value())) {
+                throw TransitionFeed.invalidPosition();
+            }
+            MessageDigest digest = sha256();
+            digest.update(DOMAIN);
+            digest.update(encoded, 0, FIELDS_BYTES);
+            byte[] supplied = new byte[32];
+            System.arraycopy(encoded, FIELDS_BYTES, supplied, 0, supplied.length);
+            if (!MessageDigest.isEqual(digest.digest(), supplied)) {
+                throw TransitionFeed.invalidPosition();
+            }
+            ByteBuffer fields = ByteBuffer.wrap(encoded).order(ByteOrder.BIG_ENDIAN);
+            if (fields.getInt() != MAGIC || fields.getShort() != VERSION || fields.getShort() != FLAGS) {
+                throw TransitionFeed.invalidPosition();
+            }
+            byte[] store = new byte[16];
+            fields.get(store);
+            long globalRevision = fields.getLong();
+            byte[] commitment = new byte[32];
+            fields.get(commitment);
+            long nextBoundary = fields.getLong();
+            try {
+                return new PositionState(new MetadataStoreId(HEX.formatHex(store)), globalRevision,
+                        new RevocationTransitionFrameCodec.Commitment(HEX.formatHex(commitment)), nextBoundary);
+            } catch (IllegalArgumentException invalid) {
+                throw TransitionFeed.invalidPosition();
+            }
+        }
+
+        private static MessageDigest sha256() {
+            try {
+                return MessageDigest.getInstance("SHA-256");
+            } catch (NoSuchAlgorithmException impossible) {
+                throw new IllegalStateException("Required SHA-256 digest is unavailable", impossible);
+            }
+        }
+    }
+
+    /** Decoded exclusive position. */
+    private record PositionState(MetadataStoreId storeId, long globalRevision,
+            RevocationTransitionFrameCodec.Commitment commitment, long nextBoundary) {
+        private PositionState {
+            Objects.requireNonNull(storeId, "storeId");
+            Objects.requireNonNull(commitment, "commitment");
         }
     }
 

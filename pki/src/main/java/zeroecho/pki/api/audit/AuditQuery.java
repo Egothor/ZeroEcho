@@ -34,6 +34,8 @@
 package zeroecho.pki.api.audit;
 
 import java.time.Instant;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.pki.api.PkiId;
@@ -41,18 +43,32 @@ import zeroecho.pki.api.PkiId;
 /**
  * Query constraints for searching audit events.
  *
- * @param category      optional category filter
- * @param action        optional action filter
- * @param after         optional lower bound for event time
- * @param before        optional upper bound for event time
- * @param objectId      optional object id filter
- * @param principalName optional principal name filter
+ * <p>
+ * Every search is bounded: {@code limit} is clamped to {@link #MAXIMUM_LIMIT} so
+ * a query can never materialize an unbounded result. {@code requiredDetails}
+ * matches events whose {@link AuditEvent#details()} contain every supplied
+ * key/value pair, which lets callers reconstruct one operation's evidence chain
+ * by its shared operation commitment without exposing event payloads.
+ * </p>
+ *
+ * @param category        optional category filter
+ * @param action          optional action filter
+ * @param after           optional lower bound for event time
+ * @param before          optional upper bound for event time
+ * @param objectId        optional object id filter
+ * @param principalName   optional principal name filter
+ * @param requiredDetails detail key/value pairs that must all be present
+ * @param limit           maximum number of events returned (bounded)
  */
 public record AuditQuery(Optional<String> category, Optional<String> action, Optional<Instant> after,
-        Optional<Instant> before, Optional<PkiId> objectId, Optional<String> principalName) {
+        Optional<Instant> before, Optional<PkiId> objectId, Optional<String> principalName,
+        Map<String, String> requiredDetails, int limit) {
+
+    /** Hard upper bound enforced on every audit search result. */
+    public static final int MAXIMUM_LIMIT = 10_000;
 
     /**
-     * Creates an audit query.
+     * Creates a bounded audit query.
      *
      * @throws IllegalArgumentException if any optional container is null
      */
@@ -61,5 +77,25 @@ public record AuditQuery(Optional<String> category, Optional<String> action, Opt
                 || principalName == null) {
             throw new IllegalArgumentException("optional fields must not be null");
         }
+        requiredDetails = Map.copyOf(Objects.requireNonNull(requiredDetails, "requiredDetails"));
+        if (limit <= 0 || limit > MAXIMUM_LIMIT) {
+            limit = MAXIMUM_LIMIT;
+        }
+    }
+
+    /**
+     * Creates a query with no detail filter and the maximum bound; retained so
+     * existing six-argument callers remain source-compatible.
+     *
+     * @param category      optional category filter
+     * @param action        optional action filter
+     * @param after         optional lower bound for event time
+     * @param before        optional upper bound for event time
+     * @param objectId      optional object id filter
+     * @param principalName optional principal name filter
+     */
+    public AuditQuery(Optional<String> category, Optional<String> action, Optional<Instant> after,
+            Optional<Instant> before, Optional<PkiId> objectId, Optional<String> principalName) {
+        this(category, action, after, before, objectId, principalName, Map.of(), MAXIMUM_LIMIT);
     }
 }

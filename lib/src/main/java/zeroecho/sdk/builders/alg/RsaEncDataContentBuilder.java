@@ -125,6 +125,7 @@ public final class RsaEncDataContentBuilder implements DataContentBuilder<DataCo
      * RsaEncDataContentBuilder b = RsaEncDataContentBuilder.builder();
      * }</pre>
      *
+     * @param session active session used to create cryptographic contexts
      * @return a new {@code RsaEncDataContentBuilder} instance
      */
     public static RsaEncDataContentBuilder builder(ZeroEchoSession session) {

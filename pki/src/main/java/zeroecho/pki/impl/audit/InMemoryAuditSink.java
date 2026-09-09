@@ -156,7 +156,7 @@ public final class InMemoryAuditSink implements AuditSink, SearchableAuditSink {
             }
         }
         out.sort(AuditEvent.auditOrder());
-        return List.copyOf(out);
+        return List.copyOf(out.subList(0, Math.min(out.size(), query.limit())));
     }
 
     @Override

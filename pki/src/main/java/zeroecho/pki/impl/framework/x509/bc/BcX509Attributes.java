@@ -159,6 +159,73 @@ public final class BcX509Attributes {
      */
     public static final AttributeId SUBJECT_DN = new AttributeId("urn:zeroecho:pki:x509:subject:dn");
 
+    /**
+     * Attribute identifier for the monotonic CRL number assigned to a generated
+     * (full or delta) CRL.
+     *
+     * <p>
+     * The associated value is a decimal {@code StringValue} holding a non-negative
+     * integer (CRL numbers may exceed the range of a {@code long}). Core status-object
+     * generation allocates the next value per issuer; the X.509 generator writes it as
+     * the RFC 5280 {@code cRLNumber} extension and it is persisted on the status object
+     * so subsequent allocations remain monotonic across restart.
+     * </p>
+     */
+    public static final AttributeId CRL_NUMBER = new AttributeId("urn:zeroecho:pki:x509:crl:number");
+
+    /**
+     * Attribute identifier for the base CRL number a delta CRL is computed against.
+     *
+     * <p>
+     * The associated value is a decimal {@code StringValue}. It is present only for
+     * {@code DELTA_CRL} generation and is written as the RFC 5280 {@code deltaCRLIndicator}
+     * (base CRL number) critical extension.
+     * </p>
+     */
+    public static final AttributeId BASE_CRL_NUMBER = new AttributeId("urn:zeroecho:pki:x509:crl:base-number");
+
+    /**
+     * Attribute identifier for the certificate serial a persistent OCSP status
+     * object covers.
+     *
+     * <p>
+     * The associated value is a decimal {@code StringValue} holding the positive
+     * X.509 serial (serials may exceed the range of a {@code long}). Core
+     * status-object generation resolves the target's current status and the X.509
+     * generator produces a single-response, issuer-signed OCSP response for it.
+     * </p>
+     */
+    public static final AttributeId OCSP_TARGET_SERIAL = new AttributeId("urn:zeroecho:pki:x509:ocsp:target-serial");
+
+    /**
+     * Attribute identifier for the resolved OCSP certificate status snapshot.
+     *
+     * <p>
+     * The associated value is a {@code StringValue} equal to {@code "GOOD"} or
+     * {@code "REVOKED"}. When {@code "REVOKED"}, {@link #OCSP_REVOCATION_TIME} and
+     * {@link #OCSP_REVOCATION_REASON} accompany it.
+     * </p>
+     */
+    public static final AttributeId OCSP_CERT_STATUS = new AttributeId("urn:zeroecho:pki:x509:ocsp:cert-status");
+
+    /**
+     * Attribute identifier for the revocation instant of a revoked OCSP target.
+     *
+     * <p>The associated value is an {@code InstantValue}; present only for a
+     * {@code "REVOKED"} status.</p>
+     */
+    public static final AttributeId OCSP_REVOCATION_TIME = new AttributeId("urn:zeroecho:pki:x509:ocsp:revocation-time");
+
+    /**
+     * Attribute identifier for the revocation reason of a revoked OCSP target.
+     *
+     * <p>The associated value is a {@code StringValue} equal to a
+     * {@code RevocationReason} constant name; present only for a {@code "REVOKED"}
+     * status.</p>
+     */
+    public static final AttributeId OCSP_REVOCATION_REASON =
+            new AttributeId("urn:zeroecho:pki:x509:ocsp:revocation-reason");
+
     private BcX509Attributes() {
         // utility
     }

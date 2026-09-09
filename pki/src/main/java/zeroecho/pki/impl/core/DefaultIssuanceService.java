@@ -43,14 +43,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+import zeroecho.core.io.CancellationSignal;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.IssuanceService;
 import zeroecho.pki.api.PkiException;
+import zeroecho.pki.api.PkiFailureReason;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.attr.AttributeValue;
@@ -62,7 +62,9 @@ import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.credential.CredentialBundle;
+import zeroecho.pki.api.credential.CredentialLineage;
 import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.credential.EndEntityProfileBinding;
 import zeroecho.pki.api.credential.CredentialUse;
 import zeroecho.pki.api.credential.EffectiveCredentialStatus;
 import zeroecho.pki.api.credential.EffectiveCredentialStatusResolver;
@@ -75,11 +77,15 @@ import zeroecho.pki.api.issuance.ReplaceCommand;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfile;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.profile.ImportedCertificateProfileVersion;
 import zeroecho.pki.api.request.CertificationRequest;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CertificationRequestParser;
+import zeroecho.pki.impl.core.async.PendingSigningOperation;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509BuiltInDefaults;
@@ -111,7 +117,8 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
  * <li>the issuer CA must expose an effectively usable credential for the active
  * framework {@link FormatId},</li>
  * <li>the signed CSR is reparsed into bounded typed subject and SAN values and
- * validated against one exact active deny-by-default profile,</li>
+ * validated against one exact active deny-by-default profile, or the exact
+ * imported profile frozen by a durable issuance intent,</li>
  * <li>only a gate-produced {@link ValidatedCertificateRequest} crosses the
  * issuer-backend boundary,</li>
  * <li>the backend result is reparsed and its subject, SAN, public key, issuer,
@@ -148,6 +155,8 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 @SuppressWarnings({ "PMD.AvoidSynchronizedAtMethodLevel", "PMD.CyclomaticComplexity", "PMD.PreserveStackTrace" })
 public final class DefaultIssuanceService implements IssuanceService {
 
+    private static final String COMMAND_PARAMETER = "command";
+
     /**
      * Maximum accepted encoded PKCS#10 request size (one mebibyte).
      */
@@ -163,6 +172,7 @@ public final class DefaultIssuanceService implements IssuanceService {
     private final EffectiveCredentialStatusResolver statusResolver;
     private final ProfileService profileService;
     private final Clock clock;
+    private final zeroecho.pki.api.RevocationService revocation;
     private final X509AuthoritySnapshot authority;
     private final zeroecho.core.spec.AlgorithmIdentity expectedSignature;
 
@@ -181,11 +191,14 @@ public final class DefaultIssuanceService implements IssuanceService {
      *                       be {@code null}
      * @param statusResolver authoritative runtime credential-status resolver; must
      *                       not be {@code null}
+     * @param profileService authoritative certificate-profile service
+     * @param clock authoritative service clock
+     * @param revocation revocation service used to validate issuer status
      * @throws NullPointerException if an argument is {@code null}
      */
     public DefaultIssuanceService(PkiStore store, CredentialFramework framework, CredentialIssuerBackend issuerBackend,
             AuditSink auditSink, EffectiveCredentialStatusResolver statusResolver, ProfileService profileService,
-            Clock clock) {
+            Clock clock, zeroecho.pki.api.RevocationService revocation) {
         this.store = Objects.requireNonNull(store, "store");
         this.framework = Objects.requireNonNull(framework, "framework");
         this.issuerBackend = Objects.requireNonNull(issuerBackend, "issuerBackend");
@@ -193,6 +206,7 @@ public final class DefaultIssuanceService implements IssuanceService {
         this.statusResolver = Objects.requireNonNull(statusResolver, "statusResolver");
         this.profileService = Objects.requireNonNull(profileService, "profileService");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.revocation = Objects.requireNonNull(revocation, "revocation");
         if (!(framework instanceof BcX509CredentialFramework x509Framework)) {
             throw new IllegalArgumentException("X.509 issuance requires an algorithm authority");
         }
@@ -231,31 +245,77 @@ public final class DefaultIssuanceService implements IssuanceService {
      */
     @Override
     public synchronized CredentialBundle issueEndEntity(IssueEndEntityCommand command) {
-        Objects.requireNonNull(command, "command");
+        return issueEndEntity(command, CancellationSignal.NONE);
+    }
+
+    @Override
+    public synchronized CredentialBundle issueEndEntity(IssueEndEntityCommand command,
+            CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation");
+        Objects.requireNonNull(command, COMMAND_PARAMETER);
         Optional<Credential> committed = command.issuanceIntent()
                 .flatMap(store::getCredentialByIssuanceIntent);
         if (committed.isPresent()) {
             return committedBundle(command, committed.orElseThrow());
         }
-        CaRecord issuer = store.getCa(command.issuerCaId()).orElseThrow(() -> new PkiException("Issuer CA not found"));
+        CaRecord issuer = store.getCa(command.issuerCaId()).orElseThrow(() -> new PkiException("Issuer CA not found", PkiFailureReason.ISSUER_CA_NOT_FOUND));
 
         if (issuer.state() != CaState.ACTIVE) {
-            throw new PkiException("Issuer CA not ACTIVE");
+            throw new PkiException("Issuer CA not ACTIVE", PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
         }
         VerifiedIssuanceCandidate candidate = verifyIssuanceCandidate(command);
-        ActiveCertificateProfile active;
-        try {
-            active = profileService.requireActiveProfile(command.profileId());
-        } catch (PkiException failure) {
-            throw rejection(candidate.request(), "PROFILE_NOT_ACTIVE");
+        return issueVerified(command, issuer, candidate, SimpleAttributeSet.builder().build(), true, cancellation);
+    }
+
+    @Override
+    public synchronized CredentialBundle issueEndEntity(IssueEndEntityCommand command,
+            AttributeSet evidence, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation");
+        Objects.requireNonNull(command, COMMAND_PARAMETER);
+        Objects.requireNonNull(evidence, "evidence");
+        Optional<Credential> committed = command.issuanceIntent()
+                .flatMap(store::getCredentialByIssuanceIntent);
+        if (committed.isPresent()) {
+            return committedBundle(command, committed.orElseThrow());
         }
-        CertificateProfile profile = active.profile();
-        command.issuanceIntent().ifPresent(intent -> {
-            if (!intent.expectedProfile().equals(active.reference())) {
-                throw new PkiException("Frozen issuance profile is unavailable");
+        CaRecord issuer = store.getCa(command.issuerCaId())
+                .orElseThrow(() -> new PkiException("Issuer CA not found", PkiFailureReason.ISSUER_CA_NOT_FOUND));
+        if (issuer.state() != CaState.ACTIVE) {
+            throw new PkiException("Issuer CA not ACTIVE", PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
+        }
+        VerifiedIssuanceCandidate candidate = verifyIssuanceCandidate(command);
+        return issueVerified(command, issuer, candidate, evidence, true, cancellation);
+    }
+
+    // Shared issuance core: profile resolution, validation, signing, result verification, and
+    // persistence. issueEndEntity supplies a CSR-derived candidate; the lifecycle operations
+    // (replace/renew/reissue) supply their own candidate and optional lineage extra-attributes.
+    private CredentialBundle issueVerified(IssueEndEntityCommand command, CaRecord issuer,
+            VerifiedIssuanceCandidate candidate, AttributeSet extraAttributes, boolean csrTransport,
+            CancellationSignal cancellation) {
+        CertificateProfileRef profileReference;
+        CertificateProfile profile;
+        if (command.issuanceIntent().isPresent()) {
+            CertificateProfileRef expected = command.issuanceIntent().orElseThrow().expectedProfile();
+            ImportedCertificateProfileVersion imported = profileService
+                    .getImportedVersion(expected.profileId(), expected.profileVersion())
+                    .orElseThrow(() -> new PkiException("Frozen issuance profile is unavailable"));
+            if (!expected.equals(imported.reference())) {
+                throw new PkiException("Frozen issuance profile differs");
             }
-        });
-        if (!command.profileId().equals(active.reference().profileId())) {
+            profileReference = imported.reference();
+            profile = CertificateProfile.fromDefinition(imported.definition());
+        } else {
+            ActiveCertificateProfile active;
+            try {
+                active = profileService.requireActiveProfile(command.profileId());
+            } catch (PkiException failure) {
+                throw rejection(candidate.request(), "PROFILE_NOT_ACTIVE");
+            }
+            profileReference = active.reference();
+            profile = active.profile();
+        }
+        if (!command.profileId().equals(profileReference.profileId())) {
             throw rejection(candidate.request(), "PROFILE_ID_MISMATCH");
         }
         if (!framework.formatId().equals(profile.formatId())
@@ -271,33 +331,53 @@ public final class DefaultIssuanceService implements IssuanceService {
         command.issuanceIntent().ifPresent(intent -> requireFrozenSelection(intent, generation, issuancePath));
         ValidatedCertificateRequest validated;
         try {
-            validated = CertificateProfileValidator.validate(candidate, profile, active.reference(), issuerCred,
-                    evaluationTime, authority);
+            validated = csrTransport
+                    ? CertificateProfileValidator.validate(candidate, profile, profileReference, issuerCred,
+                            evaluationTime, authority)
+                    : CertificateProfileValidator.validateReconstructed(candidate, profile, profileReference,
+                            issuerCred, evaluationTime, authority);
         } catch (PkiException exception) {
             throw rejection(candidate.request(), statusCode(exception));
+        }
+        validated = validated.withFrozenIssuance(generation.issuerId(), issuancePath.pathId(),
+                issuancePath.pathCommitment(), command.issuanceIntent());
+        if (!extraAttributes.ids().isEmpty()) {
+            // Carry the server-derived execution evidence into the deferred-signing continuation so the
+            // asynchronous publication path co-commits the same audit evidence as the synchronous merge below.
+            validated = validated.withExecutionEvidence(extraAttributes);
         }
         BigInteger serial = CertificateSerialAllocator.allocate();
 
         CredentialBundle bundle;
         try {
             bundle = CredentialSnapshots
-                    .copy(issuerBackend.issueEndEntity(validated, issuerCred.content(), issuer.issuerKeyRef(), serial));
+                    .copy(issuerBackend.issueEndEntity(validated, issuerCred.content(), issuer.issuerKeyRef(), serial,
+                            cancellation));
+        } catch (zeroecho.pki.api.SigningExecutionException | PendingSigningOperation signingFailure) {
+            throw signingFailure;
         } catch (RuntimeException ex) { // NOPMD - framework output must cross the snapshot boundary
             throw rejection(candidate.request(), "BACKEND_CREDENTIAL_MISMATCH");
         }
         requireIssuedCredentialMatches(validated, issuerCred, serial, bundle, candidate.request());
         Credential exactCredential = IssuerAuthorities.withIssuer(bundle.credential(),
                 new zeroecho.pki.api.IssuerRef(issuer.caId(), generation.issuerId(), issuancePath.pathId()));
-        if (command.issuanceIntent().isPresent()) {
-            IssuanceIntent intent = command.issuanceIntent().orElseThrow();
-            AttributeSet attributes = SimpleAttributeSet.builder().putAll(exactCredential.attributes())
-                    .put(IssuanceIntent.ID_ATTRIBUTE, new AttributeValue.StringValue(intent.issuanceId()))
-                    .put(IssuanceIntent.COMMITMENT_ATTRIBUTE,
-                            new AttributeValue.StringValue(intent.commandCommitment())).build();
+        boolean hasExtra = !extraAttributes.ids().isEmpty();
+        if (command.issuanceIntent().isPresent() || hasExtra) {
+            SimpleAttributeSet.Builder attributes = SimpleAttributeSet.builder().putAll(exactCredential.attributes());
+            if (hasExtra) {
+                attributes.putAll(extraAttributes);
+            }
+            if (command.issuanceIntent().isPresent()) {
+                IssuanceIntent intent = command.issuanceIntent().orElseThrow();
+                attributes.put(IssuanceIntent.ID_ATTRIBUTE, new AttributeValue.StringValue(intent.issuanceId()))
+                        .put(IssuanceIntent.COMMITMENT_ATTRIBUTE,
+                                new AttributeValue.StringValue(intent.commandCommitment()));
+            }
             exactCredential = new Credential(exactCredential.credentialId(), exactCredential.formatId(),
                     exactCredential.issuerRef(), exactCredential.subjectRef(), exactCredential.validity(),
                     exactCredential.serialOrUniqueId(), exactCredential.publicKeyId(),
-                    exactCredential.profileBinding(), exactCredential.status(), exactCredential.content(), attributes);
+                    exactCredential.profileBinding(), exactCredential.status(), exactCredential.content(),
+                    attributes.build());
         }
         store.putCredential(exactCredential);
         return new CredentialBundle(exactCredential, pathContent(issuancePath));
@@ -368,7 +448,8 @@ public final class DefaultIssuanceService implements IssuanceService {
 
     private Credential requireIssuerCredential(PkiId credentialId) {
         return store.getCredential(credentialId)
-                .orElseThrow(() -> new PkiException("Issuer CA credential not found"));
+                .orElseThrow(() -> new PkiException("Issuer CA credential not found",
+                        PkiFailureReason.ISSUER_CREDENTIAL_NOT_FOUND));
     }
 
     private VerifiedIssuanceCandidate verifyIssuanceCandidate(IssueEndEntityCommand command) {
@@ -502,15 +583,14 @@ public final class DefaultIssuanceService implements IssuanceService {
                     Optional.of(expectedSignature));
             CredentialContent.validateCertificate(store, issuerCredential.content(), authority, Optional.empty());
             byte[] credentialDer = CredentialContent.materializeForBc(store, credential.content());
-            X509CertificateHolder holder = new X509CertificateHolder(credentialDer);
-            X509CertificateHolder issuerHolder = new X509CertificateHolder(
+            java.security.cert.X509Certificate holder = zeroecho.pkix.Pkix.parseCertificate(credentialDer);
+            java.security.cert.X509Certificate issuerHolder = zeroecho.pkix.Pkix.parseCertificate(
                     CredentialContent.materializeForBc(store, issuerCredential.content()));
-            byte[] actualSpki = holder.getSubjectPublicKeyInfo().getEncoded();
+            byte[] actualSpki = zeroecho.pkix.Pkix.subjectPublicKeyInfo(holder);
             if (!MessageDigest.isEqual(validated.exactPublicKey().bytes(), actualSpki)
-                    || !holder.getSubject().equals(BcX509ProfileSupport.subject(validated.subjectRdns()))
-                    || !holder.getIssuer().equals(issuerHolder.getSubject())
-                    || !holder.isSignatureValid(
-                            new JcaContentVerifierProviderBuilder().build(issuerHolder.getSubjectPublicKeyInfo()))
+                    || !holder.getSubjectX500Principal().equals(BcX509ProfileSupport.subject(validated.subjectRdns()))
+                    || !holder.getIssuerX500Principal().equals(issuerHolder.getSubjectX500Principal())
+                    || !signatureValid(holder, issuerHolder.getPublicKey())
                     || !holder.getSerialNumber().equals(allocatedSerial)
                     || !credential.publicKeyId().equals(new PkiId("spki:" + sha256Hex(actualSpki)))
                     || !credential.credentialId().equals(new PkiId("x509:" + sha256Hex(credentialDer)))
@@ -532,10 +612,14 @@ public final class DefaultIssuanceService implements IssuanceService {
         }
     }
 
+    // Reads the stable rejection code from a typed source rather than the message
+    // text: a profile-validation rejection carries it directly, and any other
+    // structural failure reason contributes its own token, else a safe default.
     private static String statusCode(PkiException exception) {
-        String message = exception.getMessage();
-        int codeIndex = message == null ? -1 : message.indexOf("code=");
-        return codeIndex < 0 ? "PROFILE_VALIDATION_FAILED" : message.substring(codeIndex + 5);
+        if (exception instanceof ProfileValidationRejection rejection) {
+            return rejection.rejectionCode();
+        }
+        return exception.failureReason().map(PkiFailureReason::name).orElse("PROFILE_VALIDATION_FAILED");
     }
 
     private static String sha256Hex(byte[] input) {
@@ -571,8 +655,33 @@ public final class DefaultIssuanceService implements IssuanceService {
      */
     @Override
     public CredentialBundle renew(RenewCommand command) {
-        Objects.requireNonNull(command, "command");
-        throw new PkiException("Renew is not implemented in this runtime build");
+        return renew(command, CancellationSignal.NONE);
+    }
+
+    /**
+     * Renews an existing credential: reissues it with the same subject and subject
+     * public key under a fresh validity and serial, keeping the predecessor valid
+     * (renewal provides continuity, not supersession).
+     *
+     * <p>
+     * The request is reconstructed from the predecessor certificate and
+     * re-validated against the credential's current active profile, so a renewal
+     * that no longer complies with tightened policy is rejected. Proof of
+     * possession is inherited from the predecessor: the subject key is unchanged
+     * and was already proven, and no fresh private-key operation is available.
+     * </p>
+     */
+    @Override
+    public synchronized CredentialBundle renew(RenewCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation");
+        Objects.requireNonNull(command, COMMAND_PARAMETER);
+        Credential predecessor = requireLeafCredential(command.existingCredentialId(), "renew");
+        requireKeyReusablePredecessor(predecessor, "renew");
+        IssueEndEntityCommand issueCommand = new IssueEndEntityCommand(predecessor.issuerRef().caId(),
+                reconstructRequest(predecessor), profileId(predecessor), command.validityOverride());
+        CaRecord issuer = requireActiveIssuer(issueCommand.issuerCaId());
+        VerifiedIssuanceCandidate candidate = reconstructCandidate(issueCommand);
+        return issueVerified(issueCommand, issuer, candidate, command.overrides(), false, cancellation);
     }
 
     /**
@@ -591,8 +700,77 @@ public final class DefaultIssuanceService implements IssuanceService {
      */
     @Override
     public CredentialBundle replace(ReplaceCommand command) {
-        Objects.requireNonNull(command, "command");
-        throw new PkiException("Replace is not implemented in this runtime build");
+        return replace(command, CancellationSignal.NONE);
+    }
+
+    /**
+     * Replaces an existing credential with a freshly issued one from a new
+     * certification request, then permanently supersedes the predecessor.
+     *
+     * <p>
+     * The replacement is issued by the same issuer CA as the predecessor
+     * (continuity), through the identical CSR reparse, proof-of-possession, profile
+     * validation, signing, and result-verification pipeline used by end-entity
+     * issuance. The new credential carries a durable {@link CredentialLineage}
+     * pointer to the predecessor, and the predecessor is then revoked
+     * {@link zeroecho.pki.api.revocation.RevocationReason#SUPERSEDED}. Issue precedes
+     * revoke so a fault between them leaves the predecessor valid and recoverable by
+     * retry rather than leaving the subject without any credential.
+     * </p>
+     */
+    @Override
+    public synchronized CredentialBundle replace(ReplaceCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation");
+        Objects.requireNonNull(command, COMMAND_PARAMETER);
+        Credential predecessor = requireLeafCredential(command.existingCredentialId(), "replace");
+        IssueEndEntityCommand issueCommand = new IssueEndEntityCommand(predecessor.issuerRef().caId(),
+                command.newRequest(), command.profileId(), Optional.empty());
+        CaRecord issuer = store.getCa(issueCommand.issuerCaId())
+                .orElseThrow(() -> new PkiException("Issuer CA not found", PkiFailureReason.ISSUER_CA_NOT_FOUND));
+        if (issuer.state() != CaState.ACTIVE) {
+            throw new PkiException("Issuer CA not ACTIVE", PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
+        }
+        VerifiedIssuanceCandidate candidate = verifyIssuanceCandidate(issueCommand);
+        CredentialBundle bundle = issueVerified(issueCommand, issuer, candidate,
+                merged(supersedes(command.existingCredentialId()), command.overrides()), true, cancellation);
+        supersede(command.existingCredentialId());
+        return bundle;
+    }
+
+    // Combines two co-commit attribute sets (lineage + caller/gateway-supplied evidence overrides);
+    // the second wins on the (here disjoint) key overlap.
+    private static AttributeSet merged(AttributeSet base, AttributeSet overrides) {
+        if (overrides.ids().isEmpty()) {
+            return base;
+        }
+        return SimpleAttributeSet.builder().putAll(base).putAll(overrides).build();
+    }
+
+    // Lineage attributes stamped onto a superseding credential: the forward pointer to the
+    // predecessor plus the supersession reason token.
+    private static AttributeSet supersedes(PkiId predecessorId) {
+        return SimpleAttributeSet.builder()
+                .put(CredentialLineage.SUPERSEDES_CREDENTIAL_ID,
+                        new AttributeValue.StringValue(predecessorId.value()))
+                .put(CredentialLineage.SUPERSESSION_REASON,
+                        new AttributeValue.StringValue(zeroecho.pki.api.revocation.RevocationReason.SUPERSEDED.name()))
+                .build();
+    }
+
+    // Permanently revokes the predecessor as SUPERSEDED. If the predecessor is already permanently
+    // revoked (e.g. a compromise revocation preceding a replacement), it is already terminally
+    // revoked and is left as-is: the revocation authority rejects a second terminal transition, so
+    // re-revoking would fail the lifecycle operation after the successor is already issued.
+    private void supersede(PkiId predecessorId) {
+        boolean alreadyRevoked = revocation.get(predecessorId)
+                .map(record -> record.transition().state())
+                .filter(zeroecho.pki.api.revocation.RevocationState.PERMANENTLY_REVOKED::equals).isPresent();
+        if (alreadyRevoked) {
+            return;
+        }
+        revocation.revokePermanently(new zeroecho.pki.api.revocation.RevocationCommand.RevokePermanently(
+                predecessorId, zeroecho.pki.api.revocation.RevocationReason.SUPERSEDED,
+                SimpleAttributeSet.builder().build()));
     }
 
     /**
@@ -611,8 +789,104 @@ public final class DefaultIssuanceService implements IssuanceService {
      */
     @Override
     public CredentialBundle reissue(ReissueCommand command) {
-        Objects.requireNonNull(command, "command");
-        throw new PkiException("Reissue is not implemented in this runtime build");
+        return reissue(command, CancellationSignal.NONE);
+    }
+
+    /**
+     * Reissues from a stored issuance record. The issuance record is the existing
+     * credential itself: reissue reproduces issuance from the predecessor
+     * certificate's subject and subject public key under a fresh validity and
+     * serial, then permanently supersedes the predecessor.
+     *
+     * <p>
+     * Like renewal, the request is reconstructed and re-validated against the
+     * current active profile, and proof of possession is inherited. Unlike renewal,
+     * reissue supersedes the predecessor (SUPERSEDED) and stamps the successor with
+     * durable lineage, because reissue produces the authoritative replacement.
+     * </p>
+     */
+    @Override
+    public synchronized CredentialBundle reissue(ReissueCommand command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation");
+        Objects.requireNonNull(command, COMMAND_PARAMETER);
+        Credential predecessor = requireLeafCredential(command.issuanceRecordId(), "reissue");
+        requireKeyReusablePredecessor(predecessor, "reissue");
+        IssueEndEntityCommand issueCommand = new IssueEndEntityCommand(predecessor.issuerRef().caId(),
+                reconstructRequest(predecessor), profileId(predecessor), Optional.empty());
+        CaRecord issuer = requireActiveIssuer(issueCommand.issuerCaId());
+        VerifiedIssuanceCandidate candidate = reconstructCandidate(issueCommand);
+        CredentialBundle bundle = issueVerified(issueCommand, issuer, candidate,
+                merged(supersedes(command.issuanceRecordId()), command.overrides()), false, cancellation);
+        supersede(command.issuanceRecordId());
+        return bundle;
+    }
+
+    // Loads a credential and requires it to be an end-entity (leaf) credential eligible for
+    // the credential lifecycle operations.
+    private Credential requireLeafCredential(PkiId credentialId, String operation) {
+        Credential credential = store.getCredential(credentialId)
+                .orElseThrow(() -> new PkiException("Credential to " + operation + " not found"));
+        if (!(credential.profileBinding() instanceof EndEntityProfileBinding)) {
+            throw new PkiException("Credential to " + operation + " is not an end-entity credential");
+        }
+        return credential;
+    }
+
+    // renew and reissue re-certify the predecessor's existing public key. A held or permanently
+    // revoked predecessor must never be re-certified under the same key: the certificate was
+    // deliberately terminated (and, for a compromise revocation, the key may be exposed). An
+    // expired or not-yet-valid predecessor is a legitimate renewal target and is allowed. Replace
+    // deliberately does NOT apply this guard because it issues under a fresh key from a new request,
+    // which is the correct recovery path for a compromised predecessor.
+    private void requireKeyReusablePredecessor(Credential predecessor, String operation) {
+        EffectiveCredentialStatus status = statusResolver.beginEvaluation().resolve(predecessor);
+        if (status == EffectiveCredentialStatus.HELD || status == EffectiveCredentialStatus.PERMANENTLY_REVOKED) {
+            throw new PkiException(
+                    "Credential to " + operation + " is revoked or held; its key cannot be re-certified");
+        }
+    }
+
+    private CaRecord requireActiveIssuer(PkiId issuerCaId) {
+        CaRecord issuer = store.getCa(issuerCaId).orElseThrow(() -> new PkiException("Issuer CA not found", PkiFailureReason.ISSUER_CA_NOT_FOUND));
+        if (issuer.state() != CaState.ACTIVE) {
+            throw new PkiException("Issuer CA not ACTIVE", PkiFailureReason.ISSUER_CA_NOT_ACTIVE);
+        }
+        return issuer;
+    }
+
+    private static String profileId(Credential credential) {
+        return ((EndEntityProfileBinding) credential.profileBinding()).reference().profileId();
+    }
+
+    private static boolean signatureValid(java.security.cert.X509Certificate certificate,
+            java.security.PublicKey signerKey) {
+        try {
+            certificate.verify(signerKey);
+            return true;
+        } catch (java.security.GeneralSecurityException failure) {
+            return false;
+        }
+    }
+
+    // Reconstructs the certification request from a predecessor certificate. No CSR or fresh
+    // proof of possession exists; the subject public key is inherited from the predecessor.
+    private ParsedCertificationRequest reconstructRequest(Credential predecessor) {
+        byte[] certificateDer = CredentialContent.materializeForBc(store, predecessor.content());
+        try {
+            return BcX509CertificationRequestParser.reconstructForRenewal(
+                    zeroecho.pkix.Pkix.parseCertificate(certificateDer), framework.formatId());
+        } catch (IllegalArgumentException ex) {
+            throw new PkiException("Credential certificate is unreadable for reconstruction");
+        } finally {
+            java.util.Arrays.fill(certificateDer, (byte) 0);
+        }
+    }
+
+    // Builds a reconstruction candidate whose proof status is inherited (VERIFIED): the subject
+    // public key is unchanged from the predecessor and was proven at original issuance.
+    private VerifiedIssuanceCandidate reconstructCandidate(IssueEndEntityCommand command) {
+        ParsedCertificationRequest request = command.request();
+        return VerifiedIssuanceCandidate.reconstructed(request, request.requestId(), request.publicKeyInfo(), command);
     }
 
     /**
@@ -635,9 +909,10 @@ public final class DefaultIssuanceService implements IssuanceService {
      */
     @Override
     public CredentialBundle buildBundle(BundleCommand command) {
-        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(command, COMMAND_PARAMETER);
         PkiId credId = command.credentialId();
-        Credential leaf = store.getCredential(credId).orElseThrow(() -> new PkiException("Credential not found"));
+        Credential leaf = store.getCredential(credId).orElseThrow(() -> new PkiException("Credential not found",
+                PkiFailureReason.CREDENTIAL_NOT_FOUND));
         EffectiveCredentialStatusResolver.Evaluation evaluation = statusResolver.beginEvaluation();
         EffectiveCredentialStatus status;
         try {
@@ -654,7 +929,8 @@ public final class DefaultIssuanceService implements IssuanceService {
                     "Credential trust rejected: code=" + StoreBackedEffectiveCredentialStatusResolver.NOT_USABLE_CODE);
         }
         zeroecho.pki.api.ca.IssuerChainPath path = store.getIssuerChainPath(leaf.issuerRef().chainPathId())
-                .orElseThrow(() -> new PkiException("Credential issuance chain path not found"));
+                .orElseThrow(() -> new PkiException("Credential issuance chain path not found",
+                        PkiFailureReason.ISSUER_CHAIN_PATH_NOT_FOUND));
         if (!leaf.issuerRef().issuerId().equals(path.issuerId())
                 || !leaf.issuerRef().caId().equals(path.authorityId())) {
             throw new PkiException("Credential issuance chain path mismatch");

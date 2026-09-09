@@ -45,12 +45,25 @@ import conflux.CtxInterface;
  * decryption will parse it before initializing the cipher.
  */
 public interface SymmetricHeaderCodec {
-    /** Write header to {@code out}, using/recording params from {@code ctx}. */
+    /**
+     * Writes a header to {@code out}, using or recording parameters from {@code ctx}.
+     *
+     * @param out destination stream; remains owned by the caller
+     * @param algorithm exact symmetric algorithm whose runtime parameters are encoded
+     * @param ctx mutable operation context supplying those parameters
+     * @throws IOException if the header cannot be written
+     */
     void writeHeader(OutputStream out, CryptoAlgorithm algorithm, CtxInterface ctx) throws IOException;
 
     /**
      * Read header from {@code in}, populate params in {@code ctx}, and return an
      * InputStream positioned immediately after the header.
+     *
+     * @param in source stream positioned at the encoded header
+     * @param algorithm exact symmetric algorithm expected by the operation
+     * @param ctx mutable operation context populated from the header
+     * @return a stream positioned at the first payload byte; ownership remains with the caller
+     * @throws IOException if the header is truncated, malformed, or cannot be read
      */
     InputStream readHeader(InputStream in, CryptoAlgorithm algorithm, CtxInterface ctx) throws IOException;
 }

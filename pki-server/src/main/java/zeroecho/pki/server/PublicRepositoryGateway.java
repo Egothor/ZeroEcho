@@ -53,26 +53,56 @@ import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiRepositoryContent;
 
 /** Transport-neutral, read-only disclosed repository gateway. */
-@SuppressWarnings({ "PMD.FieldDeclarationsShouldBeAtStartOfClass", "PMD.ExcessiveParameterList" })
+@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.FieldDeclarationsShouldBeAtStartOfClass",
+        "PMD.ExcessiveParameterList" })
 public final class PublicRepositoryGateway {
     /** Cache policy classes with distinct privacy semantics. */
-    public enum CacheClass { PUBLIC_IMMUTABLE, PUBLIC_ALIAS, PRIVATE_AUTHENTICATED, NO_STORE_CAPABILITY }
+    public enum CacheClass {
+        /** Immutable public content may be cached indefinitely. */ PUBLIC_IMMUTABLE,
+        /** Public alias responses require revalidation. */ PUBLIC_ALIAS,
+        /** Authenticated responses must remain private. */ PRIVATE_AUTHENTICATED,
+        /** Capability-authorized responses must not be stored. */ NO_STORE_CAPABILITY
+    }
 
-    /** Safe public authority metadata. */
+    /**
+     * Safe public authority metadata.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param kind authority kind
+     * @param issuerIds immutable issuer-generation identifiers
+     * @param currentIssuanceIssuerId current issuance generation
+     */
     public record Authority(PkiId authorityId, zeroecho.pki.api.ca.CaKind kind,
             List<PkiId> issuerIds, PkiId currentIssuanceIssuerId) {
         /** Snapshots finite issuer identities. */
         public Authority { issuerIds = List.copyOf(issuerIds); }
     }
 
-    /** Exact explicit chain path represented as ordered immutable certificate links. */
+    /**
+     * Exact explicit chain path represented as ordered immutable certificate links.
+     *
+     * @param authorityId exact logical authority identifier
+     * @param issuerId exact issuer generation
+     * @param pathId exact chain-path identifier
+     * @param orderedCredentialIds leaf-to-root credential identifiers
+     * @param commitment immutable path commitment
+     * @param etag response entity tag
+     * @param cacheClass cache policy
+     */
     public record Chain(PkiId authorityId, PkiId issuerId, PkiId pathId,
             List<PkiId> orderedCredentialIds, String commitment, String etag, CacheClass cacheClass) {
         /** Snapshots exact order. */
         public Chain { orderedCredentialIds = List.copyOf(orderedCredentialIds); }
     }
 
-    /** Lifecycle-owned binary response descriptor. */
+    /**
+     * Lifecycle-owned binary response descriptor.
+     *
+     * @param lease content lease owned by this descriptor
+     * @param mediaType response media type
+     * @param etag response entity tag
+     * @param cacheClass cache policy
+     */
     public record Content(PkiRepositoryContent lease, String mediaType, String etag, CacheClass cacheClass)
             implements AutoCloseable {
         /** Validates response metadata. */
@@ -84,7 +114,13 @@ public final class PublicRepositoryGateway {
         @Override public void close() throws java.io.IOException { lease.close(); }
     }
 
-    /** Safe request identity, without certificate or bearer-token logging fields. */
+    /**
+     * Safe request identity, without certificate or bearer-token logging fields.
+     *
+     * @param principal optional authenticated principal
+     * @param capabilityBearer optional point-addressable capability bearer
+     * @param correlationId bounded non-secret request correlation identifier
+     */
     public record Access(Optional<SecurityPrincipal> principal, Optional<String> capabilityBearer,
             String correlationId) {
         /** Validates mutually exclusive principal and capability authority. */
@@ -121,7 +157,13 @@ public final class PublicRepositoryGateway {
         this.aliases = Objects.requireNonNull(aliases); this.openCheck = Objects.requireNonNull(openCheck);
     }
 
-    /** Returns one bounded keyset page of exposed public authority metadata. */
+    /**
+     * Returns one bounded keyset page of exposed public authority metadata.
+     *
+     * @param after optional exclusive authority cursor
+     * @param limit positive maximum result count
+     * @return bounded immutable authority page
+     */
     public List<Authority> authorities(Optional<PkiId> after, int limit) {
         openCheck.run();
         if (limit <= 0 || limit > 1_000) {
@@ -150,12 +192,24 @@ public final class PublicRepositoryGateway {
         return List.copyOf(result);
     }
 
-    /** Returns one exact exposed authority. */
+    /**
+     * Returns one exact exposed authority.
+     *
+     * @param authorityId exact exposed authority identifier
+     * @return safe public authority metadata
+     */
     public Authority authority(PkiId authorityId) {
         return authority(requireAuthority(authorityId));
     }
 
-    /** Opens one exact issuer-generation certificate after disclosure enforcement. */
+    /**
+     * Opens one exact issuer-generation certificate after disclosure enforcement.
+     *
+     * @param authorityId exact exposed authority identifier
+     * @param issuerId exact issuer generation
+     * @param access authenticated or capability request authority
+     * @return lifecycle-owned certificate response
+     */
     public Content issuerCertificate(PkiId authorityId, PkiId issuerId, Access access) {
         requireAuthority(authorityId);
         IssuerGeneration issuer = repository.issuer(issuerId).orElseThrow(PublicRepositoryGateway::unavailable);
@@ -169,7 +223,15 @@ public final class PublicRepositoryGateway {
         return content(repository.openCredential(credential.credentialId()), "application/pkix-cert", decision);
     }
 
-    /** Resolves one explicit chain path without constructing or preferring a path. */
+    /**
+     * Resolves one explicit chain path without constructing or preferring a path.
+     *
+     * @param authorityId exact exposed authority identifier
+     * @param issuerId exact issuer generation
+     * @param pathId exact chain path
+     * @param access authenticated or capability request authority
+     * @return exact disclosed chain path
+     */
     public Chain chainPath(PkiId authorityId, PkiId issuerId, PkiId pathId, Access access) {
         requireAuthority(authorityId);
         IssuerChainPath path = repository.chainPath(pathId).orElseThrow(PublicRepositoryGateway::unavailable);
@@ -181,7 +243,13 @@ public final class PublicRepositoryGateway {
         return chain(path, decision, path.pathCommitment(), false);
     }
 
-    /** Resolves the stable chain route only through CURRENT_CHAIN metadata. */
+    /**
+     * Resolves the stable chain route only through CURRENT_CHAIN metadata.
+     *
+     * @param authorityId exact exposed authority identifier
+     * @param access authenticated or capability request authority
+     * @return currently aliased disclosed chain path
+     */
     public Chain currentChain(PkiId authorityId, Access access) {
         requireAuthority(authorityId);
         RepositoryAliasService.Record alias = aliases.require(authorityId, RepositoryAliasService.Type.CURRENT_CHAIN);
@@ -199,7 +267,13 @@ public final class PublicRepositoryGateway {
         return chain(path, decision, alias.recordCommitment(), true);
     }
 
-    /** Opens one exact leaf certificate; object identity alone grants no access. */
+    /**
+     * Opens one exact leaf certificate; object identity alone grants no access.
+     *
+     * @param credentialId exact credential identifier
+     * @param access authenticated or capability request authority
+     * @return lifecycle-owned certificate response
+     */
     public Content credential(PkiId credentialId, Access access) {
         Credential credential = repository.credential(credentialId).orElseThrow(PublicRepositoryGateway::unavailable);
         PkiId authorityId = credential.issuerRef().caId();
@@ -209,20 +283,66 @@ public final class PublicRepositoryGateway {
         return content(repository.openCredential(credentialId), "application/pkix-cert", decision);
     }
 
-    /** Opens one exact status object after role and disclosure checks. */
+    /**
+     * Opens one exact status object after role and disclosure checks.
+     *
+     * @param statusObjectId exact status-object identifier
+     * @param access authenticated or capability request authority
+     * @return lifecycle-owned status-object response
+     */
     public Content statusObject(PkiId statusObjectId, Access access) {
         StatusObject status = repository.statusObject(statusObjectId).orElseThrow(PublicRepositoryGateway::unavailable);
         requireAuthority(status.issuerCaId());
-        boolean crl = status.type() == StatusObjectType.CRL;
-        DisclosureService.ObjectType type = crl ? DisclosureService.ObjectType.CRL
-                : DisclosureService.ObjectType.STATUS_OBJECT;
-        AccessDecision decision = decide(statusObjectId, status.issuerCaId(), type, crl,
-                crl ? Permission.Action.CRL_DOWNLOAD : Permission.Action.CERTIFICATE_READ_CONTENT, access);
-        return content(repository.openStatusObject(statusObjectId), crl ? "application/pkix-crl"
-                : "application/octet-stream", decision);
+        DisclosureService.ObjectType type = switch (status.type()) {
+            case CRL -> DisclosureService.ObjectType.CRL;
+            case DELTA_CRL -> DisclosureService.ObjectType.DELTA_CRL;
+            case OCSP -> DisclosureService.ObjectType.STATUS_OBJECT;
+        };
+        boolean crlFamily = status.type() == StatusObjectType.CRL || status.type() == StatusObjectType.DELTA_CRL;
+        String mediaType = switch (status.type()) {
+            case CRL, DELTA_CRL -> "application/pkix-crl";
+            case OCSP -> "application/ocsp-response";
+        };
+        AccessDecision decision = decide(statusObjectId, status.issuerCaId(), type, crlFamily,
+                crlFamily ? Permission.Action.CRL_DOWNLOAD : Permission.Action.CERTIFICATE_READ_CONTENT, access);
+        return content(repository.openStatusObject(statusObjectId), mediaType, decision);
     }
 
-    /** Resolves the stable current-CRL route only through CURRENT_CRL metadata. */
+    /**
+     * Resolves the stable current-delta-CRL route only through CURRENT_DELTA_CRL metadata.
+     *
+     * @param authorityId exact exposed authority identifier
+     * @param access authenticated or capability request authority
+     * @return lifecycle-owned current delta-CRL response
+     */
+    public Content currentDeltaCrl(PkiId authorityId, Access access) {
+        requireAuthority(authorityId);
+        RepositoryAliasService.Record alias = aliases.require(authorityId,
+                RepositoryAliasService.Type.CURRENT_DELTA_CRL);
+        if (alias.state() != RepositoryAliasService.State.ACTIVE) {
+            throw unavailable();
+        }
+        StatusObject status = repository.statusObject(alias.targetObjectId())
+                .orElseThrow(PublicRepositoryGateway::unavailable);
+        if (!authorityId.equals(status.issuerCaId()) || status.type() != StatusObjectType.DELTA_CRL
+                || !alias.targetCommitment().equals(status.content().sha256())) {
+            throw unavailable();
+        }
+        AccessDecision decision = decide(status.statusObjectId(), authorityId, DisclosureService.ObjectType.DELTA_CRL,
+                true, Permission.Action.CRL_DOWNLOAD, access);
+        PkiRepositoryContent lease = repository.openStatusObject(status.statusObjectId());
+        return new Content(lease, "application/pkix-crl", etag(alias.recordCommitment(), decision.commitment()),
+                decision.cacheClass() == CacheClass.PUBLIC_IMMUTABLE ? CacheClass.PUBLIC_ALIAS
+                        : decision.cacheClass());
+    }
+
+    /**
+     * Resolves the stable current-CRL route only through CURRENT_CRL metadata.
+     *
+     * @param authorityId exact exposed authority identifier
+     * @param access authenticated or capability request authority
+     * @return lifecycle-owned current CRL response
+     */
     public Content currentCrl(PkiId authorityId, Access access) {
         requireAuthority(authorityId);
         RepositoryAliasService.Record alias = aliases.require(authorityId, RepositoryAliasService.Type.CURRENT_CRL);
@@ -284,7 +404,7 @@ public final class PublicRepositoryGateway {
         BreakGlassService.ActiveGrants emergency = breakGlass.activeFor(principal.principalId());
         grants.addAll(emergency.grants());
         Permission.ResourceType resourceType = switch (objectType) {
-            case CRL, STATUS_OBJECT -> Permission.ResourceType.STATUS_OBJECT;
+            case CRL, DELTA_CRL, STATUS_OBJECT -> Permission.ResourceType.STATUS_OBJECT;
             case CA_CHAIN -> Permission.ResourceType.AUTHORITY;
             case CA_CERTIFICATE, LEAF_CERTIFICATE -> Permission.ResourceType.CERTIFICATE;
         };

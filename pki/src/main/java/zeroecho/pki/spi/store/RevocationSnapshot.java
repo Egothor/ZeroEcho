@@ -61,13 +61,25 @@ public interface RevocationSnapshot extends AutoCloseable {
      */
     String snapshotId();
 
-    /** @return captured authoritative global revision */
+    /**
+     * Returns the captured authoritative revision.
+     *
+     * @return captured authoritative global revision
+     */
     long revision();
 
-    /** @return captured authoritative byte boundary */
+    /**
+     * Returns the captured log boundary.
+     *
+     * @return captured authoritative byte boundary
+     */
     long boundary();
 
-    /** @return captured authoritative global commitment in lowercase hexadecimal */
+    /**
+     * Returns the captured global commitment.
+     *
+     * @return captured authoritative global commitment in lowercase hexadecimal
+     */
     String commitment();
 
     /**

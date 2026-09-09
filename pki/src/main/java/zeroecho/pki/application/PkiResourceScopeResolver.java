@@ -45,12 +45,43 @@ import zeroecho.pki.api.PkiId;
  * unauthorized principal.</p>
  */
 public interface PkiResourceScopeResolver {
-    /** Returns the exact logical issuer authority of one committed credential. */
-    Optional<PkiId> credentialAuthority(PkiId credentialId);
+    /**
+     * Exact authorization coordinates frozen into one committed credential.
+     *
+     * @param authorityId issuing authority
+     * @param profileId frozen logical profile
+     */
+    record CredentialScope(PkiId authorityId, String profileId) {
+        /** Validates the immutable authority and profile coordinates. */
+        public CredentialScope {
+            java.util.Objects.requireNonNull(authorityId, "authorityId");
+            if (profileId == null || profileId.isBlank()) {
+                throw new IllegalArgumentException("profileId must not be blank");
+            }
+        }
+    }
 
-    /** Returns the exact logical issuer authority of one committed status object. */
+    /**
+     * Returns the exact logical authority and frozen profile of one committed credential.
+     *
+     * @param credentialId credential identifier
+     * @return scope, or empty
+     */
+    Optional<CredentialScope> credentialScope(PkiId credentialId);
+
+    /**
+     * Returns the exact logical issuer authority of one committed status object.
+     *
+     * @param statusObjectId object identifier
+     * @return authority, or empty
+     */
     Optional<PkiId> statusObjectAuthority(PkiId statusObjectId);
 
-    /** Returns the authority of the immutable source behind one publication operation. */
+    /**
+     * Returns the authority of the immutable source behind one publication operation.
+     *
+     * @param publicationId operation identifier
+     * @return authority, or empty
+     */
     Optional<PkiId> publicationAuthority(PkiId publicationId);
 }

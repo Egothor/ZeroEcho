@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.spi.framework;
 
+import zeroecho.core.io.CancellationSignal;
+
 import zeroecho.pki.api.status.StatusObjectGenerateCommand;
 import zeroecho.pki.impl.framework.x509.X509SignedObjectCompletion;
 
@@ -54,4 +56,18 @@ public interface StatusObjectGenerator {
      * @throws RuntimeException         if generation fails
      */
     X509SignedObjectCompletion generate(StatusObjectGenerateCommand command, CrlEntrySource crlEntries);
+
+    /**
+     * Generates a status object while carrying originating cancellation to signing.
+     *
+     * @param command validated generation command
+     * @param crlEntries stable streamed CRL entries
+     * @param cancellation originating cooperative cancellation signal
+     * @return generated signed status object
+     */
+    default X509SignedObjectCompletion generate(StatusObjectGenerateCommand command, CrlEntrySource crlEntries,
+            CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, "cancellation");
+        return generate(command, crlEntries);
+    }
 }

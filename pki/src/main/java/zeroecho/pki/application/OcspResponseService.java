@@ -41,22 +41,36 @@ import java.util.Optional;
 
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
+import zeroecho.core.io.CancellationSignal;
 
 /** Transport-neutral strict OCSP response generation through confined signing. */
 @SuppressWarnings("PMD.ControlStatementBraces")
 public interface OcspResponseService {
     /** Supported RFC CertID digest identities. */
     enum CertIdHash {
-        SHA1(1), SHA256(2);
+        /** SHA-1 CertID digest used by the mandatory OCSP interoperability profile. */
+        SHA1(1),
+        /** SHA-256 CertID digest. */
+        SHA256(2);
 
         private final int code;
 
         CertIdHash(int code) { this.code = code; }
 
-        /** Stable persistence code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return positive stable persistence code
+         */
         public int code() { return code; }
 
-        /** Resolves an exact stable persistence code. */
+        /**
+         * Resolves an exact stable persistence code.
+         *
+         * @param code stable code returned by {@link #code()}
+         * @return matching digest identity
+         * @throws IllegalArgumentException if {@code code} is unknown
+         */
         public static CertIdHash fromCode(int code) {
             return switch (code) { case 1 -> SHA1; case 2 -> SHA256;
                 default -> throw new IllegalArgumentException("Unknown OCSP CertID hash code"); };
@@ -64,23 +78,43 @@ public interface OcspResponseService {
     }
     /** Exact responder identifier representation. */
     enum ResponderId {
-        BY_NAME(1), BY_KEY(2);
+        /** Identifies the responder by its distinguished name. */
+        BY_NAME(1),
+        /** Identifies the responder by its public-key hash. */
+        BY_KEY(2);
 
         private final int code;
 
         ResponderId(int code) { this.code = code; }
 
-        /** Stable persistence code. */
+        /**
+         * Returns the stable persistence code.
+         *
+         * @return positive stable persistence code
+         */
         public int code() { return code; }
 
-        /** Resolves an exact stable persistence code. */
+        /**
+         * Resolves an exact stable persistence code.
+         *
+         * @param code stable code returned by {@link #code()}
+         * @return matching responder identifier representation
+         * @throws IllegalArgumentException if {@code code} is unknown
+         */
         public static ResponderId fromCode(int code) {
             return switch (code) { case 1 -> BY_NAME; case 2 -> BY_KEY;
                 default -> throw new IllegalArgumentException("Unknown OCSP responder ID code"); };
         }
     }
 
-    /** One strictly parsed CertID. */
+    /**
+     * One strictly parsed CertID.
+     *
+     * @param hash digest identity governing both issuer hashes
+     * @param issuerNameHash exact 20-byte SHA-1 or 32-byte SHA-256 issuer-name digest
+     * @param issuerKeyHash exact 20-byte SHA-1 or 32-byte SHA-256 issuer-key digest
+     * @param serial positive certificate serial number of at most 160 bits
+     */
     record CertId(CertIdHash hash, byte[] issuerNameHash, byte[] issuerKeyHash, BigInteger serial) {
         /** Defensively owns all request values. */
         public CertId {
@@ -94,11 +128,38 @@ public interface OcspResponseService {
                 throw new IllegalArgumentException("OCSP CertID is invalid");
             }
         }
+        /**
+         * Returns the issuer-name digest without exposing internal state.
+         *
+         * @return defensive copy of the issuer-name digest
+         */
         @Override public byte[] issuerNameHash() { return issuerNameHash.clone(); }
+        /**
+         * Returns the issuer-key digest without exposing internal state.
+         *
+         * @return defensive copy of the issuer-key digest
+         */
         @Override public byte[] issuerKeyHash() { return issuerKeyHash.clone(); }
     }
 
-    /** Exact already-authorized responder generation command. */
+    /**
+     * Exact already-authorized responder generation command.
+     *
+     * @param authorityId authorized authority scope
+     * @param issuerId exact issuer generation
+     * @param issuerCredentialId issuer credential represented by the CertIDs
+     * @param responderCredentialId credential whose key signs the response
+     * @param signingKeyRef confined responder signing-key reference
+     * @param responseChain nonempty responder chain of at most 32 credentials
+     * @param signatureAlgorithm nonblank canonical signature algorithm
+     * @param signatureBindingId optional exact algorithm-binding identifier
+     * @param responderId responder identifier representation
+     * @param producedAt response production instant
+     * @param thisUpdate revocation-view effective instant, not after {@code producedAt}
+     * @param nextUpdate next scheduled update, strictly after {@code thisUpdate}
+     * @param nonce optional request nonce; its bytes are defensively copied
+     * @param requests nonempty finite CertID request list
+     */
     record Command(PkiId authorityId, PkiId issuerId, PkiId issuerCredentialId,
             PkiId responderCredentialId, KeyRef signingKeyRef, List<PkiId> responseChain,
             String signatureAlgorithm, Optional<String> signatureBindingId,
@@ -121,10 +182,24 @@ public interface OcspResponseService {
             requests = List.copyOf(Objects.requireNonNull(requests, "requests"));
             if (requests.isEmpty()) throw new IllegalArgumentException("OCSP request is empty");
         }
+        /**
+         * Returns the optional nonce without exposing internal state.
+         *
+         * @return optional defensive copy of the nonce
+         */
         @Override public Optional<byte[]> nonce() { return nonce.map(byte[]::clone); }
     }
 
-    /** Signed canonical response and stable revocation provenance. */
+    /**
+     * Signed canonical response and stable revocation provenance.
+     *
+     * @param der canonical signed OCSP response DER, defensively copied
+     * @param revocationRevision nonnegative authoritative revocation revision
+     * @param revocationCommitment lowercase 64-hex-character snapshot commitment
+     * @param goodCount number of good single responses
+     * @param revokedCount number of revoked single responses
+     * @param unknownCount number of unknown single responses
+     */
     record Response(byte[] der, long revocationRevision, String revocationCommitment,
             int goodCount, int revokedCount, int unknownCount) {
         /** Defensively owns response DER. */
@@ -136,16 +211,58 @@ public interface OcspResponseService {
                 throw new IllegalArgumentException("OCSP provenance is invalid");
             }
         }
+        /**
+         * Returns the response DER without exposing internal state.
+         *
+         * @return defensive copy of the canonical signed response
+         */
         @Override public byte[] der() { return der.clone(); }
     }
 
-    /** Resolves one stable view and signs exactly one response. */
+    /**
+     * Resolves one stable view and signs exactly one response.
+     *
+     * @param command validated responder generation command
+     * @return signed response with revocation provenance
+     */
     Response respond(Command command);
+
+    /**
+     * Resolves and signs one response with originating cancellation.
+     *
+     * @param command validated responder generation command
+     * @param cancellation originating cancellation signal
+     * @return signed response with revocation provenance
+     */
+    default Response respond(Command command, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation");
+        return respond(command);
+    }
 
     /**
      * Proves that one configured confined key capability signs as the exact
      * responder certificate before a durable responder is activated.
+     *
+     * @param responderCredentialId exact responder credential
+     * @param signingKeyRef confined signing-key reference under test
+     * @param signatureAlgorithm canonical signature algorithm
+     * @param signatureBindingId optional exact algorithm-binding identifier
      */
     void validateSigningBinding(PkiId responderCredentialId, KeyRef signingKeyRef,
             String signatureAlgorithm, Optional<String> signatureBindingId);
+
+    /**
+     * Validates responder signing while carrying originating cancellation.
+     *
+     * @param responderCredentialId exact responder credential
+     * @param signingKeyRef confined signing-key reference under test
+     * @param signatureAlgorithm canonical signature algorithm
+     * @param signatureBindingId optional exact algorithm-binding identifier
+     * @param cancellation originating cancellation signal
+     */
+    default void validateSigningBinding(PkiId responderCredentialId, KeyRef signingKeyRef,
+            String signatureAlgorithm, Optional<String> signatureBindingId, CancellationSignal cancellation) {
+        Objects.requireNonNull(cancellation, "cancellation");
+        validateSigningBinding(responderCredentialId, signingKeyRef, signatureAlgorithm, signatureBindingId);
+    }
 }

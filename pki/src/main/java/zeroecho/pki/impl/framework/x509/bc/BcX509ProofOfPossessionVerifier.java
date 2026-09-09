@@ -35,8 +35,7 @@ package zeroecho.pki.impl.framework.x509.bc;
 
 import java.util.Optional;
 
-import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import zeroecho.pkix.Pkix;
 
 import zeroecho.core.spec.AlgorithmIdentity;
 import zeroecho.core.io.ImmutableByteContent;
@@ -44,6 +43,7 @@ import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.api.issuance.VerificationPolicy;
 import zeroecho.pki.api.request.ParsedCertificationRequest;
+import zeroecho.pki.api.request.ProofOfPossessionReason;
 import zeroecho.pki.api.request.ProofOfPossessionResult;
 import zeroecho.pki.api.request.ProofOfPossessionStatus;
 import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
@@ -188,52 +188,51 @@ public final class BcX509ProofOfPossessionVerifier implements ProofOfPossessionV
             throw new IllegalArgumentException("policy must not be null");
         }
         if (!policy.requireProofOfPossession()) {
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.NOT_PRESENT, Optional.empty());
+            return ProofOfPossessionResult.of(ProofOfPossessionReason.NOT_PRESENT);
         }
 
         Optional<AttributeValue> csrDerOpt = request.attributes().get(BcX509Attributes.CSR_DER);
         if (csrDerOpt.isEmpty() || !(csrDerOpt.get() instanceof AttributeValue.BytesValue)) {
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("CSR payload not present"));
+            return ProofOfPossessionResult.of(ProofOfPossessionReason.CSR_PAYLOAD_MISSING, "CSR payload not present");
         }
         byte[] csrDer = ((AttributeValue.BytesValue) csrDerOpt.get()).value();
 
         try {
-            PKCS10CertificationRequest csr;
+            zeroecho.pkix.csr.CertificationRequest csr;
             try {
                 new StreamingDerReader().validate(csrDer,
                         BcX509CertificationRequestParser.MAXIMUM_CSR_DER_BYTES);
-                csr = new PKCS10CertificationRequest(csrDer);
+                csr = Pkix.parseCertificationRequest(csrDer);
             } catch (Exception ex) {
-                return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("Invalid CSR"));
+                return ProofOfPossessionResult.of(ProofOfPossessionReason.CSR_MALFORMED, "Invalid CSR");
             }
             BcX509AlgorithmAdapter algorithmAdapter = new BcX509AlgorithmAdapter(authority.bindings());
+            byte[] spkiDer = csr.subjectPublicKeyInfo();
             try {
-                AlgorithmIdentity signatureIdentity = algorithmAdapter.decode(csr.getSignatureAlgorithm(),
+                AlgorithmIdentity signatureIdentity = algorithmAdapter.decode(csr.signatureAlgorithm(),
                         X509AlgorithmRole.SIGNATURE_ALGORITHM);
-                AlgorithmIdentity keyIdentity = algorithmAdapter.decode(csr.getSubjectPublicKeyInfo().getAlgorithm(),
+                AlgorithmIdentity keyIdentity = algorithmAdapter.decode(Pkix.subjectPublicKeyAlgorithm(spkiDer),
                         X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
                 X509ExecutionPlan<BcX509VerificationExecutor> plan = authority.plan(signatureIdentity, keyIdentity,
                         AlgorithmExecutionCapability.Direction.VERIFY,
                         Optional.of(BcX509VerificationExecutor.IMPLEMENTATION_ID), "csr-proof",
-                        authority.bindings().bindingId(BcX509AlgorithmAdapter.fromBc(csr.getSignatureAlgorithm()),
+                        authority.bindings().bindingId(BcX509AlgorithmAdapter.fromLib(csr.signatureAlgorithm()),
                                 X509AlgorithmRole.SIGNATURE_ALGORITHM),
                         BcX509VerificationExecutor.class);
-                byte[] signedBytes = csr.toASN1Structure().getCertificationRequestInfo().getEncoded();
-                boolean valid = executor.verify(authority, plan, csr.getSubjectPublicKeyInfo(),
-                        csr.getSignatureAlgorithm(), new ImmutableByteContent(signedBytes), csr.getSignature());
+                byte[] signedBytes = csr.certificationRequestInfo();
+                boolean valid = executor.verify(authority, plan, spkiDer,
+                        csr.signatureAlgorithm(), new ImmutableByteContent(signedBytes), csr.signature());
                 if (!valid) {
-                    return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED,
-                            Optional.of("CSR signature invalid"));
+                    return ProofOfPossessionResult.of(ProofOfPossessionReason.SIGNATURE_INVALID,
+                            "CSR signature invalid");
                 }
             } catch (IllegalArgumentException unsupported) {
-                return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED,
-                        Optional.of("Unsupported CSR algorithm"));
+                return ProofOfPossessionResult.of(ProofOfPossessionReason.UNSUPPORTED_ALGORITHM,
+                        "Unsupported CSR algorithm");
             }
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.VERIFIED, Optional.empty());
-        } catch (OperatorCreationException ex) {
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("Verifier unavailable"));
+            return ProofOfPossessionResult.of(ProofOfPossessionReason.VERIFIED);
         } catch (Exception ex) {
-            return new ProofOfPossessionResult(ProofOfPossessionStatus.FAILED, Optional.of("Verification failed"));
+            return ProofOfPossessionResult.of(ProofOfPossessionReason.INTERNAL_FAILURE, "Verification failed");
         }
     }
 }

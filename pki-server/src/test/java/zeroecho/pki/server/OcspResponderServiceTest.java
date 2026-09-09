@@ -73,7 +73,7 @@ import zeroecho.pki.api.ca.IssuerGenerationState;
 import zeroecho.pki.application.OcspResponseService;
 import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiRepositoryContent;
-import zeroecho.pki.impl.fs.PosixTransactionalMetadataStore;
+import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 
 /** Durable responder binding, activation, recovery and dependency-failure coverage. */
 class OcspResponderServiceTest {
@@ -126,7 +126,7 @@ class OcspResponderServiceTest {
             assertEquals(responderId, service.requireActiveAlias("root").responderId());
         }
 
-        try (ServerControlStore reopened = new ServerControlStore(PosixTransactionalMetadataStore.open(log,
+        try (ServerControlStore reopened = new ServerControlStore(DurableTransactionalMetadataStore.open(log,
                 OptionalLong.of(1_048_576)))) {
             OcspResponderService recovered = new OcspResponderService(ServerTestSupport.REALM, reopened,
                     repository, bindings, Optional.of(signing), ServerTestSupport.CLOCK);

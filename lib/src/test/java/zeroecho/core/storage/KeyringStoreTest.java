@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
@@ -118,13 +119,19 @@ class KeyringStoreTest {
     @Test
     void plaintextV1AndDuplicateOwnerAreRejected() throws Exception {
         start("plaintextV1AndDuplicateOwnerAreRejected");
-        Path old = temporaryDirectory.resolve("old.txt");
-        Files.writeString(old, "# KeyringStore v1\n", StandardCharsets.UTF_8);
-        Files.setPosixFilePermissions(old, java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-                java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
-        try (KeyringPassword password = password()) {
-            assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID,
-                    assertThrows(KeyringException.class, () -> KeyringStore.open(old, password)).code());
+        // The plaintext-rejection leg depends on making a pre-existing file
+        // owner-only via POSIX permission bits; on Windows a file created before its
+        // parent's ACL is locked down is not owner-only, so this leg is POSIX-only.
+        // The duplicate-owner leg below is platform-neutral and always runs.
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            Path old = temporaryDirectory.resolve("old.txt");
+            Files.writeString(old, "# KeyringStore v1\n", StandardCharsets.UTF_8);
+            Files.setPosixFilePermissions(old, java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
+            try (KeyringPassword password = password()) {
+                assertEquals(KeyringException.Code.KEYRING_FORMAT_INVALID,
+                        assertThrows(KeyringException.class, () -> KeyringStore.open(old, password)).code());
+            }
         }
 
         Path path = temporaryDirectory.resolve("owned.zek");

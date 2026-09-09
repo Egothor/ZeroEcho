@@ -51,6 +51,8 @@ public enum PkiOperationFailure {
     RESOURCE_FAILURE,
     /** Cooperative cancellation was observed. */
     CANCELLED,
+    /** The bounded signing execution population is fully reserved. */
+    OVERLOADED,
     /** An unexpected implementation defect prevented a safe result. */
     INTERNAL_FAILURE
 }

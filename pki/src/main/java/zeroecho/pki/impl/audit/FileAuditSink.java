@@ -53,16 +53,20 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.audit.AuditChainHead;
 import zeroecho.pki.api.audit.AuditEvent;
+import zeroecho.pki.api.audit.AuditIntegrityReport;
 import zeroecho.pki.api.audit.AuditQuery;
 import zeroecho.pki.spi.audit.AuditSink;
 
@@ -96,11 +100,21 @@ import zeroecho.pki.spi.audit.AuditSink;
  * the record content.</li>
  * </ul>
  */
-public final class FileAuditSink implements AuditSink, SearchableAuditSink {
+// The audit verifier intentionally keeps all chain-state branches together so each failure returns its exact status.
+@SuppressWarnings("PMD.CyclomaticComplexity")
+public final class FileAuditSink implements AuditSink, SearchableAuditSink,
+        zeroecho.pki.api.audit.AuditService, zeroecho.pki.api.audit.AuditIntegrityService {
 
     private static final Logger LOG = Logger.getLogger(FileAuditSink.class.getName());
+    private static final long FIRST_SEQUENCE = 0L;
 
     private final Path baseDir;
+
+    /** Serializes chained appends and head recovery for one process. */
+    private final Object writeLock = new Object();
+    private boolean headRecovered;
+    private long headSequence = -1L;
+    private String headHash = AuditChainHead.GENESIS_RECORD_HASH;
 
     /**
      * Creates the sink with an explicit base directory.
@@ -113,29 +127,216 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink {
         LOG.log(Level.INFO, "FileAuditSink enabled; baseDir name={0}", baseDir);
     }
 
+    // This per-sink monitor makes append plus in-memory head advancement one atomic operation.
+    @SuppressWarnings("PMD.AvoidSynchronizedStatement")
     @Override
     public void record(AuditEvent event) {
         if (event == null) {
             throw new IllegalArgumentException("event must not be null");
         }
 
-        Path file = dailyFile(baseDir, event.time());
-        ensureSecurePath(file.getParent(), file);
+        synchronized (writeLock) {
+            recoverHeadIfNeeded();
+            long sequence = headSequence + 1L;
+            String previousHash = headHash;
 
-        String line = AuditEventCodec.encodeLine(event);
-        byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
+            Path file = dailyFile(baseDir, event.time());
+            ensureSecurePath(file.getParent(), file);
 
-        OpenOption[] opts = { StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND };
+            String line = AuditEventCodec.encodeChainedLine(event, sequence, previousHash);
+            byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
 
-        try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(file, opts));
-                GZIPOutputStream gzip = new GZIPOutputStream(os, true)) {
-            gzip.write(bytes);
-        } catch (IOException ex) {
-            if (LOG.isLoggable(Level.SEVERE)) {
-                LOG.log(Level.SEVERE, "Failed to write audit record to file: " + file.getFileName(), ex);
+            OpenOption[] opts = { StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND };
+
+            try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(file, opts));
+                    GZIPOutputStream gzip = new GZIPOutputStream(os, true)) {
+                gzip.write(bytes);
+            } catch (IOException ex) {
+                if (LOG.isLoggable(Level.SEVERE)) {
+                    LOG.log(Level.SEVERE, "Failed to write audit record to file: " + file.getFileName(), ex);
+                }
+                throw new IllegalStateException("Failed to write audit event.", ex);
             }
-            throw new IllegalStateException("Failed to write audit event.", ex);
+
+            headSequence = sequence;
+            headHash = AuditEventCodec.recordHash(sequence, previousHash, event);
         }
+    }
+
+    /**
+     * Verifies the tamper-evident hash chain over the entire durable audit log.
+     *
+     * <p>
+     * Records are recovered from every daily file and ordered by their global
+     * sequence, so verification is independent of physical file placement. It
+     * detects content mutation, deletion (a sequence gap), duplication, and broken
+     * links; when an {@code expectedHead} anchor is supplied it additionally
+     * detects whole-tail truncation. The returned report is payload-free.
+     * </p>
+     *
+     * @param expectedHead optional independently-retained trusted head anchor
+     * @return a safe integrity report
+     */
+    // Every accepted record advances an immutable observed-head snapshot used by early corruption returns.
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    @Override
+    public AuditIntegrityReport verifyIntegrity(Optional<AuditChainHead> expectedHead) {
+        Optional<AuditChainHead> anchor = expectedHead == null ? Optional.empty() : expectedHead;
+        ScanResult scan = scanChained();
+        List<AuditEventCodec.ChainedRecord> records = new ArrayList<>();
+        for (AuditEventCodec.ChainedRecord record : scan.records()) {
+            if (record.chained()) {
+                records.add(record);
+            }
+        }
+        records.sort(Comparator.comparingLong(AuditEventCodec.ChainedRecord::sequence));
+
+        long expectedSequence = 0L;
+        String expectedPrevious = AuditChainHead.GENESIS_RECORD_HASH;
+        long count = 0L;
+        AuditChainHead observed = AuditChainHead.empty();
+        for (AuditEventCodec.ChainedRecord record : records) {
+            if (record.sequence() < expectedSequence) {
+                return broken(AuditIntegrityReport.Status.DUPLICATE_SEQUENCE, record.sequence(), count, observed);
+            }
+            if (record.sequence() > expectedSequence) {
+                return broken(AuditIntegrityReport.Status.SEQUENCE_GAP, expectedSequence, count, observed);
+            }
+            if (!record.previousHash().equals(expectedPrevious)) {
+                return broken(AuditIntegrityReport.Status.CHAIN_BROKEN, record.sequence(), count, observed);
+            }
+            if (!AuditEventCodec.recomputeRecordHash(record).equals(record.recordHash())) {
+                return broken(AuditIntegrityReport.Status.RECORD_MUTATED, record.sequence(), count, observed);
+            }
+            expectedPrevious = record.recordHash();
+            observed = new AuditChainHead(record.sequence(), record.recordHash());
+            expectedSequence = record.sequence() + 1L;
+            count++;
+        }
+        if (scan.malformed()) {
+            return broken(AuditIntegrityReport.Status.RECORD_MUTATED, expectedSequence, count, observed);
+        }
+        if (anchor.isPresent() && !anchor.orElseThrow().equals(observed)) {
+            return new AuditIntegrityReport(AuditIntegrityReport.Status.HEAD_MISMATCH, count,
+                    Optional.of(Math.max(0L, observed.sequence() + 1L)), observed);
+        }
+        return new AuditIntegrityReport(AuditIntegrityReport.Status.INTACT, count, Optional.empty(), observed);
+    }
+
+    // Every accepted record advances an immutable observed-head snapshot used by early corruption returns.
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    @Override
+    public AuditIntegrityReport verifyAnchoredPrefix(AuditChainHead anchor) {
+        java.util.Objects.requireNonNull(anchor, "anchor");
+        ScanResult scan = scanChained();
+        List<AuditEventCodec.ChainedRecord> records = new ArrayList<>();
+        for (AuditEventCodec.ChainedRecord record : scan.records()) {
+            if (record.chained()) {
+                records.add(record);
+            }
+        }
+        records.sort(Comparator.comparingLong(AuditEventCodec.ChainedRecord::sequence));
+
+        long expectedSequence = 0L;
+        String expectedPrevious = AuditChainHead.GENESIS_RECORD_HASH;
+        long count = 0L;
+        AuditChainHead observed = AuditChainHead.empty();
+        boolean anchorSeen = false;
+        String hashAtAnchor = null;
+        for (AuditEventCodec.ChainedRecord record : records) {
+            if (record.sequence() < expectedSequence) {
+                return broken(AuditIntegrityReport.Status.DUPLICATE_SEQUENCE, record.sequence(), count, observed);
+            }
+            if (record.sequence() > expectedSequence) {
+                return broken(AuditIntegrityReport.Status.SEQUENCE_GAP, expectedSequence, count, observed);
+            }
+            if (!record.previousHash().equals(expectedPrevious)) {
+                return broken(AuditIntegrityReport.Status.CHAIN_BROKEN, record.sequence(), count, observed);
+            }
+            if (!AuditEventCodec.recomputeRecordHash(record).equals(record.recordHash())) {
+                return broken(AuditIntegrityReport.Status.RECORD_MUTATED, record.sequence(), count, observed);
+            }
+            if (record.sequence() == anchor.sequence()) {
+                anchorSeen = true;
+                hashAtAnchor = record.recordHash();
+            }
+            expectedPrevious = record.recordHash();
+            observed = new AuditChainHead(record.sequence(), record.recordHash());
+            expectedSequence = record.sequence() + 1L;
+            count++;
+        }
+        if (scan.malformed()) {
+            return broken(AuditIntegrityReport.Status.RECORD_MUTATED, expectedSequence, count, observed);
+        }
+        // A genesis (empty-log) anchor is a valid prefix of any consistent chain. Otherwise the anchored
+        // sequence must still be present with the exact same record hash; records appended after it (for
+        // example following a crash restart) are legitimate growth and do not fail the prefix check.
+        if (anchor.sequence() >= FIRST_SEQUENCE) {
+            if (!anchorSeen) {
+                return new AuditIntegrityReport(AuditIntegrityReport.Status.HEAD_MISMATCH, count,
+                        Optional.of(Math.max(0L, observed.sequence() + 1L)), observed);
+            }
+            if (!hashAtAnchor.equals(anchor.recordHash())) {
+                return broken(AuditIntegrityReport.Status.RECORD_MUTATED, anchor.sequence(), count, observed);
+            }
+        }
+        return new AuditIntegrityReport(AuditIntegrityReport.Status.INTACT, count, Optional.empty(), observed);
+    }
+
+    /**
+     * Recovers and returns the current chain head, seeding it from disk if needed.
+     *
+     * @return the current tamper-evident head anchor
+     */
+    // The returned head must be read under the same monitor that serializes append and recovery.
+    @SuppressWarnings("PMD.AvoidSynchronizedStatement")
+    public AuditChainHead currentHead() {
+        synchronized (writeLock) {
+            recoverHeadIfNeeded();
+            return new AuditChainHead(headSequence, headHash);
+        }
+    }
+
+    private static AuditIntegrityReport broken(AuditIntegrityReport.Status status, long sequence, long count,
+            AuditChainHead observed) {
+        return new AuditIntegrityReport(status, count, Optional.of(sequence), observed);
+    }
+
+    private void recoverHeadIfNeeded() {
+        if (headRecovered) {
+            return;
+        }
+        long maxSequence = -1L;
+        String maxHash = AuditChainHead.GENESIS_RECORD_HASH;
+        for (AuditEventCodec.ChainedRecord record : scanChained().records()) {
+            if (record.chained() && record.sequence() > maxSequence) {
+                maxSequence = record.sequence();
+                maxHash = record.recordHash();
+            }
+        }
+        headSequence = maxSequence;
+        headHash = maxHash;
+        headRecovered = true;
+    }
+
+    // Each malformed persisted line can fail with a different decoder runtime subtype and is classified uniformly.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private ScanResult scanChained() {
+        List<AuditEventCodec.ChainedRecord> records = new ArrayList<>();
+        boolean[] malformed = { false };
+        for (Path file : FileAuditSinkFiles.listDailyFiles(baseDir)) {
+            readMembers(file, line -> {
+                try {
+                    records.add(AuditEventCodec.decodeChainedLine(line));
+                } catch (RuntimeException corrupt) {
+                    malformed[0] = true;
+                }
+            });
+        }
+        return new ScanResult(records, malformed[0]);
+    }
+
+    private record ScanResult(List<AuditEventCodec.ChainedRecord> records, boolean malformed) {
     }
 
     @Override
@@ -155,11 +356,21 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink {
 
         List<AuditEvent> out = new ArrayList<>();
         for (Path f : files) {
-            scanFile(f, query, out, null);
+            readMembers(f, line -> {
+                AuditEvent event = decodeEventOrNull(line);
+                if (event != null && event.matches(query)) {
+                    out.add(event);
+                }
+            });
         }
 
         out.sort(AuditEvent.auditOrder());
-        return List.copyOf(out);
+        return List.copyOf(out.subList(0, Math.min(out.size(), query.limit())));
+    }
+
+    @Override
+    public Optional<AuditEvent> get(PkiId eventId) {
+        return getById(eventId);
     }
 
     @Override
@@ -168,18 +379,24 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink {
             throw new IllegalArgumentException("eventId must not be null");
         }
 
-        List<Path> files = FileAuditSinkFiles.listDailyFiles(baseDir);
-        for (Path f : files) {
-            List<AuditEvent> tmp = new ArrayList<>(); // NOPMD
-            scanFile(f, null, tmp, eventId);
-            if (!tmp.isEmpty()) {
-                return Optional.of(tmp.get(0));
+        List<AuditEvent> found = new ArrayList<>();
+        for (Path f : FileAuditSinkFiles.listDailyFiles(baseDir)) {
+            readMembers(f, line -> {
+                if (found.isEmpty()) {
+                    AuditEvent event = decodeEventOrNull(line);
+                    if (event != null && AuditEventCodec.eventId(event).equals(eventId)) {
+                        found.add(event);
+                    }
+                }
+            });
+            if (!found.isEmpty()) {
+                return Optional.of(found.get(0));
             }
         }
         return Optional.empty();
     }
 
-    private void scanFile(Path file, AuditQuery queryOrNull, List<AuditEvent> out, PkiId idOrNull) {
+    private void readMembers(Path file, Consumer<String> consumer) {
         if (!Files.isRegularFile(file)) {
             return;
         }
@@ -195,11 +412,7 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink {
                 pb.unread(peek);
 
                 try (GZIPInputStream gzip = new GZIPInputStream(new CloseShieldInputStream(pb))) { // NOPMD
-                    readLinesFromMember(gzip, queryOrNull, out, idOrNull);
-                }
-
-                if (idOrNull != null && !out.isEmpty()) {
-                    return;
+                    readLinesFromMember(gzip, consumer);
                 }
             }
 
@@ -211,55 +424,35 @@ public final class FileAuditSink implements AuditSink, SearchableAuditSink {
         }
     }
 
-    private void readLinesFromMember(InputStream gzip, AuditQuery queryOrNull, List<AuditEvent> out, PkiId idOrNull)
-            throws IOException {
-
+    private static void readLinesFromMember(InputStream gzip, Consumer<String> consumer) throws IOException {
         StringBuilder sb = new StringBuilder(256);
         int b;
         while ((b = gzip.read()) != -1) {
             if (b == '\n') { // NOPMD
-                processLine(sb.toString(), queryOrNull, out, idOrNull);
+                emit(sb.toString(), consumer);
                 sb.setLength(0);
-                if (idOrNull != null && !out.isEmpty()) {
-                    return;
-                }
             } else {
                 sb.append((char) b);
             }
         }
 
         if (sb.length() > 0) {
-            processLine(sb.toString(), queryOrNull, out, idOrNull);
+            emit(sb.toString(), consumer);
         }
     }
 
-    private void processLine(String line, AuditQuery queryOrNull, List<AuditEvent> out, PkiId idOrNull) {
-        if (line == null || line.isBlank()) {
-            return;
+    private static void emit(String line, Consumer<String> consumer) {
+        if (line != null && !line.isBlank()) {
+            consumer.accept(line);
         }
+    }
 
-        AuditEvent e;
+    private static AuditEvent decodeEventOrNull(String line) {
         try {
-            e = AuditEventCodec.decodeLine(line);
+            return AuditEventCodec.decodeChainedLine(line).event();
         } catch (RuntimeException ex) { // NOPMD
             LOG.log(Level.WARNING, "Corrupted audit record encountered; skipping.", ex);
-            return;
-        }
-
-        if (idOrNull != null) {
-            if (AuditEventCodec.eventId(e).equals(idOrNull)) {
-                out.add(e);
-            }
-            return;
-        }
-
-        if (queryOrNull == null) {
-            out.add(e);
-            return;
-        }
-
-        if (e.matches(queryOrNull)) {
-            out.add(e);
+            return null;
         }
     }
 

@@ -33,6 +33,8 @@
  ******************************************************************************/
 package zeroecho.pki.api;
 
+import zeroecho.core.io.CancellationSignal;
+
 import zeroecho.pki.api.credential.CredentialBundle;
 import zeroecho.pki.api.issuance.BundleCommand;
 import zeroecho.pki.api.issuance.IssueEndEntityCommand;
@@ -71,6 +73,36 @@ public interface IssuanceService {
     CredentialBundle issueEndEntity(IssueEndEntityCommand command);
 
     /**
+     * Issues a leaf credential with originating cancellation.
+     * @param command validated issuance command
+     * @param cancellation originating cooperative cancellation signal
+     * @return issued credential bundle
+     */
+    default CredentialBundle issueEndEntity(IssueEndEntityCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, "cancellation");
+        return issueEndEntity(command);
+    }
+
+    /**
+     * Issues a leaf credential, co-committing server-derived issuance evidence into the credential's
+     * universal attribute set in the same atomic durable write.
+     *
+     * <p>The evidence records the authenticated actor and authorization path (see
+     * {@code IssuanceExecutionEvidence}); it is never trusted as issuance authority. The default
+     * ignores the evidence for backends that do not co-commit it, preserving source compatibility.</p>
+     *
+     * @param command issuance command
+     * @param evidence closed issuance-evidence attribute set (may be empty but not null)
+     * @param cancellation originating cancellation
+     * @return credential bundle
+     */
+    default CredentialBundle issueEndEntity(IssueEndEntityCommand command,
+            zeroecho.pki.api.attr.AttributeSet evidence, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(evidence, "evidence");
+        return issueEndEntity(command, cancellation);
+    }
+
+    /**
      * Renews an existing credential according to policy-defined continuity
      * semantics.
      *
@@ -80,6 +112,17 @@ public interface IssuanceService {
      * @throws PkiException             if renewal fails
      */
     CredentialBundle renew(RenewCommand command);
+
+    /**
+     * Renews a credential while carrying originating cancellation.
+     * @param command validated renewal command
+     * @param cancellation originating cooperative cancellation signal
+     * @return renewed credential bundle
+     */
+    default CredentialBundle renew(RenewCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, "cancellation");
+        return renew(command);
+    }
 
     /**
      * Replaces an existing credential (e.g., after compromise or attribute
@@ -93,6 +136,17 @@ public interface IssuanceService {
     CredentialBundle replace(ReplaceCommand command);
 
     /**
+     * Replaces a credential while carrying originating cancellation.
+     * @param command validated replacement command
+     * @param cancellation originating cooperative cancellation signal
+     * @return replacement credential bundle
+     */
+    default CredentialBundle replace(ReplaceCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, "cancellation");
+        return replace(command);
+    }
+
+    /**
      * Reissues based on a stored issuance record.
      *
      * @param command reissue command
@@ -101,6 +155,17 @@ public interface IssuanceService {
      * @throws PkiException             if reissue fails
      */
     CredentialBundle reissue(ReissueCommand command);
+
+    /**
+     * Reissues a credential while carrying originating cancellation.
+     * @param command validated reissue command
+     * @param cancellation originating cooperative cancellation signal
+     * @return reissued credential bundle
+     */
+    default CredentialBundle reissue(ReissueCommand command, CancellationSignal cancellation) {
+        java.util.Objects.requireNonNull(cancellation, "cancellation");
+        return reissue(command);
+    }
 
     /**
      * Builds a distributable bundle for an existing credential using chain
