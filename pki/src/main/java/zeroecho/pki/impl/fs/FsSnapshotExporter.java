@@ -70,7 +70,12 @@ import zeroecho.pki.api.publication.PublicationSourceType;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.impl.ProfileLifecycleFailure;
 import zeroecho.pki.impl.ProfileLifecycleFailure.Code;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
+import zeroecho.pki.impl.core.continuation.DomainCommandEncoding;
+import zeroecho.pki.impl.core.continuation.FullCrlSigningCommand;
 import zeroecho.pki.spi.store.ContentSink;
+import zeroecho.pki.spi.store.MetadataSnapshot;
+import zeroecho.pki.spi.store.SignWorkflowStore;
 
 /**
  * Snapshot exporter ("time travel") for {@link FilesystemPkiStore}.
@@ -87,8 +92,11 @@ import zeroecho.pki.spi.store.ContentSink;
  * <ul>
  * <li>For entities with history enabled, the exporter selects the latest
  * history entry with timestamp {@code <= at}. If none exists, it may fall back
- * to {@code current.bin} only when strict mode is disabled.</li>
- * <li>Write-once objects other than credentials are copied as-is. Every valid
+ * to the current metadata head only when strict mode is disabled. Disabled
+ * history retains the current head regardless of strict mode.</li>
+ * <li>Issuer generations and paths are selected from the retained CA heads and
+ * the exact dependencies required by retained signing workflows and exported credentials, not from unrelated
+ * standalone authority records. Other write-once objects are copied as-is. Every valid
  * standalone credential is streamed from the live source into a new target-owned
  * content reference before selected ID-only CA records are published.</li>
  * <li>Signing namespace, signing-time watermark, and authoritative
@@ -96,12 +104,18 @@ import zeroecho.pki.spi.store.ContentSink;
  * time. They are intentionally not reconstructed at {@code at}: rolling them
  * back could make a stable identifier reusable or discard a completed signing
  * result.</li>
+ * <li>Scope ownership and CRL-number counters are copied together from pinned
+ * current metadata. Neither historical {@code at} nor target initial-number
+ * configuration can roll back a consumed or reserved CRL number.</li>
  * </ul>
  *
  * <p>
- * Export requires time linear in copied files plus selected credential bytes,
- * with auxiliary memory linear in selected CA and standalone credential metadata,
- * plus one fixed-size transfer buffer.
+ * Export requires time linear in examined authority metadata, copied files,
+ * and selected credential bytes,
+ * with auxiliary memory including selected CA/credential metadata and all
+ * retained generation/path payloads, including the sum of their KeyRef bytes,
+ * plus one fixed-size transfer buffer. Startup streaming does not imply that
+ * the export plan is constant-memory.
  * </p>
  */
 final class FsSnapshotExporter {
@@ -128,14 +142,14 @@ final class FsSnapshotExporter {
         Objects.requireNonNull(targetRoot, "targetRoot");
         Objects.requireNonNull(at, "at");
 
-        try {
+        try (MetadataSnapshot snapshot = source.metadataStore().snapshot()) {
             requireNewTarget(targetRoot);
             Path sourceRoot = source.snapshotRoot();
             List<SnapshotProfileArtifact> profiles = preflightImportedProfiles(sourceRoot.resolve("profiles"), at);
-            SnapshotAuthority authority = new AuthorityPlanner(source, options).plan(at);
-            Set<String> nonCredentialContentIds = source.snapshotNonCredentialContentIds();
+            SnapshotAuthority authority = new AuthorityPlanner(source, options, snapshot).plan(at);
+            Set<String> nonCredentialContentIds = source.snapshotNonCredentialContentIds(snapshot);
             SnapshotPlan plan = new SnapshotPlan(profiles, authority, nonCredentialContentIds);
-            new SnapshotPublisher(source, options, plan).publish(targetRoot, at);
+            new SnapshotPublisher(source, options, plan, snapshot).publish(targetRoot, at);
         } catch (SnapshotProfileFailure failure) {
             throw new IllegalStateException(failure.getMessage());
         } catch (IOException e) {
@@ -158,7 +172,14 @@ final class FsSnapshotExporter {
                         output.write(buffer, 0, read);
                     }
                 }
-                return sink.complete();
+                DurableContentReference transferred = sink.complete();
+                if (transferred.length() != sourceReference.length() || !transferred.sha256().equals(sourceReference.sha256())) {
+                    IOException failure = new IOException("Snapshot content commitment differs");
+                    try { target.stagedContent().retireUnownedContent(transferred); }
+                    catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                    throw failure;
+                }
+                return transferred;
             } finally {
                 Arrays.fill(buffer, (byte) 0);
             }
@@ -177,114 +198,120 @@ final class FsSnapshotExporter {
         }
     }
 
-    private static List<Path> selectMutableRecords(Path srcTree, Instant at, FsHistoryPolicy policy, boolean strict)
-            throws IOException {
-        if (!Files.exists(srcTree)) {
-            return List.of();
-        }
-        List<Path> selected = new ArrayList<>();
-        try (java.util.stream.Stream<Path> paths = Files.walk(srcTree)) {
-            for (Path current : paths.filter(Files::isRegularFile)
-                    .filter(path -> FsPaths.CURRENT_FILE.equals(path.getFileName().toString()))
-                    .sorted(Comparator.comparing(Path::toString)).toList()) {
-                Path selectedRecord = null;
-                if (policy.enabled()) {
-                    Path historyDir = current.getParent().resolve(FsPaths.HISTORY_DIR);
-                    if (Files.isDirectory(historyDir)) {
-                        selectedRecord = selectHistoryEntry(historyDir, at);
-                    }
-                }
-                if (selectedRecord == null) {
-                    if (strict && policy.enabled()) {
-                        throw new IllegalStateException("No CA history entry is available for snapshot time");
-                    }
-                    selectedRecord = current;
-                }
-                selected.add(selectedRecord);
-            }
-        }
-        return List.copyOf(selected);
-    }
-
     /** Builds the validated logical credential and selected-CA export plan. */
     private static final class AuthorityPlanner {
         private final FilesystemPkiStore source;
         private final FsPkiStoreOptions options;
-        private final FsPaths sourcePaths;
+        private final MetadataSnapshot snapshot;
 
-        private AuthorityPlanner(FilesystemPkiStore source, FsPkiStoreOptions options) {
+        private AuthorityPlanner(FilesystemPkiStore source, FsPkiStoreOptions options, MetadataSnapshot snapshot) {
             this.source = source;
             this.options = options;
-            this.sourcePaths = new FsPaths(source.snapshotRoot());
+            this.snapshot = snapshot;
         }
 
+        // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
+        @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops" })
         private SnapshotAuthority plan(Instant at) throws IOException {
+            AuthorityMetadataStore.validateAll(snapshot);
             CredentialInventory inventory = inventoryCredentials();
             List<CaRecord> cas = selectCas(at, inventory.credentials());
-            List<IssuerGeneration> generations = cas.stream().flatMap(ca -> ca.issuerIds().stream())
-                    .map(id -> source.getIssuerGeneration(id).orElseThrow(
-                            () -> new SnapshotAuthorityFailure("Snapshot issuer generation is missing"))).toList();
-            List<IssuerChainPath> paths = generations.stream()
-                    .flatMap(generation -> source.listIssuerChainPaths(generation.issuerId()).stream()).toList();
-            List<StatusObject> statuses = source.snapshotStatusObjects();
+            Map<PkiId, IssuerGeneration> generations = new LinkedHashMap<>();
+            for (CaRecord ca : cas) {
+                for (PkiId issuerId : ca.issuerIds()) { includeGeneration(generations, issuerId); }
+            }
+            Map<PkiId, IssuerChainPath> paths = new LinkedHashMap<>();
+            AuthorityMetadataStore.visit(snapshot, AuthorityMetadataCodec.ISSUER_PATH, AuthorityMetadataCodec::path,
+                    path -> {
+                        if (generations.containsKey(path.issuerId())) { paths.put(path.pathId(), path); }
+                    });
+            source.visitSnapshotSigningWorkflows(snapshot, workflow -> includeSigningDependencies(workflow, generations, paths));
+            // A standalone self-signed credential does not publish its CA authority.
+            // Non-root credentials still need their exact frozen issuer dependencies.
+            for (Credential credential : inventory.credentials().values()) {
+                if (BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())
+                        && !credential.issuerRef().issuerId().equals(IssuerGeneration.idFor(
+                                credential.issuerRef().caId(), credential.credentialId()))) {
+                    PkiId pathId = credential.issuerRef().chainPathId();
+                    IssuerChainPath path = AuthorityMetadataStore.find(snapshot,
+                            AuthorityMetadataCodec.pathKey(pathId), AuthorityMetadataCodec::path)
+                            .orElseThrow(() -> new SnapshotAuthorityFailure("Snapshot credential issuer authority is missing"));
+                    paths.put(pathId, path);
+                }
+            }
+            for (IssuerChainPath path : paths.values()) {
+                includeGeneration(generations, path.issuerId());
+                for (int index = 0; index + 1 < path.orderedCredentialIds().size(); index++) {
+                    Credential credential = inventory.credentials().get(path.orderedCredentialIds().get(index));
+                    if (credential == null) { throw new SnapshotAuthorityFailure("Snapshot issuer credential is missing"); }
+                    includeGeneration(generations, credential.issuerRef().issuerId());
+                    includeGeneration(generations, IssuerGeneration.idFor(credential.issuerRef().caId(),
+                            path.orderedCredentialIds().get(index + 1)));
+                }
+            }
+            List<StatusObject> statuses = source.snapshotStatusObjects(snapshot);
             Set<String> remintedContentIds = new HashSet<>(inventory.contentIds());
             for (StatusObject status : statuses) {
                 remintedContentIds.add(status.content().contentId());
             }
-            return new SnapshotAuthority(cas, generations, paths, inventory.credentials(), statuses,
+            return new SnapshotAuthority(cas, List.copyOf(generations.values()), List.copyOf(paths.values()), inventory.credentials(), statuses,
                     remintedContentIds);
+        }
+
+        private void includeGeneration(Map<PkiId, IssuerGeneration> generations, PkiId issuerId) throws IOException {
+            if (!generations.containsKey(issuerId)) {
+                generations.put(issuerId, AuthorityMetadataStore.find(snapshot,
+                        AuthorityMetadataCodec.generationKey(issuerId), AuthorityMetadataCodec::generation)
+                        .orElseThrow(() -> new SnapshotAuthorityFailure("Snapshot issuer generation is missing")));
+            }
+        }
+
+        private void includeSigningDependencies(SignWorkflowStore.Workflow workflow,
+                Map<PkiId, IssuerGeneration> generations, Map<PkiId, IssuerChainPath> paths) throws IOException {
+            if (workflow.envelope().outer().isEmpty()) { return; }
+            SignWorkflowStore.OuterCommand outer = workflow.envelope().outer().orElseThrow();
+            DomainCommandEncoding.Decoded command = DomainCommandEncoding.decode(outer.command());
+            switch (outer.kind()) {
+                case ISSUANCE -> {
+                    includeGeneration(generations, new PkiId(command.field(1)));
+                    includePath(paths, new PkiId(command.field(2)));
+                }
+                case CA -> {
+                    if (!"CREATE_ROOT".equals(command.operation()) && !"ROLLOVER_ROOT".equals(command.operation())) {
+                        includeGeneration(generations, new PkiId(command.field(3)));
+                        includePath(paths, new PkiId(command.field(4)));
+                    }
+                }
+                case STATUS -> {
+                    if (FullCrlSigningCommand.supports(command.operation())) {
+                        includeGeneration(generations, new PkiId(command.field(6)));
+                    }
+                }
+                case KEY_PROOF -> { /* Proofs reference no persisted issuer generation or path. */ }
+            }
+        }
+
+        private void includePath(Map<PkiId, IssuerChainPath> paths, PkiId pathId) throws IOException {
+            if (!paths.containsKey(pathId)) {
+                paths.put(pathId, AuthorityMetadataStore.find(snapshot, AuthorityMetadataCodec.pathKey(pathId), AuthorityMetadataCodec::path)
+                        .orElseThrow(() -> new SnapshotAuthorityFailure("Snapshot signing issuer path is missing")));
+            }
         }
 
         private CredentialInventory inventoryCredentials() throws IOException {
             Map<PkiId, Credential> credentials = new LinkedHashMap<>();
             Set<String> contentIds = new HashSet<>();
-            Path credentialsRoot = source.snapshotRoot().resolve("credentials").resolve("by-id");
-            if (!Files.isDirectory(credentialsRoot)) {
-                return new CredentialInventory(credentials, contentIds);
-            }
-            try (java.util.stream.Stream<Path> records = Files.list(credentialsRoot)) {
-                for (Path record : records.filter(Files::isRegularFile)
-                        .filter(path -> path.getFileName().toString().endsWith(BINARY_EXTENSION))
-                        .sorted(Comparator.comparing(Path::toString)).toList()) {
-                    loadCredential(record, credentials, contentIds);
-                }
-            }
+            new CredentialMetadataAuthority(source.metadataStore(), source.stagedContent()).validateAll(snapshot, credential -> {
+                credentials.put(credential.credentialId(), credential);
+                contentIds.add(credential.content().contentId());
+            });
             return new CredentialInventory(credentials, contentIds);
         }
 
-        private void loadCredential(Path record, Map<PkiId, Credential> credentials, Set<String> contentIds)
-                throws IOException {
-            Credential decoded;
-            try {
-                decoded = FsCodec.decode(FsCodec.CREDENTIAL, FsOperations.readAll(record), source.stagedContent());
-            } catch (IllegalStateException failure) {
-                rejectCredential();
-                return;
-            }
-            contentIds.add(decoded.content().contentId());
-            if (!sourcePaths.credentialPath(decoded.credentialId()).equals(record)
-                    || credentials.containsKey(decoded.credentialId())) {
-                rejectCredential();
-                return;
-            }
-            try {
-                Credential validated = source.getCredential(decoded.credentialId()).orElse(null);
-                if (validated == null) {
-                    rejectCredential();
-                    return;
-                }
-                credentials.put(decoded.credentialId(), validated);
-            } catch (IllegalStateException failure) {
-                rejectCredential();
-            }
-        }
-
         private List<CaRecord> selectCas(Instant at, Map<PkiId, Credential> credentials) throws IOException {
-            List<Path> selectedRecords = selectMutableRecords(source.snapshotRoot().resolve("cas"), at,
-                    options.caHistoryPolicy(), options.strictSnapshotExport());
             List<CaRecord> selected = new ArrayList<>();
-            for (Path record : selectedRecords) {
-                CaRecord ca = loadCa(record);
+            for (AuthorityMetadataCodec.Head current : AuthorityMetadataStore.list(snapshot, AuthorityMetadataCodec.CA_CURRENT, AuthorityMetadataCodec::head)) {
+                CaRecord ca = AuthorityMetadataStore.caAt(snapshot, current.caId(), at, options.caHistoryPolicy(), options.strictSnapshotExport()).orElse(null);
                 if (ca != null && validCa(ca, credentials)) {
                     selected.add(ca);
                 } else if (ca != null) {
@@ -294,36 +321,21 @@ final class FsSnapshotExporter {
             return List.copyOf(selected);
         }
 
-        private boolean validCa(CaRecord ca, Map<PkiId, Credential> credentials) {
+        private boolean validCa(CaRecord ca, Map<PkiId, Credential> credentials) throws IOException {
             try {
                 for (PkiId issuerId : ca.issuerIds()) {
-                    IssuerGeneration generation = source.getIssuerGeneration(issuerId).orElseThrow();
+                    IssuerGeneration generation = AuthorityMetadataStore.find(snapshot, AuthorityMetadataCodec.generationKey(issuerId), AuthorityMetadataCodec::generation).orElseThrow();
                     if (!ca.caId().equals(generation.authorityId())
                             || !credentials.containsKey(generation.credentialId())) {
                         return false;
                     }
                 }
-                IssuerChainPath path = source.getIssuerChainPath(ca.issuanceChainPathId()).orElseThrow();
+                IssuerChainPath path = AuthorityMetadataStore.find(snapshot, AuthorityMetadataCodec.pathKey(ca.issuanceChainPathId()), AuthorityMetadataCodec::path).orElseThrow();
                 return ca.caId().equals(path.authorityId())
                         && ca.currentIssuanceIssuerId().equals(path.issuerId())
                         && path.orderedCredentialIds().stream().allMatch(credentials::containsKey);
             } catch (IllegalStateException | java.util.NoSuchElementException failure) {
                 return false;
-            }
-        }
-
-        private CaRecord loadCa(Path record) throws IOException {
-            try {
-                return FsCodec.decode(FsCodec.CA_RECORD, FsOperations.readAll(record), source.stagedContent());
-            } catch (IllegalStateException failure) {
-                rejectCa();
-                return null;
-            }
-        }
-
-        private void rejectCredential() {
-            if (options.strictSnapshotExport()) {
-                throw new SnapshotAuthorityFailure("Snapshot credential preflight failed");
             }
         }
 
@@ -339,11 +351,13 @@ final class FsSnapshotExporter {
         private final FilesystemPkiStore source;
         private final FsPkiStoreOptions options;
         private final SnapshotPlan plan;
+        private final MetadataSnapshot snapshot;
 
-        private SnapshotPublisher(FilesystemPkiStore source, FsPkiStoreOptions options, SnapshotPlan plan) {
+        private SnapshotPublisher(FilesystemPkiStore source, FsPkiStoreOptions options, SnapshotPlan plan, MetadataSnapshot snapshot) {
             this.source = source;
             this.options = options;
             this.plan = plan;
+            this.snapshot = snapshot;
         }
 
         private void publish(Path targetRoot, Instant at) throws IOException {
@@ -368,7 +382,7 @@ final class FsSnapshotExporter {
         }
 
         private void build(Path targetRoot, Instant at) throws IOException {
-            try (PublicationCursor publications = source.openPublicationRecords()) {
+            try (PublicationCursor publications = source.openPublicationRecords(snapshot)) {
                 Path sourceRoot = source.snapshotRoot();
                 Path stagedRevocationPrefix = targetRoot.resolve(REVOCATION_PREFIX_STAGE);
                 FilesystemRevocationLog.RecoveryTarget captured =
@@ -382,12 +396,13 @@ final class FsSnapshotExporter {
                 copyImportedProfilesAsOf(plan.profiles(), targetRoot.resolve("profiles"));
                 reconstructMutableTree(sourceRoot.resolve("workflows"), targetRoot.resolve("workflows"), at,
                         options.workflowHistoryPolicy(), options.strictSnapshotExport());
-                new AuthorityRestorer(source, options, plan.authority()).restore(targetRoot);
+                new AuthorityRestorer(source, options, plan.authority(), snapshot).restore(targetRoot);
                 installRevocationAuthority(targetRoot, stagedRevocationPrefix);
                 try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(
                         targetRoot, options)) {
                     // Opening validates the restored authority and rebuilds its derived index.
                     restorePublicationMetadata(publications, target);
+                    target.validateRecoveredCrlAuthority();
                 }
                 writeSnapshotBoundary(targetRoot, captured.boundary());
             }
@@ -452,30 +467,42 @@ final class FsSnapshotExporter {
         private final FilesystemPkiStore source;
         private final FsPkiStoreOptions options;
         private final SnapshotAuthority authority;
+        private final MetadataSnapshot snapshot;
+        private final Map<PkiId, IssuerGeneration> generations = new LinkedHashMap<>();
+        private final Map<PkiId, IssuerChainPath> paths = new LinkedHashMap<>();
 
         private AuthorityRestorer(FilesystemPkiStore source, FsPkiStoreOptions options,
-                SnapshotAuthority authority) {
+                SnapshotAuthority authority, MetadataSnapshot snapshot) {
             this.source = source;
             this.options = options;
             this.authority = authority;
+            this.snapshot = snapshot;
+            for (IssuerGeneration generation : authority.generations()) {
+                generations.put(generation.issuerId(), generation);
+            }
+            for (IssuerChainPath path : authority.paths()) {
+                paths.put(path.pathId(), path);
+            }
         }
 
+        // Each iteration requires its own immutable value or failure object; sharing would conflate distinct records or attempts.
+        @SuppressWarnings({ "PMD.AvoidInstantiatingObjectsInLoops" })
         private void restore(Path targetRoot) throws IOException {
             Set<PkiId> transferred = new HashSet<>();
-            source.copySnapshotMetadataTo(targetRoot);
+            source.copySnapshotMetadataTo(snapshot, targetRoot);
             try (FilesystemPkiStore target = FilesystemPkiStore.openSnapshotAssembly(targetRoot, options)) {
                 for (Map.Entry<PkiId, Credential> entry : authority.credentials().entrySet()) {
-                    if (persistCredential(target, entry.getValue())) {
-                        transferred.add(entry.getKey());
-                    }
+                    persistCredentialWithIssuer(target, entry.getValue(), transferred, new HashSet<>());
                 }
                 for (IssuerGeneration generation : authority.generations()) {
-                    if (transferred.contains(generation.credentialId())) {
+                    if (transferred.contains(generation.credentialId())
+                            && target.getIssuerGeneration(generation.issuerId()).isEmpty()) {
                         target.putIssuerGeneration(generation);
                     }
                 }
                 for (IssuerChainPath path : authority.paths()) {
-                    if (transferred.containsAll(path.orderedCredentialIds())) {
+                    if (transferred.containsAll(path.orderedCredentialIds())
+                            && target.getIssuerChainPath(path.pathId()).isEmpty()) {
                         target.putIssuerChainPath(path);
                     }
                 }
@@ -491,14 +518,58 @@ final class FsSnapshotExporter {
             }
         }
 
+        // Each issuer dependency is visited once; recursion is bounded by the
+        // existing maximum chain depth. This is transfer ordering, not recovery
+        // reconstruction of scope ownership or consumed serial reservations.
+        private boolean persistCredentialWithIssuer(FilesystemPkiStore target, Credential credential,
+                Set<PkiId> transferred, Set<PkiId> visiting) throws IOException {
+            if (transferred.contains(credential.credentialId())) { return true; }
+            if (!visiting.add(credential.credentialId()) || visiting.size() > IssuerChainPath.MAX_CERTIFICATES + 1) {
+                throw new IOException("Snapshot credential issuer dependency is cyclic or too deep");
+            }
+            try {
+                boolean root = credential.issuerRef().issuerId().equals(
+                        IssuerGeneration.idFor(credential.issuerRef().caId(), credential.credentialId()));
+                if (BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())
+                        && !root) {
+                    IssuerGeneration generation = generations.get(credential.issuerRef().issuerId());
+                    IssuerChainPath path = paths.get(credential.issuerRef().chainPathId());
+                    if (generation == null || path == null) {
+                        throw new IOException("Snapshot credential issuer authority is missing");
+                    }
+                    for (PkiId parentId : path.orderedCredentialIds()) {
+                        Credential parent = authority.credentials().get(parentId);
+                        if (parent == null || !persistCredentialWithIssuer(target, parent, transferred, visiting)) {
+                            throw new IOException("Snapshot credential issuer content is missing");
+                        }
+                    }
+                    if (target.getIssuerGeneration(generation.issuerId()).isEmpty()) {
+                        target.putIssuerGeneration(generation);
+                    }
+                    if (target.getIssuerChainPath(path.pathId()).isEmpty()) {
+                        target.putIssuerChainPath(path);
+                    }
+                }
+                if (persistCredential(target, credential)) {
+                    transferred.add(credential.credentialId());
+                    return true;
+                }
+                return false;
+            } finally {
+                visiting.remove(credential.credentialId());
+            }
+        }
+
         private boolean persistCredential(FilesystemPkiStore target, Credential sourceCredential)
                 throws IOException {
             if (options.strictSnapshotExport()) {
                 return persistCredentialStrict(target, sourceCredential);
             }
-            try (CredentialTransfer transfer = new CredentialTransfer(source, target, sourceCredential)) {
+            try (CredentialTransfer transfer = new CredentialTransfer(source, target, sourceCredential, snapshot)) {
                 transfer.persist();
                 return true;
+            } catch (FilesystemPkiStore.SnapshotCredentialAuthorityException failure) {
+                throw failure;
             } catch (IOException | IllegalArgumentException | IllegalStateException failure) {
                 return false;
             }
@@ -506,19 +577,19 @@ final class FsSnapshotExporter {
 
         private boolean persistCredentialStrict(FilesystemPkiStore target, Credential sourceCredential)
                 throws IOException {
-            try (CredentialTransfer transfer = new CredentialTransfer(source, target, sourceCredential)) {
+            try (CredentialTransfer transfer = new CredentialTransfer(source, target, sourceCredential, snapshot)) {
                 transfer.persist();
                 return true;
             }
         }
 
-        private boolean persistCa(FilesystemPkiStore target, CaRecord ca) {
+        private boolean persistCa(FilesystemPkiStore target, CaRecord ca) throws IOException {
             if (options.strictSnapshotExport()) {
-                target.putCa(ca);
+                target.restoreSnapshotCa(ca);
                 return true;
             }
             try {
-                target.putCa(ca);
+                target.restoreSnapshotCa(ca);
                 return true;
             } catch (IllegalArgumentException | IllegalStateException failure) {
                 return false;
@@ -537,17 +608,19 @@ final class FsSnapshotExporter {
         private final FilesystemPkiStore target;
         private final Credential sourceCredential;
         private final DurableContentReference targetReference;
+        private final Optional<FilesystemPkiStore.SnapshotCredentialAuthority> credentialAuthority;
         private boolean persisted;
 
         private CredentialTransfer(FilesystemPkiStore source, FilesystemPkiStore target,
-                Credential sourceCredential) throws IOException {
+                Credential sourceCredential, MetadataSnapshot snapshot) throws IOException {
             this.target = target;
             this.sourceCredential = sourceCredential;
+            this.credentialAuthority = source.credentialSnapshotAuthority(snapshot, sourceCredential);
             this.targetReference = transferContent(source, target, sourceCredential.content());
         }
 
-        private void persist() {
-            target.putCredential(withContent(sourceCredential, targetReference));
+        private void persist() throws IOException {
+            target.putSnapshotCredential(withContent(sourceCredential, targetReference), credentialAuthority);
             persisted = true;
         }
 

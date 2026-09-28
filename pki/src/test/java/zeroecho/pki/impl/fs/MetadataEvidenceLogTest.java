@@ -50,7 +50,7 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.spi.store.MetadataStoreId;
 
-/** Ordered, idempotent, resumable behaviour of the reusable append-only evidence log (Task 8a). */
+/** Ordered, idempotent, resumable behaviour of the reusable append-only evidence log. */
 class MetadataEvidenceLogTest {
     private static final MetadataStoreId STORE_ID = new MetadataStoreId("0123456789abcdef0123456789abcdef");
     private static final String NAMESPACE = "io.zeroecho.pki.test-evidence";

@@ -56,14 +56,19 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import zeroecho.core.io.RepeatableContent;
 import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 
 /** Coordinates the credential-record/content-owner write-once handoff. */
 @SuppressWarnings("PMD.CyclomaticComplexity")
@@ -77,6 +82,8 @@ final class CredentialContentTransaction {
     private static final int LOCK_COUNT = 64;
     private static final String INTENT_SUFFIX = ".intent";
     private static final String PRIVATE_SUFFIX = ".credential.pending";
+    private static final ThreadLocal<DirectoryForceObserver> DIRECTORY_FORCE_OBSERVER = new ThreadLocal<>();
+    private static final ThreadLocal<Consumer<ReentrantLock>> BEFORE_LOCK_OBSERVER = new ThreadLocal<>();
     private static final byte[] INTENT_KEY_DOMAIN =
             "zeroecho:pki:credential-handoff-intent:v1".getBytes(StandardCharsets.US_ASCII);
 
@@ -99,11 +106,68 @@ final class CredentialContentTransaction {
         Objects.requireNonNull(credential, "credential");
         PkiId credentialId = credential.credentialId();
         ReentrantLock lock = lock(credentialId);
+        observeBeforeLock(lock);
         lock.lock();
         try {
             putLocked(credential);
         } finally {
             lock.unlock();
+        }
+    }
+
+    /** Publishes X.509 content or verifies a completed exact replay under the existing handoff lock. */
+    // The handoff marker unwraps its original IOException and installs the store fence before releasing the lock.
+    @SuppressWarnings({ "PMD.ExceptionAsFlowControl", "PMD.PreserveStackTrace" })
+    /* default */ void putOrVerifyExactX509(Credential credential, Runnable requireStoreUsable,
+            Function<IOException, PkiException> recoveryRequired) {
+        Objects.requireNonNull(credential, "credential");
+        Objects.requireNonNull(requireStoreUsable, "requireStoreUsable");
+        Objects.requireNonNull(recoveryRequired, "recoveryRequired");
+        if (!BcX509CredentialFramework.FORMAT_ID.equals(credential.formatId())) {
+            throw new IllegalArgumentException("Exact credential replay requires X.509 content");
+        }
+        ReentrantLock lock = lock(credential.credentialId());
+        observeBeforeLock(lock);
+        lock.lock();
+        try {
+            // A queued caller must observe any fence raised by the preceding
+            // publisher before it can acknowledge the visible target.
+            requireStoreUsable.run();
+            if (Files.exists(intentPath(credential.credentialId()), LinkOption.NOFOLLOW_LINKS)
+                    || Files.exists(privateRecordPath(credential.credentialId()), LinkOption.NOFOLLOW_LINKS)) {
+                throw recoveryRequired.apply(new IOException("Credential content handoff requires recovery"));
+            }
+            Path target = paths.credentialPath(credential.credentialId());
+            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                if (!isRegularFile(target)) { throw new IOException("Credential record is not a regular file"); }
+                requirePersistedReference(credential.content());
+                validateIntegrity(credential.content());
+                Credential actual = FsCodec.decode(FsCodec.CREDENTIAL, FsOperations.readAll(target), stagedContent);
+                validateLoaded(credential.credentialId(), actual);
+                requireExactReplay(actual, credential);
+            } else {
+                putLocked(credential);
+            }
+        } catch (HandoffUnconfirmedException failure) {
+            // The shared store fence is installed while the handoff lock is
+            // still held, including failures after intent cleanup has begun.
+            throw recoveryRequired.apply(failure.failure);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Credential replay verification failed", failure);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /* default */ static void requireExactReplay(Credential actual, Credential expected) {
+        Credential metadata = new Credential(actual.credentialId(), actual.formatId(), actual.issuerRef(),
+                actual.subjectRef(), actual.validity(), actual.serialOrUniqueId(), actual.publicKeyId(),
+                actual.profileBinding(), actual.status(), expected.content(), expected.attributes());
+        if (!metadata.equals(expected) || actual.content().length() != expected.content().length()
+                || actual.content().encoding() != expected.content().encoding()
+                || !actual.content().sha256().equals(expected.content().sha256())
+                || !DomainAttributeEncoding.encode(actual.attributes()).equals(DomainAttributeEncoding.encode(expected.attributes()))) {
+            throw new IllegalStateException("Persisted credential differs from its replay");
         }
     }
 
@@ -149,12 +213,11 @@ final class CredentialContentTransaction {
                     ownerAdded, failure);
             throw duplicate(credentialId, failure);
         } catch (PublishedException failure) {
-            throw new IllegalStateException("Credential publication durability is unconfirmed", failure);
+            throw new HandoffUnconfirmedException(failure);
         } catch (IOException failure) {
-            if (!published) {
-                rollbackBeforePublication(credential.content(), owner, privateRecord, intentPath, intentWritten,
-                        ownerAdded, failure);
-            }
+            if (published) { throw new HandoffUnconfirmedException(failure); }
+            rollbackBeforePublication(credential.content(), owner, privateRecord, intentPath, intentWritten,
+                    ownerAdded, failure);
             throw new IllegalStateException("Credential content handoff failed", failure);
         } catch (RuntimeException failure) {
             if (!published) {
@@ -224,6 +287,7 @@ final class CredentialContentTransaction {
             Credential credential = FsCodec.decode(FsCodec.CREDENTIAL, FsOperations.readAll(target), stagedContent);
             requireIntentMatch(intent, credential);
             validateLoaded(intent.credentialId(), credential);
+            forceCredentialDirectory(target.getParent());
             cleanup(privateRecord, intentPath);
             return;
         }
@@ -371,7 +435,7 @@ final class CredentialContentTransaction {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
             moved = true;
             try {
-                PlatformFs.forceDirectory(target.getParent());
+                forceCredentialDirectory(target.getParent());
             } catch (IOException failure) {
                 throw new PublishedException();
             }
@@ -382,6 +446,34 @@ final class CredentialContentTransaction {
                 Files.deleteIfExists(source);
             }
         }
+    }
+
+    // Calling-thread fault/ordering seams for the credential publication boundary.
+    /** Calling-thread observer of directory durability boundaries. */
+    /* default */
+    @FunctionalInterface
+    interface DirectoryForceObserver {
+        /** Runs before the specified directory is forced to durable storage. */
+        void beforeForce(Path directory) throws IOException;
+    }
+    /* default */ static void installDirectoryForceObserver(DirectoryForceObserver observer) {
+        DIRECTORY_FORCE_OBSERVER.set(Objects.requireNonNull(observer, "observer"));
+    }
+    /* default */ static void clearDirectoryForceObserver() { DIRECTORY_FORCE_OBSERVER.remove(); }
+    /* default */ static void installBeforeLockObserver(Consumer<ReentrantLock> observer) {
+        BEFORE_LOCK_OBSERVER.set(Objects.requireNonNull(observer, "observer"));
+    }
+    /* default */ static void clearBeforeLockObserver() { BEFORE_LOCK_OBSERVER.remove(); }
+
+    private static void observeBeforeLock(ReentrantLock lock) {
+        Consumer<ReentrantLock> observer = BEFORE_LOCK_OBSERVER.get();
+        if (observer != null) { observer.accept(lock); }
+    }
+
+    private static void forceCredentialDirectory(Path directory) throws IOException {
+        DirectoryForceObserver observer = DIRECTORY_FORCE_OBSERVER.get();
+        if (observer != null) { observer.beforeForce(directory); }
+        PlatformFs.forceDirectory(directory);
     }
 
     private static IllegalStateException duplicate(PkiId credentialId, Throwable cause) {
@@ -561,6 +653,17 @@ final class CredentialContentTransaction {
 
         /* default */ DurableContentReference restore(FilesystemStagedContentStore store) throws IOException {
             return store.restoreReference(storeId, contentId, encoding, length, sha256, lifecycle);
+        }
+    }
+
+    /** Preserves the recovery requirement until the owning store installs its fence. */
+    private static final class HandoffUnconfirmedException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+        private final IOException failure;
+
+        private HandoffUnconfirmedException(IOException failure) {
+            super("Credential publication durability is unconfirmed", failure);
+            this.failure = failure;
         }
     }
 

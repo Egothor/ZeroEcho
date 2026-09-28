@@ -102,7 +102,7 @@ import zeroecho.pki.api.status.StatusObject;
  * </p>
  */
 @SuppressWarnings("PMD.ExcessivePublicCount")
-public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, AutoCloseable {
+public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, AutoCloseable { // NOPMD - TooManyMethods: one cohesive strict-schema or store-transaction ownership contract.
 
     /**
      * Returns the runtime-owned durable streaming-content store.
@@ -127,6 +127,33 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      *                               credential is missing or invalid
      */
     void putCa(CaRecord record);
+
+    /**
+     * Atomically replaces an existing CA record only while its complete value equals
+     * {@code expected}.
+     *
+     * <p>The expected and replacement records must identify the same CA. Comparison
+     * and conditional publication share one authoritative snapshot and head revision.
+     * Existing credential, generation, path, append-only membership and history
+     * validation apply to the replacement. A successful publication atomically
+     * updates the current head and any configured membership/history rows.</p>
+     *
+     * <p>A missing or unequal current value, or a definite commit conflict, returns
+     * {@code false} without publishing replacement rows. Other storage failures,
+     * acknowledgement failures and uncertain outcomes throw; they are never reported
+     * as a comparison mismatch. An uncertain attempt must not be blindly retried.</p>
+     *
+     * @param expected complete previously observed CA record
+     * @param replacement complete replacement record for the same CA
+     * @return {@code true} after confirmed publication, or {@code false} for absence,
+     *         an unequal current value or a definite concurrent-write conflict
+     * @throws NullPointerException if either record is {@code null}
+     * @throws IllegalArgumentException if the records identify different CAs
+     * @throws IllegalStateException if reference validation or definite persistence fails
+     * @throws zeroecho.pki.api.PkiException if durable publication or acknowledgement
+     *         cannot be confirmed; the owning store may require recovery
+     */
+    boolean replaceCa(CaRecord expected, CaRecord replacement);
 
     /**
      * Retrieves a CA record.
@@ -161,6 +188,98 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
     List<CaRecord> listCasPage(Optional<PkiId> afterCaId, int limit);
 
     /**
+     * Selects an authorized authority page before its limit is applied.
+     * @param after exclusive wire identifier
+     * @param limit maximum rows including lookahead, 1 through 1001
+     * @param include short-lived authorization predicate, never retained
+     * @param cancellation cooperative signal checked for every scanned candidate
+     * @return immutable page in ascending identifier order
+     */
+    List<CaRecord> selectAuthoritiesPage(Optional<String> after, int limit,
+            java.util.function.Predicate<CaRecord> include, zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Visits known issuing-key references from authoritative CA metadata without collecting all CAs.
+     * The callback is synchronous, may see duplicates, and is never retained.
+     * @param visitor consumer of non-secret key references
+     * @param cancellation cooperative cancellation checked for every record
+     */
+    void visitAuthorityKeyReferences(java.util.function.Consumer<zeroecho.pki.api.KeyRef> visitor,
+            zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Lists logical profile IDs after an exclusive identifier, in ascending string order.
+     * A filesystem store scans profile directories with O(N log L) time and O(L) auxiliary memory.
+     * @param after exclusive identifier, or empty for the first page
+     * @param limit maximum rows, 1 through 1001 (including presentation lookahead)
+     * @param include short-lived authorization predicate, never retained
+     * @param cancellation cooperative signal checked for every scanned candidate
+     * @return immutable bounded identifier page
+     */
+    List<String> listProfileIdsPage(Optional<String> after, int limit, java.util.function.Predicate<String> include, zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Lists request metadata in ascending request-ID order. Subject data is not suitable for selection responses.
+     * @param after exclusive request identifier
+     * @param limit maximum rows, 1 through 1001
+     * @param include short-lived authorization predicate, never retained
+     * @param cancellation cooperative signal checked for every scanned candidate
+     * @return immutable bounded page
+     */
+    List<RequestSelection> listRequestsPage(Optional<String> after, int limit, java.util.function.Predicate<RequestSelection> include, zeroecho.core.io.CancellationSignal cancellation);
+
+    /** Safe immutable request-selection metadata; contains no subject, SAN, CSR or key bytes.
+     * @param requestId authoritative request identity
+     * @param formatId parsed format
+     * @param profileId persisted optional requested profile
+     */
+    record RequestSelection(PkiId requestId, zeroecho.pki.api.FormatId formatId, Optional<String> profileId) { }
+
+    /**
+     * Lists credentials for one authority in ascending credential-ID order.
+     * @param authorityId authoritative issuer authority
+     * @param after exclusive credential identifier
+     * @param limit maximum rows, 1 through 1001
+     * @param include short-lived authorization predicate, never retained
+     * @param cancellation cooperative signal checked for every scanned candidate
+     * @return immutable bounded page
+     */
+    List<Credential> listCredentialsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<Credential> include, zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Lists historical issuer generations in ascending issuer-ID order.
+     * @param authorityId authoritative logical authority
+     * @param after exclusive issuer identifier
+     * @param limit maximum rows, 1 through 1001
+     * @param include short-lived authorization predicate, never retained
+     * @param cancellation cooperative signal checked for every scanned candidate
+     * @return immutable bounded page
+     */
+    List<IssuerGeneration> listIssuerGenerationsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<IssuerGeneration> include, zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Lists status metadata for one authority in ascending status-ID order.
+     * @param authorityId authoritative issuer authority
+     * @param after exclusive status identifier
+     * @param limit maximum rows, 1 through 1001
+     * @param include short-lived authorization predicate, never retained
+     * @param cancellation cooperative signal checked for every scanned candidate
+     * @return immutable bounded page
+     */
+    List<StatusObject> listStatusObjectsPage(PkiId authorityId, Optional<String> after, int limit, java.util.function.Predicate<StatusObject> include, zeroecho.core.io.CancellationSignal cancellation);
+
+    /**
+     * Lists publication metadata in ascending publication-ID order.
+     * @param after exclusive publication identifier
+     * @param limit maximum rows, 1 through 1001
+     * @param include short-lived authorization predicate, never retained
+     * @param cancellation cooperative signal checked for every scanned candidate
+     * @return immutable bounded page
+     */
+    List<PublicationRecord> listPublicationsPage(Optional<String> after, int limit, java.util.function.Predicate<PublicationRecord> include, zeroecho.core.io.CancellationSignal cancellation);
+
+
+    /**
      * Persists one immutable canonical issuer-generation record.
      *
      * @param generation validated issuer generation to store atomically
@@ -174,6 +293,34 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * @return immutable generation, or empty when absent
      */
     Optional<IssuerGeneration> getIssuerGeneration(PkiId issuerId);
+
+    /**
+     * Irreversibly reserves the next CRL number for an authoritative issuer generation.
+     * The store resolves the generation and its credential, derives the canonical
+     * issuer Name/SPKI scope and validates its permanent logical-authority owner.
+     * Full and delta CRLs share one sequence across all generations with that
+     * same scope. A different scope has an independent sequence.
+     *
+     * <p>This operation is thread-safe and successful reservations are linearizable.
+     * A number is returned only after its consumption is durably confirmed; it
+     * cannot be returned or reused if subsequent signing/publication fails.
+     * An uncertain outcome returns no number, may consume a number, and fences
+     * the store until recovery. Gaps are therefore permitted and irreversible.
+     * Issued numbers range from zero through {@code 2^159 - 1}; exhaustion fails
+     * without modifying the counter. Implementations may reject excessive
+     * contention after a finite number of compare-and-replace attempts.</p>
+     *
+     * @param issuerGenerationId exact persisted issuer-generation identifier
+     * @return the non-negative, durably reserved number
+     * @throws NullPointerException if {@code issuerGenerationId} is {@code null}
+     * @throws IllegalStateException if the generation, credential or scope owner
+     *         is absent or inconsistent, the counter is exhausted, or bounded
+     *         contention prevents reservation
+     * @throws zeroecho.pki.api.PkiException if a metadata operation is safely
+     *         rejected, for example because bounded capacity is exhausted, or
+     *         storage durability cannot be confirmed
+     */
+    BigInteger reserveCrlNumber(PkiId issuerGenerationId);
 
     /**
      * Lists issuer generations owned by an exact logical authority.
@@ -214,12 +361,34 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * that storing a credential is atomic and that the record remains retrievable
      * for its entire retention period.
      * </p>
+     * <p>X.509 imports require a resolved authoritative issuer (or a verified
+     * self-signed root bootstrap). The issuer scope and serial are permanently
+     * reserved to the exact certificate content before publication. Reusing a
+     * serial with different content or signing ownership is rejected.</p>
      *
      * @param credential credential record (never {@code null})
      * @throws NullPointerException  if {@code credential} is {@code null}
-     * @throws IllegalStateException if persistence fails
+     * @throws IllegalStateException if issuer authority or serial ownership
+     *         conflicts, certificate content is invalid, or persistence fails
      */
     void putCredential(Credential credential);
+
+    /**
+     * Publishes an X.509 credential from one authoritative signing continuation.
+     * The store requires a successful signing result, the stored PUBLISHING
+     * continuation and its exact command commitment, and byte-identical signed
+     * certificate content. It permanently reserves the issuer scope and serial
+     * to that operation/command before the credential becomes visible. Exact
+     * replay preserves the original reservation; any competing owner conflicts.
+     *
+     * @param credential exact immutable credential metadata and store-owned DER
+     * @param operationId authoritative signing and continuation identity
+     * @param commandCommitment exact versioned stored command commitment
+     * @throws NullPointerException if an argument is null
+     * @throws IllegalStateException if authority, content or reservation differs,
+     *         or persistence fails
+     */
+    void putCredentialFromSigning(Credential credential, PkiId operationId, String commandCommitment);
 
     /**
      * Retrieves a credential record.
@@ -454,10 +623,48 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
             Optional<RevocationTransitionFeed.Position> afterExclusive);
 
     /**
+     * Requires an exact authoritative revocation prefix in this store's captured live head.
+     * Validation reads a fixed preamble and at most one bounded successor frame;
+     * it does not scan history or materialize current states. Genesis requires the
+     * canonical initial commitment and boundary. Callers comparing an earlier frozen
+     * snapshot must independently enforce that snapshot's source and upper bounds.
+     * @param prefix source identity, global revision and commitment to validate
+     * @param boundary exclusive byte boundary of the prefix
+     * @param cancellation cancellation checked before opening and after validation, including EOF
+     * @throws NullPointerException if a required input is null
+     * @throws IllegalArgumentException if the prefix is foreign, malformed or outside the captured head
+     * @throws IllegalStateException if the store is unavailable
+     * @throws java.io.IOException if authoritative continuity, reading or closure fails;
+     *         cancellation is propagated as {@link java.io.InterruptedIOException}
+     */
+    void requireRevocationPrefix(RevocationTransitionFeed.HighWatermark prefix, long boundary,
+            zeroecho.core.io.CancellationSignal cancellation) throws java.io.IOException;
+
+    /**
+     * Reports whether optional terminal signing and internal-proof evidence is enabled.
+     * @return true only when the underlying store maintains the opt-in feed
+     */
+    default boolean supportsSigningEvidenceFeed() { return false; }
+
+    /**
+     * Opens the append-ordered best-effort signing/proof evidence feed. Each marker
+     * identifies either the parent operation or its distinct internal proof step.
+     * Successful appends survive workflow purge; missing entries can be recovered
+     * only while the authoritative workflow remains retained.
+     * @param afterSequenceExclusive last projected sequence, or -1 to read from the start
+     * @return caller-owned closeable evidence feed
+     * @throws UnsupportedOperationException if signing evidence is disabled or unsupported
+     * @throws IllegalStateException if the owning store or session is closed or unavailable
+     */
+    default AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
+        throw new UnsupportedOperationException("Signing evidence feed is not supported");
+    }
+
+    /**
      * Opens the append-ordered issuance success-evidence feed strictly after {@code afterSequenceExclusive}.
      *
      * <p>Each entry is one committed end-entity issuance carrying its co-committed server-derived
-     * evidence, enabling a bounded, crash-consistent audit projector (Task 8a). The default throws
+     * evidence, enabling a bounded, crash-consistent audit projector. The default throws
      * {@link UnsupportedOperationException} for stores that do not maintain the evidence log.</p>
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
@@ -472,8 +679,8 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      * {@code afterSequenceExclusive}.
      *
      * <p>Each entry is one committed status object (CRL, delta CRL, or persistent OCSP response) carrying
-     * its server-derived generation evidence, enabling a bounded, crash-consistent audit projector
-     * (Task 8a). The default throws {@link UnsupportedOperationException} for stores that do not maintain
+     * its server-derived generation evidence, enabling a bounded, crash-consistent audit projector.
+     * The default throws {@link UnsupportedOperationException} for stores that do not maintain
      * the evidence log.</p>
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
@@ -489,7 +696,7 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      *
      * <p>Each entry is one publication that reached a terminal outcome ({@code SUCCEEDED} or
      * {@code TERMINAL_FAILURE}) carrying its server-derived outcome evidence, enabling a bounded,
-     * crash-consistent audit projector (Task 8a). The default throws
+     * crash-consistent audit projector. The default throws
      * {@link UnsupportedOperationException} for stores that do not maintain the evidence log.</p>
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
@@ -497,33 +704,6 @@ public interface PkiStore extends SignWorkflowStore, DomainContinuationStore, Au
      */
     default AuditEvidenceFeed openPublicationEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Publication evidence feed is not supported by this store");
-    }
-
-    /**
-     * Opens the append-ordered signing terminal-outcome success-evidence feed strictly after
-     * {@code afterSequenceExclusive}.
-     *
-     * <p>Each entry is one signing operation that reached a terminal outcome carrying its server-derived
-     * key-usage evidence, enabling a bounded, crash-consistent audit projector (Task 8a). The default
-     * throws {@link UnsupportedOperationException} for stores that do not maintain the evidence log.</p>
-     *
-     * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
-     * @return closeable append-ordered evidence feed
-     */
-    default AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
-        throw new UnsupportedOperationException("Signing evidence feed is not supported by this store");
-    }
-
-    /**
-     * Reports whether this store maintains the signing terminal-outcome evidence log (an operator opt-in).
-     *
-     * <p>When {@code false}, {@link #openSigningEvidenceFeed(long)} is unsupported and no signing audit
-     * projection should be registered. The default is {@code false}.</p>
-     *
-     * @return {@code true} only when signing key-usage audit is enabled for this store
-     */
-    default boolean supportsSigningEvidenceFeed() {
-        return false;
     }
 
     /**

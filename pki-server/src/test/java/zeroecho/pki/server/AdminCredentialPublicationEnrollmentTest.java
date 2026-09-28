@@ -249,7 +249,8 @@ class AdminCredentialPublicationEnrollmentTest {
                 new OperationSecurityDescriptors(), (operation, cancellation) -> {
                     pkiCalls.incrementAndGet();
                     return new PkiOperationOutcome.Completed(new PkiOperationResult(operation.name(), Map.of()));
-                }, scopes, Map.of(),
+                }, (request, evidence, cancellation) -> { throw new AssertionError("Unexpected signing"); },
+                scopes, Map.of(),
                 profileId -> zeroecho.pki.api.profile.IssuanceApprovalRequirement.NONE,
                 ServerTestSupport.CLOCK, opened.audit(), () -> { });
         Permission.Scope scope = new Permission.Scope(ServerTestSupport.REALM,

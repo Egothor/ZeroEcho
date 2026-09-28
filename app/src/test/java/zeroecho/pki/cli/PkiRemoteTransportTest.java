@@ -34,20 +34,23 @@
 package zeroecho.pki.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLHandshakeException;
 
 import org.junit.jupiter.api.Test;
 
@@ -55,234 +58,300 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.application.PkiOperationValue;
 
 class PkiRemoteTransportTest {
-
-    private static final CancellationSignal NOT_CANCELLED = () -> false;
-    private static final Duration FAST_POLL = Duration.ofMillis(5);
+    private static final CancellationSignal ACTIVE = () -> false;
+    private static final String DIGEST = "a".repeat(64);
 
     @Test
-    void encodesRequestEnvelopeWithVersionScopeAndArguments() {
-        System.out.println("encodesRequestEnvelopeWithVersionScopeAndArguments");
-        Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
-        fields.put("credentialId", new PkiOperationValue.Text("cred-1"));
-        fields.put("limit", new PkiOperationValue.IntegerValue(10));
-        byte[] body = PkiRemoteEnvelope.encodeRequest(Optional.of("authority-7"), Optional.empty(),
-                Optional.empty(), new PkiOperationValue.ObjectValue(fields));
+    void encodesRequestScopeAndTypedArguments() {
+        byte[] body = PkiRemoteEnvelope.encodeRequest(Optional.of("authority"), Optional.of("approval"),
+                Optional.of("2030-01-01T00:00:00Z"), new PkiOperationValue.ObjectValue(Map.of(
+                        "limit", new PkiOperationValue.IntegerValue(10))));
         PkiOperationValue.ObjectValue parsed = (PkiOperationValue.ObjectValue) PkiCliJson.parse(body);
-        assertEquals(1L, ((PkiOperationValue.IntegerValue) parsed.fields().get("version")).value());
-        assertEquals("authority-7", ((PkiOperationValue.Text) parsed.fields().get("authorityId")).value());
-        assertTrue(parsed.fields().get("approvalId") == null);
-        PkiOperationValue.ObjectValue arguments = (PkiOperationValue.ObjectValue) parsed.fields().get("arguments");
-        assertEquals("cred-1", ((PkiOperationValue.Text) arguments.fields().get("credentialId")).value());
-        System.out.println("...ok");
+        assertEquals(new PkiOperationValue.IntegerValue(1), parsed.fields().get("version"));
+        assertEquals(new PkiOperationValue.Text("approval"), parsed.fields().get("approvalId"));
     }
 
     @Test
-    void decodesFailureEnvelope() {
-        System.out.println("decodesFailureEnvelope");
-        byte[] body = ("{\"version\":1,\"operation\":\"credential.inspect\",\"status\":\"FAILED\","
-                + "\"failure\":{\"classification\":\"NOT_FOUND\",\"code\":\"OBJECT_NOT_FOUND\","
-                + "\"recoveryRequired\":false,\"reconciliationRequired\":true}}").getBytes(StandardCharsets.UTF_8);
-        PkiRemoteEnvelope.ResponseEnvelope envelope = PkiRemoteEnvelope.decodeResponse(body);
-        assertEquals(Optional.of("FAILED"), envelope.status());
-        assertEquals("NOT_FOUND", envelope.failure().orElseThrow().classification());
-        assertTrue(envelope.failure().orElseThrow().reconciliationRequired());
-        System.out.println("...ok");
+    void realSuccessAndFailureNullSlotsAndServerDenialArePreserved() throws Exception {
+        PkiRemoteResult success = submit(new Script(request -> success("ca.list", "{}")), Duration.ZERO, ACTIVE);
+        assertEquals(0, PkiRemoteExitCodes.from(success));
+        PkiRemoteResult failure = submit(new Script(request -> failure("ca.list", "DENIED", true, true)),
+                Duration.ZERO, ACTIVE);
+        assertEquals(4, PkiRemoteExitCodes.from(failure));
+        assertTrue(((PkiRemoteResult.Failed) failure).recoveryRequired());
+        assertTrue(((PkiRemoteResult.Failed) failure).reconciliationRequired());
     }
 
     @Test
-    void succeededExchangeMapsToSuccessExit() throws Exception {
-        System.out.println("succeededExchangeMapsToSuccessExit");
-        FakeExchange exchange = new FakeExchange(request -> ok("{\"version\":1,\"operation\":\"credential.inspect\","
-                + "\"status\":\"SUCCEEDED\",\"result\":{\"credentialId\":\"cred-1\"}}"));
-        PkiRemoteResult result = transport(exchange, Duration.ZERO).submit("credential.inspect", empty(),
-                Optional.empty(), Optional.empty(), Optional.empty(), NOT_CANCELLED);
-        assertTrue(result instanceof PkiRemoteResult.Succeeded);
-        assertEquals(PkiExitCodes.SUCCESS, PkiRemoteExitCodes.from(result));
-        assertEquals("/admin/v1/operations/credential.inspect", exchange.requests.get(0).path());
-        System.out.println("...ok");
+    void failureClassificationsRetainStableExitCodes() throws Exception {
+        Map<String, Integer> cases = Map.ofEntries(Map.entry("VALIDATION_FAILURE", 4), Map.entry("POLICY_REJECTION", 4),
+                Map.entry("DENIED", 4), Map.entry("AUTHORIZATION_DENIED", 4), Map.entry("NOT_FOUND", 5),
+                Map.entry("CONFLICT", 5), Map.entry("RECOVERY_REQUIRED", 6), Map.entry("EXTERNAL_OUTCOME_UNKNOWN", 7),
+                Map.entry("DEADLINE_EXCEEDED", 7), Map.entry("RESOURCE_FAILURE", 8), Map.entry("OVERLOADED", 8),
+                Map.entry("CANCELLED", 130), Map.entry("INTERNAL_FAILURE", 9));
+        for (Map.Entry<String, Integer> entry : cases.entrySet()) {
+            PkiRemoteResult result = submit(new Script(request -> failure("ca.list", entry.getKey(), false, false)),
+                    Duration.ZERO, ACTIVE);
+            assertEquals(entry.getValue(), PkiRemoteExitCodes.from(result));
+        }
     }
 
     @Test
-    void failureClassificationsMapToLocalExitCodes() throws Exception {
-        System.out.println("failureClassificationsMapToLocalExitCodes");
-        assertEquals(PkiExitCodes.VALIDATION_OR_POLICY, failureExit("VALIDATION_FAILURE"));
-        assertEquals(PkiExitCodes.VALIDATION_OR_POLICY, failureExit("POLICY_REJECTION"));
-        assertEquals(PkiExitCodes.VALIDATION_OR_POLICY, failureExit("AUTHORIZATION_DENIED"));
-        assertEquals(PkiExitCodes.NOT_FOUND_OR_CONFLICT, failureExit("NOT_FOUND"));
-        assertEquals(PkiExitCodes.NOT_FOUND_OR_CONFLICT, failureExit("CONFLICT"));
-        assertEquals(PkiExitCodes.RECOVERY_REQUIRED, failureExit("RECOVERY_REQUIRED"));
-        assertEquals(PkiExitCodes.EXTERNAL_OUTCOME_UNKNOWN, failureExit("EXTERNAL_OUTCOME_UNKNOWN"));
-        assertEquals(PkiExitCodes.EXTERNAL_OUTCOME_UNKNOWN, failureExit("DEADLINE_EXCEEDED"));
-        assertEquals(PkiExitCodes.RESOURCE_FAILURE, failureExit("RESOURCE_FAILURE"));
-        assertEquals(PkiExitCodes.RESOURCE_FAILURE, failureExit("OVERLOADED"));
-        assertEquals(PkiExitCodes.CANCELLED, failureExit("CANCELLED"));
-        assertEquals(PkiExitCodes.INTERNAL_FAILURE, failureExit("INTERNAL_FAILURE"));
-        System.out.println("...ok");
+    void invalidVersionTypesNullsDuplicatesAndHttpConflictsNeverSucceed() {
+        String valid = json("ca.list", "SUCCEEDED", "{}", "null");
+        List<String> invalid = List.of("", "{}", "null", valid.replace("\"version\":1", "\"version\":99"),
+                valid.replace("\"version\":1,", ""), valid.replace("\"version\":1", "\"version\":\"1\""),
+                valid.replace("\"requestId\":\"test\",", ""), valid.replace("\"requestId\":\"test\"", "\"requestId\":17"), valid.replace("\"SUCCEEDED\"", "17"),
+                valid.replace("\"failure\":null", "\"failure\":false"), valid + "{}",
+                valid.replace("\"version\":1", "\"version\":1,\"version\":1"),
+                valid.replace("\"result\":{}", "\"result\":null"),
+                valid.replace("\"result\":{}", "\"result\":{\"nested\":null}"));
+        for (String body : invalid) {
+            assertProtocol(new Script(request -> response(200, body)));
+        }
+        for (int http : List.of(202, 409, 500)) assertProtocol(new Script(request -> response(http, valid)));
+        assertProtocol(new Script(request -> response(403, "")));
+        assertProtocol(new Script(request -> response(409, "{}")));
+        assertProtocol(new Script(request -> success("wrong.operation", "{}")));
+        assertProtocol(new Script(request -> success("signing.operation", completion("sign-1"))));
+        String badFlag = json("ca.list", "FAILED", "null", failureJson("NOT_FOUND", false, false))
+                .replace("\"recoveryRequired\":false", "\"recoveryRequired\":\"false\"");
+        assertProtocol(new Script(request -> response(404, badFlag)));
     }
 
     @Test
-    void forbiddenHttpStatusMapsToPolicyExitWithoutEnvelope() throws Exception {
-        System.out.println("forbiddenHttpStatusMapsToPolicyExitWithoutEnvelope");
-        FakeExchange exchange = new FakeExchange(request -> new PkiHttpExchange.Response(403, Optional.empty(),
-                new byte[0]));
-        PkiRemoteResult result = transport(exchange, Duration.ZERO).submit("security.role.list", empty(),
-                Optional.empty(), Optional.empty(), Optional.empty(), NOT_CANCELLED);
-        assertEquals(PkiExitCodes.VALIDATION_OR_POLICY, PkiRemoteExitCodes.from(result));
-        System.out.println("...ok");
+    void approvalRequiresExplicitTypedStatusAndCommitment() throws Exception {
+        Script exchange = new Script(request -> response(409, json("ca.list", "APPROVAL_REQUIRED",
+                "{\"operationCommitment\":\"" + DIGEST + "\"}", failureJson("APPROVAL_REQUIRED", false, false))));
+        PkiRemoteResult result = submit(exchange, Duration.ZERO, ACTIVE);
+        assertEquals(4, PkiRemoteExitCodes.from(result));
+        assertEquals(DIGEST, ((PkiRemoteResult.ApprovalRequired) result).operationCommitment());
+        assertEquals(1, exchange.requests.size());
     }
 
     @Test
-    void unauthenticatedResponseIsAConfigurationFailure() {
-        System.out.println("unauthenticatedResponseIsAConfigurationFailure");
-        FakeExchange exchange = new FakeExchange(request -> new PkiHttpExchange.Response(401, Optional.empty(),
-                new byte[0]));
-        PkiRemoteTransportException failure = assertThrows(PkiRemoteTransportException.class,
-                () -> transport(exchange, Duration.ZERO).submit("ca.list", empty(), Optional.empty(),
-                        Optional.empty(), Optional.empty(), NOT_CANCELLED));
-        assertEquals(PkiExitCodes.CONFIGURATION_FAILURE, failure.exitCode());
-        System.out.println("...ok");
+    void receiptComesOnlyFromBodyAndZeroWaitNeverPolls() throws Exception {
+        Script exchange = new Script(request -> pending("ca.list", "sign-1"));
+        PkiRemoteResult result = submit(exchange, Duration.ZERO, ACTIVE);
+        assertEquals(7, PkiRemoteExitCodes.from(result));
+        assertEquals("sign-1", ((PkiRemoteResult.Pending) result).operationId());
+        assertEquals(1, exchange.requests.size());
+        assertProtocol(new Script(request -> new PkiHttpExchange.Response(202,
+                Optional.of("https://attacker.example/sign-1"), json("ca.list", "PENDING", "{}", "null")
+                        .getBytes(StandardCharsets.UTF_8))));
+        for (String id : List.of("", " ", "a/b", "a".repeat(513))) {
+            assertProtocol(new Script(request -> pending("ca.list", id)));
+        }
     }
 
     @Test
-    void tlsFailureIsConfigurationAndNetworkFailureIsResource() {
-        System.out.println("tlsFailureIsConfigurationAndNetworkFailureIsResource");
-        PkiRemoteTransportException tls = assertThrows(PkiRemoteTransportException.class,
-                () -> transport(new FakeExchange(request -> {
-                    throw new SSLException("handshake");
-                }), Duration.ZERO).submit("ca.list", empty(), Optional.empty(), Optional.empty(),
-                        Optional.empty(), NOT_CANCELLED));
-        PkiRemoteTransportException network = assertThrows(PkiRemoteTransportException.class,
-                () -> transport(new FakeExchange(request -> {
-                    throw new IOException("connection refused");
-                }), Duration.ZERO).submit("ca.list", empty(), Optional.empty(), Optional.empty(),
-                        Optional.empty(), NOT_CANCELLED));
-        assertEquals(PkiExitCodes.CONFIGURATION_FAILURE, tls.exitCode());
-        assertEquals(PkiExitCodes.RESOURCE_FAILURE, network.exitCode());
-        System.out.println("...ok");
+    void signsOnceAndPollsOnlySameReceiptThroughCompletion() throws Exception {
+        Script exchange = new Script(request -> request.method() == PkiHttpExchange.Method.POST
+                ? pending("ca.list", "sign-1") : success("signing.operation", completion("sign-1")));
+        PkiRemoteResult result = submit(exchange, Duration.ofSeconds(1), ACTIVE);
+        assertEquals(0, PkiRemoteExitCodes.from(result));
+        assertEquals(Optional.of("sign-1"), ((PkiRemoteResult.Succeeded) result).operationId());
+        assertEquals(List.of(PkiHttpExchange.Method.POST, PkiHttpExchange.Method.GET),
+                exchange.requests.stream().map(PkiHttpExchange.Request::method).toList());
+        assertEquals("/admin/v1/signing-operations/sign-1", exchange.requests.get(1).path());
+        assertTrue(exchange.requests.get(1).timeout().compareTo(Duration.ofSeconds(1)) <= 0);
+        for (PkiOutputMode mode : PkiOutputMode.values()) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            new PkiRemoteReporter().render(result, mode, output);
+            assertTrue(output.toString(StandardCharsets.UTF_8).contains("sign-1"));
+        }
     }
 
     @Test
-    void approvalRequiredSurfacesCommitmentAndExitsFour() throws Exception {
-        System.out.println("approvalRequiredSurfacesCommitmentAndExitsFour");
-        String commitment = "0".repeat(64);
-        FakeExchange exchange = new FakeExchange(request -> new PkiHttpExchange.Response(409, Optional.empty(),
-                ("{\"version\":1,\"operation\":\"credential.issue\",\"status\":\"APPROVAL_REQUIRED\","
-                        + "\"result\":{\"operationCommitment\":\"" + commitment + "\"}}")
-                        .getBytes(StandardCharsets.UTF_8)));
-        PkiRemoteResult result = transport(exchange, Duration.ZERO).submit("credential.issue", empty(),
-                Optional.of("authority-1"), Optional.empty(), Optional.empty(), NOT_CANCELLED);
-        assertTrue(result instanceof PkiRemoteResult.ApprovalRequired);
-        assertEquals(commitment, ((PkiRemoteResult.ApprovalRequired) result).operationCommitment());
-        assertEquals(PkiExitCodes.VALIDATION_OR_POLICY, PkiRemoteExitCodes.from(result));
-        System.out.println("...ok");
+    void changedReceiptOrMalformedCompletionRetainsPendingReceipt() throws Exception {
+        for (String body : List.of(completion("changed"), "{\"operationId\":\"sign-1\"}",
+                completion("sign-1").replace("ISSUANCE", "INVALID"),
+                completion("sign-1").replace(DIGEST, "bad"))) {
+            Script exchange = new Script(request -> request.method() == PkiHttpExchange.Method.POST
+                    ? pending("ca.list", "sign-1") : success("signing.operation", body));
+            assertPending(submit(exchange, Duration.ofSeconds(1), ACTIVE), 9);
+            assertEquals(2, exchange.requests.size());
+        }
+        Script exchange = new Script(request -> request.method() == PkiHttpExchange.Method.POST
+                ? pending("ca.list", "sign-1") : pending("signing.operation", "changed"));
+        assertPending(submit(exchange, Duration.ofSeconds(1), ACTIVE), 9);
+        Script wrongOperation = new Script(request -> request.method() == PkiHttpExchange.Method.POST
+                ? pending("ca.list", "sign-1") : success("ca.list", completion("sign-1")));
+        assertPending(submit(wrongOperation, Duration.ofSeconds(1), ACTIVE), 9);
     }
 
     @Test
-    void pendingWithZeroWaitExitsExternalOutcomeUnknown() throws Exception {
-        System.out.println("pendingWithZeroWaitExitsExternalOutcomeUnknown");
-        FakeExchange exchange = new FakeExchange(request -> new PkiHttpExchange.Response(202,
-                Optional.of("/admin/v1/signing-operations/sign-9"),
-                "{\"version\":1,\"operation\":\"credential.issue\",\"status\":\"PENDING\",\"result\":{}}"
-                        .getBytes(StandardCharsets.UTF_8)));
-        PkiRemoteResult result = transport(exchange, Duration.ZERO).submit("credential.issue", empty(),
-                Optional.of("authority-1"), Optional.empty(), Optional.empty(), NOT_CANCELLED);
-        assertTrue(result instanceof PkiRemoteResult.Pending);
-        assertEquals("sign-9", ((PkiRemoteResult.Pending) result).operationId());
-        assertEquals(PkiExitCodes.EXTERNAL_OUTCOME_UNKNOWN, PkiRemoteExitCodes.from(result));
-        System.out.println("...ok");
+    void postAcceptanceFailureRetainsReceiptAndServerRecoveryFlags() throws Exception {
+        Script exchange = new Script(request -> request.method() == PkiHttpExchange.Method.POST
+                ? pending("ca.list", "sign-1") : failure("operation", "RECOVERY_REQUIRED", true, true));
+        PkiRemoteResult.Failed result = (PkiRemoteResult.Failed) submit(exchange, Duration.ofSeconds(1), ACTIVE);
+        assertEquals(Optional.of("sign-1"), result.operationId());
+        assertEquals(6, PkiRemoteExitCodes.from(result));
+        assertTrue(result.recoveryRequired());
+        assertTrue(result.reconciliationRequired());
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new PkiRemoteReporter().render(result, PkiOutputMode.JSON, output);
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operationId\":\"sign-1\""));
     }
 
     @Test
-    void pendingResolvesByPollingSigningOperation() throws Exception {
-        System.out.println("pendingResolvesByPollingSigningOperation");
-        AtomicInteger polls = new AtomicInteger();
-        FakeExchange exchange = new FakeExchange(request -> {
-            if (request.method() == PkiHttpExchange.Method.POST) {
-                return new PkiHttpExchange.Response(202, Optional.of("/admin/v1/signing-operations/sign-3"),
-                        "{\"version\":1,\"operation\":\"credential.issue\",\"status\":\"PENDING\",\"result\":{}}"
-                                .getBytes(StandardCharsets.UTF_8));
-            }
-            int count = polls.incrementAndGet();
-            String status = count >= 2 ? "SUCCEEDED" : "PENDING";
-            String result = count >= 2 ? "{\"credentialId\":\"cred-9\"}" : "{}";
-            return new PkiHttpExchange.Response(200, Optional.empty(),
-                    ("{\"version\":1,\"operation\":\"credential.issue\",\"status\":\"" + status
-                            + "\",\"result\":" + result + "}").getBytes(StandardCharsets.UTF_8));
+    void pollingNetworkAndProtocolFailuresRetainReceiptWithoutRetry() throws Exception {
+        for (boolean protocol : List.of(true, false)) {
+            Script exchange = new Script(request -> {
+                if (request.method() == PkiHttpExchange.Method.POST) return pending("ca.list", "sign-1");
+                if (protocol) return response(200, "broken");
+                throw new IOException("sensitive provider diagnostic");
+            });
+            PkiRemoteResult result = submit(exchange, Duration.ofSeconds(1), ACTIVE);
+            assertPending(result, protocol ? 9 : 8);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            new PkiRemoteReporter().render(result, PkiOutputMode.JSON, output);
+            assertTrue(output.toString(StandardCharsets.UTF_8).contains("observationFailure"));
+            assertFalse(output.toString(StandardCharsets.UTF_8).contains("sensitive"));
+            assertEquals(2, exchange.requests.size());
+        }
+    }
+
+    @Test
+    void inspectionUsesOneGetAndEncodesDotSegmentsWithoutRoutingFromLocation() {
+        for (String id : List.of("sign-1", ".", "..", "a?b#c")) {
+            Script exchange = new Script(request -> pending("signing.operation", id));
+            PkiRemoteResult result = transport(exchange, Duration.ofSeconds(1)).inspect(id, ACTIVE);
+            assertEquals(7, PkiRemoteExitCodes.from(result));
+            assertEquals(1, exchange.requests.size());
+            assertEquals(PkiHttpExchange.Method.GET, exchange.requests.getFirst().method());
+            assertFalse(exchange.requests.getFirst().path().endsWith("/.."));
+            assertEquals(Duration.ofSeconds(60), exchange.requests.getFirst().timeout());
+        }
+    }
+
+    @Test
+    void waitBudgetExpiryAndCancellationNeverResubmitOrCancelBackend() throws Exception {
+        Script exchange = new Script(request -> pending("ca.list", "sign-1"));
+        PkiRemoteResult result = new RemotePkiOperationTransport(exchange, Duration.ofMillis(1), Duration.ofSeconds(1))
+                .submit("ca.list", empty(), Optional.empty(), Optional.empty(), Optional.empty(), ACTIVE);
+        assertPending(result, 7);
+        assertEquals(1, exchange.requests.size());
+        AtomicBoolean cancelled = new AtomicBoolean();
+        Script cancelledExchange = new Script(request -> { cancelled.set(true); return pending("ca.list", "sign-1"); });
+        assertPending(submit(cancelledExchange, Duration.ofSeconds(1), cancelled::get), 130);
+        assertEquals(1, cancelledExchange.requests.size());
+        Script budgetExchange = new Script(request -> {
+            if (request.method() == PkiHttpExchange.Method.POST) return pending("ca.list", "sign-1");
+            throw new HttpTimeoutException("budget exhausted");
         });
-        PkiRemoteResult result = transport(exchange, Duration.ofSeconds(5)).submit("credential.issue", empty(),
-                Optional.of("authority-1"), Optional.empty(), Optional.empty(), NOT_CANCELLED);
-        System.out.println("...polls=" + polls.get());
-        assertTrue(result instanceof PkiRemoteResult.Succeeded);
-        assertEquals(PkiExitCodes.SUCCESS, PkiRemoteExitCodes.from(result));
-        assertTrue(polls.get() >= 2);
-        assertEquals("/admin/v1/signing-operations/sign-3", exchange.requests.get(1).path());
-        System.out.println("...ok");
+        assertPending(submit(budgetExchange, Duration.ofMillis(100), ACTIVE), 7);
     }
 
     @Test
-    void unsupportedProtocolVersionFallsBackToHttpStatusClassification() throws Exception {
-        System.out.println("unsupportedProtocolVersionFallsBackToHttpStatusClassification");
-        FakeExchange exchange = new FakeExchange(request -> ok("{\"version\":99,\"operation\":\"ca.list\","
-                + "\"status\":\"SUCCEEDED\",\"result\":{}}"));
-        PkiRemoteResult result = transport(exchange, Duration.ZERO).submit("ca.list", empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), NOT_CANCELLED);
-        // Version 99 causes decodeResponse to throw; tryDecode returns empty; synthesize falls back
-        // to HTTP 200 → Succeeded (safe: the HTTP contract is honoured, not the unrecognised envelope).
-        assertTrue(result instanceof PkiRemoteResult.Succeeded, "Expected Succeeded from HTTP 200 fallback");
-        System.out.println("...ok");
+    void pollingInterruptionRestoresFlagAndKeepsReceipt() throws Exception {
+        Script exchange = new Script(request -> {
+            if (request.method() == PkiHttpExchange.Method.POST) return pending("ca.list", "sign-1");
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted");
+        });
+        try {
+            assertPending(submit(exchange, Duration.ofSeconds(1), ACTIVE), 130);
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally { Thread.interrupted(); }
     }
 
     @Test
-    void cancellationBeforeSubmitYieldsCancelledExit() throws Exception {
-        System.out.println("cancellationBeforeSubmitYieldsCancelledExit");
-        FakeExchange exchange = new FakeExchange(request -> ok("{}"));
-        PkiRemoteResult result = transport(exchange, Duration.ZERO).submit("ca.list", empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), () -> true);
-        assertEquals(PkiExitCodes.CANCELLED, PkiRemoteExitCodes.from(result));
+    void unknownSubmissionAcceptanceHasNoInventedReceiptWhileHandshakeIsConfigurationFailure() throws Exception {
+        for (IOException error : List.of(new IOException("connection lost"), new SSLException("after handshake"))) {
+            Script exchange = new Script(request -> { throw error; });
+            PkiRemoteResult result = submit(exchange, Duration.ZERO, ACTIVE);
+            assertEquals(7, PkiRemoteExitCodes.from(result));
+            assertTrue(((PkiRemoteResult.Failed) result).operationId().isEmpty());
+            assertEquals(1, exchange.requests.size());
+        }
+        Script handshake = new Script(request -> { throw new SSLHandshakeException("handshake"); });
+        assertEquals(3, assertThrows(PkiRemoteTransportException.class,
+                () -> submit(handshake, Duration.ZERO, ACTIVE)).exitCode());
+        assertEquals(3, assertThrows(PkiRemoteTransportException.class,
+                () -> submit(new Script(request -> response(401, "")), Duration.ZERO, ACTIVE)).exitCode());
+    }
+
+    @Test
+    void cancellationBeforeSubmitSendsNothingAndSigningSubmissionCannotSucceedSynchronously() throws Exception {
+        Script exchange = new Script(request -> success("ca.create", completion("sign-1")));
+        assertEquals(130, PkiRemoteExitCodes.from(submit(exchange, Duration.ZERO, () -> true)));
         assertTrue(exchange.requests.isEmpty());
-        System.out.println("...ok");
+        assertEquals(9, assertThrows(PkiRemoteTransportException.class, () -> transport(exchange, Duration.ZERO)
+                .submit("ca.create", empty(), Optional.empty(), Optional.empty(), Optional.empty(), ACTIVE)).exitCode());
     }
 
-    private static int failureExit(String classification) throws Exception {
-        FakeExchange exchange = new FakeExchange(request -> ok("{\"version\":1,\"operation\":\"op.x\","
-                + "\"status\":\"FAILED\",\"failure\":{\"classification\":\"" + classification + "\","
-                + "\"code\":\"REMOTE_FAILURE\",\"recoveryRequired\":false,\"reconciliationRequired\":false}}"));
-        PkiRemoteResult result = transport(exchange, Duration.ZERO).submit("op.x", empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), NOT_CANCELLED);
-        return PkiRemoteExitCodes.from(result);
+    @Test
+    void responseLimitsAcceptRealLargeResultsWithoutRelaxingConfiguration() {
+        String longString = "x".repeat(5000);
+        String response = json("credential.export", "SUCCEEDED", "{\"encoded\":\"" + longString + "\"}", "null");
+        assertTrue(PkiRemoteEnvelope.decodeResponse(response.getBytes(StandardCharsets.UTF_8)).result().isPresent());
+        assertThrows(IllegalArgumentException.class, () -> PkiCliJson.parse(("\"" + longString + "\"")
+                .getBytes(StandardCharsets.UTF_8)));
+        String values = String.join(",", java.util.Collections.nCopies(2049, "1"));
+        String inventory = json("request.list", "SUCCEEDED", "{\"items\":[" + values + "]}", "null");
+        assertTrue(PkiRemoteEnvelope.decodeResponse(inventory.getBytes(StandardCharsets.UTF_8)).result().isPresent());
     }
 
-    private static RemotePkiOperationTransport transport(FakeExchange exchange, Duration pendingWait) {
-        return new RemotePkiOperationTransport(exchange, pendingWait, FAST_POLL);
+    private static void assertPending(PkiRemoteResult result, int exit) {
+        assertTrue(result instanceof PkiRemoteResult.Pending);
+        assertEquals("sign-1", ((PkiRemoteResult.Pending) result).operationId());
+        assertEquals(exit, PkiRemoteExitCodes.from(result));
     }
 
-    private static PkiHttpExchange.Response ok(String json) {
-        return new PkiHttpExchange.Response(200, Optional.empty(), json.getBytes(StandardCharsets.UTF_8));
+    private static void assertProtocol(Script exchange) {
+        assertEquals(9, assertThrows(PkiRemoteTransportException.class,
+                () -> submit(exchange, Duration.ZERO, ACTIVE)).exitCode());
     }
 
-    private static PkiOperationValue.ObjectValue empty() {
-        return new PkiOperationValue.ObjectValue(new LinkedHashMap<>());
+    private static PkiRemoteResult submit(Script exchange, Duration wait, CancellationSignal cancellation)
+            throws PkiRemoteTransportException {
+        return transport(exchange, wait).submit("ca.list", empty(), Optional.empty(), Optional.empty(), Optional.empty(), cancellation);
     }
 
-    /** Scripted in-memory exchange used to exercise the transport without real TLS or sockets. */
-    private static final class FakeExchange implements PkiHttpExchange {
+    private static RemotePkiOperationTransport transport(Script exchange, Duration wait) {
+        return new RemotePkiOperationTransport(exchange, wait, Duration.ofMillis(1));
+    }
+
+    private static PkiOperationValue.ObjectValue empty() { return new PkiOperationValue.ObjectValue(Map.of()); }
+
+    private static String completion(String id) {
+        return "{\"operationId\":\"" + id + "\",\"kind\":\"ISSUANCE\",\"encoding\":\"DER\",\"resultSha256\":\"" + DIGEST + "\"}";
+    }
+
+    private static String json(String operation, String status, String result, String failure) {
+        return "{\"version\":1,\"requestId\":\"test\",\"operation\":\"" + operation + "\",\"status\":\""
+                + status + "\",\"result\":" + result + ",\"failure\":" + failure + "}";
+    }
+
+    private static String failureJson(String classification, boolean recovery, boolean reconciliation) {
+        return "{\"classification\":\"" + classification + "\",\"code\":\"" + classification + "\",\"messageKey\":\"safe\","
+                + "\"recoveryRequired\":" + recovery + ",\"reconciliationRequired\":" + reconciliation + "}";
+    }
+
+    private static PkiHttpExchange.Response failure(String operation, String classification, boolean recovery, boolean reconciliation) {
+        return response(409, json(operation, "FAILED", "null", failureJson(classification, recovery, reconciliation)));
+    }
+
+    private static PkiHttpExchange.Response success(String operation, String result) {
+        return response(200, json(operation, "SUCCEEDED", result, "null"));
+    }
+
+    private static PkiHttpExchange.Response pending(String operation, String id) {
+        return response(202, json(operation, "PENDING", "{\"operationId\":\"" + id + "\"}", "null"));
+    }
+
+    private static PkiHttpExchange.Response response(int status, String body) {
+        return new PkiHttpExchange.Response(status, Optional.empty(), body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static final class Script implements PkiHttpExchange {
         private final Responder responder;
         private final List<Request> requests = new ArrayList<>();
-
-        private FakeExchange(Responder responder) {
-            this.responder = responder;
-        }
-
-        @Override
-        public Response send(Request request) throws IOException {
-            requests.add(request);
-            return responder.respond(request);
-        }
+        private Script(Responder responder) { this.responder = responder; }
+        @Override public Response send(Request request) throws IOException { requests.add(request); return responder.respond(request); }
     }
 
-    /** Response supplier that may raise an {@link IOException} to model transport faults. */
     @FunctionalInterface
-    private interface Responder {
-        PkiHttpExchange.Response respond(PkiHttpExchange.Request request) throws IOException;
-    }
+    private interface Responder { PkiHttpExchange.Response respond(PkiHttpExchange.Request request) throws IOException; }
 }

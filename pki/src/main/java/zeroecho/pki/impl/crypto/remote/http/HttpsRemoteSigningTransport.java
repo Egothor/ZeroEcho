@@ -33,7 +33,9 @@
  ******************************************************************************/
 package zeroecho.pki.impl.crypto.remote.http;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -51,6 +53,7 @@ import java.util.Set;
 
 import javax.net.ssl.SSLContext;
 
+import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
 
 /**
@@ -76,11 +79,19 @@ import zeroecho.pki.spi.crypto.remote.RemoteSigningTransport;
  * {@link #status(String, RemoteCallControl)}.</li>
  * </ul>
  */
-public final class HttpsRemoteSigningTransport implements RemoteSigningTransport {
+@SuppressWarnings("PMD.LongVariable")
+public final class HttpsRemoteSigningTransport implements RemoteSigningTransport { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
 
     private static final String CONTENT_TYPE = "application/json";
     private static final int HTTP_OK = 200;
     private static final int HTTP_CONFLICT = 409;
+    private static final int MAXIMUM_CAPABILITIES_RESPONSE_BYTES = 64 * 1024;
+    private static final int MAXIMUM_PUBLIC_KEY_BYTES = 1_048_576;
+    private static final int MAXIMUM_SIGNATURE_BASE64_CHARACTERS =
+            base64Characters(SigningProvider.OperationObservation.MAXIMUM_SIGNATURE_BYTES);
+    private static final int MAXIMUM_STATUS_RESPONSE_BYTES = MAXIMUM_SIGNATURE_BASE64_CHARACTERS + 64 * 1024;
+    private static final int MAXIMUM_PUBLIC_KEY_RESPONSE_BYTES = base64Characters(MAXIMUM_PUBLIC_KEY_BYTES) + 4096;
+    private static final int READ_BUFFER_BYTES = 8192;
     /** Delimiter joining advertised algorithm identities in the capabilities message. */
     /* default */ static final String ALGORITHM_SEPARATOR = "\u001f";
 
@@ -141,6 +152,11 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         Objects.requireNonNull(control, "control");
         Map<String, String> body = new LinkedHashMap<>();
         body.put("op", "submit");
+        body.put("protocolVersion", Integer.toString(request.protocolVersion()));
+        body.put("inputMode", request.inputMode().name());
+        body.put("digestId", request.digestId());
+        body.put("configurationCommitment", Base64.getEncoder().encodeToString(
+                request.configurationCommitment().bytes()));
         body.put("submissionId", request.submissionId());
         body.put("namespace", request.namespace());
         body.put("semanticFingerprint", request.semanticFingerprint());
@@ -165,7 +181,8 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
     }
 
     @Override
-    public boolean cancel(String operationId, long fencingToken, String reason, RemoteCallControl control) {
+    public RemoteSigningStatus cancel(String operationId, long fencingToken, String reason,
+            RemoteCallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         Objects.requireNonNull(reason, "reason");
         Objects.requireNonNull(control, "control");
@@ -174,7 +191,7 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         body.put("operationId", operationId);
         body.put("fencingToken", Long.toString(fencingToken));
         body.put("reason", reason);
-        return "true".equals(call(body, control).get("accepted"));
+        return decodeStatus(call(body, control));
     }
 
     @Override
@@ -185,7 +202,7 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         if (encoded == null || encoded.isEmpty()) {
             throw new RemoteSigningException("Remote signing service returned no public key info");
         }
-        return decodeBase64(encoded, "public key info");
+        return decodeBase64(encoded, "public key info", MAXIMUM_PUBLIC_KEY_BYTES);
     }
 
     @Override
@@ -221,27 +238,66 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
                 .header("Accept", CONTENT_TYPE)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(RemoteSigningJson.write(body)))
                 .build();
-        HttpResponse<byte[]> response;
+        HttpResponse<InputStream> response;
         try {
-            response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new RemoteSigningException("Remote signing call interrupted: op=" + op, interrupted);
         } catch (IOException communication) {
             throw new RemoteSigningException("Remote signing call failed: op=" + op, communication);
         }
-        int code = response.statusCode();
-        if (code == HTTP_OK) {
-            try {
-                return RemoteSigningJson.read(response.body());
-            } catch (RuntimeException malformed) {
-                throw new RemoteSigningException("Remote signing response is malformed: op=" + op, malformed);
+        try (InputStream responseBody = response.body()) {
+            int code = response.statusCode();
+            if (code == HTTP_OK) {
+                byte[] boundedBody = readBounded(responseBody, responseLimit(op), op);
+                try {
+                    return RemoteSigningJson.read(boundedBody);
+                } catch (RuntimeException malformed) {
+                    throw new RemoteSigningException("Remote signing response is malformed: op=" + op, malformed);
+                } finally {
+                    Arrays.fill(boundedBody, (byte) 0);
+                }
             }
+            if (code == HTTP_CONFLICT) {
+                throw new IllegalStateException("Remote signing service reported a conflict or stale fence: op="
+                        + op);
+            }
+            throw new RemoteSigningException("Remote signing service returned HTTP " + code + ": op=" + op);
+        } catch (IOException communication) {
+            throw new RemoteSigningException("Remote signing response could not be read: op=" + op, communication);
         }
-        if (code == HTTP_CONFLICT) {
-            throw new IllegalStateException("Remote signing service reported a conflict or stale fence: op=" + op);
+    }
+
+    private static byte[] readBounded(InputStream input, int maximumBytes, String op) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(READ_BUFFER_BYTES, maximumBytes));
+        byte[] buffer = new byte[READ_BUFFER_BYTES];
+        int total = 0;
+        int read;
+        try {
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) {
+                    total = Math.addExact(total, read);
+                    if (total > maximumBytes) {
+                        throw new RemoteSigningException("Remote signing response exceeds its finite bound: op="
+                                + op);
+                    }
+                    output.write(buffer, 0, read);
+                }
+            }
+            return output.toByteArray();
+        } finally {
+            Arrays.fill(buffer, (byte) 0);
         }
-        throw new RemoteSigningException("Remote signing service returned HTTP " + code + ": op=" + op);
+    }
+
+    private static int responseLimit(String op) {
+        return switch (op) {
+            case "capabilities" -> MAXIMUM_CAPABILITIES_RESPONSE_BYTES;
+            case "publicKey" -> MAXIMUM_PUBLIC_KEY_RESPONSE_BYTES;
+            case "submit", "status", "cancel" -> MAXIMUM_STATUS_RESPONSE_BYTES;
+            default -> throw new IllegalArgumentException("Unsupported remote signing operation");
+        };
     }
 
     // Instant parsing can report multiple runtime subtypes, all representing the same malformed wire field.
@@ -260,21 +316,58 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         } catch (RuntimeException malformedInstant) {
             throw new RemoteSigningException("Remote signing timestamp is malformed", malformedInstant);
         }
-        String reason = fields.getOrDefault("reason", "");
-        Optional<String> reasonValue = reason.isEmpty() ? Optional.empty() : Optional.of(reason);
         String signature = fields.getOrDefault("signature", "");
+        if (state != RemoteSigningState.SIGNED && !signature.isEmpty()) {
+            throw new RemoteSigningException("Remote signing response carries a signature for a non-signed state");
+        }
         Optional<byte[]> signatureValue = signature.isEmpty() ? Optional.empty()
-                : Optional.of(decodeBase64(signature, "signature"));
+                : Optional.of(decodeBase64(signature, "signature",
+                        SigningProvider.OperationObservation.MAXIMUM_SIGNATURE_BYTES));
         String encoding = fields.getOrDefault("signatureEncoding", "BINARY");
-        return new RemoteSigningStatus(operationId, state, updatedAt, reasonValue, signatureValue, encoding);
+        return new RemoteSigningStatus(operationId, state, updatedAt, signatureValue, encoding);
     }
 
+    // All malformed capabilities are translated to the same typed remote failure with the original cause.
+    @SuppressWarnings({ "PMD.ExceptionAsFlowControl" })
     private static RemoteCapabilities decodeCapabilities(Map<String, String> fields) {
-        String algorithms = fields.getOrDefault("algorithms", "");
+        String algorithms = required(fields, "algorithms");
         Set<String> supported = algorithms.isEmpty() ? Set.of()
                 : new LinkedHashSet<>(Arrays.asList(algorithms.split(ALGORITHM_SEPARATOR, -1)));
-        byte[] commitment = decodeBase64(required(fields, "configurationCommitment"), "configuration commitment");
-        return new RemoteCapabilities(Set.copyOf(supported), commitment);
+        byte[] commitment = decodeBase64(required(fields, "configurationCommitment"), "configuration commitment",
+                SigningProvider.ConfigurationCommitment.BYTE_LENGTH);
+        try {
+            int version = Integer.parseInt(required(fields, "protocolVersion"));
+            long rawLimit = Long.parseLong(required(fields, "rawMessageMaximum"));
+            int count = Integer.parseInt(required(fields, "prehashCount"));
+            if (count < 0 || count > zeroecho.pki.spi.crypto.SigningInputCapabilities.MAXIMUM_ALGORITHMS) {
+                throw new IllegalArgumentException("Prehash capability count is out of bounds");
+            }
+            Map<String, zeroecho.core.spec.AlgorithmIdentity> mappings = new LinkedHashMap<>();
+            for (int index = 0; index < count; index++) {
+                String algorithm = required(fields, "prehashAlgorithm." + index);
+                zeroecho.core.spec.AlgorithmIdentity digest = prehashDigest(
+                        required(fields, "prehashDigest." + index));
+                if (mappings.put(algorithm, digest) != null) {
+                    throw new IllegalArgumentException("Duplicate prehash capability");
+                }
+            }
+            return new RemoteCapabilities(Set.copyOf(supported), commitment, version,
+                    new zeroecho.pki.spi.crypto.SigningInputCapabilities(rawLimit, mappings));
+        } catch (IllegalArgumentException invalid) {
+            throw new RemoteSigningException("Invalid remote input capabilities", invalid);
+        }
+    }
+
+    private static zeroecho.core.spec.AlgorithmIdentity prehashDigest(String canonical) {
+        for (zeroecho.core.spec.AlgorithmIdentity digest : java.util.List.of(
+                zeroecho.core.alg.BootstrapAlgorithmIdentities.SHA256,
+                zeroecho.core.alg.BootstrapAlgorithmIdentities.SHA384,
+                zeroecho.core.alg.BootstrapAlgorithmIdentities.SHA512)) {
+            if (digest.canonicalForm().equals(canonical)) {
+                return digest;
+            }
+        }
+        throw new IllegalArgumentException("Unsupported remote prehash digest identity");
     }
 
     private static String required(Map<String, String> fields, String key) {
@@ -285,11 +378,23 @@ public final class HttpsRemoteSigningTransport implements RemoteSigningTransport
         return value;
     }
 
-    private static byte[] decodeBase64(String value, String what) {
+    private static byte[] decodeBase64(String value, String what, int maximumDecodedBytes) {
+        if (value.length() > base64Characters(maximumDecodedBytes)) {
+            throw new RemoteSigningException("Remote signing " + what + " exceeds its finite bound");
+        }
         try {
-            return Base64.getDecoder().decode(value);
+            byte[] decoded = Base64.getDecoder().decode(value);
+            if (decoded.length > maximumDecodedBytes) {
+                Arrays.fill(decoded, (byte) 0);
+                throw new RemoteSigningException("Remote signing " + what + " exceeds its finite bound");
+            }
+            return decoded;
         } catch (IllegalArgumentException malformed) {
             throw new RemoteSigningException("Remote signing " + what + " is malformed", malformed);
         }
+    }
+
+    private static int base64Characters(int decodedBytes) {
+        return Math.multiplyExact(4, Math.floorDiv(Math.addExact(decodedBytes, 2), 3));
     }
 }

@@ -57,6 +57,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.PSSParameterSpec;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -127,6 +128,8 @@ import zeroecho.pki.spi.store.RevocationSnapshot;
 /** Complete wire-level ACME account-to-revocation integration. */
 @SuppressWarnings("PMD")
 class AcmeEndToEndTest {
+    // The installed signing provider and the subprocess use the real UTC clock.
+    private static final Clock CLOCK = Clock.systemUTC();
     private static final char[] KEYRING_PASSWORD = "acme-end-to-end-password".toCharArray();
     private static final String DIRECTORY_ALIAS = "internal";
     private static final String EAB_DIRECTORY_ALIAS = "eab";
@@ -219,7 +222,7 @@ class AcmeEndToEndTest {
             server.realm().session().profiles().activateProfile("server-tls", 2L);
             String csr = Base64.getUrlEncoder().withoutPadding().encodeToString(csr(leafKey));
             AcmeTestClient.Response finalized = client.kid(finalizeUri, "{\"csr\":\"" + csr + "\"}");
-            assertEquals(200, finalized.status());
+            finalized = awaitValidOrder(client, orderUri, finalized);
             assertEquals("valid", AcmeTestClient.text(finalized, "status"));
             certificateUri = URI.create(AcmeTestClient.text(finalized, "certificate"));
             AcmeTestClient.Response certificate = client.postAsGet(certificateUri);
@@ -273,6 +276,7 @@ class AcmeEndToEndTest {
                     .filter(value -> Integer.valueOf(2).equals(value.get(0))).map(value -> value.get(1).toString())
                     .toList());
             chain.get(0).verify(chain.get(1).getPublicKey());
+            awaitCertificateValidity(chain.get(0));
             leafDer = chain.get(0).getEncoded();
             assertOcsp(wire, publicPort, chain.get(1), chain.get(0), false);
             assertOcspNonce(wire, publicPort, chain.get(1), chain.get(0));
@@ -290,9 +294,11 @@ class AcmeEndToEndTest {
 
         registerManagedRequester(fixture, leafDer, leafKey);
         try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
-                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
-            context.session().authorities().orElseThrow().setCaState(
-                    issuedAuthorityId, CaState.RETIRED, "ACME frozen-binding continuation test");
+                fixture.dependencies(), CLOCK, HttpServerTestSupport.random())) {
+            assertInstanceOf(zeroecho.pki.application.PkiOperationOutcome.Completed.class,
+                    context.session().operations().execute(new zeroecho.pki.application.PkiOperation.TransitionAuthority(
+                            issuedAuthorityId, CaState.RETIRED, "ACME frozen-binding continuation test"),
+                            zeroecho.core.io.CancellationSignal.NONE));
         }
 
         try (PkiHttpsServer restarted = start(fixture);
@@ -356,7 +362,7 @@ class AcmeEndToEndTest {
             System.out.println("...rollover-restart-revocation=true");
         }
         try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
-                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random());
+                fixture.dependencies(), CLOCK, HttpServerTestSupport.random());
                 RevocationSnapshot snapshot = context.session().revocations().search(new RevocationQuery(
                         Optional.empty(), Optional.of(RevocationReason.KEY_COMPROMISE), Optional.empty(),
                         Optional.empty())); RevocationSnapshot.Cursor cursor = snapshot.openCursor()) {
@@ -426,7 +432,7 @@ class AcmeEndToEndTest {
     private static void replaceImmediateAuditWithThrowingSink(ServerRealmContext context) throws Exception {
         Field field = ServerRealmContext.class.getDeclaredField("audit");
         field.setAccessible(true);
-        field.set(context, new SafeAudit(ServerTestSupport.CLOCK, event -> {
+        field.set(context, new SafeAudit(CLOCK, event -> {
             throw new IllegalStateException("immediate ACME audit unavailable");
         }));
     }
@@ -494,8 +500,10 @@ class AcmeEndToEndTest {
                 String encodedCsr = Base64.getUrlEncoder().withoutPadding().encodeToString(csr(leaf));
                 AcmeTestClient.Response finalized = client.kid(finalizeOrder,
                         "{\"csr\":\"" + encodedCsr + "\"}");
+                finalized = awaitValidOrder(client, orderUri, finalized);
                 URI certificate = URI.create(AcmeTestClient.text(finalized, "certificate"));
                 List<X509Certificate> chain = certificates(client.postAsGet(certificate).bodyText());
+                awaitCertificateValidity(chain.get(0));
                 assertEquals(2, chain.size());
                 packagedCertificate = chain.get(0);
                 packagedIssuer = chain.get(1);
@@ -567,9 +575,10 @@ class AcmeEndToEndTest {
                 "keyringPath", keyring.toString(),
                 "keyRefPrefix", "acme-test:", "requireComponentSuffix", "true"));
         PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
-                workflow, new ProviderConfig("x509-bc", Map.of()), "SHA256withRSA", Duration.ofSeconds(10),
-                Optional.empty());
-        PkiSessionConfiguration session = new PkiSessionConfiguration(3,
+                workflow, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(),
+                Duration.ofSeconds(10), Optional.empty(),
+                signingTopology(), java.util.OptionalLong.empty());
+        PkiSessionConfiguration session = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 base.realm().pkiSessionConfiguration().store(), base.realm().pkiSessionConfiguration().audit(),
                 Optional.of(signing), List.of(), List.of());
         ServerRealmConfiguration realm = new ServerRealmConfiguration(base.realm().realmId(),
@@ -607,18 +616,61 @@ class AcmeEndToEndTest {
         seed(fixture, true);
     }
 
+    private static PkiSessionConfiguration.SigningTopology signingTopology() {
+        return new PkiSessionConfiguration.SigningTopology(
+                new PkiSessionConfiguration.SigningCoordinatorLimits(2, Duration.ofSeconds(10),
+                        Duration.ofSeconds(5), Duration.ofMillis(10), Duration.ofSeconds(5)),
+                List.of(), new PkiSessionConfiguration.SigningLanePool(2, 3));
+    }
+
+    private static zeroecho.pki.api.signing.SemanticSigningOperation awaitSigning(
+            zeroecho.pki.api.SemanticSigningService service, PkiId id) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            zeroecho.pki.api.signing.SemanticSigningOperation value = service.find(id).orElseThrow();
+            if (value.state() != zeroecho.pki.api.signing.SemanticSigningState.SIGNING
+                    && value.state() != zeroecho.pki.api.signing.SemanticSigningState.PUBLISHING) {
+                assertEquals(zeroecho.pki.api.signing.SemanticSigningState.COMPLETED, value.state());
+                return value;
+            }
+            java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(5));
+        }
+        throw new AssertionError("Root preparation did not complete");
+    }
+
     private void seed(Fixture fixture, boolean includeEab) throws Exception {
         try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
-                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+                fixture.dependencies(), CLOCK, HttpServerTestSupport.random())) {
             BuiltInCertificateProfileTemplate root = template("root-ca");
             BuiltInCertificateProfileTemplate leaf = template("server-tls");
             context.session().profiles().importBuiltIn(root);
             context.session().profiles().activateProfile("root-ca", root.definition().profileVersion());
             context.session().profiles().importBuiltIn(leaf);
             context.session().profiles().activateProfile("server-tls", leaf.definition().profileVersion());
-            PkiId authority = context.session().authorities().orElseThrow().createRoot(new CaCreateCommand(
+            zeroecho.pki.api.SemanticSigningService signing = context.session().semanticSigning().orElseThrow();
+            zeroecho.pki.api.signing.PreparedSemanticSigningRequest prepared = signing.prepareRootCreation(
+                    new zeroecho.pki.api.audit.AccessContext(new zeroecho.pki.api.audit.Principal("SYSTEM", "test"),
+                            new zeroecho.pki.api.audit.Purpose("ca.create"), Optional.empty(), Optional.empty()),
+                    new CaCreateCommand(
                     root.definition().formatId(), new SubjectRef("CN=ZeroEcho ACME E2E Root"), "root-ca",
-                    Optional.of(new KeyRef("acme-test:root.prv")), new SimpleAttributeSet()));
+                    new KeyRef("acme-test:root.prv"), new SimpleAttributeSet()),
+                    zeroecho.core.io.CancellationSignal.NONE);
+            zeroecho.pki.api.signing.SigningAcceptanceResult accepted = signing.accept(prepared);
+            assertEquals(zeroecho.pki.api.signing.SigningAcceptanceDisposition.ACCEPTED, accepted.disposition());
+            PkiId rootCredential = awaitSigning(signing, accepted.receipt().operationId())
+                    .completedCredentialId().orElseThrow();
+            X509Certificate rootCertificate;
+            try (zeroecho.pki.application.PkiRepositoryContent content = context.session().repository()
+                    .openCredential(rootCredential); java.io.InputStream input = content.openStream()) {
+                rootCertificate = (X509Certificate) CertificateFactory.getInstance("X.509")
+                        .generateCertificate(input);
+            }
+            zeroecho.pki.api.Validity rootValidity = context.session().repository()
+                    .credential(rootCredential).orElseThrow().validity();
+            assertEquals(rootValidity.notBefore(), rootCertificate.getNotBefore().toInstant());
+            assertEquals(rootValidity.notAfter(), rootCertificate.getNotAfter().toInstant());
+            awaitCertificateValidity(rootCertificate);
+            PkiId authority = context.session().repository().credential(rootCredential).orElseThrow().issuerRef().caId();
             zeroecho.pki.api.ca.CaRecord authorityRecord = context.session().repository().authority(authority)
                     .orElseThrow();
             zeroecho.pki.api.ca.IssuerGeneration issuer = context.session().repository()
@@ -626,7 +678,8 @@ class AcmeEndToEndTest {
             OcspResponderService.Responder responder = context.ocspResponders().create("ocsp-e2e-root", "root",
                     authority, issuer.issuerId(), OcspResponderService.SigningMode.ISSUER_SIGNED,
                     issuer.credentialId(), issuer.signingKeyRef(), authorityRecord.issuanceChainPathId(),
-                    "SHA256withRSA", Optional.empty(), context.session().algorithmBindings().commitment(),
+                    BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), Optional.empty(),
+                    context.session().algorithmBindings().commitment(),
                     zeroecho.pki.application.OcspResponseService.ResponderId.BY_KEY, Duration.ofMinutes(5),
                     OcspResponderService.NoncePolicy.OPTIONAL_ECHO, 64,
                     Set.of(zeroecho.pki.application.OcspResponseService.CertIdHash.SHA1,
@@ -639,7 +692,7 @@ class AcmeEndToEndTest {
             registerNonceResponder(context, responder, "ocsp-e2e-required", "required",
                     OcspResponderService.NoncePolicy.REQUIRED);
             ActiveCertificateProfile active = context.session().profiles().requireActiveProfile("server-tls");
-            AcmeService service = new AcmeService(context, ServerTestSupport.CLOCK, HttpServerTestSupport.random(),
+            AcmeService service = new AcmeService(context, CLOCK, HttpServerTestSupport.random(),
                     Map.of(Http01ChallengeProvider.ID, new Http01ChallengeProvider()),
                     Map.of(Http01ChallengeProvider.ID, fixture.http01()),
                     Map.of(TestAcmeEabProvider.ID, new TestAcmeEabProvider()),
@@ -662,6 +715,18 @@ class AcmeEndToEndTest {
         }
     }
 
+    private static void awaitCertificateValidity(X509Certificate certificate) throws Exception {
+        Instant notBefore = certificate.getNotBefore().toInstant();
+        // Inward DER normalization can move the approved start to the next whole second.
+        assertFalse(notBefore.isAfter(CLOCK.instant().plusSeconds(1)),
+                "Fresh certificate starts beyond the whole-second normalization boundary");
+        while (CLOCK.instant().isBefore(notBefore)) {
+            java.util.concurrent.TimeUnit.NANOSECONDS.sleep(Math.max(1,
+                    Duration.between(CLOCK.instant(), notBefore).toNanos()));
+        }
+        certificate.checkValidity(java.util.Date.from(CLOCK.instant()));
+    }
+
     private static void registerNonceResponder(ServerRealmContext context,
             OcspResponderService.Responder template, String responderId, String alias,
             OcspResponderService.NoncePolicy noncePolicy) {
@@ -680,7 +745,7 @@ class AcmeEndToEndTest {
         X509Certificate requester = (X509Certificate) CertificateFactory.getInstance("X.509")
                 .generateCertificate(new ByteArrayInputStream(requesterDer));
         try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
-                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+                fixture.dependencies(), CLOCK, HttpServerTestSupport.random())) {
             OcspResponderService.Responder template = context.ocspResponders().requireAlias("root");
             String commitment = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(requesterDer));
@@ -726,7 +791,7 @@ class AcmeEndToEndTest {
 
     private static void denyPackagedSignedRequester(Fixture fixture) throws Exception {
         try (ServerRealmContext context = ServerRealmContext.open(fixture.configuration().realm(),
-                fixture.dependencies(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+                fixture.dependencies(), CLOCK, HttpServerTestSupport.random())) {
             OcspResponderService.Responder responder = context.ocspResponders().requireAlias("signed");
             Permission.Scope scope = new Permission.Scope(context.configuration().realmId(),
                     Optional.of(responder.authorityId()), Optional.of(responder.issuerId()), Optional.empty(),
@@ -821,7 +886,7 @@ class AcmeEndToEndTest {
                 signature.getSignatureAlgorithm().getEncoded(), signature.getSignature().getOctets(),
                 List.of(requesterCertificate.getEncoded()));
         try {
-            new OcspRequesterService(context, ServerTestSupport.CLOCK).authenticate(responder, signed,
+            new OcspRequesterService(context, CLOCK).authenticate(responder, signed,
                     List.of(new zeroecho.pki.application.OcspResponseService.CertId(
                             zeroecho.pki.application.OcspResponseService.CertIdHash.SHA1,
                             certificateId.getIssuerNameHash(), certificateId.getIssuerKeyHash(),
@@ -832,7 +897,7 @@ class AcmeEndToEndTest {
     }
 
     private PkiHttpsServer start(Fixture fixture) throws Exception {
-        return PkiHttpsServer.start(fixture.configuration(), fixture.dependencies(), ServerTestSupport.CLOCK,
+        return PkiHttpsServer.start(fixture.configuration(), fixture.dependencies(), CLOCK,
                 HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader());
     }
 
@@ -848,9 +913,10 @@ class AcmeEndToEndTest {
                 "keyRefPrefix", "acme-test:",
                 "requireComponentSuffix", "true"));
         PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
-                workflow, new ProviderConfig("x509-bc", Map.of()), "SHA256withRSA", Duration.ofSeconds(10),
-                Optional.of("ZEROECHO_TEST_KEYRING_PASSWORD"));
-        PkiSessionConfiguration session = new PkiSessionConfiguration(3,
+                workflow, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(),
+                Duration.ofSeconds(10),
+                Optional.of("ZEROECHO_TEST_KEYRING_PASSWORD"), signingTopology(), java.util.OptionalLong.empty());
+        PkiSessionConfiguration session = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("fs", Map.of("root", root.resolve("pki").toString())),
                 new ProviderConfig("memory", Map.of("size", "256")), Optional.of(signing), List.of(), List.of());
         ApprovalService.Policy approval = new ApprovalService.Policy("high-risk", 1, Set.of("approver"), Set.of(),
@@ -912,7 +978,7 @@ class AcmeEndToEndTest {
                 .orElseThrow();
         ProviderConfig http = configuration.acmeListener().orElseThrow().challengeProviders().get(0);
         String tlsJson = providerJson(tlsProvider(tls));
-        String workflow = providerJson(signing.workflow());
+        String workflow = providerJson(signing.provider());
         String store = providerJson(realm.pkiSessionConfiguration().store());
         String audit = providerJson(realm.pkiSessionConfiguration().audit());
         String authenticationJson = "{\"mode\":\"DIRECT_MTLS\",\"directClientMappings\":[{"
@@ -941,20 +1007,20 @@ class AcmeEndToEndTest {
                 + "\"approvalPolicy\":{\"policyId\":\"high-risk\",\"threshold\":1,"
                 + "\"eligibleApprovers\":[\"approver\"],\"requiredRoleTemplateIds\":[],"
                 + "\"requesterSeparation\":true,\"lifetimeMillis\":3600000,\"justificationRequired\":true},"
-                + "\"pkiSession\":{\"version\":4,\"store\":" + store + ",\"audit\":" + audit
-                + ",\"signing\":{\"workflow\":" + workflow + ",\"framework\":"
-                + providerJson(signing.framework()) + ",\"signatureAlgorithm\":\"SHA256withRSA\","
+                + "\"pkiSession\":{\"version\":6,\"store\":" + store + ",\"audit\":" + audit
+                + ",\"signing\":{\"provider\":" + workflow + ",\"signatureAlgorithm\":\""
+                + json(signing.signatureAlgorithm()) + "\","
                 + "\"signingTtlMillis\":10000,"
-                + "\"laneCount\":2,\"queueCapacity\":3,\"gracefulDrainMillis\":4000,"
-                + "\"forcedCancellationMillis\":5000,"
+                + "\"topology\":{\"coordinator\":{\"pageSize\":2,\"claimLeaseMillis\":10000,"
+                + "\"providerCallTimeoutMillis\":5000,\"idlePollIntervalMillis\":10,\"closeTimeoutMillis\":5000},"
+                + "\"exactGroups\":[],\"catchAll\":{\"laneCount\":2,\"prefetchSize\":3}},"
                 + "\"unlockEnvironmentVariable\":\"ZEROECHO_TEST_KEYRING_PASSWORD\"},"
                 + "\"publishers\":[],\"bindingProviders\":[]}},\"listener\":{\"address\":\"127.0.0.1\","
                 + "\"port\":" + configuration.listener().port() + ",\"tlsProvider\":" + tlsJson
                 + ",\"clientCertificateRequired\":true,\"maximumHeaderBytes\":16384,"
                 + "\"maximumBodyBytes\":1048576},\"authentication\":" + authenticationJson
                 + ",\"execution\":" + executionJson()
-                + ",\"signingReconciliation\":{\"enabled\":true,\"maxRecords\":256,\"maxCalls\":64,"
-                + "\"passTimeoutMillis\":30000,\"providerCallTimeoutMillis\":10000,"
+                + ",\"auditProjection\":{\"maxRecords\":256,\"maxSinkCalls\":64,"
                 + "\"idleIntervalMillis\":2000},\"publicListener\":{\"enabled\":true,"
                 + "\"address\":\"127.0.0.1\",\"port\":" + publicListener.port()
                 + ",\"tlsProvider\":" + tlsJson + ",\"allowPlaintextLoopback\":false,"
@@ -998,6 +1064,24 @@ class AcmeEndToEndTest {
 
     private static String json(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static AcmeTestClient.Response awaitValidOrder(AcmeTestClient client, URI orderUri,
+            AcmeTestClient.Response finalized) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        AcmeTestClient.Response current = finalized;
+        while (true) {
+            assertEquals(200, current.status(), current.bodyText());
+            String status = AcmeTestClient.text(current, "status");
+            if ("valid".equals(status)) {
+                return current;
+            }
+            assertEquals("processing", status, "Accepted order must remain processing until valid");
+            assertTrue(System.nanoTime() < deadline, "Accepted order did not become valid");
+            TimeUnit.MILLISECONDS.sleep(5);
+            // Finalize is submitted once; polling observes the same retained issuance.
+            current = client.postAsGet(orderUri);
+        }
     }
 
     private static void awaitDirectory(HttpClient client, URI directory, Process process, Path output)

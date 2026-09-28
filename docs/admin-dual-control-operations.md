@@ -2,7 +2,7 @@
 
 This document records which administrative operations require dual-control
 (second-person approval) and why. It exists so the decision can be folded into
-the final ZeroEcho documentation (Task 16) without re-deriving the rationale.
+the ZeroEcho operations documentation without re-deriving the rationale.
 
 ## Mechanism
 
@@ -61,15 +61,11 @@ default agreed with the owner on 2026-09-05.
   (`issuer.generation.inspect`, `issuer.path.inspect`, `issuer.path.list`) are
   non-mutating and approval-free.
 
-## Related follow-up
+## Publication authority binding
 
-The Task 12 independent review noted that publication operations
-(`publication.register`, `publication.retry`, `publication.reconcile`,
-`publication.inspect`, `publication.process`) required an envelope `authorityId`
-but did not bind it to the publication's owning authority, because
-`PublicationRecord` carries no authority field. This authorization hardening was
-completed as **Task 12+** (see [project-work-plan.md](project-work-plan.md)):
-the gateway now resolves the owning authority — from the committed record for
+Publication operations bind the declared envelope `authorityId` to the owning
+authority. Because `PublicationRecord` carries no authority field,
+the gateway resolves the owning authority — from the committed record for
 retry/reconcile/inspect/process, and directly from the declared source for
 register — and denies any request whose declared authority does not match, or
 whose source cannot be resolved. It is independent of the dual-control

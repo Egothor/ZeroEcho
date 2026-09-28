@@ -34,10 +34,12 @@
 
 /** Wire types for the pki-server admin API. */
 
+export type OperationFamily = 'PKI_OPERATION' | 'SIGNING_OPERATION' | 'SERVER_CONTROL_OPERATION';
+
 /** One operation descriptor as returned by `GET /admin/v1/operations`. */
 export interface OperationDescriptor {
   readonly operation: string;
-  readonly family: 'PKI_OPERATION' | 'SERVER_CONTROL_OPERATION';
+  readonly family: OperationFamily;
   readonly mutating: boolean;
   readonly resourceType: string;
   readonly approval: string;
@@ -77,4 +79,17 @@ export interface OperationRequest {
   /** ISO-8601 duration, e.g. "PT30S". */
   readonly deadline?: string;
   readonly arguments: Record<string, unknown>;
+}
+
+/** Public signing-operation projection; internal reactor/provider states are not a UI contract. */
+export interface SigningPendingResult extends Record<string, unknown> {
+  readonly operationId: string;
+}
+
+export interface SigningCompletedResult extends SigningPendingResult {
+  readonly kind: 'CA' | 'ISSUANCE' | 'STATUS';
+  readonly encoding: string;
+  readonly resultSha256: string;
+  readonly credentialId?: string;
+  readonly statusObjectId?: string;
 }

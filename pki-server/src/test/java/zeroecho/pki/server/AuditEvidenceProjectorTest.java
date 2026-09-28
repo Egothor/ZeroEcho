@@ -55,7 +55,7 @@ import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 
-/** Bounded, resumable, idempotent behaviour of the generic evidence projector (Task 8a framework). */
+/** Bounded, resumable, idempotent behaviour of the generic evidence projector in the evidence projection framework. */
 class AuditEvidenceProjectorTest {
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
 

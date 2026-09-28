@@ -33,7 +33,7 @@
  ******************************************************************************/
 
 import { useQuery } from '@tanstack/react-query';
-import { ApiRequestError, api, postRaw } from '@/api/client';
+import { ApiRequestError, api, getRaw, postRaw, type RawResult } from '@/api/client';
 import type { OperationCatalogResponse, OperationDescriptor, OperationEnvelope, OperationRequest } from '@/api/types';
 import type { FieldSpec, OperationSpec } from '@/api/operationSchema';
 
@@ -116,79 +116,116 @@ export function buildRequest(spec: OperationSpec, values: Record<string, FieldVa
 }
 
 export interface ExecuteExtras {
+  readonly signal?: AbortSignal;
   readonly approvalId?: string;
   readonly deadline?: string;
   /** Maximum time to keep polling a PENDING signing operation (ms). */
   readonly maxPendingWaitMs?: number;
 }
 
+export type PendingOutcome = {
+  readonly kind: 'pending';
+  readonly envelope: OperationEnvelope;
+  readonly operationId: string;
+  /** A local polling error does not change the last authoritative server outcome. */
+  readonly pollingError?: string;
+};
+
 export type ExecuteOutcome =
   | { readonly kind: 'succeeded'; readonly envelope: OperationEnvelope }
   | { readonly kind: 'failed'; readonly envelope: OperationEnvelope }
   | { readonly kind: 'approval-required'; readonly envelope: OperationEnvelope; readonly operationCommitment: string }
-  | { readonly kind: 'pending'; readonly envelope: OperationEnvelope; readonly signingOperationId?: string };
+  | PendingOutcome;
 
-function asEnvelope(body: unknown): OperationEnvelope {
-  const b = (body ?? {}) as Partial<OperationEnvelope>;
-  return {
-    version: b.version ?? 1,
-    requestId: b.requestId ?? '',
-    operation: b.operation ?? '',
-    status: b.status ?? 'FAILED',
-    result: (b.result as Record<string, unknown> | null) ?? null,
-    failure: (b.failure as OperationEnvelope['failure']) ?? null,
-  };
+function object(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function classify(status: number, envelope: OperationEnvelope, location?: string): ExecuteOutcome {
-  if (envelope.status === 'APPROVAL_REQUIRED' || status === 409) {
-    const commitment = (envelope.result?.['operationCommitment'] as string | undefined) ?? '';
-    return { kind: 'approval-required', envelope, operationCommitment: commitment };
-  }
-  if (envelope.status === 'PENDING' || status === 202) {
-    const id = location ? location.split('/').filter(Boolean).pop() : undefined;
-    return id ? { kind: 'pending', envelope, signingOperationId: id } : { kind: 'pending', envelope };
-  }
-  if (envelope.status === 'SUCCEEDED' && status >= 200 && status < 300) return { kind: 'succeeded', envelope };
-  return { kind: 'failed', envelope };
+function protocolError(status: number): never {
+  throw new ApiRequestError({ status, code: 'invalid_operation_response', message: 'Invalid operation response from the server.' });
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Decode the public envelope, without inferring success or approval from an HTTP code. */
+function classify(raw: RawResult): ExecuteOutcome {
+  const { status, body } = raw;
+  if (!object(body) || body.version !== 1 || typeof body.requestId !== 'string'
+      || typeof body.operation !== 'string' || !(body.result === null || object(body.result))) {
+    return protocolError(status);
+  }
+  if (body.failure !== null && (!object(body.failure)
+      || typeof body.failure.classification !== 'string' || typeof body.failure.code !== 'string'
+      || typeof body.failure.messageKey !== 'string' || typeof body.failure.recoveryRequired !== 'boolean'
+      || typeof body.failure.reconciliationRequired !== 'boolean')) return protocolError(status);
+  const envelope = body as unknown as OperationEnvelope;
+  if (body.status === 'APPROVAL_REQUIRED' && status === 409
+      && envelope.failure?.code === 'APPROVAL_REQUIRED'
+      && typeof envelope.result?.operationCommitment === 'string' && envelope.result.operationCommitment) {
+    return { kind: 'approval-required', envelope, operationCommitment: envelope.result.operationCommitment };
+  }
+  if (body.status === 'PENDING' && status === 202 && body.failure === null) {
+    const id = envelope.result?.operationId;
+    if (typeof id !== 'string' || !id.trim() || id.length > 512 || id.includes('/')) return protocolError(status);
+    return { kind: 'pending', envelope, operationId: id };
+  }
+  if (body.status === 'SUCCEEDED' && status >= 200 && status < 300 && body.failure === null) {
+    return { kind: 'succeeded', envelope };
+  }
+  if (body.status === 'FAILED' && status >= 400 && envelope.failure) return { kind: 'failed', envelope };
+  return protocolError(status);
+}
 
-/**
- * Execute an operation with the server's synchronous bounded-wait semantics.
- * A 202 PENDING signing hand-off is polled at `/admin/v1/signing-operations/{id}`
- * until it terminalizes or the pending-wait budget elapses.
- */
+function validateSigningCompletion(result: Record<string, unknown> | null, operationId: string): void {
+  if (!result || result.operationId !== operationId
+      || typeof result.kind !== 'string' || !['CA', 'ISSUANCE', 'STATUS'].includes(result.kind)
+      || typeof result.encoding !== 'string' || !result.encoding
+      || typeof result.resultSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(result.resultSha256)
+      || (result.credentialId !== undefined && (typeof result.credentialId !== 'string' || !result.credentialId))
+      || (result.statusObjectId !== undefined && (typeof result.statusObjectId !== 'string' || !result.statusObjectId))) {
+    protocolError(200);
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Sequential, bounded polling. Keeps only the latest response, never replays submission. */
+export async function pollOperation(initial: PendingOutcome, maxWaitMs = 30_000): Promise<ExecuteOutcome> {
+  if (!Number.isFinite(maxWaitMs) || maxWaitMs < 0) throw new Error('Polling wait must be finite and non-negative');
+  const deadline = Date.now() + maxWaitMs;
+  let pending: PendingOutcome = { kind: 'pending', envelope: initial.envelope, operationId: initial.operationId };
+  while (Date.now() < deadline) {
+    await sleep(Math.min(1_000, deadline - Date.now()));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remaining);
+    try {
+      const outcome = classify(await getRaw(`/admin/v1/signing-operations/${encodeURIComponent(initial.operationId)}`, controller.signal));
+      if (outcome.kind === 'approval-required') return protocolError(409);
+      if (outcome.kind === 'succeeded') validateSigningCompletion(outcome.envelope.result, initial.operationId);
+      if (outcome.kind !== 'pending') return outcome;
+      if (outcome.operationId !== initial.operationId) return protocolError(202);
+      pending = outcome;
+    } catch (error) {
+      return { ...pending, pollingError: controller.signal.aborted
+        ? 'The local wait budget elapsed while checking the operation.'
+        : error instanceof Error ? error.message : 'Unable to check the operation.' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return pending;
+}
+
+/** Submit once; accepted local and remote signing work both return PENDING. */
 export async function executeOperation(
   spec: OperationSpec,
   values: Record<string, FieldValue>,
   extra: ExecuteExtras = {},
 ): Promise<ExecuteOutcome> {
-  const { path, request } = buildRequest(spec, values, extra);
-  const raw = await postRaw(path, request);
-  let outcome = classify(raw.status, asEnvelope(raw.body), raw.headers['location']);
-
-  if (outcome.kind === 'pending' && outcome.signingOperationId) {
-    const deadline = Date.now() + (extra.maxPendingWaitMs ?? 30_000);
-    const id = outcome.signingOperationId;
-    while (Date.now() < deadline) {
-      await sleep(1_000);
-      let env: OperationEnvelope;
-      try {
-        env = await api.get<OperationEnvelope>(`/admin/v1/signing-operations/${encodeURIComponent(id)}`);
-      } catch (e) {
-        if (e instanceof ApiRequestError && e.body) {
-          env = asEnvelope(e.body);
-        } else {
-          throw e;
-        }
-      }
-      if (env.status !== 'PENDING') {
-        outcome = classify(200, env);
-        break;
-      }
-    }
+  if (extra.maxPendingWaitMs !== undefined && (!Number.isFinite(extra.maxPendingWaitMs) || extra.maxPendingWaitMs < 0)) {
+    throw new Error('Polling wait must be finite and non-negative');
   }
-  return outcome;
+  const { path, request } = buildRequest(spec, values, extra);
+  const outcome = classify(await postRaw(path, request, extra.signal));
+  return outcome.kind === 'pending' ? pollOperation(outcome, extra.maxPendingWaitMs) : outcome;
 }

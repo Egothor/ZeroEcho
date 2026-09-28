@@ -34,6 +34,7 @@
 package zeroecho.pki.impl.fs;
 
 import java.time.Duration;
+import java.math.BigInteger;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -72,20 +73,16 @@ import java.util.Optional;
  *                                               resident bytes available only to
  *                                               detached compaction work; must be
  *                                               positive
- * @param signingEvidenceAudit                  whether to record per-signing
- *                                               terminal-outcome (CA key-usage)
- *                                               audit evidence; an operator opt-in
- *                                               that costs an additional durable
- *                                               metadata commit (extra fsync) per
- *                                               terminal signing outcome
- *                                               (default {@code false})
+ * @param signingEvidenceAudit whether optional best-effort signing/proof evidence is appended; defaults to false
+ * @param initialCrlNumber initial number for a newly created CRL scope counter,
+ *                         from zero through {@code 2^159 - 1}; defaults to one
  */
 @SuppressWarnings("PMD.LongVariable") // Public option names remain explicit and configuration-stable.
 public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy profileHistoryPolicy,
         FsHistoryPolicy revocationHistoryPolicy, FsHistoryPolicy workflowHistoryPolicy, boolean strictSnapshotExport,
         Duration signingOperationHorizon, Duration signingIdPermittedSkew, int signingMaximumGroupSize,
         long signingResidentIndexBudgetBytes, long signingCompactionTransientBudgetBytes,
-        boolean signingEvidenceAudit) {
+        BigInteger initialCrlNumber, boolean signingEvidenceAudit) {
 
     private static final int DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE = 32;
     private static final int MAXIMUM_SIGNING_GROUP_SIZE = 32;
@@ -98,7 +95,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
      *
      * @throws NullPointerException     if a required object value is {@code null}
      * @throws IllegalArgumentException if a duration, signing group size, or
-     *                                  resident-index budget is outside its
+     *                                  resident-index budget or initial CRL number is outside its
      *                                  supported range
      */
     public FsPkiStoreOptions {
@@ -108,6 +105,10 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         Objects.requireNonNull(workflowHistoryPolicy, "workflowHistoryPolicy");
         Objects.requireNonNull(signingOperationHorizon, "signingOperationHorizon");
         Objects.requireNonNull(signingIdPermittedSkew, "signingIdPermittedSkew");
+        Objects.requireNonNull(initialCrlNumber, "initialCrlNumber");
+        if (initialCrlNumber.signum() < 0 || initialCrlNumber.bitLength() > 159) {
+            throw new IllegalArgumentException("initialCrlNumber must be from zero through 2^159 - 1");
+        }
         if (signingOperationHorizon.isZero() || signingOperationHorizon.isNegative()) {
             throw new IllegalArgumentException("signingOperationHorizon must be positive");
         }
@@ -146,7 +147,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         FsHistoryPolicy ninetyDays = FsHistoryPolicy.onWrite(Optional.of(Duration.ofDays(90)));
         return new FsPkiStoreOptions(ninetyDays, ninetyDays, ninetyDays, ninetyDays, true, Duration.ofDays(90),
                 Duration.ZERO, DEFAULT_SIGNING_MAXIMUM_GROUP_SIZE,
-                DEFAULT_RESIDENT_INDEX_BUDGET_BYTES, DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES, false);
+                DEFAULT_RESIDENT_INDEX_BUDGET_BYTES, DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES, BigInteger.ONE, false);
     }
 
     /**
@@ -166,25 +167,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, maximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, signingEvidenceAudit);
-    }
-
-    /**
-     * Returns a copy toggling per-signing terminal-outcome (CA key-usage) audit evidence.
-     *
-     * <p>When enabled, each terminal signing outcome records server-derived key-usage evidence in an
-     * append-ordered evidence log for the audit projector, at the cost of an additional durable metadata
-     * commit (extra fsync) per terminal outcome. It is an operator opt-in and defaults to disabled so the
-     * signing hot path is byte-for-byte and force-for-force unchanged unless the deployment requests it.</p>
-     *
-     * @param enabled whether to record signing key-usage audit evidence
-     * @return an immutable copy with the supplied setting
-     */
-    public FsPkiStoreOptions withSigningEvidenceAudit(boolean enabled) {
-        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
-                revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
-                signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, enabled);
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit);
     }
 
     /**
@@ -203,7 +186,7 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                maximumBytes, signingCompactionTransientBudgetBytes, signingEvidenceAudit);
+                maximumBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, signingEvidenceAudit);
     }
 
     /**
@@ -219,6 +202,36 @@ public record FsPkiStoreOptions(FsHistoryPolicy caHistoryPolicy, FsHistoryPolicy
         return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
                 revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
                 signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
-                signingResidentIndexBudgetBytes, maximumBytes, signingEvidenceAudit);
+                signingResidentIndexBudgetBytes, maximumBytes, initialCrlNumber, signingEvidenceAudit);
+    }
+
+    /**
+     * Returns an immutable copy with the initial number for new CRL scope counters.
+     * This setting does not reset an existing counter.
+     *
+     * @param number initial issued number, from zero through {@code 2^159 - 1}
+     * @return an immutable copy preserving all other options
+     * @throws NullPointerException if {@code number} is {@code null}
+     * @throws IllegalArgumentException if {@code number} is outside the issued range
+     */
+    public FsPkiStoreOptions withInitialCrlNumber(BigInteger number) {
+        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
+                revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
+                signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, number, signingEvidenceAudit);
+    }
+    /**
+     * Returns a copy enabling or disabling best-effort terminal signing and internal-proof evidence.
+     * Enabled evidence costs a separate metadata commit per new entry. Missing entries are
+     * recoverable only while their authoritative workflow remains retained; this option does
+     * not delay retirement or purge and creates no delivery worker.
+     * @param enabled whether the optional signing evidence feed is maintained
+     * @return an immutable copy preserving every other option
+     */
+    public FsPkiStoreOptions withSigningEvidenceAudit(boolean enabled) {
+        return new FsPkiStoreOptions(caHistoryPolicy, profileHistoryPolicy,
+                revocationHistoryPolicy, workflowHistoryPolicy, strictSnapshotExport,
+                signingOperationHorizon, signingIdPermittedSkew, signingMaximumGroupSize,
+                signingResidentIndexBudgetBytes, signingCompactionTransientBudgetBytes, initialCrlNumber, enabled);
     }
 }

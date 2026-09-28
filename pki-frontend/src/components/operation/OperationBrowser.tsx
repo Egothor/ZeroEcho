@@ -48,7 +48,6 @@ import {
   Typography,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import { useNavigate } from 'react-router-dom';
 import type { OperationSpec } from '@/api/operationSchema';
 import { indexDescriptors, useOperationDescriptors } from '@/api/operations';
 import { OperationRunner } from '@/components/operation/OperationRunner';
@@ -63,7 +62,6 @@ export function OperationBrowser({ operations }: Props) {
   const index = useMemo(() => indexDescriptors(descriptors.data), [descriptors.data]);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
-  const navigate = useNavigate();
 
   // Until the catalog loads (or if it is unavailable) show all; once loaded,
   // only operations this identity may invoke are shown at all — never merely
@@ -139,10 +137,10 @@ export function OperationBrowser({ operations }: Props) {
         )}
         {activeId ? (
           <OperationRunner
+            key={activeId}
             operationId={activeId}
             descriptor={index.get(activeId)}
             permitted={permitted(activeId)}
-            onRequestApproval={(_, opId) => navigate(`/approvals?target=${encodeURIComponent(opId)}`)}
           />
         ) : (
           <Paper variant="outlined" sx={{ p: 3 }}>

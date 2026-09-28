@@ -45,7 +45,7 @@ package zeroecho.pki.api.orch;
  *
  * <h2>Examples</h2>
  * <ul>
- * <li>A remote signature workflow may wait for hours. If the remote system is
+ * <li>A remote signing operation may wait for hours. If the remote system is
  * the source of truth and all necessary data can be re-derived from external
  * references (operation ID, request ID), the workflow can run in a durable mode
  * without storing sensitive material locally.</li>

@@ -34,6 +34,7 @@
 package zeroecho.pki.cli;
 
 import java.util.Objects;
+import java.util.Optional;
 
 import zeroecho.pki.application.PkiOperationValue;
 
@@ -53,11 +54,12 @@ sealed interface PkiRemoteResult permits PkiRemoteResult.Succeeded, PkiRemoteRes
     String operation();
 
     /** Successful operation with its safe structured result view. */
-    record Succeeded(String operation, PkiOperationValue.ObjectValue result) implements PkiRemoteResult {
+    record Succeeded(String operation, PkiOperationValue.ObjectValue result, Optional<String> operationId) implements PkiRemoteResult {
         /** Validates the successful result. */
         public Succeeded {
             requireOperation(operation);
             Objects.requireNonNull(result, "result");
+            Objects.requireNonNull(operationId, "operationId");
         }
     }
 
@@ -65,15 +67,19 @@ sealed interface PkiRemoteResult permits PkiRemoteResult.Succeeded, PkiRemoteRes
      * A signing hand-off that had not terminalized when the bounded wait elapsed;
      * the operator resumes it later using {@code operationId}.
      */
-    record Pending(String operation, String operationId) implements PkiRemoteResult {
+    record Pending(String operation, String operationId, Optional<ObservationFailure> observationFailure) implements PkiRemoteResult {
         /** Validates the pending identity. */
         public Pending {
             requireOperation(operation);
+            Objects.requireNonNull(observationFailure, "observationFailure");
             if (operationId == null || operationId.isBlank()) {
                 throw new IllegalArgumentException("operationId must not be blank");
             }
         }
     }
+
+    /** Safe local observation failure; the backend operation remains pending. */
+    record ObservationFailure(String classification, String code, int exitCode) { }
 
     /**
      * The operation requires an out-of-band approval; the caller must obtain an
@@ -91,9 +97,15 @@ sealed interface PkiRemoteResult permits PkiRemoteResult.Succeeded, PkiRemoteRes
 
     /** A safely-classified server failure carrying the stable classification and code. */
     record Failed(String operation, String classification, String code, boolean recoveryRequired,
-            boolean reconciliationRequired) implements PkiRemoteResult {
+            boolean reconciliationRequired, Optional<String> operationId) implements PkiRemoteResult {
         /** Validates the failure identity. */
+        public Failed(String operation, String classification, String code, boolean recoveryRequired,
+                boolean reconciliationRequired) {
+            this(operation, classification, code, recoveryRequired, reconciliationRequired, Optional.empty());
+        }
+
         public Failed {
+            Objects.requireNonNull(operationId, "operationId");
             requireOperation(operation);
             if (classification == null || classification.isBlank()) {
                 throw new IllegalArgumentException("classification must not be blank");

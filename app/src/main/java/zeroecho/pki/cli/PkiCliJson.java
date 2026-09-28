@@ -57,21 +57,37 @@ final class PkiCliJson {
 
     private static final int MAXIMUM_DEPTH = 16;
     private static final int MAXIMUM_STRING_LENGTH = 4_096;
-    private static final JsonFactory JSON_FACTORY = createFactory();
+    private static final JsonFactory JSON_FACTORY = createFactory(MAXIMUM_DOCUMENT_BYTES, MAXIMUM_STRING_LENGTH);
+    private static final JsonFactory ARGUMENT_FACTORY = createFactory(16 * MAXIMUM_DOCUMENT_BYTES, 21_846);
+    private static final JsonFactory RESPONSE_FACTORY = createFactory(4 * MAXIMUM_DOCUMENT_BYTES, 4 * MAXIMUM_DOCUMENT_BYTES);
 
     private PkiCliJson() {
     }
 
     /* default */ static PkiOperationValue parse(byte[] document) {
-        if (document == null || document.length == 0 || document.length > MAXIMUM_DOCUMENT_BYTES || hasBom(document)) {
+        return parse(document, JSON_FACTORY, MAXIMUM_DOCUMENT_BYTES, false, false);
+    }
+
+    /* default */ static PkiOperationValue parseResponse(byte[] document) {
+        return parse(document, RESPONSE_FACTORY, 4 * MAXIMUM_DOCUMENT_BYTES, true, true);
+    }
+
+    /* default */ static PkiOperationValue parseArgument(byte[] document) {
+        return parse(document, ARGUMENT_FACTORY, 16 * MAXIMUM_DOCUMENT_BYTES, true, false);
+    }
+
+    private static PkiOperationValue parse(byte[] document, JsonFactory factory, int maximumBytes,
+            boolean response, boolean envelope) {
+        if (document == null || document.length == 0 || document.length > maximumBytes || hasBom(document)) {
             throw invalid();
         }
-        try (JsonParser parser = JSON_FACTORY.createParser(ObjectReadContext.empty(), document, 0, document.length)) {
+        try (JsonParser parser = factory.createParser(ObjectReadContext.empty(), document, 0, document.length)) {
             JsonToken first = parser.nextToken();
             if (first == null) {
                 throw invalid();
             }
-            PkiOperationValue value = readValue(parser, first);
+            PkiOperationValue value = first == JsonToken.START_OBJECT
+                    ? readObject(parser, response, envelope) : readValue(parser, first, response);
             if (parser.nextToken() != null) {
                 throw invalid();
             }
@@ -81,10 +97,10 @@ final class PkiCliJson {
         }
     }
 
-    private static PkiOperationValue readValue(JsonParser parser, JsonToken token) {
+    private static PkiOperationValue readValue(JsonParser parser, JsonToken token, boolean response) {
         return switch (token) {
-            case START_OBJECT -> readObject(parser);
-            case START_ARRAY -> readArray(parser);
+            case START_OBJECT -> readObject(parser, response, false);
+            case START_ARRAY -> readArray(parser, response);
             case VALUE_STRING -> new PkiOperationValue.Text(parser.getString());
             case VALUE_NUMBER_INT -> new PkiOperationValue.IntegerValue(parser.getLongValue());
             case VALUE_TRUE -> new PkiOperationValue.BooleanValue(true);
@@ -93,37 +109,44 @@ final class PkiCliJson {
         };
     }
 
-    private static PkiOperationValue.ObjectValue readObject(JsonParser parser) {
+    private static PkiOperationValue.ObjectValue readObject(JsonParser parser, boolean response, boolean root) {
         Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
+        boolean resultSeen = false;
+        boolean failureSeen = false;
         while (parser.nextToken() != JsonToken.END_OBJECT) {
-            if (parser.currentToken() != JsonToken.PROPERTY_NAME || fields.size() >= MAXIMUM_CONTAINER_ENTRIES) {
+            if (parser.currentToken() != JsonToken.PROPERTY_NAME || fields.size() >= (response ? 4096 : MAXIMUM_CONTAINER_ENTRIES)) {
                 throw invalid();
             }
             String name = parser.currentName();
+            resultSeen |= "result".equals(name);
+            failureSeen |= "failure".equals(name);
             JsonToken valueToken = parser.nextToken();
-            if (valueToken == null || fields.putIfAbsent(name, readValue(parser, valueToken)) != null) {
+            if (root && valueToken == JsonToken.VALUE_NULL
+                    && ("result".equals(name) || "failure".equals(name))) { continue; }
+            if (valueToken == null || fields.putIfAbsent(name, readValue(parser, valueToken, response)) != null) {
                 throw invalid();
             }
         }
+        if (root && (!resultSeen || !failureSeen)) { throw invalid(); }
         return new PkiOperationValue.ObjectValue(fields);
     }
 
-    private static PkiOperationValue.ListValue readArray(JsonParser parser) {
+    private static PkiOperationValue.ListValue readArray(JsonParser parser, boolean response) {
         List<PkiOperationValue> values = new ArrayList<>();
         JsonToken token;
         while ((token = parser.nextToken()) != JsonToken.END_ARRAY) {
-            if (token == null || values.size() >= MAXIMUM_CONTAINER_ENTRIES) {
+            if (token == null || values.size() >= (response ? 4096 : MAXIMUM_CONTAINER_ENTRIES)) {
                 throw invalid();
             }
-            values.add(readValue(parser, token));
+            values.add(readValue(parser, token, response));
         }
         return new PkiOperationValue.ListValue(values);
     }
 
-    private static JsonFactory createFactory() {
+    private static JsonFactory createFactory(int maximumBytes, int maximumStringLength) {
         StreamReadConstraints constraints = StreamReadConstraints.builder().maxNestingDepth(MAXIMUM_DEPTH)
-                .maxDocumentLength(MAXIMUM_DOCUMENT_BYTES).maxTokenCount(32_768).maxNumberLength(20)
-                .maxStringLength(MAXIMUM_STRING_LENGTH).maxNameLength(64).build();
+                .maxDocumentLength(maximumBytes).maxTokenCount(maximumBytes > MAXIMUM_DOCUMENT_BYTES ? 65_536 : 32_768).maxNumberLength(20)
+                .maxStringLength(maximumStringLength).maxNameLength(maximumBytes > MAXIMUM_DOCUMENT_BYTES ? 128 : 64).build();
         JsonFactoryBuilder builder = JsonFactory.builder().streamReadConstraints(constraints)
                 .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).disable(StreamReadFeature.AUTO_CLOSE_SOURCE);
         for (JsonReadFeature feature : JsonReadFeature.values()) {

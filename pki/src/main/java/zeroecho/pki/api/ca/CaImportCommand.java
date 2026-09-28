@@ -35,6 +35,7 @@ package zeroecho.pki.api.ca;
 
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.content.DurableContentReference;
@@ -43,43 +44,41 @@ import zeroecho.pki.api.content.DurableContentReference;
  * Command to import an existing root CA credential into PKI inventory.
  *
  * <p>
- * This operation registers a CA entity and associates it with an externally
- * managed key reference.
+ * Execution requires an exact retained completed managed-key proof with
+ * {@code CaSubject(targetAuthorityId, Optional.of(targetAuthorityId), profileId, keyRef)}
+ * coordinates and separate authorization. An existing credential's self-signature
+ * is not fresh possession evidence. Construction only validates structural inputs;
+ * it does not read the credential, look up or verify a proof, or authorize import.
  * </p>
  *
+ * @param targetAuthorityId    exact import target, strict UTF-8 at most 4,096 bytes
  * @param formatId             credential format id
  * @param subjectRef           normalized CA subject reference
- * @param profileId            profile id for mapping/constraints
- * @param keyRef               reference to private key material
+ * @param profileId            nonblank strict UTF-8 profile id, at most 256 bytes
+ * @param keyRef               managed key reference, strict UTF-8 at most 1,048,576 bytes
+ * @param proofId              retained proof submission id, strict UTF-8 at most 4,096 bytes
  * @param existingCaCredential existing CA credential payload (certificate-like)
  * @param attributes           universal attributes (may be empty but not null)
  */
-public record CaImportCommand(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
-        DurableContentReference existingCaCredential, AttributeSet attributes) {
+public record CaImportCommand(PkiId targetAuthorityId, FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
+        PkiId proofId, DurableContentReference existingCaCredential, AttributeSet attributes) {
 
     /**
      * Creates a CA import command.
      *
-     * @throws IllegalArgumentException if inputs are invalid
+     * @throws IllegalArgumentException if any component is null, bounded text is invalid or proof id is malformed
      */
     public CaImportCommand {
-        if (formatId == null) {
-            throw new IllegalArgumentException("formatId must not be null");
-        }
-        if (subjectRef == null) {
-            throw new IllegalArgumentException("subjectRef must not be null");
-        }
-        if (profileId == null || profileId.isBlank()) {
-            throw new IllegalArgumentException("profileId must not be null/blank");
-        }
-        if (keyRef == null) {
-            throw new IllegalArgumentException("keyRef must not be null");
-        }
-        if (existingCaCredential == null) {
-            throw new IllegalArgumentException("existingCaCredential must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
+        CaCommandInputs.identifier(targetAuthorityId);
+        CaCommandInputs.required(formatId);
+        CaCommandInputs.required(subjectRef);
+        CaCommandInputs.profile(profileId);
+        CaCommandInputs.key(keyRef);
+        CaCommandInputs.proof(proofId);
+        CaCommandInputs.required(existingCaCredential);
+        CaCommandInputs.required(attributes);
     }
+
+    /** Returns a diagnostic representation without command coordinates, content or attributes. */
+    @Override public String toString() { return "CaImportCommand[redacted]"; }
 }

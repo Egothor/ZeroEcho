@@ -56,6 +56,7 @@ final class SigningCheckpointCodec {
 
     private static final short FLAGS = 0;
     private static final int ENTRY_FIXED_BYTES = 32;
+    private static final ThreadLocal<ReadFaultInjector> READ_FAULTS = new ThreadLocal<>();
 
     private SigningCheckpointCodec() {
         // utility class
@@ -67,6 +68,14 @@ final class SigningCheckpointCodec {
 
     /* default */ static Reader reader(SeekableByteChannel channel) throws IOException {
         return new Reader(channel);
+    }
+
+    /* default */ static void installReadFault(ReadFaultInjector fault) {
+        READ_FAULTS.set(Objects.requireNonNull(fault, "fault"));
+    }
+
+    /* default */ static void clearReadFault() {
+        READ_FAULTS.remove();
     }
 
     /* default */ static int encodedIndexBytes(String key) {
@@ -245,7 +254,12 @@ final class SigningCheckpointCodec {
             indexInput.readFully(fixed, 0, fixed.length,
                     "signing checkpoint entry is truncated");
             fixedView.clear();
-            String decodedKey = SigningFormatSupport.decodeCanonicalUtf8(key, MAX_KEY_BYTES);
+            String decodedKey;
+            try {
+                decodedKey = SigningFormatSupport.decodeCanonicalUtf8(key, MAX_KEY_BYTES);
+            } catch (IOException malformed) {
+                throw invalid("signing checkpoint key encoding is invalid");
+            }
             MetadataKey semanticKey;
             try {
                 semanticKey = semanticKey(decodedKey);
@@ -350,9 +364,16 @@ final class SigningCheckpointCodec {
         }
     }
 
+    // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
     private static SigningWalFrameCodec.Frame validateFrame(EntryDescriptor entry, byte[] encoded)
             throws IOException {
-        SigningWalFrameCodec.Frame frame = SigningWalFrameCodec.decode(encoded);
+        SigningWalFrameCodec.Frame frame;
+        try {
+            frame = SigningWalFrameCodec.decode(encoded);
+        } catch (IOException malformed) {
+            throw invalid("signing checkpoint frame is invalid");
+        }
         if (frame.recordType() != entry.recordType() || frame.sequence() != entry.sequence()) {
             throw invalid("signing checkpoint frame does not match its index entry");
         }
@@ -407,8 +428,25 @@ final class SigningCheckpointCodec {
         throw invalid("signing checkpoint record type is unsupported");
     }
 
-    private static IOException invalid(String diagnostic) {
-        return SigningFormatSupport.invalid(diagnostic);
+    private static MalformedCheckpointException invalid(String diagnostic) {
+        return new MalformedCheckpointException(diagnostic);
+    }
+
+    /** Internal marker separating malformed bytes from operational channel I/O. */
+    /* default */ static final class MalformedCheckpointException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private MalformedCheckpointException(String diagnostic) {
+            super(diagnostic);
+        }
+    }
+
+    /** Calling-thread injection point for operational checkpoint read failures. */
+    /* default */
+    @FunctionalInterface
+    interface ReadFaultInjector {
+        /** Runs before reading checkpoint content. */
+        void beforeRead() throws IOException;
     }
 
     /* default */ record Header(long generationIdentity, long revision,
@@ -483,6 +521,10 @@ final class SigningCheckpointCodec {
             channel.position(position);
             buffer.clear();
             buffer.limit((int) Math.min(buffer.capacity(), limit - position));
+            ReadFaultInjector fault = READ_FAULTS.get();
+            if (fault != null) {
+                fault.beforeRead();
+            }
             int count = channel.read(buffer);
             readCalls++;
             if (count <= 0) {

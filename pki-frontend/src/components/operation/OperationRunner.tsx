@@ -34,9 +34,9 @@
 
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Box, Divider, Paper, Stack, Typography } from '@mui/material';
+import { Alert, Button, Box, Divider, Paper, Stack, Typography } from '@mui/material';
 import { ApiRequestError } from '@/api/client';
-import { executeOperation, type ExecuteExtras, type ExecuteOutcome, type FieldValue } from '@/api/operations';
+import { buildRequest, executeOperation, pollOperation, type ExecuteExtras, type ExecuteOutcome, type FieldValue } from '@/api/operations';
 import { operationSpec } from '@/api/operationCatalog';
 import type { OperationDescriptor } from '@/api/types';
 import { OperationForm } from '@/components/operation/OperationForm';
@@ -52,12 +52,11 @@ interface Props {
   readonly initialValues?: Partial<Record<string, FieldValue>>;
   /** Notified with the operation result (used by entity screens to refresh lists). */
   readonly onCompleted?: (outcome: ExecuteOutcome) => void;
-  readonly onRequestApproval?: (operationCommitment: string, operationId: string) => void;
 }
 
 /**
  * Runs a single operation: a typed form plus execution with the server's
- * bounded-wait / pending / approval semantics, rendered as an outcome. UI never
+ * acceptance / pending / approval semantics, rendered as an outcome. UI never
  * grants authority — a hidden or disabled control is not an authorization
  * boundary; the server decides on every request.
  */
@@ -67,10 +66,11 @@ export function OperationRunner({
   permitted = true,
   initialValues,
   onCompleted,
-  onRequestApproval,
 }: Props) {
   const spec = operationSpec(operationId);
   const [outcome, setOutcome] = useState<ExecuteOutcome | null>(null);
+  const [followup, setFollowup] = useState<{ id: string; values: Record<string, FieldValue> } | null>(null);
+  const [submitted, setSubmitted] = useState<Record<string, FieldValue>>({});
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
@@ -91,6 +91,19 @@ export function OperationRunner({
         setError(e instanceof Error ? e.message : 'Execution failed');
       }
     },
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: async () => {
+      if (outcome?.kind !== 'pending') throw new Error('No pending operation');
+      return pollOperation(outcome);
+    },
+    onSuccess: (result) => {
+      setOutcome(result);
+      setError(null);
+      onCompleted?.(result);
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : 'Unable to check the operation.'),
   });
 
   if (!spec) {
@@ -130,12 +143,29 @@ export function OperationRunner({
 
       <Divider sx={{ mb: 2 }} />
 
+      {spec.id === 'credential.confirmation.proof.complete' && !initialValues?.expectedChallengeRecordCommitment && <Alert severity="info" sx={{ mb: 2 }} action={<Button onClick={() => setFollowup({ id: 'credential.confirmation.challenge.issue', values: { ...initialValues } })}>Issue challenge</Button>}>
+        Issue a fresh confirmation challenge, then use Complete proof to carry its server-provided preconditions.
+      </Alert>}
       <OperationForm
         spec={spec}
-        busy={mutation.isPending}
+        busy={mutation.isPending || statusMutation.isPending}
         initialValues={initialValues}
-        onSubmit={(values, extra) => mutation.mutate({ values, extra })}
+        onSubmit={(values, extra) => { setSubmitted(values); setFollowup(null); mutation.mutate({ values, extra }); }}
       />
+
+      {outcome?.kind === 'succeeded' && spec.id === 'credential.confirmation.challenge.issue' && <Button onClick={() => {
+        const result = outcome.envelope.result ?? {};
+        const values: Record<string, FieldValue> = { __authorityId: submitted.__authorityId };
+        for (const key of ['credentialId', 'expectedLifecycleRevision', 'expectedLifecycleRecordCommitment', 'expectedChallengeRecordCommitment']) {
+          const value = result[key]; if (typeof value === 'string' || typeof value === 'number') values[key] = value;
+        }
+        setFollowup({ id: 'credential.confirmation.proof.complete', values });
+      }}>Complete proof</Button>}
+      {outcome?.kind === 'approval-required' && <Button onClick={() => {
+        const { request } = buildRequest(spec, submitted);
+        setFollowup({ id: 'security.approval.request', values: { targetOperation: spec.id, targetArguments: JSON.stringify(request.arguments), targetAuthorityId: request.authorityId ?? '' } });
+      }}>Prepare approval request</Button>}
+      {followup && <OperationRunner key={followup.id} operationId={followup.id} initialValues={followup.values} />}
 
       {(outcome || error) && (
         <Box sx={{ mt: 3 }}>
@@ -143,9 +173,9 @@ export function OperationRunner({
           {outcome && (
             <OutcomeView
               outcome={outcome}
-              onRequestApproval={
-                onRequestApproval ? (commitment) => onRequestApproval(commitment, spec.id) : undefined
-              }
+              onCheckStatus={() => statusMutation.mutate()}
+              checkingStatus={mutation.isPending || statusMutation.isPending}
+
             />
           )}
         </Box>

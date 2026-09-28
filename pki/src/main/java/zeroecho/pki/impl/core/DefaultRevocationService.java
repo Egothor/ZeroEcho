@@ -290,6 +290,11 @@ public final class DefaultRevocationService implements RevocationService {
         }
 
         @Override
+        public zeroecho.pki.spi.store.MetadataStoreId sourceStoreId() {
+            return source.sourceStoreId();
+        }
+
+        @Override
         public long revision() {
             return source.revision();
         }
@@ -362,6 +367,14 @@ public final class DefaultRevocationService implements RevocationService {
                 throw new IllegalStateException("Revocation search cursor is not positioned");
             }
             return current;
+        }
+
+        @Override
+        public long currentGlobalRevision() {
+            if (current == null) {
+                throw new IllegalStateException("Revocation search cursor is not positioned");
+            }
+            return source.currentGlobalRevision();
         }
 
         @Override

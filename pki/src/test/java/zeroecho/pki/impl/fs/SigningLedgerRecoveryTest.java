@@ -44,6 +44,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
@@ -53,16 +54,273 @@ import java.util.Optional;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.CRC32C;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import zeroecho.pki.spi.store.MetadataKey;
+import zeroecho.pki.spi.store.MetadataStoreId;
 
 final class SigningLedgerRecoveryTest {
     @TempDir
     private Path temporaryDirectory;
+
+    @Test
+    void recoveryOwnershipAdvancesOnceThroughPassiveActivationAndExplicitStart()
+            throws Exception {
+        Path root = createRoot("two-phase-recovery");
+        activeOnly(root, 7L, 0L, 0L);
+        Map<String, byte[]> before = inventory(root);
+        CollectingSink sink = new CollectingSink();
+
+        try (SigningLedgerRecovery.PreparedOpen prepared = SigningLedgerRecovery.prepare(
+                root, configuration(), sink)) {
+            assertEquals(SigningLedgerRecovery.OpenState.PREPARED_READ_ONLY, prepared.state());
+            assertFalse(sink.published.get());
+            assertInventoryEquals(before, inventory(root));
+
+            try (SigningLedgerRecovery.ActivatedOpen activated = prepared.activate()) {
+                assertEquals(SigningLedgerRecovery.OpenState.PASSIVE_ACTIVATED,
+                        activated.state());
+                assertEquals(SigningActiveWal.State.PASSIVE,
+                        activated.activeWal().snapshot().state());
+                assertFalse(sink.published.get());
+                assertThrows(IllegalStateException.class, prepared::activate);
+
+                activated.publishRecoveredState();
+                activated.markEngineReconstructed();
+                assertEquals(SigningLedgerRecovery.OpenState.ENGINE_RECONSTRUCTED,
+                        activated.state());
+                activated.markRecoveryWritesForced();
+                activated.activeWal().startWriter();
+                activated.markThreadsStarted();
+                SigningLedgerRecovery.Handle handle = activated.transferToStartedEngine();
+                assertEquals(SigningLedgerRecovery.OpenState.OWNERSHIP_TRANSFERRED,
+                        handle.state());
+                assertTrue(sink.published.get());
+                assertThrows(IllegalStateException.class,
+                        activated::transferToStartedEngine);
+                handle.close();
+                handle.close();
+            }
+        }
+    }
+
+    @Test
+    void activationRechecksValidatedWalBeforeAnyRepairOrPublication() throws Exception {
+        Path root = createRoot("two-phase-recheck");
+        SigningManifestCodec.Manifest manifest = activeOnly(root, 7L, 0L, 0L);
+        CollectingSink sink = new CollectingSink();
+
+        try (SigningLedgerRecovery.PreparedOpen prepared = SigningLedgerRecovery.prepare(
+                root, configuration(), sink)) {
+            Path active = root.resolve(manifest.activeWal().name());
+            Files.write(active, new byte[] { 9 }, StandardOpenOption.APPEND);
+            byte[] changed = Files.readAllBytes(active);
+
+            IOException failure = assertThrows(IOException.class, prepared::activate);
+            assertEquals("signing active WAL changed after validation", failure.getMessage());
+            assertFalse(sink.published.get());
+            assertArrayEquals(changed, Files.readAllBytes(active));
+            prepared.close();
+        }
+    }
+
+    @Test
+    void malformedActiveHeaderAfterPreflightIsCauseFreeAndReleasesOwnership()
+            throws Exception {
+        Path root = createRoot("two-phase-malformed-header");
+        SigningManifestCodec.Manifest manifest = activeOnly(root, 7L, 0L, 0L);
+        CollectingSink sink = new CollectingSink();
+        TrackingOperations operations = new TrackingOperations();
+        AtomicReference<SigningGenerationRegistry> observedRegistry = new AtomicReference<>();
+        long threadsBefore = recoveryThreadCount();
+        SigningLedgerRecovery.PreparedOpen prepared = SigningLedgerRecovery.prepare(
+                root, configuration(), sink, operations, System::nanoTime,
+                (monitor, nanos) -> { },
+                (stage, registry) -> observedRegistry.set(registry));
+        Path active = root.resolve(manifest.activeWal().name());
+        try (FileChannel channel = FileChannel.open(active, StandardOpenOption.WRITE)) {
+            channel.position(0L);
+            channel.write(ByteBuffer.wrap(new byte[] { 0 }));
+            channel.force(true);
+        }
+
+        SigningLedgerRecovery.RecoveryException failure = assertThrows(
+                SigningLedgerRecovery.RecoveryException.class, prepared::activate);
+
+        assertEquals(SigningLedgerRecovery.Code.RECOVERY_INVALID, failure.code());
+        assertEquals(0, failure.getSuppressed().length);
+        assertEquals(null, failure.getCause());
+        assertFalse(sink.published.get());
+        assertTrue(sink.preparedClosed.get());
+        assertFalse(operations.channelOpen());
+        assertEquals(threadsBefore, recoveryThreadCount());
+        assertReleased(observedRegistry.get().statistics());
+        prepared.close();
+    }
+
+    @Test
+    void uncertainPassiveTailRepairRetainsOperationalCauseAndReleasesOwnership()
+            throws Exception {
+        Path root = createRoot("uncertain-passive-tail-repair");
+        SigningManifestCodec.Manifest manifest = activeOnly(root, 7L, 0L, 0L);
+        Path active = root.resolve(manifest.activeWal().name());
+        Files.write(active, new byte[] { 1, 2, 3 }, StandardOpenOption.APPEND);
+        CollectingSink sink = new CollectingSink();
+        TrackingOperations operations = new TrackingOperations(
+                new IOException("operational-tail-force-sentinel"));
+        AtomicReference<SigningGenerationRegistry> observedRegistry = new AtomicReference<>();
+        long threadsBefore = recoveryThreadCount();
+
+        SigningActiveWal.RecoveryRequiredException failure = assertThrows(
+                SigningActiveWal.RecoveryRequiredException.class, () -> {
+                    try (SigningLedgerRecovery.PreparedOpen prepared =
+                            SigningLedgerRecovery.prepare(root, configuration(), sink,
+                                    operations, System::nanoTime, (monitor, nanos) -> { },
+                                    (stage, registry) -> observedRegistry.set(registry))) {
+                        prepared.activate();
+                    }
+                });
+
+        assertEquals("operational-tail-force-sentinel", failure.getCause().getMessage());
+        assertFalse(sink.published.get());
+        assertTrue(sink.preparedClosed.get());
+        assertFalse(operations.channelOpen());
+        assertEquals(threadsBefore, recoveryThreadCount());
+        assertReleased(observedRegistry.get().statistics());
+    }
+
+    @ParameterizedTest
+    @EnumSource(SigningLedgerStoreEngine.StartStage.class)
+    void partialEngineStartClosesEveryStartedRecoveryThread(
+            SigningLedgerStoreEngine.StartStage failedStage) throws Exception {
+        Path root = createRoot("start-fault-" + failedStage.name().toLowerCase(
+                java.util.Locale.ROOT));
+        activeOnly(root, 7L, 0L, 0L);
+        long before = recoveryThreadCount();
+        AtomicReference<SigningActiveWal> observedWal = new AtomicReference<>();
+        AtomicReference<SigningGenerationRegistry> observedRegistry = new AtomicReference<>();
+
+        IOException failure = assertThrows(IOException.class, () ->
+                SigningLedgerStoreEngine.open(root,
+                        new MetadataStoreId("0123456789abcdef0123456789abcdef"),
+                        SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
+                        configuration().activeWalConfiguration(),
+                        FsPkiStoreOptions.DEFAULT_RESIDENT_INDEX_BUDGET_BYTES,
+                        FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES, null,
+                        (stage, wal, registry) -> {
+                            observedWal.set(wal);
+                            observedRegistry.set(registry);
+                            if (stage == failedStage) {
+                                throw new IOException("injected engine start failure");
+                            }
+                        }));
+
+        assertEquals("injected engine start failure", failure.getMessage());
+        assertEquals(before, recoveryThreadCount());
+        SigningActiveWal wal = observedWal.get();
+        assertFalse(wal.channelOpen());
+        assertEquals(0, wal.snapshot().queueDepth());
+        assertEquals(0, wal.snapshot().outstandingRequests());
+        assertEquals(0L, wal.snapshot().outstandingPayloadBytes());
+        assertEquals(0L, wal.snapshot().outstandingEncodedBytes());
+        assertReleased(observedRegistry.get().statistics());
+    }
+
+    @Test
+    void postActivationBudgetFailureReleasesWalPinsReferencesAndThreads()
+            throws Exception {
+        Path root = createRoot("post-activation-budget");
+        activeOnly(root, 7L, 0L, 0L);
+        long before = recoveryThreadCount();
+        AtomicReference<SigningActiveWal> observedWal = new AtomicReference<>();
+        AtomicReference<SigningGenerationRegistry> observedRegistry = new AtomicReference<>();
+
+        assertThrows(IllegalArgumentException.class, () -> SigningLedgerStoreEngine.open(root,
+                new MetadataStoreId("0123456789abcdef0123456789abcdef"),
+                SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
+                configuration().activeWalConfiguration(), 1L,
+                FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES, null,
+                (stage, wal, registry) -> {
+                    if (stage == SigningLedgerStoreEngine.StartStage.RECOVERY_ACTIVATED) {
+                        observedWal.set(wal);
+                        observedRegistry.set(registry);
+                    }
+                }));
+
+        assertEquals(before, recoveryThreadCount());
+        assertFalse(observedWal.get().channelOpen());
+        assertEquals(0, observedWal.get().snapshot().outstandingRequests());
+        assertReleased(observedRegistry.get().statistics());
+    }
+
+    @ParameterizedTest
+    @EnumSource(SigningLedgerRecovery.RecoveryStage.class)
+    void recoveryBoundaryFaultsCloseOwnershipWithoutUnauthorizedMutation(
+            SigningLedgerRecovery.RecoveryStage failedStage) throws Exception {
+        Path root = createRoot("recovery-fault-" + failedStage.name().toLowerCase(
+                java.util.Locale.ROOT));
+        SigningManifestCodec.Manifest manifest = activeOnly(root, 7L, 0L, 0L);
+        Path active = root.resolve(manifest.activeWal().name());
+        if (failedStage == SigningLedgerRecovery.RecoveryStage.AFTER_TAIL_REPAIR) {
+            Files.write(active, new byte[] { 1, 2, 3 }, StandardOpenOption.APPEND);
+        }
+        Map<String, byte[]> before = inventory(root);
+        TrackingOperations operations = new TrackingOperations();
+        CollectingSink sink = new CollectingSink();
+        AtomicReference<SigningGenerationRegistry> observedRegistry = new AtomicReference<>();
+        long threadsBefore = recoveryThreadCount();
+
+        IOException failure = assertThrows(IOException.class, () -> {
+                    try (SigningLedgerRecovery.PreparedOpen prepared =
+                            SigningLedgerRecovery.prepare(root, configuration(), sink,
+                                    operations, System::nanoTime, (monitor, nanos) -> { },
+                                    (stage, registry) -> {
+                                        observedRegistry.set(registry);
+                                        if (stage == failedStage) {
+                                            throw new IOException("injected recovery failure");
+                                        }
+                                    })) {
+                        prepared.activate();
+                    }
+                });
+
+        assertEquals("injected recovery failure", failure.getMessage());
+        assertFalse(sink.published.get());
+        assertTrue(sink.preparedClosed.get());
+        assertFalse(operations.channelOpen());
+        assertEquals(threadsBefore, recoveryThreadCount());
+        assertReleased(observedRegistry.get().statistics());
+        if (failedStage == SigningLedgerRecovery.RecoveryStage.AFTER_TAIL_REPAIR) {
+            assertArrayEquals(SigningWalContainerCodec.encode(
+                    new SigningWalContainerCodec.Header(7L, 0L, 0L)),
+                    Files.readAllBytes(active));
+        } else {
+            assertInventoryEquals(before, inventory(root));
+        }
+    }
+
+    private static void assertReleased(SigningGenerationRegistry.Snapshot snapshot) {
+        assertEquals(0L, snapshot.currentReferences());
+        assertEquals(0L, snapshot.snapshotPins());
+        assertEquals(0L, snapshot.mvccReferences());
+        assertEquals(0L, snapshot.dueReferences());
+        assertEquals(0L, snapshot.ownerReferences());
+        assertEquals(0L, snapshot.recoveryTemporaryReferences());
+    }
+
+    private static long recoveryThreadCount() {
+        return Thread.getAllStackTraces().keySet().stream()
+                .filter(Thread::isAlive)
+                .map(Thread::getName)
+                .filter(name -> name.equals("zeroecho-signing-wal-writer")
+                        || name.equals("zeroecho-metadata-commit-coordinator")
+                        || name.equals("zeroecho-metadata-maintenance-coordinator"))
+                .count();
+    }
 
     @ParameterizedTest(name = "integrity/restart image: {0}")
     @EnumSource(IntegrityImage.class)
@@ -490,7 +748,7 @@ final class SigningLedgerRecoveryTest {
                 replaceSealedCommitment(fixture);
             }
         },
-        MANIFEST_COMMITMENT(SigningLedgerRecovery.Code.RECOVERY_INVALID) {
+        MANIFEST_COMMITMENT(SigningLedgerRecovery.Code.MANIFEST_INVALID) {
             @Override void mutate(IntegrityFixture fixture) throws IOException {
                 byte[] manifest = Files.readAllBytes(fixture.root().resolve(SigningLedgerRecovery.MANIFEST_FILE));
                 manifest[manifest.length - 1] ^= 1;
@@ -653,6 +911,7 @@ final class SigningLedgerRecoveryTest {
         private final List<String> keys = new ArrayList<>();
         private final List<SigningCheckpointCodec.Header> boundaries = new ArrayList<>();
         private final AtomicBoolean published = new AtomicBoolean();
+        private final AtomicBoolean preparedClosed = new AtomicBoolean();
 
         @Override
         public Session begin(SigningManifestCodec.Manifest manifest) {
@@ -680,12 +939,94 @@ final class SigningLedgerRecoveryTest {
                 public Prepared prepare() {
                     return new Prepared() {
                         @Override public void publish() { published.set(true); }
-                        @Override public void close() { }
+                        @Override public void close() { preparedClosed.set(true); }
                     };
                 }
 
                 @Override public void close() { }
             };
+        }
+    }
+
+    private static final class TrackingOperations implements SigningActiveWal.Operations {
+        private final IOException forceFailure;
+        private TrackingChannel channel;
+
+        private TrackingOperations() {
+            this(null);
+        }
+
+        private TrackingOperations(IOException forceFailure) {
+            this.forceFailure = forceFailure;
+        }
+
+        @Override public boolean exists(Path path) {
+            return Files.exists(path, LinkOption.NOFOLLOW_LINKS);
+        }
+
+        @Override public boolean isRegularFile(Path path) {
+            return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS);
+        }
+
+        @Override public SigningActiveWal.WalChannel createNew(Path path) throws IOException {
+            throw new IOException("recovery must not create an active WAL");
+        }
+
+        @Override public SigningActiveWal.WalChannel openExisting(Path path) throws IOException {
+            channel = new TrackingChannel(FileChannel.open(path, StandardOpenOption.READ,
+                    StandardOpenOption.WRITE), forceFailure);
+            return channel;
+        }
+
+        @Override public void forceDirectory(Path directory) {
+            // Recovery does not publish a directory entry.
+        }
+
+        private boolean channelOpen() {
+            return channel != null && channel.isOpen();
+        }
+    }
+
+    private static final class TrackingChannel implements SigningActiveWal.WalChannel {
+        private final FileChannel delegate;
+        private final IOException forceFailure;
+
+        private TrackingChannel(FileChannel delegate, IOException forceFailure) {
+            this.delegate = delegate;
+            this.forceFailure = forceFailure;
+        }
+
+        @Override public int read(ByteBuffer target) throws IOException {
+            return delegate.read(target);
+        }
+
+        @Override public int write(ByteBuffer source) throws IOException {
+            return delegate.write(source);
+        }
+
+        @Override public long position() throws IOException { return delegate.position(); }
+
+        @Override public SigningActiveWal.WalChannel position(long position) throws IOException {
+            delegate.position(position);
+            return this;
+        }
+
+        @Override public long size() throws IOException { return delegate.size(); }
+
+        @Override public SigningActiveWal.WalChannel truncate(long size) throws IOException {
+            delegate.truncate(size);
+            return this;
+        }
+
+        @Override public boolean isOpen() { return delegate.isOpen(); }
+
+        @Override public void close() throws IOException { delegate.close(); }
+
+        @Override public void force(boolean metadata) throws IOException {
+            if (forceFailure != null) {
+                throw forceFailure;
+            }
+            delegate.force(metadata);
         }
     }
 }

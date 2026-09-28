@@ -119,7 +119,7 @@ final class SigningTransitionWorkspaceSizing {
         int deleteNodes = Math.multiplyExact(Math.max(0, height - 1),
                 Math.addExact(1, DOUBLE_ROTATION_EXTRA_NODES));
         int records = SigningTransactionPayloadCodec.MAXIMUM_MUTATIONS / 3;
-        int deletes = Math.multiplyExact(records, 3);
+        int deletes = SigningTransactionPayloadCodec.MAXIMUM_MUTATIONS;
         int replacements = 1; // Engine-added watermark; purge uses direct commit.
         long nodes = Math.addExact(Math.multiplyExact((long) deletes, deleteNodes),
                 Math.multiplyExact((long) replacements, replaceNodes));
@@ -136,6 +136,7 @@ final class SigningTransitionWorkspaceSizing {
         CREATE_INTENT(3, 1, 0),
         CREATE_INTENT_WITH_DOMAIN(4, 1, 0),
         CREATE_INTENT_WITH_CORRELATED_DOMAIN(5, 1, 0),
+        CREATE_COMPOSITE_CA_WITH_CORRELATED_DOMAIN(6, 1, 0),
         ATOMIC_LOCAL_ACCEPTANCE(3, 0, 0),
         DOMAIN_CONTINUATION(0, 3, 0),
         CLAIM_RENEW_OR_RECONCILE(0, 3, 0),

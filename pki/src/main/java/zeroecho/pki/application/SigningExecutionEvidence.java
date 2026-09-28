@@ -48,15 +48,19 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
  * usage).
  *
  * <p>Every issuance, status object, CA certificate, and CRL is produced by a signing operation, so this
- * evidence provides the key-usage audit dimension: which signing namespace and key fingerprint produced a
+ * evidence provides the key-usage audit dimension: which signing namespace and accepted-request fingerprint produced a
  * terminal outcome, under whose ownership, with which outcome classification. It is recorded when a signing
  * record reaches a terminal state ({@code SIGNED}, {@code FAILED}, {@code CANCELLED}, {@code EXPIRED}) and
  * is derivable entirely from that terminal record. Because signing records are retired after downstream
  * publication, the evidence is appended in the append-ordered signing-evidence log so a bounded,
- * crash-consistent audit projector can reconstruct every key use independently of record retirement.</p>
+ * crash-consistent audit projector can project retained key-use evidence independently of record retirement.
+ * Delivery is best-effort and opt-in: a missing append is recoverable only while the authoritative
+ * workflow remains retained. A composite proof uses its distinct provider step ID as the feed marker
+ * and shares the parent acceptance commitment; proof success is recorded even if later verification
+ * or certificate publication fails.</p>
  *
  * @param namespace signing namespace
- * @param fingerprint signing-key fingerprint
+ * @param fingerprint immutable semantic acceptance commitment
  * @param ownerType signing-owner principal type
  * @param ownerId signing-owner principal identity
  * @param detailCode safe terminal detail classification, when present
@@ -110,14 +114,14 @@ public record SigningExecutionEvidence(String namespace, String fingerprint, Str
      * Creates authoritative terminal signing evidence.
      *
      * @param namespace signing namespace
-     * @param fingerprint signing-key fingerprint
+     * @param fingerprint immutable semantic acceptance commitment
      * @param ownerType signing-owner principal type
      * @param ownerId signing-owner principal identifier
      * @param detailCode optional safe terminal detail classification
      * @param outcome terminal outcome
      * @return validated terminal evidence
      */
-    // Stable evidence factory retained for source compatibility; grouping parameters would change the public API.
+    // The factory preserves the closed server evidence vocabulary.
     @SuppressWarnings("PMD.UseObjectForClearerAPI")
     public static SigningExecutionEvidence terminal(String namespace, String fingerprint, String ownerType,
             String ownerId, Optional<String> detailCode, Outcome outcome) {
@@ -171,6 +175,24 @@ public record SigningExecutionEvidence(String namespace, String fingerprint, Str
             return Optional.of(new SigningExecutionEvidence(namespace, fingerprint, ownerType, ownerId, detailCode,
                     outcome));
         } catch (IllegalArgumentException | NullPointerException invalid) {
+            throw invalidEvidence();
+        }
+    }
+
+    /**
+     * Decodes a feed payload containing UTF-8 canonical unpadded base64url attributes.
+     * The encoded byte count is bounded before allocation; the existing attribute
+     * decoder enforces canonical framing and its decoded-byte and entry limits.
+     *
+     * @param payload exact evidence-feed bytes, borrowed for this call
+     * @return empty only when this evidence family's vocabulary is absent
+     * @throws IllegalArgumentException if framing or this family's vocabulary is invalid
+     */
+    @SuppressWarnings("PMD.PreserveStackTrace") // Feed values must not escape through exception causes.
+    public static Optional<SigningExecutionEvidence> decode(byte[] payload) {
+        try {
+            return decode(EvidencePayloadEncoding.decode(payload));
+        } catch (IllegalArgumentException invalid) {
             throw invalidEvidence();
         }
     }

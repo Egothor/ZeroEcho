@@ -56,31 +56,38 @@ export function createDemoState(): DemoState {
       { caId: 'ca-devices-01', subject: 'CN=ZeroEcho Device CA', state: 'ACTIVE', kind: 'INTERMEDIATE', profileId: 'device-v1' },
       { caId: 'ca-legacy-01', subject: 'CN=ZeroEcho Legacy CA', state: 'RETIRED', kind: 'INTERMEDIATE', profileId: 'tls-issuing-v1' },
     ],
+    generations: [
+      { issuerId: 'gen-01', authorityId: 'ca-tls-issuing-01', credentialId: 'cred-9f01', state: 'ACTIVE', profileId: 'tls-server-v3' },
+      { issuerId: 'gen-root', authorityId: 'ca-root-01', state: 'ACTIVE', profileId: 'root-ca-v1' },
+    ],
+    capabilities: [{ capabilityId: 'cap-01', objectId: 'cred-9f01', expiresAt: '2027-01-01T00:00:00Z', revoked: false }],
     chainPaths: [
+      { pathId: 'path-root', issuerId: 'gen-root', hops: 1 },
       { pathId: 'path-01', issuerId: 'gen-01', hops: 2, active: true },
       { pathId: 'path-02', issuerId: 'gen-02', hops: 2, active: false },
     ],
     profiles: [
-      { profileId: 'tls-server-v3', profileVersion: 3, active: true, keyUsage: 'digitalSignature,keyEncipherment', eku: 'serverAuth' },
-      { profileId: 'tls-client-v2', profileVersion: 2, active: true, keyUsage: 'digitalSignature', eku: 'clientAuth' },
+      { profileId: 'root-ca-v1', displayName: 'Root authority', formatId: 'x509', profileVersion: 1, active: true, publicKeyAlgorithms: ['EC'], x509BindingPolicies: ['sha256-ecdsa'] },
+      { profileId: 'tls-server-v3', displayName: 'TLS server certificate', formatId: 'x509', profileVersion: 3, publicKeyAlgorithms: ['EC'], x509BindingPolicies: ['sha256-ecdsa'], maximumValidity: 'PT24H', active: true, keyUsage: 'digitalSignature,keyEncipherment', eku: 'serverAuth' },
+      { profileId: 'tls-client-v2', displayName: 'TLS client certificate', formatId: 'x509', profileVersion: 2, publicKeyAlgorithms: ['EC'], x509BindingPolicies: ['sha256-ecdsa'], maximumValidity: 'PT24H', active: true, keyUsage: 'digitalSignature', eku: 'clientAuth' },
       { profileId: 'code-signing-v1', profileVersion: 1, active: false, keyUsage: 'digitalSignature', eku: 'codeSigning' },
     ],
     requests: [
-      { requestId: 'req-1a2b', subject: 'CN=web01.example.org', keyAlgorithm: 'EC P-256', state: 'IMPORTED' },
-      { requestId: 'req-3c4d', subject: 'CN=api.example.org', keyAlgorithm: 'RSA 3072', state: 'VERIFIED' },
+      { formatId: 'x509', requestId: 'req-1a2b', subject: 'CN=web01.example.org', keyAlgorithm: 'EC P-256', state: 'IMPORTED' },
+      { formatId: 'x509', requestId: 'req-3c4d', subject: 'CN=api.example.org', keyAlgorithm: 'RSA 3072', state: 'VERIFIED' },
     ],
     credentials: [
-      { credentialId: 'cred-9f01', subject: 'CN=web01.example.org', serial: '0x4a2f...', state: 'VALID', notAfter: '2027-03-01T00:00:00Z', issuerCaId: 'ca-tls-issuing-01' },
-      { credentialId: 'cred-9f02', subject: 'CN=api.example.org', serial: '0x77b1...', state: 'VALID', notAfter: '2027-04-15T00:00:00Z', issuerCaId: 'ca-tls-issuing-01' },
+      { credentialId: 'cred-9f01', subject: 'CN=web01.example.org', serial: '0x4a2f...', state: 'VALID', notAfter: '2027-03-01T00:00:00Z', authorityId: 'ca-tls-issuing-01', issuerId: 'gen-01', issuerCaId: 'ca-tls-issuing-01' },
+      { credentialId: 'cred-9f02', subject: 'CN=api.example.org', serial: '0x77b1...', state: 'VALID', notAfter: '2027-04-15T00:00:00Z', authorityId: 'ca-tls-issuing-01', issuerId: 'gen-01', issuerCaId: 'ca-tls-issuing-01' },
       { credentialId: 'cred-8801', subject: 'CN=old.example.org', serial: '0x1200...', state: 'REVOKED', notAfter: '2026-01-01T00:00:00Z', issuerCaId: 'ca-legacy-01' },
     ],
     statusObjects: [
-      { statusObjectId: 'crl-tls-014', type: 'CRL', crlNumber: 14, issuerCaId: 'ca-tls-issuing-01', producedAt: '2026-09-06T00:00:00Z' },
-      { statusObjectId: 'crl-tls-013', type: 'CRL', crlNumber: 13, issuerCaId: 'ca-tls-issuing-01', producedAt: '2026-08-30T00:00:00Z' },
+      { statusObjectId: 'crl-tls-014', type: 'CRL', crlNumber: 14, authorityId: 'ca-tls-issuing-01', issuerId: 'gen-01', issuerCaId: 'ca-tls-issuing-01', producedAt: '2026-09-06T00:00:00Z' },
+      { statusObjectId: 'crl-tls-013', type: 'CRL', crlNumber: 13, authorityId: 'ca-tls-issuing-01', issuerId: 'gen-01', issuerCaId: 'ca-tls-issuing-01', producedAt: '2026-08-30T00:00:00Z' },
     ],
     publications: [
-      { publicationId: 'pub-01', sourceType: 'STATUS_OBJECT', targetType: 'FILESYSTEM', state: 'PUBLISHED' },
-      { publicationId: 'pub-02', sourceType: 'CREDENTIAL', targetType: 'HTTP', state: 'PENDING' },
+      { publicationId: 'pub-01', sourceType: 'STATUS_OBJECT', targetType: 'FILESYSTEM', status: 'PUBLISHED' },
+      { publicationId: 'pub-02', sourceType: 'CREDENTIAL', targetType: 'HTTP', status: 'PENDING' },
     ],
     principals: [
       { principalId: 'alice', type: 'USER', displayName: 'Alice Admin', enabled: true },
@@ -101,12 +108,12 @@ export function createDemoState(): DemoState {
       { grantId: 'g-02', principalId: 'svc-ci', effect: 'ALLOW', action: 'REQUEST_SUBMIT', resourceType: 'REQUEST', relationship: 'OWN' },
     ],
     approvals: [
-      { approvalId: 'ap-01', targetOperation: 'ca.rotate', state: 'PENDING', requesterPrincipalId: 'bob' },
-      { approvalId: 'ap-02', targetOperation: 'profile.activate', state: 'APPROVED', requesterPrincipalId: 'alice' },
+      { approvalId: 'ap-01', operation: 'ca.rotate', state: 'PENDING', requesterId: 'bob' },
+      { approvalId: 'ap-02', operation: 'profile.activate', state: 'APPROVED', requesterId: 'alice' },
     ],
     breakGlass: [{ breakGlassId: 'bg-01', principalId: 'alice', state: 'REVOKED', reason: 'DR rehearsal' }],
     repositoryAliases: [
-      { authorityId: 'ca-tls-issuing-01', type: 'CURRENT_CRL', state: 'ACTIVE', targetObjectId: 'crl-tls-014' },
+      { authorityId: 'ca-tls-issuing-01', recordCommitment: 'c'.repeat(64), type: 'CURRENT_CRL', state: 'ACTIVE', targetObjectId: 'crl-tls-014' },
     ],
     acmeDirectories: [
       { directoryId: 'acme-tls', alias: 'tls', authorityId: 'ca-tls-issuing-01', state: 'ACTIVE', eabRequired: false },
@@ -116,8 +123,8 @@ export function createDemoState(): DemoState {
       { responderId: 'ocsp-tls', alias: 'tls', authorityId: 'ca-tls-issuing-01', state: 'ACTIVE', signingMode: 'DELEGATED_RESPONDER' },
     ],
     algorithmBindings: [
-      { bindingId: 'sha256-ecdsa', origin: 'default', role: 'signing', algorithm: 'SHA256withECDSA' },
-      { bindingId: 'sha384-ecdsa', origin: 'default', role: 'signing', algorithm: 'SHA384withECDSA' },
+      { bindingId: 'sha256-ecdsa', origin: 'default', role: 'signing', bindingCommitment: 'a'.repeat(64), algorithmId: 'SHA256withECDSA' },
+      { bindingId: 'sha384-ecdsa', origin: 'default', role: 'signing', bindingCommitment: 'a'.repeat(64), algorithmId: 'SHA384withECDSA' },
     ],
     auditRecords: [
       { sequence: 1042, category: 'ISSUANCE', action: 'CERTIFICATE_ISSUE', principalName: 'bob', at: '2026-09-06T10:12:04Z', objectId: 'cred-9f02' },

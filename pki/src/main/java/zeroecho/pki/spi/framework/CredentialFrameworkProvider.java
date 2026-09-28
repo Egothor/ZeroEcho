@@ -45,7 +45,7 @@ import zeroecho.pki.spi.ProviderConfig;
  * {@link #validateConfig(ProviderConfig)} and
  * {@link #allocate(ProviderConfig)}. Provider selection is performed by
  * {@code PkiBootstrap} using configuration properties (similarly to store,
- * audit, async bus, and signature workflow providers).
+ * audit, async bus, and signing providers).
  * </p>
  *
  * <h2>Dependency boundary</h2>

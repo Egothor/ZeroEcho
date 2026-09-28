@@ -48,7 +48,8 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSession;
-import zeroecho.pki.application.PkiSessionConfiguration;
+import zeroecho.pki.application.LocalPkiSessionConfiguration;
+import zeroecho.pki.application.PkiSessionRuntimeDependencies;
 
 /** Composition root for the synchronous {@code zeroecho pki} command family. */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops",
@@ -71,7 +72,7 @@ public final class PkiCli {
     private static final String APPROVAL_ID = "--approval-id";
     private static final String DEADLINE = "--deadline";
     private static final java.util.regex.Pattern REMOTE_OPERATION_ID =
-            java.util.regex.Pattern.compile("[a-z][a-z0-9]*(\\.[a-z0-9]+)+");
+            java.util.regex.Pattern.compile("[a-z][a-z0-9]*(\\.[a-z0-9]+(?:-[a-z0-9]+)*)+");
     private static final java.time.Duration REMOTE_POLL_INTERVAL = java.time.Duration.ofMillis(100);
     private static final RemoteExchangeFactory DEFAULT_EXCHANGE_FACTORY = target ->
             JdkHttpExchange.open(target.baseUri(), PkiRemoteTls.createContext(target, System::getenv));
@@ -94,7 +95,13 @@ public final class PkiCli {
             Map.entry("--issuer-id", "issuerId"), Map.entry("--path-id", "pathId"),
             Map.entry("--parent-path-id", "parentPathId"), Map.entry("--subject-ca-id", "subjectCaId"),
             Map.entry("--existing-credential-id", "existingCredentialId"),
-            Map.entry("--new-key-ref", "newKeyRef"));
+            Map.entry("--new-key-ref", "newKeyRef"), Map.entry("--authority-id", "authorityId"),
+            Map.entry("--operation-id", "operationId"), Map.entry("--after", "after"),
+            Map.entry("--cutoff-inclusive", "cutoffInclusive"), Map.entry("--after-exclusive", "afterExclusive"),
+            Map.entry("--expected-lifecycle-revision", "expectedLifecycleRevision"),
+            Map.entry("--expected-lifecycle-record-commitment", "expectedLifecycleRecordCommitment"),
+            Map.entry("--expected-challenge-record-commitment", "expectedChallengeRecordCommitment"),
+            Map.entry("--response", "response"));
     private static final int RUN_TOKEN_COUNT = 2;
 
     private PkiCli() {
@@ -109,7 +116,25 @@ public final class PkiCli {
      * @throws NullPointerException if an argument container is {@code null}
      */
     public static int execute(String[] arguments, OutputStream output) {
-        return execute(arguments, output, PkiSession::open, () -> Thread.currentThread().isInterrupted());
+        return execute(arguments, output,
+                configuration -> PkiSession.openLocal(configuration, runtimeDependencies(configuration)),
+                () -> Thread.currentThread().isInterrupted());
+    }
+
+    private static PkiSessionRuntimeDependencies runtimeDependencies(LocalPkiSessionConfiguration configuration) {
+        Optional<String> environment = configuration.signing().flatMap(
+                zeroecho.pki.application.LocalSigningConfiguration::unlockEnvironmentVariable);
+        if (environment.isEmpty()) { return PkiSessionRuntimeDependencies.none(); }
+        return PkiSessionRuntimeDependencies.withKeyringUnlockProvider(() -> {
+            String value = System.getenv(environment.orElseThrow());
+            if (value == null || value.isEmpty()) { throw new IOException("Configured unlock source is unavailable"); }
+            char[] secret = value.toCharArray();
+            try {
+                return new zeroecho.core.storage.KeyringPassword(secret);
+            } finally {
+                java.util.Arrays.fill(secret, '\0');
+            }
+        });
     }
 
     /* default */ static int execute(String[] arguments, OutputStream output, SessionOpener opener,
@@ -129,7 +154,7 @@ public final class PkiCli {
         try {
             invocation = parseInvocation(arguments);
         } catch (IllegalArgumentException failure) {
-            return renderFailure(renderer, PkiOutputMode.HUMAN, "INVALID_INVOCATION", "INVOCATION_INVALID",
+            return renderFailure(renderer, requestedOutput(arguments), "INVALID_INVOCATION", "INVOCATION_INVALID",
                     PkiExitCodes.INVALID_INVOCATION, output);
         }
         if (invocation.help()) {
@@ -141,7 +166,7 @@ public final class PkiCli {
                     invocation.pendingWait(), renderer, remoteExchangeFactory, cancellation, output);
         }
 
-        PkiSessionConfiguration configuration;
+        LocalPkiSessionConfiguration configuration;
         try {
             configuration = PkiCliConfiguration.read(invocation.configuration());
         } catch (IOException | RuntimeException failure) {
@@ -154,6 +179,12 @@ public final class PkiCli {
         try {
             plan = invocation.batch() ? PkiPlanParser.read(invocation.plan(), registry.names())
                     : singlePlan(invocation, registry);
+            for (PkiPlan.Step step : plan.steps()) {
+                if (!registry.executable(step.operation())) {
+                    return renderFailure(renderer, invocation.outputMode(), "INVALID_PLAN", "PLAN_INVALID",
+                            PkiExitCodes.INVALID_INVOCATION, output);
+                }
+            }
         } catch (IOException | RuntimeException failure) {
             return renderFailure(renderer, invocation.outputMode(), "INVALID_PLAN", "PLAN_INVALID",
                     PkiExitCodes.INVALID_INVOCATION, output);
@@ -173,7 +204,7 @@ public final class PkiCli {
         PkiPlanExecution execution;
         try {
             PkiOperationTransport transport = new LocalPkiOperationTransport(session);
-            execution = new PkiPlanExecutor(registry, invocation.pendingWait()).execute(plan, transport, cancellation);
+            execution = new PkiPlanExecutor(registry).execute(plan, transport, cancellation);
         } catch (RuntimeException failure) {
             execution = internalFailure(plan);
         }
@@ -205,10 +236,15 @@ public final class PkiCli {
         try {
             RemotePkiOperationTransport transport = new RemotePkiOperationTransport(exchange, pendingWait,
                     REMOTE_POLL_INTERVAL);
-            PkiRemoteResult result = transport.submit(remote.operationId(), remote.arguments(),
-                    remote.authorityId(), remote.approvalId(), remote.deadline(), cancellation);
+            PkiRemoteResult result = PkiLocalCommand.INSPECT.equals(remote.operationId())
+                    ? transport.inspect(PkiCliConfiguration.text(remote.arguments().fields().get("operationId")), cancellation)
+                    : transport.submit(remote.operationId(), remote.arguments(), remote.authorityId(),
+                            remote.approvalId(), remote.deadline(), cancellation);
             new PkiRemoteReporter().render(result, mode, output);
             return PkiRemoteExitCodes.from(result);
+        } catch (PkiRemoteEnvelope.RequestTooLargeException invalid) {
+            return renderFailure(renderer, mode, "INVALID_INVOCATION", "INVOCATION_INVALID",
+                    PkiExitCodes.INVALID_INVOCATION, output);
         } catch (PkiRemoteTransportException failure) {
             return renderFailure(renderer, mode, failure.category(), failure.code(), failure.exitCode(), output);
         } catch (IOException failure) {
@@ -229,7 +265,6 @@ public final class PkiCli {
         }
     }
 
-    @SuppressWarnings({ "PMD.CyclomaticComplexity" })
     private static Invocation parseInvocation(String[] arguments) {
         if (arguments.length == 0) {
             throw new IllegalArgumentException("PKI command is missing");
@@ -239,26 +274,20 @@ public final class PkiCli {
         List<String> commandTokens = new ArrayList<>();
         boolean help = false;
         boolean outputSelected = false;
-        java.time.Duration pendingWait = PkiPlanExecutor.DEFAULT_PENDING_WAIT;
+        java.time.Duration pendingWait = java.time.Duration.ofSeconds(3);
         boolean pendingWaitSelected = false;
         RemoteOptions remoteOptions = new RemoteOptions();
         for (int index = 0; index < arguments.length; index++) {
             String argument = Objects.requireNonNull(arguments[index], "argument");
             if (CONFIG.equals(argument)) {
-                if (configuration != null) {
-                    throw new IllegalArgumentException("PKI configuration option is duplicated");
-                }
+                requireUniqueOption(configuration != null, "configuration");
                 configuration = Path.of(requireValue(arguments, ++index));
             } else if (OUTPUT.equals(argument)) {
-                if (outputSelected) {
-                    throw new IllegalArgumentException("PKI output option is duplicated");
-                }
+                requireUniqueOption(outputSelected, "output");
                 outputMode = parseOutput(requireValue(arguments, ++index));
                 outputSelected = true;
             } else if (PENDING_WAIT.equals(argument)) {
-                if (pendingWaitSelected) {
-                    throw new IllegalArgumentException("PKI pending-wait option is duplicated");
-                }
+                requireUniqueOption(pendingWaitSelected, "pending-wait");
                 pendingWait = parsePendingWait(requireValue(arguments, ++index));
                 pendingWaitSelected = true;
             } else if ("--help".equals(argument) || "-h".equals(argument)) {
@@ -267,36 +296,23 @@ public final class PkiCli {
                 index = remoteOptions.accept(argument, arguments, index);
             } else {
                 commandTokens.add(argument);
+                if (argument.startsWith("--")) {
+                    commandTokens.add(requireValue(arguments, ++index));
+                }
             }
         }
         if (help) {
             return new Invocation(null, outputMode, false, null, null, null, true, pendingWait, Optional.empty());
         }
         if (remoteOptions.url() != null) {
-            return remoteInvocation(remoteOptions, commandTokens, outputMode, pendingWait);
+            if (configuration != null) { throw new IllegalArgumentException("--config conflicts with --url"); }
+            return remoteInvocation(remoteOptions, commandTokens, outputMode, pendingWait, pendingWaitSelected);
         }
-        if (remoteOptions.hasClientMaterial()) {
-            throw new IllegalArgumentException("Remote client options require --url");
-        }
-        if (configuration == null || commandTokens.isEmpty()) {
-            throw new IllegalArgumentException("PKI configuration or operation is missing");
-        }
-        String command = commandTokens.get(0);
-        if (RUN.equals(command)) {
-            if (commandTokens.size() != RUN_TOKEN_COUNT) {
-                throw new IllegalArgumentException("Plan path is invalid");
-            }
-            return new Invocation(configuration, outputMode, true, Path.of(commandTokens.get(1)), null, null, false,
-                    pendingWait, Optional.empty());
-        }
-        PkiOperationValue.ObjectValue operationArguments = directArguments(commandTokens.subList(1,
-                commandTokens.size()));
-        return new Invocation(configuration, outputMode, false, null, command, operationArguments, false,
-                pendingWait, Optional.empty());
+        return localInvocation(configuration, remoteOptions, commandTokens, outputMode, pendingWait, pendingWaitSelected);
     }
 
     private static Invocation remoteInvocation(RemoteOptions remoteOptions, List<String> commandTokens,
-            PkiOutputMode outputMode, java.time.Duration pendingWait) {
+            PkiOutputMode outputMode, java.time.Duration pendingWait, boolean pendingWaitSelected) {
         PkiRemoteTarget target = remoteOptions.target();
         if (commandTokens.isEmpty()) {
             throw new IllegalArgumentException("Remote operation is missing");
@@ -305,11 +321,22 @@ public final class PkiCli {
         if (RUN.equals(operation)) {
             throw new IllegalArgumentException("Remote mode executes a single operation, not a batch plan");
         }
-        if (!REMOTE_OPERATION_ID.matcher(operation).matches()) {
+        if (operation.length() > 128 || !REMOTE_OPERATION_ID.matcher(operation).matches()) {
             throw new IllegalArgumentException("Remote operation identifier is invalid");
         }
         PkiOperationValue.ObjectValue arguments = PkiRemoteArguments.parse(commandTokens.subList(1,
                 commandTokens.size()), OPERATION_ARGUMENT_NAMES);
+        if (PkiLocalCommand.COMPLETE.equals(operation)) {
+            throw new IllegalArgumentException("Explicit completion is local only");
+        }
+        if (PkiLocalCommand.INSPECT.equals(operation)) {
+            if (!arguments.fields().keySet().equals(java.util.Set.of("operationId"))
+                    || remoteOptions.authorityId() != null || remoteOptions.approvalId() != null
+                    || remoteOptions.deadline() != null || pendingWaitSelected) {
+                throw new IllegalArgumentException("Signing inspection accepts only operationId");
+            }
+            RemotePkiOperationTransport.requireIdentifier(PkiCliConfiguration.text(arguments.fields().get("operationId")));
+        }
         Remote remote = new Remote(target, operation, arguments, Optional.ofNullable(remoteOptions.authorityId()),
                 Optional.ofNullable(remoteOptions.approvalId()), Optional.ofNullable(remoteOptions.deadline()));
         return new Invocation(null, outputMode, false, null, null, null, false, pendingWait, Optional.of(remote));
@@ -331,7 +358,7 @@ public final class PkiCli {
         for (int index = 0; index < tokens.size(); index += 2) {
             String name = argumentName(tokens.get(index));
             String raw = tokens.get(index + 1);
-            PkiOperationValue value = "limit".equals(name) || "profileVersion".equals(name)
+            PkiOperationValue value = "limit".equals(name) || "profileVersion".equals(name) || "expectedLifecycleRevision".equals(name)
                     ? new PkiOperationValue.IntegerValue(parseLong(raw)) : new PkiOperationValue.Text(raw);
             if (arguments.putIfAbsent(name, value) != null) {
                 throw new IllegalArgumentException("Operation argument is duplicated");
@@ -388,9 +415,8 @@ public final class PkiCli {
         java.io.PrintWriter writer = new java.io.PrintWriter(output, false, java.nio.charset.StandardCharsets.UTF_8);
         writer.println("Usage (local, in-process):");
         writer.println("       zeroecho pki <operation> --config <file> [--output human|json]"
-                + " [--pending-wait <seconds>] [arguments]");
-        writer.println("       zeroecho pki run <plan-file> --config <file> [--output human|json]"
-                + " [--pending-wait <seconds>]");
+                + " [arguments]");
+        writer.println("       zeroecho pki run <plan-file> --config <file> [--output human|json]");
         writer.println("Usage (remote, pki-server admin API over mutual TLS):");
         writer.println("       zeroecho pki <operation.id> --url <https-base-url>"
                 + " (--client-keystore <p12> [--client-keystore-password-env <ENV>]");
@@ -404,8 +430,12 @@ public final class PkiCli {
                 + " in-process mode runs.");
         writer.println("  --url with missing/partial client material (or client material without --url)"
                 + " is invalid (exit 2).");
-        writer.println("  Remote mode ignores --config (no local backend providers are opened) and runs a"
-                + " single operation.");
+        writer.println("  --config and --url conflict. Local configuration requires mode=local, version=1 and operatorId.");
+        writer.println("  --arg-json name=JSON supplies nested objects/lists using strict bounded JSON.");
+        writer.println("  --pending-wait applies only to remote mode (default 3 seconds).");
+        writer.println("  Local signing executes synchronously; explicit invocation is local root approval.");
+        writer.println("  signing.operation.inspect --operation-id <id> (local read or remote GET; no --pending-wait)");
+        writer.println("  signing.operation.complete --operation-id <id> (explicit recovery, local only)");
         writer.println("  Remote mode accepts any dotted operation id (including security.*, acme.*, ocsp.*,"
                 + " repository.*);");
         writer.println("  arguments use --arg name=value, --arg-int name=value, --arg-bool name=true|false,"
@@ -437,11 +467,11 @@ public final class PkiCli {
         writer.println("  credential.replace --existing-credential-id <id> --request-id <id> --profile-id <id>");
         writer.println("  credential.reissue --credential-id <id>");
         writer.println("  ca.intermediate.create --format-id <id> --issuer-ca-id <id> --subject-ref <subject>");
-        writer.println("                         --profile-id <id> [--key-ref <ref>]");
+        writer.println("                         --profile-id <id> --key-ref <ref>");
         writer.println("  ca.intermediate.issue --format-id <id> --issuer-ca-id <id> --subject-ca-id <id>"
                 + " --profile-id <id>");
         writer.println("  ca.rollover --ca-id <id> [--issuer-ca-id <id>]");
-        writer.println("  ca.rotate --ca-id <id> [--new-key-ref <ref>] [--issuer-ca-id <id>]");
+        writer.println("  ca.rotate --ca-id <id> --new-key-ref <ref> [--issuer-ca-id <id>]");
         writer.println("  issuer.generation.inspect --issuer-id <id>");
         writer.println("  issuer.path.inspect --path-id <id>");
         writer.println("  issuer.path.list --issuer-id <id>");
@@ -462,7 +492,26 @@ public final class PkiCli {
         writer.println("  publication.process --publication-id <id>");
         writer.println("  publication.retry --publication-id <id>");
         writer.println("  publication.reconcile --publication-id <id>");
+        writer.println("  profile.list-all | request.list --limit <1..1000> [--after <cursor>]");
+        writer.println("  credential.search | issuer.generation.list --authority-id <id> --limit <1..1000> [--after <cursor>]");
+        writer.println("  Paged inventories also accept --after <cursor>.");
+        writer.println("  credential.confirmation.pending.list --authority-id <id> --cutoff-inclusive <ISO-8601>");
+        writer.println("      --limit <1..1000> [--profile-id <id>] [--after-exclusive <cursor>]");
+        writer.println("  credential.confirmation.challenge.issue --credential-id <id>");
+        writer.println("  credential.confirmation.proof.complete --credential-id <id> --expected-lifecycle-revision <number>");
+        writer.println("      --expected-lifecycle-record-commitment <value> --expected-challenge-record-commitment <value>");
+        writer.println("      --response <unpadded-base64url>");
+        writer.println("  credential.confirmation.pending.revoke --credential-id <id> [--justification <text>]");
         writer.flush();
+    }
+
+    private static PkiOutputMode requestedOutput(String[] arguments) {
+        for (int index = 0; index + 1 < arguments.length; index++) {
+            String argument = arguments[index];
+            if (OUTPUT.equals(argument) && "json".equals(arguments[index + 1])) { return PkiOutputMode.JSON; }
+            if (argument != null && argument.startsWith("--") && !"--help".equals(argument)) { index++; }
+        }
+        return PkiOutputMode.HUMAN;
     }
 
     private static PkiOutputMode parseOutput(String raw) {
@@ -506,7 +555,7 @@ public final class PkiCli {
     @SuppressWarnings("PMD.CommentDefaultAccessModifier")
     interface SessionOpener {
         /** Opens one lifecycle-owned backend session. */
-        PkiSession open(PkiSessionConfiguration configuration);
+        PkiSession open(LocalPkiSessionConfiguration configuration);
     }
 
     /** Construction seam for the remote mutual-TLS HTTP exchange, overridable in tests. */
@@ -528,6 +577,7 @@ public final class PkiCli {
     // Mutable parsing accumulator; behavior belongs to the enclosing CLI parser after validation.
     @SuppressWarnings("PMD.DataClass")
     private static final class RemoteOptions {
+        private final java.util.Set<String> supplied = new java.util.HashSet<>();
         private String url;
         private String clientKeystore;
         private String clientKeystorePasswordEnv;
@@ -540,6 +590,7 @@ public final class PkiCli {
         private String deadline;
 
         private int accept(String option, String[] arguments, int index) {
+            if (!supplied.add(option)) { throw new IllegalArgumentException("Remote option is duplicated"); }
             int cursor = index;
             String value = requireValue(arguments, ++cursor);
             switch (option) {
@@ -576,7 +627,7 @@ public final class PkiCli {
 
         private boolean hasClientMaterial() {
             return clientKeystore != null || clientKeystorePasswordEnv != null || clientCert != null
-                    || clientKey != null || trust != null || trustPasswordEnv != null || authorityId != null
+                    || clientKey != null || trust != null || trustPasswordEnv != null
                     || approvalId != null || deadline != null;
         }
 
@@ -595,4 +646,36 @@ public final class PkiCli {
             String operation, PkiOperationValue.ObjectValue arguments, boolean help,
             java.time.Duration pendingWait, Optional<Remote> remote) {
     }
+
+    private static Invocation localInvocation(Path configuration, RemoteOptions remoteOptions, List<String> commandTokens,
+            PkiOutputMode outputMode, java.time.Duration pendingWait, boolean pendingWaitSelected) {
+        if (pendingWaitSelected) { throw new IllegalArgumentException("--pending-wait requires remote mode"); }
+        if (remoteOptions.authorityId() != null) {
+            commandTokens.add(AUTHORITY_ID);
+            commandTokens.add(remoteOptions.authorityId());
+        }
+        if (remoteOptions.hasClientMaterial()) {
+            throw new IllegalArgumentException("Remote client options require --url");
+        }
+        if (configuration == null || commandTokens.isEmpty()) {
+            throw new IllegalArgumentException("PKI configuration or operation is missing");
+        }
+        String command = commandTokens.get(0);
+        if (RUN.equals(command)) {
+            if (commandTokens.size() != RUN_TOKEN_COUNT) {
+                throw new IllegalArgumentException("Plan path is invalid");
+            }
+            return new Invocation(configuration, outputMode, true, Path.of(commandTokens.get(1)), null, null, false,
+                    pendingWait, Optional.empty());
+        }
+        PkiOperationValue.ObjectValue operationArguments = directArguments(commandTokens.subList(1,
+                commandTokens.size()));
+        return new Invocation(configuration, outputMode, false, null, command, operationArguments, false,
+                pendingWait, Optional.empty());
+    }
+
+    private static void requireUniqueOption(boolean selected, String option) {
+        if (selected) { throw new IllegalArgumentException("PKI " + option + " option is duplicated"); }
+    }
+
 }

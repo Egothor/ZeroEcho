@@ -78,6 +78,21 @@ public interface CertificationRequestService {
     ParsedCertificationRequest parse(CertificationRequest request);
 
     /**
+     * Restores the exact bounded X.509 CSR DER snapshot retained in a parsed request.
+     * Requires one byte-valued CSR attribute, between one byte and one MiB, and
+     * the exact {@code csr:} SHA-256 identity of the returned snapshot. The snapshot
+     * is captured before hashing, so subsequent attribute mutations cannot change it.
+     * This performs no parsing, proof verification, persistence or admission and
+     * does not make the parsed request an authorization credential.
+     * @param parsed parsed request containing its original CSR bytes
+     * @return independently owned DER request with the same X.509 format
+     * @throws IllegalArgumentException if the input, format, attribute or identity is invalid
+     * @throws PkiException if SHA-256 is unavailable
+     */
+    CertificationRequest encodedRequest(ParsedCertificationRequest parsed);
+
+
+    /**
      * Verifies proof-of-possession (PoP) for the private key corresponding to the
      * requested public key.
      *

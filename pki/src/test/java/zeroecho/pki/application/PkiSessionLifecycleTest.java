@@ -33,549 +33,454 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.lang.reflect.Proxy;
-import java.nio.charset.StandardCharsets;
+import java.io.InputStream;
 import java.nio.file.Path;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.Map;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.util.OptionalLong;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongFunction;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.core.io.CancellationSignal;
-import zeroecho.pki.api.KeyRef;
+import zeroecho.core.io.OneShotContent;
+import zeroecho.pki.api.Encoding;
 import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.IssuerRef;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.SubjectRef;
+import zeroecho.pki.api.SigningService;
 import zeroecho.pki.api.SigningExecutionException;
-import zeroecho.pki.impl.core.async.PkiSigningBus;
-import zeroecho.pki.api.profile.BuiltInCertificateProfileCatalog;
-import zeroecho.pki.api.profile.BuiltInCertificateProfileTemplate;
-import zeroecho.pki.spi.bootstrap.PkiBootstrap;
-import zeroecho.pki.spi.crypto.SignatureWorkflow;
-import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
+import zeroecho.pki.api.SubjectRef;
+import zeroecho.pki.api.Validity;
+import zeroecho.pki.api.audit.AccessContext;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
+import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.api.credential.Credential;
+import zeroecho.pki.api.credential.CredentialStatus;
+import zeroecho.pki.api.credential.EndEntityProfileBinding;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+import zeroecho.pki.api.signing.SigningRequest;
+import zeroecho.pki.api.status.StatusObject;
+import zeroecho.pki.api.status.StatusObjectType;
+import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.audit.AuditSink;
+import zeroecho.pki.spi.bootstrap.PkiBootstrap;
+import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.pki.spi.crypto.SigningProviderRuntimeDependencies;
+import zeroecho.pki.spi.store.AuditEvidenceFeed;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
-import zeroecho.pki.testkit.InMemorySignatureWorkflow;
-import zeroecho.pki.testkit.TestX509AlgorithmBindingProvider;
+import zeroecho.pki.testkit.PkiTestRuntime;
 
-class PkiSessionLifecycleTest {
-
-    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-08-04T00:00:00Z"), ZoneOffset.UTC);
-
-    @TempDir
-    Path temporaryDirectory;
+final class PkiSessionLifecycleTest {
 
     @Test
-    void opensReusesAndDeterministicallyClosesOneSession() throws Exception {
-        System.out.println("opensReusesAndDeterministicallyClosesOneSession");
-        PkiSessionConfiguration configuration = configuration(temporaryDirectory.resolve("store"));
-        PkiSession session = PkiSession.open(configuration);
-        zeroecho.pki.api.confirmation.CredentialConfirmationService confirmations =
-                session.confirmations();
-        assertTrue(confirmations == session.confirmations());
-        PkiOperationOutcome first = session.operations().execute(new PkiOperation.ValidateConfiguration(),
-                CancellationSignal.NONE);
-        PkiOperationOutcome second = session.operations().execute(new PkiOperation.ValidateConfiguration(),
-                CancellationSignal.NONE);
-        System.out.println("...executions=2");
-        assertInstanceOf(PkiOperationOutcome.Completed.class, first);
-        assertInstanceOf(PkiOperationOutcome.Completed.class, second);
+    void opensUnconfiguredServicesAndClosesIdempotently(@TempDir Path temporary) throws Exception {
+        PkiSession session = PkiSession.open(configuration(temporary));
+
+        assertTrue(session.profiles() == session.profiles());
+        assertTrue(session.confirmations() == session.confirmations());
+        assertTrue(session.revocations() == session.revocations());
+        assertTrue(session.requests().isPresent());
+        assertTrue(session.publications().isEmpty());
+        assertTrue(session.signing().isEmpty());
+        assertTrue(session.semanticSigning().isEmpty());
+        assertTrue(session.signingCommands().isEmpty());
+        assertTrue(session.algorithmBindings() == session.algorithmBindings());
+        assertTrue(session.resourceScopes() == session.resourceScopes());
+        assertTrue(session.repository() == session.repository());
+        assertFalse(session.supportsSigningEvidenceFeed());
+        assertThrows(UnsupportedOperationException.class, () -> session.openSigningEvidenceFeed(-1L));
+        assertInstanceOf(PkiOperationOutcome.Completed.class,
+                session.operations().execute(new PkiOperation.ValidateConfiguration(), CancellationSignal.NONE));
+
         session.close();
         session.close();
         assertThrows(IllegalStateException.class, session::operations);
-        assertThrows(IllegalStateException.class, session::confirmations);
-        assertThrows(IllegalStateException.class,
-                () -> confirmations.get(new PkiId("closed-confirmation")));
-        assertThrows(IllegalStateException.class,
-                () -> confirmations.issueProofChallenge(
-                        new zeroecho.pki.api.confirmation.CredentialConfirmationProofChallengeRequest(
-                                new PkiId("closed-challenge"), 1L, "0".repeat(64))));
-        assertThrows(UnsupportedOperationException.class,
-                () -> ((PkiOperationOutcome.Completed) first).result().fields().put("x", new PkiOperationValue.Text("y")));
-        System.out.println("...ok");
+        assertThrows(IllegalStateException.class, session::repository);
+        assertThrows(IllegalStateException.class, session::requests);
+        assertThrows(IllegalStateException.class, session::semanticSigning);
+        assertThrows(IllegalStateException.class, session::signingCommands);
+        assertThrows(IllegalStateException.class, () -> session.openIssuanceEvidenceFeed(-1L));
+        assertThrows(IllegalStateException.class, () -> session.openStatusEvidenceFeed(-1L));
+        assertThrows(IllegalStateException.class, () -> session.openPublicationEvidenceFeed(-1L));
+        assertThrows(IllegalStateException.class, session::supportsSigningEvidenceFeed);
+        assertThrows(IllegalStateException.class, () -> session.openSigningEvidenceFeed(-1L));
     }
 
     @Test
-    void ownsOneExplicitlyPrecomposedAuditSink() throws Exception {
-        System.out.println("ownsOneExplicitlyPrecomposedAuditSink");
-        AtomicInteger closes = new AtomicInteger();
-        AuditSink shared = new AuditSink() {
-            @Override
-            public void record(zeroecho.pki.api.audit.AuditEvent event) {
-                // The lifecycle assertion does not require emitting an event.
-            }
+    void exposesCommittedIssuanceAndStatusEvidenceWithExclusiveResume(@TempDir Path temporary) throws Exception {
+        RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
+        try (PkiSession session = DefaultPkiSession.open(configuration(temporary),
+                Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), bootstrap)) {
+            assertEvidenceFeedEmpty(session.openIssuanceEvidenceFeed(-1L), 0L);
+            assertEvidenceFeedEmpty(session.openStatusEvidenceFeed(-1L), 0L);
 
-            @Override
-            public void close() {
-                closes.incrementAndGet();
-            }
-        };
-        PkiSessionRuntimeDependencies dependencies = PkiSessionRuntimeDependencies.none().withAuditSink(shared);
-        PkiSession session = PkiSession.open(configuration(temporaryDirectory.resolve("shared-audit-store")),
-                dependencies);
-        session.close();
-        session.close();
-        assertEquals(1, closes.get());
-        System.out.println("...shared-audit-closes=" + closes.get());
-        System.out.println("...ok");
-    }
+            DurableContentReference content = PkiTestRuntime.fixtureReference(
+                    bootstrap.store.stagedContent(), Encoding.DER, new byte[] { 0x01, 0x02, 0x03 });
+            PkiId credentialId = new PkiId("session-credential");
+            PkiId statusId = new PkiId("session-status");
+            PkiId issuerId = new PkiId("session-issuer");
+            bootstrap.store.putCredential(new Credential(credentialId, new FormatId("fmt-x509"),
+                    new IssuerRef(issuerId), new SubjectRef("CN=session"),
+                    new Validity(Instant.EPOCH, Instant.EPOCH.plusSeconds(60L)), "01",
+                    new PkiId("session-public-key"),
+                    new EndEntityProfileBinding(new CertificateProfileRef("session-profile", 1, new byte[32])),
+                    CredentialStatus.ISSUED, content, new SimpleAttributeSet()));
+            bootstrap.store.putStatusObject(new StatusObject(statusId, new FormatId("x509"), issuerId,
+                    StatusObjectType.CRL, Instant.EPOCH, Optional.of(Instant.EPOCH.plusSeconds(60L)),
+                    content, new SimpleAttributeSet()));
 
-    @Test
-    void explicitlyActivatesAuthorizedDeployerBindingProvider() throws Exception {
-        System.out.println("explicitlyActivatesAuthorizedDeployerBindingProvider");
-        PkiSessionConfiguration.BindingProviderConfiguration bindings =
-                new PkiSessionConfiguration.BindingProviderConfiguration(TestX509AlgorithmBindingProvider.ID,
-                        List.of(TestX509AlgorithmBindingProvider.PEN_ROOT,
-                                TestX509AlgorithmBindingProvider.EGOTHOR_ROOT),
-                        Optional.of("test-bindings-v1"));
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
-                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("binding-store").toString())),
-                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), List.of(), List.of(bindings));
-        try (PkiSession session = PkiSession.open(configuration)) {
-            assertTrue(session.algorithmBindings().find("test.ed25519.certificate.v1").isPresent());
-            assertTrue(session.algorithmBindings().find("test.ed25519.crl.v1").isPresent());
-            System.out.println("...bindings=" + session.algorithmBindings().bindings().size());
-        }
-        System.out.println("...ok");
-    }
-
-    @Test
-    void profileValidationRejectsBindingOutsideActiveRegistry() throws Exception {
-        System.out.println("profileValidationRejectsBindingOutsideActiveRegistry");
-        PkiSessionConfiguration configuration = configuration(temporaryDirectory.resolve("profile-binding-store"));
-        BuiltInCertificateProfileTemplate template = BuiltInCertificateProfileCatalog
-                .load(getClass().getClassLoader()).stream().findFirst().orElseThrow();
-        String document = new String(template.canonicalJson(), StandardCharsets.UTF_8).replace(
-                "\"algorithmBindings\":{\"mode\":\"STANDARD_ONLY\"}",
-                "\"algorithmBindings\":{\"mode\":\"EXPLICIT\",\"certificateSignature\":"
-                        + "{\"bindingId\":\"deployer.inactive.certificate.v1\","
-                        + "\"commitment\":\"inactive-binding-commitment\"}}");
-        try (PkiSession session = PkiSession.open(configuration)) {
-            PkiOperationOutcome outcome = session.operations().execute(
-                    new PkiOperation.ValidateProfile(document.getBytes(StandardCharsets.UTF_8)),
-                    CancellationSignal.NONE);
-            PkiOperationOutcome.Failed failure = assertInstanceOf(PkiOperationOutcome.Failed.class, outcome);
-            System.out.println("...classification=" + failure.classification());
-            assertEquals(PkiOperationFailure.POLICY_REJECTION, failure.classification());
-        }
-        System.out.println("...ok");
-    }
-
-    @Test
-    void rejectsUnauthorizedDeployerBindingRootBeforeStoreAllocation() {
-        System.out.println("rejectsUnauthorizedDeployerBindingRootBeforeStoreAllocation");
-        PkiSessionConfiguration.BindingProviderConfiguration bindings =
-                new PkiSessionConfiguration.BindingProviderConfiguration(TestX509AlgorithmBindingProvider.ID,
-                        List.of(TestX509AlgorithmBindingProvider.PEN_ROOT), Optional.of("test-bindings-v1"));
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
-                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("unused-binding").toString())),
-                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), List.of(), List.of(bindings));
-        assertThrows(IllegalArgumentException.class, () -> PkiSession.open(configuration));
-        System.out.println("...ok");
-    }
-
-    @Test
-    void validatesBeforeAllocationAndCleansPartialConstruction() {
-        System.out.println("validatesBeforeAllocationAndCleansPartialConstruction");
-        PkiSessionConfiguration configuration = configuration(temporaryDirectory.resolve("unused"));
-        AtomicInteger storesOpened = new AtomicInteger();
-        AtomicInteger storesClosed = new AtomicInteger();
-        DefaultPkiSession.Bootstrap invalid = bootstrap(storesOpened, storesClosed, true, false, false, false);
-        assertThrows(IllegalArgumentException.class,
-                () -> DefaultPkiSession.open(configuration, CLOCK, invalid));
-        assertEquals(0, storesOpened.get());
-
-        DefaultPkiSession.Bootstrap partial = bootstrap(storesOpened, storesClosed, false, true, false, false);
-        assertThrows(IllegalStateException.class,
-                () -> DefaultPkiSession.open(configuration, CLOCK, partial));
-        System.out.println("...partialStoreCloses=" + storesClosed.get());
-        assertEquals(1, storesClosed.get());
-        System.out.println("...ok");
-    }
-
-    @Test
-    void passesExactSessionClockToStoreBootstrap() throws Exception {
-        AtomicReference<PkiStoreRuntimeDependencies> observed = new AtomicReference<>();
-        DefaultPkiSession.Bootstrap delegate = bootstrap(new AtomicInteger(), new AtomicInteger(),
-                false, false, false, false);
-        DefaultPkiSession.Bootstrap capturing = new DefaultPkiSession.Bootstrap() {
-            @Override public void validateStore(ProviderConfig configuration) {
-                delegate.validateStore(configuration);
-            }
-            @Override public void validateAudit(ProviderConfig configuration) {
-                delegate.validateAudit(configuration);
-            }
-            @Override public PkiStore openStore(ProviderConfig configuration) {
-                throw new AssertionError("Session bypassed store runtime dependencies");
-            }
-            @Override public PkiStore openStore(ProviderConfig configuration,
-                    PkiStoreRuntimeDependencies dependencies) {
-                observed.set(dependencies);
-                return delegate.openStore(configuration);
-            }
-            @Override public AuditSink openAudit(ProviderConfig configuration) {
-                return delegate.openAudit(configuration);
-            }
-        };
-        try (PkiSession ignored = DefaultPkiSession.open(
-                configuration(temporaryDirectory.resolve("clock-store")), CLOCK, capturing)) {
-            assertSame(CLOCK, observed.get().clock());
+            assertEvidenceFeed(session::openIssuanceEvidenceFeed, credentialId);
+            assertEvidenceFeed(session::openStatusEvidenceFeed, statusId);
         }
     }
 
     @Test
-    void preservesPrimaryAndSuppressedCloseFailures() throws Exception {
-        System.out.println("preservesPrimaryAndSuppressedCloseFailures");
-        PkiSessionConfiguration configuration = configuration(temporaryDirectory.resolve("unused-close"));
-        DefaultPkiSession.Bootstrap bootstrap = bootstrap(new AtomicInteger(), new AtomicInteger(), false, false,
-                true, true);
-        PkiSession session = DefaultPkiSession.open(configuration, CLOCK, bootstrap);
-        Exception failure = assertThrows(Exception.class, session::close);
-        System.out.println("...suppressed=" + failure.getSuppressed().length);
-        assertEquals("audit-close", failure.getMessage());
-        assertEquals(1, failure.getSuppressed().length);
-        assertInstanceOf(IOException.class, failure.getSuppressed()[0]);
-        session.close();
-        System.out.println("...ok");
-    }
-
-    @Test
-    void remoteSigningProviderReceivesUnlockButNotLocalLedger() throws Exception {
-        System.out.println("remoteSigningProviderReceivesUnlockButNotLocalLedger");
-        ProviderConfig placeholder = new ProviderConfig("test", Map.of());
-        PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
-                placeholder, new ProviderConfig("x509-bc", Map.of()),
-                "SHA256withRSA", Duration.ofSeconds(5),
-                Optional.empty());
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
-                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("store-signing").toString())),
-                new ProviderConfig("memory", Map.of("size", "16")), Optional.of(signing), java.util.List.of());
-        InMemorySignatureWorkflow remoteWorkflow = new InMemorySignatureWorkflow(Map.of());
-        AtomicBoolean emptyDependenciesObserved = new AtomicBoolean();
-        AtomicBoolean localParticipantObserved = new AtomicBoolean();
-        PkiSessionRuntimeDependencies runtime = PkiSessionRuntimeDependencies.withKeyringUnlockProvider(
-                () -> new zeroecho.core.storage.KeyringPassword(new char[] { 't', 'e', 's', 't' }));
-        try (PkiSession session = DefaultPkiSession.open(configuration, runtime, CLOCK,
-                signingBootstrap(remoteWorkflow, emptyDependenciesObserved, localParticipantObserved))) {
-            assertTrue(session.authorities().isPresent());
-            assertFalse(emptyDependenciesObserved.get());
-            assertFalse(localParticipantObserved.get());
-        }
-        System.out.println("...ok");
-    }
-
-    @Test
-    void foregroundDrainCancelsTimesOutWithoutClosingDependenciesAndRetries() throws Exception {
-        InMemorySignatureWorkflow workflow = new InMemorySignatureWorkflow(Map.of());
-        AtomicInteger auditCloses = new AtomicInteger();
-        AuditSink audit = new AuditSink() {
-            @Override public void record(zeroecho.pki.api.audit.AuditEvent event) { }
-            @Override public void close() { auditCloses.incrementAndGet(); }
-        };
-        DefaultPkiSession session = (DefaultPkiSession) DefaultPkiSession.open(
-                signingConfiguration(temporaryDirectory.resolve("foreground-timeout"),
-                        Duration.ofMillis(1), Duration.ofMillis(1)),
-                PkiSessionRuntimeDependencies.none().withAuditSink(audit), CLOCK,
-                signingBootstrap(workflow, new AtomicBoolean()));
-        PkiSigningBus.ForegroundCall call = session.registerForegroundSigningCall(CancellationSignal.NONE);
-
-        SigningExecutionException timeout = assertThrows(SigningExecutionException.class, session::close);
-
-        assertEquals(SigningExecutionException.Classification.SHUTDOWN_TIMEOUT, timeout.classification());
-        assertTrue(call.cancellation().isCancelled());
-        assertEquals(0, auditCloses.get());
-        SigningExecutionException rejected = assertThrows(SigningExecutionException.class,
-                () -> session.registerForegroundSigningCall(CancellationSignal.NONE));
-        assertEquals(SigningExecutionException.Classification.SHUTTING_DOWN, rejected.classification());
-
-        call.close();
-        session.close();
-        assertEquals(1, auditCloses.get());
-    }
-
-    @Test
-    void foregroundGraceAllowsCompletionBeforeDependencyClose() throws Exception {
-        InMemorySignatureWorkflow workflow = new InMemorySignatureWorkflow(Map.of());
-        AtomicInteger auditCloses = new AtomicInteger();
-        AuditSink audit = new AuditSink() {
-            @Override public void record(zeroecho.pki.api.audit.AuditEvent event) { }
-            @Override public void close() { auditCloses.incrementAndGet(); }
-        };
-        DefaultPkiSession session = (DefaultPkiSession) DefaultPkiSession.open(
-                signingConfiguration(temporaryDirectory.resolve("foreground-grace"),
-                        Duration.ofSeconds(1), Duration.ofMillis(50)),
-                PkiSessionRuntimeDependencies.none().withAuditSink(audit), CLOCK,
-                signingBootstrap(workflow, new AtomicBoolean()));
-        PkiSigningBus.ForegroundCall call = session.registerForegroundSigningCall(CancellationSignal.NONE);
-        CompletableFuture<Void> closing = CompletableFuture.runAsync(() -> {
-            try {
-                session.close();
-            } catch (Exception failure) {
-                throw new CompletionException(failure);
+    void exposesEnabledSigningEvidenceThroughSessionAndPreservesExclusiveResume(@TempDir Path temporary) throws Exception {
+        RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
+        bootstrap.signingEvidence = true;
+        PkiSession session = DefaultPkiSession.open(configuration(temporary), Clock.systemUTC(), bootstrap);
+        try (session) {
+            assertTrue(session.supportsSigningEvidenceFeed());
+            assertEvidenceFeedEmpty(session.openSigningEvidenceFeed(-1), 0);
+            Instant created = bootstrap.store.signingNow();
+            String namespace = bootstrap.store.signingNamespace() + ".test-signer";
+            PkiId operation = zeroecho.pki.api.orch.SigningSubmissionId.create(namespace, created,
+                    new java.security.SecureRandom()).id();
+            zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceCommand command = new zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceCommand(
+                    operation, namespace, new SigningProvider.ConfigurationCommitment(new byte[32]),
+                    new AccessContext(new Principal("TEST", "session"), new Purpose("SIGN"), Optional.empty(), Optional.empty()),
+                    new KeyRef("session-key"), new PkiId("session-authority"), "SHA256withRSA", Encoding.BINARY,
+                    created, created.plusSeconds(60), PkiTestRuntime.operationReference(bootstrap.store.stagedContent(), Encoding.BINARY,
+                            new byte[] {1}), Optional.empty(), zeroecho.pki.spi.store.SignWorkflowStore.Mode.NORMAL, Optional.empty());
+            assertEquals(zeroecho.pki.spi.store.SignWorkflowStore.AcceptanceResult.ACCEPTED, bootstrap.store.acceptSign(command));
+            bootstrap.store.requestSignCancellation(operation, 0, 0).orElseThrow();
+            assertEvidenceFeed(session::openSigningEvidenceFeed, operation);
+            try (AuditEvidenceFeed feed = session.openSigningEvidenceFeed(-1)) {
+                assertTrue(feed.next(CancellationSignal.NONE));
+                assertEquals(SigningExecutionEvidence.Outcome.CANCELLED,
+                        SigningExecutionEvidence.decode(feed.current().evidence()).orElseThrow().outcome());
             }
-        });
-        awaitForegroundQuiesce(session);
-
-        assertFalse(call.cancellation().isCancelled());
-        assertEquals(0, auditCloses.get());
-        call.close();
-        closing.get(2, TimeUnit.SECONDS);
-        assertEquals(1, auditCloses.get());
-    }
-
-    @Test
-    void opensExplicitPublisherCapabilityWithoutSigning() throws Exception {
-        System.out.println("opensExplicitPublisherCapabilityWithoutSigning");
-        ProviderConfig publisher = new ProviderConfig("filesystem",
-                Map.of("root", temporaryDirectory.resolve("published").toString(), "targetId", "local-crls"));
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
-                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("store-publisher").toString())),
-                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), java.util.List.of(publisher));
-        try (PkiSession session = PkiSession.open(configuration)) {
-            System.out.println("...publicationConfigured=" + session.publications().isPresent());
-            assertTrue(session.publications().isPresent());
-            assertTrue(session.authorities().isEmpty());
         }
-        System.out.println("...ok");
+        assertThrows(IllegalStateException.class, session::supportsSigningEvidenceFeed);
+        assertThrows(IllegalStateException.class, () -> session.openSigningEvidenceFeed(-1));
+    }
+
+    private static void assertEvidenceFeed(LongFunction<AuditEvidenceFeed> opener, PkiId expectedId)
+            throws IOException {
+        try (AuditEvidenceFeed feed = opener.apply(-1L)) {
+            assertEquals(1L, feed.highWatermark());
+            assertTrue(feed.next(CancellationSignal.NONE));
+            assertEquals(0L, feed.current().sequence());
+            assertEquals(expectedId, feed.current().objectId());
+            assertTrue(feed.current().evidence().length > 0);
+            assertFalse(feed.next(CancellationSignal.NONE));
+        }
+        assertEvidenceFeedEmpty(opener.apply(0L), 1L);
+    }
+
+    private static void assertEvidenceFeedEmpty(AuditEvidenceFeed feed, long expectedWatermark) throws IOException {
+        try (feed) {
+            assertEquals(expectedWatermark, feed.highWatermark());
+            assertFalse(feed.next(CancellationSignal.NONE));
+        }
     }
 
     @Test
-    void rejectsUnknownPublisherBeforeStoreAllocation() {
-        System.out.println("rejectsUnknownPublisherBeforeStoreAllocation");
-        Path storeRoot = temporaryDirectory.resolve("must-not-open");
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
-                new ProviderConfig("fs", Map.of("root", storeRoot.toString())),
-                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(),
-                java.util.List.of(new ProviderConfig("unknown-publisher", Map.of())));
-        assertThrows(IllegalStateException.class, () -> PkiSession.open(configuration));
-        System.out.println("...storeAllocated=" + java.nio.file.Files.exists(storeRoot));
-        assertTrue(java.nio.file.Files.notExists(storeRoot));
-        System.out.println("...ok");
-    }
-
-    @Test
-    void composesOneSharedSigningAndX509ServiceGraph() throws Exception {
-        System.out.println("composesOneSharedSigningAndX509ServiceGraph");
-        KeyRef keyRef = new KeyRef("managed:test-root");
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-        generator.initialize(2048);
-        KeyPair keyPair = generator.generateKeyPair();
-        InMemorySignatureWorkflow workflow = new InMemorySignatureWorkflow(Map.of(keyRef.value(), keyPair));
-        ProviderConfig placeholder = new ProviderConfig("test", Map.of());
-        PkiSessionConfiguration.SigningConfiguration signing = new PkiSessionConfiguration.SigningConfiguration(
-                placeholder, new ProviderConfig("x509-bc", Map.of()),
-                "SHA256withRSA", Duration.ofSeconds(5), Optional.empty());
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(3,
-                new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("composed-store").toString())),
-                new ProviderConfig("memory", Map.of("size", "16")), Optional.of(signing), java.util.List.of());
-        AtomicBoolean emptyDependenciesObserved = new AtomicBoolean();
-        DefaultPkiSession.Bootstrap bootstrap = signingBootstrap(workflow, emptyDependenciesObserved);
-        try (PkiSession session = DefaultPkiSession.open(configuration, PkiSessionRuntimeDependencies.none(), CLOCK,
-                bootstrap)) {
-            System.out.println("...services=ca,request,issuance,status");
-            assertTrue(session.authorities().isPresent());
+    void unconfiguredSessionRemainsSigningThreadless(@TempDir Path temporary) throws Exception {
+        try (PkiSession session = PkiSession.open(configuration(temporary))) {
             assertTrue(session.requests().isPresent());
-            assertTrue(session.issuance().isPresent());
-            assertTrue(session.statusObjects().isPresent());
-            assertTrue(session.publications().isEmpty());
-            BuiltInCertificateProfileTemplate root = BuiltInCertificateProfileCatalog
-                    .load(getClass().getClassLoader()).stream()
-                    .filter(candidate -> "root-ca".equals(candidate.definition().profileId())).findFirst()
-                    .orElseThrow();
-            session.profiles().importProfile(root.canonicalJson());
-            session.profiles().activateProfile("root-ca", root.definition().profileVersion());
-            PkiOperationOutcome outcome = session.operations().execute(new PkiOperation.CreateAuthority(
-                    new FormatId("x509"), new SubjectRef("CN=Composed Root"), "root-ca", keyRef),
-                    CancellationSignal.NONE);
-            assertInstanceOf(PkiOperationOutcome.Completed.class, outcome);
-            SigningReconciliationResult reconciliation = session.reconcileSigning(new SigningReconciliationRequest(
-                    SigningReconciliationContinuation.start(), 16, 16, CLOCK.instant().plusSeconds(30),
-                    Duration.ofSeconds(5), CancellationSignal.NONE));
-            assertTrue(workflow.submittedSignCount() >= 1);
-            assertEquals(0, reconciliation.retryable());
-            assertTrue(emptyDependenciesObserved.get());
         }
-        System.out.println("...ok");
     }
 
-    private static PkiSessionConfiguration configuration(Path storeRoot) {
-        return new PkiSessionConfiguration(1, new ProviderConfig("fs", Map.of("root", storeRoot.toString())),
-                new ProviderConfig("memory", Map.of("size", "16")));
+    @Test
+    void exposesRestoredOcspWithoutLegacySigningSessionSurface() {
+        Set<String> methods = Arrays.stream(PkiSession.class.getMethods())
+                .map(java.lang.reflect.Method::getName)
+                .collect(Collectors.toUnmodifiableSet());
+
+        assertTrue(methods.contains("ocsp"));
+        assertTrue(methods.stream().noneMatch(Set.of("authorities", "issuance", "statusObjects",
+                "reconcileSigning", "registerSigningAdvisoryWake", "signingExecutionMetrics")::contains));
     }
 
-    private static PkiSessionConfiguration signingConfiguration(Path storeRoot, Duration gracefulDrain,
-            Duration forcedCancellation) {
-        ProviderConfig workflow = new ProviderConfig("test", Map.of());
+    @Test
+    void configuredSessionOwnsSigningRuntimeAndClosesProvider(@TempDir Path temporary)
+            throws Exception {
+        RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
+        PkiSession session = DefaultPkiSession.open(configured(temporary, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm()),
+                Clock.systemUTC(), bootstrap);
+        zeroecho.pki.api.SigningService service = session.signing().orElseThrow();
+        zeroecho.pki.api.SemanticSigningService semantic = session.semanticSigning().orElseThrow();
+        assertTrue(semantic == session.semanticSigning().orElseThrow());
+        PkiSigningCommands commands = session.signingCommands().orElseThrow();
+        assertTrue(commands == session.signingCommands().orElseThrow());
+        assertEquals(1, bootstrap.provider.opens);
+        session.close();
+        assertEquals(1, bootstrap.provider.closes);
+        assertThrows(IllegalStateException.class, () -> commands.completedResult(null));
+        assertThrows(IllegalStateException.class, () -> commands.prepare(null, null, null, null));
+        assertThrows(SigningExecutionException.class, service::newSubmissionId);
+        assertThrows(SigningExecutionException.class,
+                () -> semantic.findByCorrelation(zeroecho.pki.api.signing.SemanticSigningKind.CA, "closed"));
+    }
+
+    @Test
+    void configuredSessionDispatchesExactNondefaultRequestAlgorithm(@TempDir Path temporary) throws Exception {
+        RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap(1);
+        try (PkiSession session = DefaultPkiSession.open(configured(temporary,
+                zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm()), Clock.systemUTC(), bootstrap)) {
+            SigningService service = session.signing().orElseThrow();
+            KeyRef key = new KeyRef("nondefault-ed-key");
+            AccessContext access = new AccessContext(new Principal("TEST", "algorithm"), new Purpose("SIGN"), Optional.empty(), Optional.empty());
+            SigningRequest request = new SigningRequest(service.newSubmissionId(), access, key, new PkiId("algorithm-authority"),
+                    zeroecho.core.alg.BootstrapAlgorithmIdentities.ED25519_SIGNATURE, Encoding.BINARY, Encoding.BINARY);
+            zeroecho.pki.api.signing.PreparedSigningRequest prepared = service.prepare(request, oneShot(new byte[] {1, 2}), CancellationSignal.NONE);
+            assertEquals(request.signatureAlgorithm(), prepared.request().signatureAlgorithm());
+            service.accept(prepared);
+            assertTrue(bootstrap.provider.dispatched.await(5, TimeUnit.SECONDS));
+            assertEquals(request.signatureAlgorithm().canonicalForm(), bootstrap.provider.dispatchAlgorithms.get(key));
+            assertEquals(request.signatureAlgorithm().canonicalForm(), bootstrap.store.getSignWorkflow(request.submissionId().id())
+                    .orElseThrow().envelope().algorithmId());
+            assertEquals(zeroecho.pki.api.signing.SigningAcceptanceResolution.MATCHED, service.resolve(prepared.receipt()));
+        }
+    }
+
+    @Test
+    void configuredTopologyRoutesExactAndUnmatchedKeysToDedicatedPools(
+            @TempDir Path temporary) throws Exception {
+        KeyRef exactKey = new KeyRef("session-exact-sensitive");
+        KeyRef unmatchedKey = new KeyRef("session-unmatched-sensitive");
+        PkiSessionConfiguration.SigningTopology topology = topology(2,
+                List.of(new PkiSessionConfiguration.SigningKeyGroup(List.of(exactKey),
+                        new PkiSessionConfiguration.SigningLanePool(1, 1))),
+                new PkiSessionConfiguration.SigningLanePool(1, 1));
+        RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap(2);
+
+        try (PkiSession session = DefaultPkiSession.open(
+                configured(temporary, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), topology),
+                Clock.systemUTC(), bootstrap)) {
+            SigningService service = session.signing().orElseThrow();
+            submit(service, exactKey, new PkiId("authority-exact"));
+            submit(service, unmatchedKey, new PkiId("authority-catch-all"));
+            assertTrue(bootstrap.provider.dispatched.await(5L, TimeUnit.SECONDS));
+            assertTrue(bootstrap.provider.threadFor(exactKey).contains("pool-0"));
+            assertTrue(bootstrap.provider.threadFor(unmatchedKey).contains("pool-1"));
+            assertTrue(bootstrap.provider.threadNames().stream()
+                    .noneMatch(name -> name.contains(exactKey.value())
+                            || name.contains(unmatchedKey.value())));
+        }
+        assertEquals(1, bootstrap.provider.closes);
+    }
+
+    @Test
+    void failedSigningCompositionClosesProviderAndStore(@TempDir Path temporary) {
+        RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
+        assertThrows(IllegalArgumentException.class, () -> DefaultPkiSession.open(
+                configured(temporary, "unsupported"), Clock.systemUTC(), bootstrap));
+        assertEquals(1, bootstrap.provider.closes);
+        assertThrows(IllegalStateException.class, bootstrap.store::signingNow);
+    }
+
+    @Test
+    void invalidDuplicateRouteFailsBeforeResourceAllocation(@TempDir Path temporary) {
+        RecordingSigningBootstrap bootstrap = new RecordingSigningBootstrap();
+
+        assertThrows(IllegalArgumentException.class, () -> DefaultPkiSession.open(
+                duplicateRouteConfiguration(temporary), Clock.systemUTC(), bootstrap));
+        assertEquals(0, bootstrap.provider.opens);
+        assertTrue(bootstrap.store == null);
+    }
+
+    @Test
+    void rejectsEveryConfigurationVersionExceptCurrent(@TempDir Path temporary) {
+        ProviderConfig store = new ProviderConfig("fs", Map.of("root", temporary.toString()));
+        ProviderConfig audit = new ProviderConfig("memory", Map.of("size", "16"));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION - 1,
+                        store, audit, Optional.empty(), List.of(), List.of()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION + 1,
+                        store, audit, Optional.empty(), List.of(), List.of()));
+    }
+
+    private static PkiSessionConfiguration configuration(Path temporary) {
+        return new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
+                new ProviderConfig("fs", Map.of("root", temporary.resolve("store").toString())),
+                new ProviderConfig("memory", Map.of("size", "16")),
+                Optional.empty(), List.of(), List.of());
+    }
+
+    private static PkiSessionConfiguration configured(Path temporary, String algorithm) {
+        return configured(temporary, algorithm, topology(2, List.of(),
+                new PkiSessionConfiguration.SigningLanePool(1, 4)));
+    }
+
+    private static PkiSessionConfiguration configured(Path temporary, String algorithm,
+            PkiSessionConfiguration.SigningTopology topology) {
         PkiSessionConfiguration.SigningConfiguration signing =
-                new PkiSessionConfiguration.SigningConfiguration(workflow,
-                        new ProviderConfig("x509-bc", Map.of()), "SHA256withRSA", Duration.ofSeconds(5),
-                        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), 1, 1,
-                        gracefulDrain, forcedCancellation);
-        return new PkiSessionConfiguration(3,
-                new ProviderConfig("fs", Map.of("root", storeRoot.toString())),
-                new ProviderConfig("memory", Map.of("size", "16")), Optional.of(signing), List.of());
+                new PkiSessionConfiguration.SigningConfiguration(
+                        new ProviderConfig("test-signing", Map.of()), algorithm,
+                        Duration.ofMinutes(1L), Optional.empty(), topology, OptionalLong.empty());
+        return new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
+                new ProviderConfig("fs", Map.of("root", temporary.resolve("store").toString())),
+                new ProviderConfig("memory", Map.of("size", "16")),
+                Optional.of(signing), List.of(), List.of());
     }
 
-    private static void awaitForegroundQuiesce(DefaultPkiSession session) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
-        while (System.nanoTime() < deadline) {
-            try (PkiSigningBus.ForegroundCall ignored =
-                    session.registerForegroundSigningCall(CancellationSignal.NONE)) {
-                Thread.onSpinWait();
-            } catch (SigningExecutionException rejected) {
-                assertEquals(SigningExecutionException.Classification.SHUTTING_DOWN, rejected.classification());
-                return;
+    private static PkiSessionConfiguration duplicateRouteConfiguration(Path temporary) {
+        KeyRef duplicate = new KeyRef("duplicate-sensitive-key");
+        PkiSessionConfiguration.SigningKeyGroup first =
+                new PkiSessionConfiguration.SigningKeyGroup(List.of(duplicate),
+                        new PkiSessionConfiguration.SigningLanePool(1, 1));
+        PkiSessionConfiguration.SigningKeyGroup second =
+                new PkiSessionConfiguration.SigningKeyGroup(List.of(duplicate),
+                        new PkiSessionConfiguration.SigningLanePool(1, 1));
+        return configured(temporary, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(), topology(2,
+                List.of(first, second), new PkiSessionConfiguration.SigningLanePool(1, 1)));
+    }
+
+    private static PkiSessionConfiguration.SigningTopology topology(int pageSize,
+            List<PkiSessionConfiguration.SigningKeyGroup> exactGroups,
+            PkiSessionConfiguration.SigningLanePool catchAll) {
+        return new PkiSessionConfiguration.SigningTopology(
+                new PkiSessionConfiguration.SigningCoordinatorLimits(pageSize,
+                        Duration.ofSeconds(10L), Duration.ofSeconds(5L),
+                        Duration.ofDays(1L), Duration.ofSeconds(2L)),
+                exactGroups, catchAll);
+    }
+
+    private static void submit(SigningService service, KeyRef keyRef, PkiId authority) {
+        AccessContext access = new AccessContext(new Principal("TEST", "session"),
+                new Purpose("SIGN"), Optional.empty(), Optional.empty());
+        SigningRequest request = new SigningRequest(service.newSubmissionId(), access,
+                keyRef, authority, zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256, Encoding.BINARY, Encoding.BINARY);
+        service.accept(service.prepare(request, oneShot(new byte[] { 1, 2, 3 }),
+                CancellationSignal.NONE));
+    }
+
+    private static OneShotContent oneShot(byte[] content) {
+        byte[] snapshot = content.clone();
+        return new OneShotContent() {
+            private boolean opened;
+            @Override public InputStream openStream() {
+                if (opened) {
+                    throw new IllegalStateException("Content was already opened");
+                }
+                opened = true;
+                return new ByteArrayInputStream(snapshot);
             }
+            @Override public OptionalLong length() { return OptionalLong.of(snapshot.length); }
+            @Override public void close() { }
+        };
+    }
+
+    private static final class RecordingSigningBootstrap implements DefaultPkiSession.Bootstrap {
+        private final RecordingProvider provider;
+        private PkiStore store;
+        private boolean signingEvidence;
+
+        private RecordingSigningBootstrap() {
+            this(0);
         }
-        throw new AssertionError("Foreground signing did not quiesce");
+
+        private RecordingSigningBootstrap(int expectedDispatches) {
+            provider = new RecordingProvider(expectedDispatches);
+        }
+
+        @Override public void validateStore(ProviderConfig configuration) {
+            PkiBootstrap.validateStoreConfiguration(configuration);
+        }
+        @Override public void validateAudit(ProviderConfig configuration) {
+            PkiBootstrap.validateAuditConfiguration(configuration);
+        }
+        @Override public PkiStore openStore(ProviderConfig configuration) {
+            store = signingEvidence ? evidenceStore(configuration) : PkiBootstrap.openStore(configuration);
+            return store;
+        }
+        @Override public PkiStore openStore(ProviderConfig configuration,
+                PkiStoreRuntimeDependencies dependencies) {
+            store = signingEvidence ? evidenceStore(configuration) : PkiBootstrap.openStore(configuration, dependencies);
+            return store;
+        }
+        private static PkiStore evidenceStore(ProviderConfig configuration) {
+            return new zeroecho.pki.impl.fs.FilesystemPkiStore(Path.of(configuration.get("root").orElseThrow()),
+                    zeroecho.pki.impl.fs.FsPkiStoreOptions.defaults().withSigningEvidenceAudit(true));
+        }
+        @Override public AuditSink openAudit(ProviderConfig configuration) {
+            return PkiBootstrap.openAudit(configuration);
+        }
+        @Override public void validateSigning(ProviderConfig configuration) { }
+        @Override public SigningProvider openSigning(ProviderConfig configuration,
+                SigningProviderRuntimeDependencies dependencies) {
+            provider.opens++;
+            return provider;
+        }
     }
 
-    private static DefaultPkiSession.Bootstrap bootstrap(AtomicInteger storesOpened, AtomicInteger storesClosed,
-            boolean invalidAudit, boolean failAuditOpen, boolean failAuditClose, boolean failStoreClose) {
-        return new DefaultPkiSession.Bootstrap() {
-            @Override
-            public void validateStore(ProviderConfig configuration) {
-                // valid
-            }
+    private static final class RecordingProvider implements SigningProvider {
+        @Override public zeroecho.pki.spi.crypto.SigningInputCapabilities inputCapabilities() {
+            return new zeroecho.pki.spi.crypto.SigningInputCapabilities(Long.MAX_VALUE, java.util.Map.of());
+        }
+        private final ConfigurationCommitment commitment =
+                new ConfigurationCommitment(new byte[ConfigurationCommitment.BYTE_LENGTH]);
+        private int opens;
+        private int closes;
+        private final CountDownLatch dispatched;
+        private final Map<KeyRef, String> dispatchThreads = new ConcurrentHashMap<>();
+        private final Map<KeyRef, String> dispatchAlgorithms = new ConcurrentHashMap<>();
 
-            @Override
-            public void validateAudit(ProviderConfig configuration) {
-                if (invalidAudit) {
-                    throw new IllegalArgumentException("invalid");
-                }
-            }
-
-            @Override
-            public void validateSignatureWorkflow(ProviderConfig configuration) {
-                // valid test provider
-            }
-
-            @Override
-            public void validateCredentialFramework(ProviderConfig configuration) {
-                // valid test framework
-            }
-
-            @Override
-            public PkiStore openStore(ProviderConfig configuration) {
-                storesOpened.incrementAndGet();
-                return proxyStore(() -> {
-                    storesClosed.incrementAndGet();
-                    if (failStoreClose) {
-                        throw new IOException("store-close");
-                    }
-                });
-            }
-
-            @Override
-            public AuditSink openAudit(ProviderConfig configuration) {
-                if (failAuditOpen) {
-                    throw new IllegalStateException("audit-open");
-                }
-                return new AuditSink() {
-                    @Override
-                    public void record(zeroecho.pki.api.audit.AuditEvent event) {
-                        // no-op
-                    }
-
-                    @Override
-                    public void close() {
-                        if (failAuditClose) {
-                            throw new IllegalStateException("audit-close");
-                        }
-                    }
-                };
-            }
-        };
-    }
-
-    private static DefaultPkiSession.Bootstrap signingBootstrap(SignatureWorkflow workflow,
-            AtomicBoolean emptyDependenciesObserved) {
-        return signingBootstrap(workflow, emptyDependenciesObserved, new AtomicBoolean());
-    }
-
-    private static DefaultPkiSession.Bootstrap signingBootstrap(SignatureWorkflow workflow,
-            AtomicBoolean emptyDependenciesObserved, AtomicBoolean localParticipantObserved) {
-        return new DefaultPkiSession.Bootstrap() {
-            @Override
-            public void validateStore(ProviderConfig configuration) {
-                PkiBootstrap.validateStoreConfiguration(configuration);
-            }
-
-            @Override
-            public void validateAudit(ProviderConfig configuration) {
-                PkiBootstrap.validateAuditConfiguration(configuration);
-            }
-
-            @Override
-            public PkiStore openStore(ProviderConfig configuration) {
-                return PkiBootstrap.openStore(configuration);
-            }
-
-            @Override
-            public AuditSink openAudit(ProviderConfig configuration) {
-                return PkiBootstrap.openAudit(configuration);
-            }
-
-            @Override
-            public void validateSignatureWorkflow(ProviderConfig configuration) {
-                // Explicit deterministic test provider.
-            }
-
-            @Override
-            public void validateCredentialFramework(ProviderConfig configuration) {
-                PkiBootstrap.validateCredentialFrameworkConfiguration(configuration);
-            }
-
-            @Override
-            public SignatureWorkflow openSignatureWorkflow(ProviderConfig configuration,
-                    SignatureWorkflowRuntimeDependencies dependencies) {
-                emptyDependenciesObserved.set(dependencies.keyringUnlockProvider().isEmpty());
-                localParticipantObserved.set(dependencies.localSigningLedgerParticipant().isPresent());
-                return workflow;
-            }
-        };
-    }
-
-    private static PkiStore proxyStore(CloseAction close) {
-        return (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(), new Class<?>[] { PkiStore.class },
-                (proxy, method, arguments) -> {
-                    if ("close".equals(method.getName())) {
-                        close.close();
-                        return null;
-                    }
-                    if ("toString".equals(method.getName())) {
-                        return "test-store";
-                    }
-                    throw new UnsupportedOperationException(method.getName());
-                });
-    }
-
-    @FunctionalInterface
-    private interface CloseAction {
-        void close() throws Exception;
+        private RecordingProvider(int expectedDispatches) {
+            dispatched = new CountDownLatch(expectedDispatches);
+        }
+        @Override public String id() { return "test-signer"; }
+        @Override public ConfigurationCommitment configurationCommitment() { return commitment; }
+        @Override public Set<String> supportedAlgorithms() { return Set.of(zeroecho.core.alg.BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256.canonicalForm(),
+                zeroecho.core.alg.BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm()); }
+        @Override public OperationObservation dispatch(SigningProvider.SignRequest request,
+                CallControl control) {
+            dispatchThreads.put(request.keyRef(), Thread.currentThread().getName());
+            dispatchAlgorithms.put(request.keyRef(), request.algorithmId());
+            dispatched.countDown();
+            return pending(request.operationId());
+        }
+        @Override public OperationObservation reconcile(PkiId operationId, CallControl control) {
+            return pending(operationId);
+        }
+        @Override public OperationObservation cancel(PkiId operationId, long fencingToken,
+                CancellationReason reason, CallControl control) {
+            return pending(operationId);
+        }
+        @Override public void close() { closes++; }
+        private String threadFor(KeyRef keyRef) { return dispatchThreads.get(keyRef); }
+        private List<String> threadNames() { return List.copyOf(dispatchThreads.values()); }
+        private static OperationObservation pending(PkiId operationId) {
+            return new OperationObservation(operationId, ObservationState.PENDING,
+                    java.time.Instant.now(), DetailCode.PENDING, Optional.empty());
+        }
     }
 }

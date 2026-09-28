@@ -32,13 +32,12 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 /**
- * ZeroEcho-lib backed cryptographic workflow implementation for PKI signing and
- * signature verification.
+ * ZeroEcho-lib backed signing-provider implementation.
  *
  * <p>
  * This package contains the ZeroEcho-lib based implementation of the PKI crypto
- * boundary represented by {@link zeroecho.pki.spi.crypto.SignatureWorkflow}. It
- * adapts PKI-facing workflow requests to ZeroEcho core cryptographic execution
+ * boundary represented by {@link zeroecho.pki.spi.crypto.SigningProvider}. It
+ * adapts PKI-facing signing requests to ZeroEcho core cryptographic execution
  * backed by {@link zeroecho.core.storage.KeyringStore}.
  * </p>
  *
@@ -46,16 +45,16 @@
  * The implementation resolves opaque {@link zeroecho.pki.api.KeyRef} values to
  * provider-local keyring aliases, loads the corresponding key material within
  * this boundary, performs signature generation or verification through ZeroEcho
- * core cryptographic APIs, and returns workflow-oriented operation status
- * objects to the PKI orchestration layer.
+ * core cryptographic APIs, and returns one bounded operation observation to the
+ * PKI orchestration layer.
  * </p>
  *
  * <h2>Architectural role</h2>
  * <ul>
  * <li>The package acts as an implementation-side crypto boundary, not as a
  * generic public crypto API.</li>
- * <li>Public workflow contracts remain defined in
- * {@link zeroecho.pki.spi.crypto.SignatureWorkflow}.</li>
+ * <li>The provider contract remains defined in
+ * {@link zeroecho.pki.spi.crypto.SigningProvider}.</li>
  * <li>Private key material is never exported outside this package
  * boundary.</li>
  * <li>Key lookup and key loading are delegated to
@@ -64,15 +63,10 @@
  *
  * <h2>Execution model</h2>
  * <p>
- * The current implementation uses an in-memory workflow registry and executes
- * submitted sign and verify operations eagerly in the caller thread. Operation
- * identifiers are still returned so that callers interact through the workflow
- * contract rather than through direct cryptographic return values.
- * </p>
- *
- * <p>
- * Operation status and notification registrations are not durably persisted.
- * They exist only for the lifetime of the provider instance.
+ * The implementation executes signing inline in the caller thread and retains
+ * no per-operation state. The authoritative store owns lifecycle, fencing,
+ * retry, and recovery; a dispatched local operation cannot be replayed after a
+ * restart and is therefore reconciled as unrecoverable.
  * </p>
  *
  * <h2>KeyRef mapping</h2>
@@ -100,7 +94,7 @@
  * payload bytes, or raw signature bytes.</li>
  * <li>Supported algorithm reporting is informational and does not by itself
  * imply key availability or policy acceptance.</li>
- * <li>The assurance of the workflow outcome depends on the integrity of the
+ * <li>The assurance of the signing outcome depends on the integrity of the
  * configured keyring content and on ZeroEcho core cryptographic
  * implementations.</li>
  * </ul>

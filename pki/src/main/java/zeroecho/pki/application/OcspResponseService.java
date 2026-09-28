@@ -41,9 +41,15 @@ import java.util.Optional;
 
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.PkiException;
 import zeroecho.core.io.CancellationSignal;
 
-/** Transport-neutral strict OCSP response generation through confined signing. */
+/**
+ * Transport-neutral strict OCSP response generation through session-owned signing.
+ * Callers authorize responder policy and authority scope before invocation. The
+ * service captures one revocation view and releases it before bounded raw signing;
+ * it introduces no persistent OCSP operation or foreground provider executor.
+ */
 @SuppressWarnings("PMD.ControlStatementBraces")
 public interface OcspResponseService {
     /** Supported RFC CertID digest identities. */
@@ -224,8 +230,13 @@ public interface OcspResponseService {
      *
      * @param command validated responder generation command
      * @return signed response with revocation provenance
+     * @throws SigningPendingException if the bounded signing attempt remains pending
+     * @throws zeroecho.pki.api.SigningExecutionException if signing is overloaded or shutting down
+     * @throws PkiException if response validation or signing fails, without sensitive causes
      */
-    Response respond(Command command);
+    default Response respond(Command command) {
+        return respond(command, CancellationSignal.NONE);
+    }
 
     /**
      * Resolves and signs one response with originating cancellation.
@@ -233,36 +244,58 @@ public interface OcspResponseService {
      * @param command validated responder generation command
      * @param cancellation originating cancellation signal
      * @return signed response with revocation provenance
+     * @throws SigningPendingException if the bounded signing attempt remains pending
+     * @throws zeroecho.pki.api.SigningExecutionException if signing is overloaded or shutting down
+     * @throws PkiException if response validation or signing fails, without sensitive causes
      */
-    default Response respond(Command command, CancellationSignal cancellation) {
-        Objects.requireNonNull(cancellation, "cancellation");
-        return respond(command);
-    }
+    Response respond(Command command, CancellationSignal cancellation);
 
     /**
      * Proves that one configured confined key capability signs as the exact
      * responder certificate before a durable responder is activated.
      *
+     * @param authorityId explicitly authorized authority used for signing fairness, never inferred from the responder issuer
      * @param responderCredentialId exact responder credential
      * @param signingKeyRef confined signing-key reference under test
      * @param signatureAlgorithm canonical signature algorithm
      * @param signatureBindingId optional exact algorithm-binding identifier
+     * @throws SigningPendingException if the bounded signing attempt remains pending
+     * @throws zeroecho.pki.api.SigningExecutionException if signing is overloaded or shutting down
+     * @throws PkiException if the binding cannot be verified, without sensitive causes
      */
-    void validateSigningBinding(PkiId responderCredentialId, KeyRef signingKeyRef,
-            String signatureAlgorithm, Optional<String> signatureBindingId);
+    default void validateSigningBinding(PkiId authorityId, PkiId responderCredentialId, KeyRef signingKeyRef,
+            String signatureAlgorithm, Optional<String> signatureBindingId) {
+        validateSigningBinding(authorityId, responderCredentialId, signingKeyRef, signatureAlgorithm, signatureBindingId,
+                CancellationSignal.NONE);
+    }
 
     /**
      * Validates responder signing while carrying originating cancellation.
      *
+     * @param authorityId explicitly authorized authority used for signing fairness, never inferred from the responder issuer
      * @param responderCredentialId exact responder credential
      * @param signingKeyRef confined signing-key reference under test
      * @param signatureAlgorithm canonical signature algorithm
      * @param signatureBindingId optional exact algorithm-binding identifier
      * @param cancellation originating cancellation signal
+     * @throws SigningPendingException if the bounded signing attempt remains pending
+     * @throws zeroecho.pki.api.SigningExecutionException if signing is overloaded or shutting down
+     * @throws PkiException if the binding cannot be verified, without sensitive causes
      */
-    default void validateSigningBinding(PkiId responderCredentialId, KeyRef signingKeyRef,
-            String signatureAlgorithm, Optional<String> signatureBindingId, CancellationSignal cancellation) {
-        Objects.requireNonNull(cancellation, "cancellation");
-        validateSigningBinding(responderCredentialId, signingKeyRef, signatureAlgorithm, signatureBindingId);
+    void validateSigningBinding(PkiId authorityId, PkiId responderCredentialId, KeyRef signingKeyRef,
+            String signatureAlgorithm, Optional<String> signatureBindingId, CancellationSignal cancellation);
+
+    /**
+     * Content-free result indicating that the bounded initial signing attempt
+     * returned pending. Durable cancellation is requested without awaiting cleanup;
+     * this exception carries no operation identity or provider diagnostic.
+     */
+    final class SigningPendingException extends PkiException {
+        private static final long serialVersionUID = 825419348201647529L;
+
+        /** Creates the fixed safe pending disposition. */
+        public SigningPendingException() {
+            super("OCSP signing remains pending");
+        }
     }
 }

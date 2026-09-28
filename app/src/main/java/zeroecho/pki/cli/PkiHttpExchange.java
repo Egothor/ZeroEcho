@@ -36,6 +36,7 @@ package zeroecho.pki.cli;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.Optional;
+import java.time.Duration;
 
 /**
  * Minimal request/response seam over the admin HTTP API.
@@ -62,6 +63,12 @@ interface PkiHttpExchange extends AutoCloseable {
         // No resource by default.
     }
 
+    /** A bounded response violated the protocol before decoding. */
+    final class InvalidResponseException extends IOException {
+        private static final long serialVersionUID = 1L;
+        /* default */ InvalidResponseException(String message) { super(message); }
+    }
+
     /** Supported request methods. */
     enum Method {
         /** Retrieve a resource. */
@@ -77,10 +84,12 @@ interface PkiHttpExchange extends AutoCloseable {
      * @param path absolute request path, resolved against the base URL
      * @param body JSON request body for {@code POST}, empty for {@code GET}
      */
-    record Request(Method method, String path, Optional<byte[]> body) {
+    record Request(Method method, String path, Optional<byte[]> body, Duration timeout) {
         /** Validates the request. */
         public Request {
             Objects.requireNonNull(method, "method");
+            Objects.requireNonNull(timeout, "timeout");
+            if (timeout.isZero() || timeout.isNegative()) { throw new IllegalArgumentException("timeout must be positive"); }
             if (path == null || path.isBlank()) {
                 throw new IllegalArgumentException("path must not be blank");
             }
@@ -94,7 +103,7 @@ interface PkiHttpExchange extends AutoCloseable {
          * @return the request
          */
         public static Request get(String path) {
-            return new Request(Method.GET, path, Optional.empty());
+            return new Request(Method.GET, path, Optional.empty(), Duration.ofSeconds(60));
         }
 
         /**
@@ -105,7 +114,7 @@ interface PkiHttpExchange extends AutoCloseable {
          * @return the request
          */
         public static Request post(String path, byte[] body) {
-            return new Request(Method.POST, path, Optional.of(body.clone()));
+            return new Request(Method.POST, path, Optional.of(body.clone()), Duration.ofSeconds(60));
         }
     }
 

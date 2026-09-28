@@ -45,4 +45,10 @@ public final class FilesystemPkiStoreTestAccess {
         return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), Clock.systemUTC(),
                 maximumSigningWork, null);
     }
+
+    /** Opens a filesystem store with deterministic time and signing-work bound. */
+    public static FilesystemPkiStore open(Path root, int maximumSigningWork, Clock clock) {
+        return new FilesystemPkiStore(root, FsPkiStoreOptions.defaults(), clock,
+                maximumSigningWork, null);
+    }
 }

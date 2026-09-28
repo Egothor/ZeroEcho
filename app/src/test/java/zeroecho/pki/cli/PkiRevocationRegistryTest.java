@@ -54,14 +54,14 @@ class PkiRevocationRegistryTest {
     @Test
     void bindsOptionalJustificationWithoutConflatingTheStandardizedReason() throws Exception {
         PkiOperationRegistry registry = new PkiOperationRegistry();
-        PkiOperation.RevokeCredential reasonOnly = (PkiOperation.RevokeCredential) registry.bind(
+        PkiOperation.RevokeCredential reasonOnly = (PkiOperation.RevokeCredential) ((PkiLocalCommand.Core) registry.bind(
                 PkiOperation.RevokeCredential.NAME, arguments(Map.of(
                         "credentialId", text("credential-a"), "reason", text("KEY_COMPROMISE"))),
-                temporaryDirectory);
-        PkiOperation.RevokeCredential justified = (PkiOperation.RevokeCredential) registry.bind(
+                temporaryDirectory)).operation();
+        PkiOperation.RevokeCredential justified = (PkiOperation.RevokeCredential) ((PkiLocalCommand.Core) registry.bind(
                 PkiOperation.RevokeCredential.NAME, arguments(Map.of(
                         "credentialId", text("credential-a"), "reason", text("KEY_COMPROMISE"),
-                        "justification", text("ticket-100"))), temporaryDirectory);
+                        "justification", text("ticket-100"))), temporaryDirectory)).operation();
 
         assertEquals(Optional.empty(), reasonOnly.operatorJustification());
         assertEquals(Optional.of("ticket-100"), justified.operatorJustification());

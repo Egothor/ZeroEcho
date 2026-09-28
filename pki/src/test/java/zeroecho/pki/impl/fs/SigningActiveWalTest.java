@@ -77,6 +77,58 @@ final class SigningActiveWalTest {
     private Path temporaryDirectory;
 
     @Test
+    void validatedRecoveryOpenRemainsPassiveUntilWriterStartsExactlyOnce() throws Exception {
+        Path path = temporaryDirectory.resolve("passive-active.zew");
+        byte[] header = SigningWalContainerCodec.encode(new SigningWalContainerCodec.Header(
+                DESCRIPTOR.identity(), DESCRIPTOR.firstSequence(), DESCRIPTOR.baselineRevision()));
+        Files.write(path, header);
+        TestOperations operations = new TestOperations();
+        SigningActiveWal.ValidatedState validated = new SigningActiveWal.ValidatedState(
+                header.length, header.length, DESCRIPTOR.firstSequence() - 1L,
+                DESCRIPTOR.baselineRevision(), SigningFormatSupport.sha256().digest(header));
+
+        SigningActiveWal wal = SigningActiveWal.reopenValidatedPassive(path, DESCRIPTOR,
+                configuration(4, 4, 0L), validated, operations, FIXED_CLOCK, NO_WAIT);
+        assertEquals(SigningActiveWal.State.PASSIVE, wal.snapshot().state());
+        assertArrayEquals(header, Files.readAllBytes(path));
+        assertThrows(SigningActiveWal.UnavailableException.class, () -> wal.submit(
+                SigningWalFrameCodec.RecordType.INTENT, uuid(1), new byte[] { 1 }));
+
+        SigningActiveWal.CommitResult recovered = wal.appendRecovery(
+                SigningWalFrameCodec.RecordType.INTENT, uuid(2), new byte[] { 2 });
+        assertEquals(10L, recovered.sequence());
+        assertEquals(SigningActiveWal.State.PASSIVE, wal.snapshot().state());
+        assertEquals(1L, wal.snapshot().forces());
+        wal.startWriter();
+        assertEquals(SigningActiveWal.State.OPEN, wal.snapshot().state());
+        assertThrows(IllegalStateException.class, wal::startWriter);
+        assertEquals(11L, wal.submit(SigningWalFrameCodec.RecordType.INTENT, uuid(3),
+                new byte[] { 3 }).get(5L, TimeUnit.SECONDS).sequence());
+        wal.close();
+    }
+
+    @Test
+    void closingPassiveRecoveryWalClosesChannelWithoutStartingWriter() throws Exception {
+        Path path = temporaryDirectory.resolve("close-passive-active.zew");
+        byte[] header = SigningWalContainerCodec.encode(new SigningWalContainerCodec.Header(
+                DESCRIPTOR.identity(), DESCRIPTOR.firstSequence(), DESCRIPTOR.baselineRevision()));
+        Files.write(path, header);
+        TestOperations operations = new TestOperations();
+        SigningActiveWal.ValidatedState validated = new SigningActiveWal.ValidatedState(
+                header.length, header.length, DESCRIPTOR.firstSequence() - 1L,
+                DESCRIPTOR.baselineRevision(), SigningFormatSupport.sha256().digest(header));
+
+        SigningActiveWal wal = SigningActiveWal.reopenValidatedPassive(path, DESCRIPTOR,
+                configuration(4, 4, 0L), validated, operations, FIXED_CLOCK, NO_WAIT);
+        wal.close();
+        wal.close();
+
+        assertEquals(SigningActiveWal.State.CLOSED, wal.snapshot().state());
+        assertFalse(operations.channel.isOpen());
+        assertArrayEquals(header, Files.readAllBytes(path));
+    }
+
+    @Test
     void singletonTimeoutCommitsOneGroupWithOneForceAndStableBoundaries() throws Exception {
         Path path = temporaryDirectory.resolve("active.zew");
         TestOperations operations = new TestOperations();
@@ -323,6 +375,11 @@ final class SigningActiveWalTest {
         first.get(5L, TimeUnit.SECONDS);
         second.get(5L, TimeUnit.SECONDS);
         third.get(5L, TimeUnit.SECONDS);
+        SigningActiveWal.CommitResult afterRejection = wal.submit(
+                SigningWalFrameCodec.RecordType.INTENT, uuid(5), new byte[0])
+                .get(5L, TimeUnit.SECONDS);
+        assertEquals(13L, afterRejection.sequence(),
+                "pre-intent queue rejection must not consume a WAL sequence");
         wal.close();
     }
 

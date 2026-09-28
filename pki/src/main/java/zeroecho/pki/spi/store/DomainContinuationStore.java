@@ -58,7 +58,9 @@ public interface DomainContinuationStore {
         /** End-entity or intermediate credential issuance. */
         ISSUANCE,
         /** CRL or another persisted status object. */
-        STATUS
+        STATUS,
+        /** Managed private-key possession proof; never certificate or status publication. */
+        KEY_PROOF
     }
 
     /** Durable outer lifecycle. */

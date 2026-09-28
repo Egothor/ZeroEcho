@@ -49,6 +49,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import zeroecho.pki.spi.store.MetadataStoreId;
+
 /** Opt-in eligibility-ordered due-selection diagnostic over a production-recovered ledger. */
 @SuppressWarnings({ "PMD.CommentRequired", "PMD.SystemPrintln", "PMD.UseObjectForClearerAPI" })
 public final class SigningDueSelectionBenchmark {
@@ -85,10 +87,19 @@ public final class SigningDueSelectionBenchmark {
         if (fixture.population().dueRecords() != configuration.activePopulation()) {
             throw new BenchmarkException("FIXTURE_RECOVERY_UNAVAILABLE_OR_INVALID");
         }
-        Path metadataRoot = new FsPaths(configuration.workRoot()).transactionalMetadataRoot();
+        FsPaths paths = new FsPaths(configuration.workRoot());
+        Path metadataRoot = paths.transactionalMetadataRoot();
+        String signingNamespace = Files.readString(paths.signingNamespaceFile()).trim();
         try {
             try (SegmentedTransactionalMetadataStore metadata =
-                    SegmentedTransactionalMetadataStore.open(metadataRoot)) {
+                    SegmentedTransactionalMetadataStore.open(metadataRoot,
+                            new MetadataStoreId(signingNamespace),
+                            SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
+                            SigningActiveWal.Configuration.defaults(),
+                            FsPkiStoreOptions.DEFAULT_RESIDENT_INDEX_BUDGET_BYTES,
+                            FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES,
+                            FilesystemStagedContentStore.readOnlyResolver(
+                                    paths.stagedContentRoot(), signingNamespace))) {
                 long first = sample(metadata, configuration.selectionBound());
                 long[] subsequent = new long[configuration.subsequentInProcessSamples()];
                 for (int index = 0; index < subsequent.length; index++) {

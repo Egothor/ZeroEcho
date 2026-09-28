@@ -32,93 +32,90 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-import { useState } from 'react';
-import { Autocomplete, CircularProgress, Stack, TextField, Typography } from '@mui/material';
+import { useEffect, useState } from 'react';
+import { Autocomplete, Button, CircularProgress, Stack, TextField, Typography } from '@mui/material';
 import type { FieldSpec } from '@/api/operationSchema';
-import { refSource } from '@/api/entityRefs';
-import { useEntityOptions } from '@/hooks/useEntityOptions';
+import type { FieldValue } from '@/api/operations';
+import type { SelectionContext } from '@/api/entityRefs';
+import { displayLabel } from '@/api/labels';
+import { useEntityOptions, type EntityOption } from '@/hooks/useEntityOptions';
 
 interface Props {
   readonly field: FieldSpec;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
+  readonly value: FieldValue;
+  readonly context?: SelectionContext;
+  readonly onChange: (value: FieldValue) => void;
   readonly disabled?: boolean;
 }
 
-function label(field: FieldSpec): string {
-  const base = field.label ?? field.name;
-  return field.required ? base : `${base} (optional)`;
-}
-
-/**
- * Type-to-search picker for a field that references an existing entity. Suggests
- * candidates from the entity's list operation once opened, while still allowing a
- * free-typed identifier (freeSolo) — useful when the id is known but the list
- * operation is unavailable to this identity.
- */
-export function EntityAutocomplete({ field, value, onChange, disabled }: Props) {
+/** Known identities must be selected. Only explicitly new external references permit free entry. */
+export function EntityAutocomplete({ field, value, onChange, disabled, context = {} }: Props) {
   const [open, setOpen] = useState(false);
-  const source = refSource(field.ref);
-  const { data, isFetching } = useEntityOptions(field.ref, open);
-  const ids = data?.ids ?? [];
-  const labels = data?.labels ?? new Map<string, string>();
-  const entity = source?.label ?? 'value';
-
+  const [input, setInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [cursor, setCursor] = useState<string | number>();
+  const [selected, setSelected] = useState<readonly EntityOption[]>([]);
+  useEffect(() => {
+    const timer = setTimeout(() => { setSearch(input); setCursor(undefined); }, 250);
+    return () => clearTimeout(timer);
+  }, [input]);
+  const query = useEntityOptions(field.ref, open, context, search, cursor);
+  const items = query.data?.items ?? [];
+  const multiple = field.type === 'stringSet' || field.type === 'enumSet';
+  const ids = Array.isArray(value) ? value : value ? [String(value)] : [];
+  const options = ids.map((id) => items.find((item) => item.id === id) ?? selected.find((item) => item.id === id)
+    ?? { id, label: id, description: id, record: {} });
+  const helper = query.prerequisite ?? (query.error instanceof Error ? query.error.message : field.help)
+    ?? (field.allowNew ? 'Choose a known key, or enter a new external key reference.' : 'Search by name or identifier; select an item from the results.');
   return (
-    <Autocomplete
-      freeSolo
-      autoHighlight
-      size="small"
-      open={open}
-      onOpen={() => setOpen(true)}
-      onClose={() => setOpen(false)}
-      options={ids}
-      loading={isFetching}
-      disabled={disabled}
-      inputValue={value ?? ''}
-      onInputChange={(_, v) => onChange(v)}
-      filterOptions={(opts, state) => {
-        const q = state.inputValue.toLowerCase();
-        return opts.filter(
-          (o) => o.toLowerCase().includes(q) || (labels.get(o) ?? '').toLowerCase().includes(q),
-        );
-      }}
-      renderOption={(props, id) => {
-        const { key, ...rest } = props as { key: string } & Record<string, unknown>;
-        return (
-          <li key={key} {...rest}>
-            <Stack sx={{ minWidth: 0 }}>
-              <Typography variant="body2" sx={{ fontFamily: 'Roboto Mono, monospace' }}>
-                {id}
-              </Typography>
-              {labels.get(id) && (
-                <Typography variant="caption" color="text.secondary" noWrap>
-                  {labels.get(id)}
-                </Typography>
-              )}
-            </Stack>
-          </li>
-        );
-      }}
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          label={label(field)}
-          placeholder={`Start typing to search ${entity}…`}
-          helperText={field.help ?? `Search an existing ${entity}, or type an id.`}
-          slotProps={{
-            input: {
-              ...params.InputProps,
-              endAdornment: (
-                <>
-                  {isFetching ? <CircularProgress color="inherit" size={16} /> : null}
-                  {params.InputProps.endAdornment}
-                </>
-              ),
-            },
-          }}
-        />
-      )}
-    />
+    <Stack spacing={0.5}>
+      <Autocomplete<EntityOption, boolean, false, boolean>
+        multiple={multiple}
+        freeSolo={field.allowNew === true}
+        autoHighlight
+        size="small"
+        open={open}
+        onOpen={() => setOpen(true)}
+        onClose={() => setOpen(false)}
+        options={items}
+        value={multiple ? options : options[0] ?? null}
+        getOptionLabel={(item) => typeof item === 'string' ? item : item.label}
+        isOptionEqualToValue={(a, b) => a.id === b.id}
+        filterOptions={(available) => available}
+        loading={query.isFetching}
+        disabled={disabled}
+        onInputChange={(_, text, reason) => {
+          if (reason === 'input' || reason === 'clear') {
+            setInput(text);
+            if (field.allowNew && !multiple) onChange(text);
+            else if (!multiple && reason === 'input' && ids.length) onChange('');
+          }
+        }}
+        onChange={(_, choice) => {
+          const choices = choice === null ? [] : Array.isArray(choice) ? choice : [choice];
+          setSelected(choices.filter((item): item is EntityOption => typeof item !== 'string'));
+          const values = choices.map((item) => typeof item === 'string' ? item : item.id);
+          onChange(multiple ? values : values[0] ?? '');
+          setInput('');
+        }}
+        noOptionsText={query.prerequisite ?? (query.isError ? 'Could not load choices' : 'No matching choices')}
+        renderOption={(props, item) => {
+          const { key, ...rest } = props;
+          return <li key={key} {...rest}><Stack sx={{ minWidth: 0 }}>
+            <Typography variant="body2">{item.label}</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{item.description}</Typography>
+          </Stack></li>;
+        }}
+        renderInput={(params) => <TextField {...params}
+          label={`${field.label ?? displayLabel(field.name)}${field.required ? '' : ' (optional)'}`}
+          error={query.isError} helperText={helper}
+          slotProps={{ input: { ...params.InputProps, endAdornment: <>{query.isFetching && <CircularProgress size={16} />}{params.InputProps.endAdornment}</> } }} />}
+      />
+      {open && <Stack direction="row" spacing={1}>
+        {cursor !== undefined && <Button size="small" onMouseDown={(event) => event.preventDefault()} onClick={() => setCursor(undefined)}>First page</Button>}
+        {query.data?.next !== undefined && <Button size="small" disabled={query.isFetching} onMouseDown={(event) => event.preventDefault()} onClick={() => setCursor(query.data?.next)}>Next results</Button>}
+        {query.isError && <Button size="small" onMouseDown={(event) => event.preventDefault()} onClick={() => void query.refetch()}>Retry</Button>}
+      </Stack>}
+    </Stack>
   );
 }

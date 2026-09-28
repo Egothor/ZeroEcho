@@ -48,9 +48,9 @@ import zeroecho.pki.api.profile.IssuanceApprovalRequirement;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationExecutor;
 import zeroecho.pki.application.PkiOperationOutcome;
-import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.IssuanceExecutionEvidence;
+import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.pki.application.RevocationEvidenceExecutor;
 import zeroecho.pki.application.RevocationExecutionEvidence;
 import zeroecho.pki.server.acme.AcmeService;
@@ -69,6 +69,8 @@ import zeroecho.pki.application.PkiResourceScopeResolver;
         "PMD.NcssCount", "PMD.ConfusingTernary", "PMD.ExceptionAsFlowControl",
         "PMD.CouplingBetweenObjects" })
 public final class ServerOperationGateway {
+    private static final String PROFILE_ID = "profileId";
+
     /**
      * Complete transport-neutral request admission input.
      *
@@ -190,6 +192,24 @@ public final class ServerOperationGateway {
         }
     }
 
+    /**
+     * Executes one already-authorized signing operation through semantic admission.
+     * The implementation owns no additional runtime or retry loop.
+     */
+    @FunctionalInterface
+    public interface SigningExecutor {
+        /**
+         * Admits the authorized operation once, retaining its durable receipt when available.
+         *
+         * @param request authorized request and trusted actor context
+         * @param evidence optional leaf execution evidence
+         * @param cancellation transport cancellation before admission
+         * @return safe durable admission outcome
+         */
+        PkiOperationOutcome execute(Request request, Optional<IssuanceExecutionEvidence> evidence,
+                CancellationSignal cancellation);
+    }
+
     private final RealmId realmId;
     private final AuthorityExposurePolicy exposure;
     private final ServerControlStore control;
@@ -199,6 +219,7 @@ public final class ServerOperationGateway {
     private final BreakGlassService breakGlass;
     private final OperationSecurityDescriptors descriptors;
     private final PkiOperationExecutor executor;
+    private final SigningExecutor signingExecutor;
     private final ServerControlOperationExecutor controlExecutor;
     private final PkiResourceScopeResolver resourceScopes;
     private final Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies;
@@ -226,6 +247,7 @@ public final class ServerOperationGateway {
      * @param repositoryAliases optional repository-alias capability
      * @param descriptors closed operation-security descriptor catalog
      * @param executor session-owned PKI operation executor
+     * @param signingExecutor semantic signing admission adapter
      * @param resourceScopes authoritative PKI resource-scope resolver
      * @param approvalPolicies approval policy by operation category
      * @param issuanceApprovalRequirements resolves the active certificate profile's issuance
@@ -241,7 +263,7 @@ public final class ServerOperationGateway {
             CredentialPublicationGate credentialPublication, AuditorViews auditorViews,
             Optional<RepositoryAliasService> repositoryAliases,
             OperationSecurityDescriptors descriptors, PkiOperationExecutor executor,
-            PkiResourceScopeResolver resourceScopes,
+            SigningExecutor signingExecutor, PkiResourceScopeResolver resourceScopes,
             Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies,
             Function<String, IssuanceApprovalRequirement> issuanceApprovalRequirements,
             java.time.Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink, Runnable reconciliationWake,
@@ -255,7 +277,8 @@ public final class ServerOperationGateway {
         this.breakGlass = Objects.requireNonNull(breakGlass, "breakGlass");
         this.descriptors = Objects.requireNonNull(descriptors, "descriptors");
         this.executor = Objects.requireNonNull(executor, "executor");
-        this.controlExecutor = new ServerControlOperationExecutor(realmId, exposure, control, roles,
+        this.signingExecutor = Objects.requireNonNull(signingExecutor, "signingExecutor");
+        this.controlExecutor = new ServerControlOperationExecutor(executor, realmId, exposure, control, roles,
                 authorization, approvals, breakGlass, disclosure, credentialPublication, auditorViews,
                 repositoryAliases, descriptors, approvalPolicies);
         this.resourceScopes = Objects.requireNonNull(resourceScopes, "resourceScopes");
@@ -286,6 +309,7 @@ public final class ServerOperationGateway {
      * @param repositoryAliases optional repository-alias capability
      * @param descriptors closed operation-security descriptor catalog
      * @param executor session-owned PKI operation executor
+     * @param signingExecutor semantic signing admission adapter
      * @param resourceScopes authoritative PKI resource-scope resolver
      * @param approvalPolicies approval policy by operation category
      * @param issuanceApprovalRequirements resolves the active certificate profile's issuance
@@ -300,12 +324,12 @@ public final class ServerOperationGateway {
             CredentialPublicationGate credentialPublication, AuditorViews auditorViews,
             Optional<RepositoryAliasService> repositoryAliases,
             OperationSecurityDescriptors descriptors, PkiOperationExecutor executor,
-            PkiResourceScopeResolver resourceScopes,
+            SigningExecutor signingExecutor, PkiResourceScopeResolver resourceScopes,
             Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies,
             Function<String, IssuanceApprovalRequirement> issuanceApprovalRequirements,
             java.time.Clock clock, zeroecho.pki.spi.audit.AuditSink auditSink, Runnable openCheck) {
         this(realmId, exposure, control, roles, authorization, approvals, breakGlass, disclosure,
-                credentialPublication, auditorViews, repositoryAliases, descriptors, executor, resourceScopes,
+                credentialPublication, auditorViews, repositoryAliases, descriptors, executor, signingExecutor, resourceScopes,
                 approvalPolicies, issuanceApprovalRequirements, clock, auditSink, () -> { }, openCheck);
     }
 
@@ -359,6 +383,9 @@ public final class ServerOperationGateway {
             if (exact.operation() instanceof AdministrativeOperation.Pki pki) {
                 descriptors.validateResource(pki.operation(), exact.resource());
                 validateAuthoritativeScope(pki.operation(), exact.resource());
+            } else if (exact.operation() instanceof AdministrativeOperation.Signing signing) {
+                descriptors.validateResource(signing.operation(), exact.resource());
+                validateSigningScope(signing.operation(), exact.resource());
             } else if (descriptor.resourceType() != exact.resource().type()) {
                 throw new SecurityException("Control operation resource type differs");
             } else {
@@ -371,8 +398,8 @@ public final class ServerOperationGateway {
             // as a uniform denial rather than escaping as an unclassified error, matching authoritativeRequest.
             return denied(exact, AuthorizationEngine.Code.NO_MATCHING_GRANT);
         }
-        if (exact.operation() instanceof AdministrativeOperation.Pki pki
-                && pki.operation() instanceof PkiOperation.CreateAuthority
+        if (exact.operation() instanceof AdministrativeOperation.Signing signing
+                && signing.operation() instanceof PkiSigningOperation.CreateAuthority
                 && !exposure.authorityCreationPermitted()) {
             return denied(exact, AuthorizationEngine.Code.OUTSIDE_AUTHORITY_SCOPE);
         }
@@ -410,7 +437,7 @@ public final class ServerOperationGateway {
             approvalCategory = issuanceApprovalCategory(profileDriven.orElseThrow());
         }
         boolean filterableList = exact.operation() instanceof AdministrativeOperation.Pki pki
-                && pki.operation() instanceof PkiOperation.ListAuthorities
+                && selectionOperation(pki.operation())
                 && decision.code() == AuthorizationEngine.Code.NO_MATCHING_GRANT;
         boolean conditionallyApprovable = decision.code() == AuthorizationEngine.Code.APPROVAL_REQUIRED
                 && approvalCategory != OperationSecurityDescriptors.ApprovalCategory.NONE;
@@ -466,29 +493,24 @@ public final class ServerOperationGateway {
                 backend = revocationExecutor.orElseThrow().executePendingConfirmationRevocation(
                         revocation, evidence, cancellation);
                 wakeAfterCommittedRevocation(backend);
-            } else if (pki.operation() instanceof PkiOperation.IssueCredential issue) {
-                IssuanceExecutionEvidence evidence = IssuanceExecutionEvidence.administrative(
-                        principal.principalId(), realmId.value(), exact.correlationId(),
-                        issuanceAuthentication(exact.authenticationMode()),
-                        issuanceAuthorizationPath(decision, claimedApproval), commitment,
-                        issue.issuerCaId().value(), issue.profileId());
-                backend = executor.execute(pki.operation(), evidence.attributes(), cancellation);
-            } else if (pki.operation() instanceof PkiOperation.RenewCredential renew) {
-                backend = executeLifecycleIssuance(pki.operation(), renew.credentialId(), Optional.empty(),
-                        principal, exact, decision, claimedApproval, commitment, cancellation);
-            } else if (pki.operation() instanceof PkiOperation.ReissueCredential reissue) {
-                backend = executeLifecycleIssuance(pki.operation(), reissue.credentialId(), Optional.empty(),
-                        principal, exact, decision, claimedApproval, commitment, cancellation);
-            } else if (pki.operation() instanceof PkiOperation.ReplaceCredential replace) {
-                backend = executeLifecycleIssuance(pki.operation(), replace.existingCredentialId(),
-                        Optional.of(replace.profileId()), principal, exact, decision, claimedApproval, commitment,
+            } else if (selectionOperation(pki.operation())) {
+                zeroecho.pki.application.PkiSelectionExecutor selection = selectionExecutor();
+                Permission.Context selectionContext = exact.context();
+                backend = selection.executeSelection(pki.operation(),
+                        row -> selectionAllowed(pki.operation(), row, principal, grants, emergency.grantIds(), selectionContext),
                         cancellation);
             } else {
                 backend = executor.execute(pki.operation(), cancellation);
             }
-            if (pki.operation() instanceof PkiOperation.ListAuthorities) {
-                backend = filterAuthorities(backend, principal, grants, emergency.grantIds(), exact.context());
-            }
+            if (claimedApproval.isPresent()) approvals.complete(claimedApproval.orElseThrow(), classification(backend));
+            audit.record("GATEWAY_RESULT", principal.principalId(), exact.resource().objectId(),
+                    gatewayDetails(exact, "result", classification(backend)));
+            return new Outcome.Executed(backend);
+        }
+        if (exact.operation() instanceof AdministrativeOperation.Signing) {
+            Optional<IssuanceExecutionEvidence> evidence = signingEvidence(principal,
+                    exact, decision, claimedApproval, commitment);
+            PkiOperationOutcome backend = signingExecutor.execute(exact, evidence, cancellation);
             if (claimedApproval.isPresent()) approvals.complete(claimedApproval.orElseThrow(), classification(backend));
             audit.record("GATEWAY_RESULT", principal.principalId(), exact.resource().objectId(),
                     gatewayDetails(exact, "result", classification(backend)));
@@ -548,28 +570,6 @@ public final class ServerOperationGateway {
         if (decision.usedBreakGlass()) return IssuanceExecutionEvidence.AuthorizationPath.BREAK_GLASS;
         return claimedApproval.isPresent() ? IssuanceExecutionEvidence.AuthorizationPath.APPROVAL
                 : IssuanceExecutionEvidence.AuthorizationPath.ORDINARY_GRANT;
-    }
-
-    // Renew/replace/reissue produce a new credential just like IssueCredential, so they co-commit the same
-    // issuance evidence. The issuing authority (and, for renew/reissue, the frozen profile) is the target
-    // credential's AUTHORITATIVE coordinate resolved by the scope resolver, never a caller claim. If the
-    // target credential cannot be resolved the operation will fail during execution, so evidence is omitted.
-    private PkiOperationOutcome executeLifecycleIssuance(PkiOperation operation, PkiId existingCredentialId,
-            Optional<String> overrideProfileId, SecurityPrincipal principal, Request exact,
-            AuthorizationEngine.Decision decision, Optional<String> claimedApproval, String commitment,
-            CancellationSignal cancellation) {
-        Optional<PkiResourceScopeResolver.CredentialScope> scope =
-                resourceScopes.credentialScope(existingCredentialId);
-        if (scope.isEmpty()) {
-            return executor.execute(operation, cancellation);
-        }
-        PkiResourceScopeResolver.CredentialScope coordinates = scope.orElseThrow();
-        IssuanceExecutionEvidence evidence = IssuanceExecutionEvidence.administrative(
-                principal.principalId(), realmId.value(), exact.correlationId(),
-                issuanceAuthentication(exact.authenticationMode()),
-                issuanceAuthorizationPath(decision, claimedApproval), commitment,
-                coordinates.authorityId().value(), overrideProfileId.orElseGet(coordinates::profileId));
-        return executor.execute(operation, evidence.attributes(), cancellation);
     }
 
     /**
@@ -734,31 +734,62 @@ public final class ServerOperationGateway {
         return false;
     }
 
-    private PkiOperationOutcome filterAuthorities(PkiOperationOutcome outcome, SecurityPrincipal principal,
-            List<Permission.Grant> grants, java.util.Set<String> breakGlassIds, Permission.Context context) {
-        if (!(outcome instanceof PkiOperationOutcome.Completed success)) return outcome;
-        PkiOperationValue value = success.result().fields().get("authorities");
-        if (!(value instanceof PkiOperationValue.ListValue list)) return outcome;
-        List<PkiOperationValue> allowed = list.values().stream().filter(item -> authorityAllowed(item, principal,
-                grants, breakGlassIds, context)).toList();
-        Map<String, PkiOperationValue> fields = new LinkedHashMap<>(success.result().fields());
-        fields.put("count", new PkiOperationValue.IntegerValue(allowed.size()));
-        fields.put("authorities", new PkiOperationValue.ListValue(allowed));
-        return new PkiOperationOutcome.Completed(new PkiOperationResult(success.result().operationName(), fields));
+    private static boolean selectionOperation(PkiOperation operation) {
+        return operation instanceof PkiOperation.ListProfiles || operation instanceof PkiOperation.ListRequests
+                || operation instanceof PkiOperation.SearchCredentials || operation instanceof PkiOperation.ListIssuerGenerations
+                || operation instanceof PkiOperation.ListAuthorities || operation instanceof PkiOperation.ListStatus
+                || operation instanceof PkiOperation.ListPublications || operation instanceof PkiOperation.ListAlgorithmBindings;
     }
 
-    private boolean authorityAllowed(PkiOperationValue value, SecurityPrincipal principal,
-            List<Permission.Grant> grants, java.util.Set<String> breakGlassIds, Permission.Context context) {
-        if (!(value instanceof PkiOperationValue.ObjectValue object)
-                || !(object.fields().get("caId") instanceof PkiOperationValue.Text id)) return false;
-        PkiId authorityId = new PkiId(id.value());
-        if (!exposure.allows(authorityId)) return false;
-        Permission.Resource resource = new Permission.Resource(Permission.ResourceType.AUTHORITY,
-                new Permission.Scope(realmId, Optional.of(authorityId), Optional.empty(), Optional.empty()),
-                Optional.of(authorityId), Optional.empty());
+    private boolean selectionAllowed(PkiOperation operation, PkiOperationValue.ObjectValue row,
+            SecurityPrincipal principal, List<Permission.Grant> grants, java.util.Set<String> breakGlassIds,
+            Permission.Context context) {
+        OperationSecurityDescriptors.Descriptor descriptor = descriptors.require(operation);
+        Optional<PkiId> authority = Optional.empty();
+        Optional<PkiId> issuer = Optional.empty();
+        Optional<String> profile = Optional.empty();
+        Optional<PkiId> object = Optional.empty();
+        if (operation instanceof PkiOperation.ListAuthorities) {
+            authority = Optional.of(new PkiId(selectionText(row, "caId")));
+            object = authority;
+        } else if (operation instanceof PkiOperation.ListProfiles) {
+            profile = Optional.of(selectionText(row, PROFILE_ID));
+        } else if (operation instanceof PkiOperation.ListRequests) {
+            object = Optional.of(new PkiId(selectionText(row, "requestId")));
+            if (row.fields().get(PROFILE_ID) instanceof PkiOperationValue.Text value) { profile = Optional.of(value.value()); }
+        } else if (operation instanceof PkiOperation.SearchCredentials) {
+            authority = Optional.of(new PkiId(selectionText(row, "authorityId")));
+            issuer = Optional.of(new PkiId(selectionText(row, "issuerId")));
+            profile = Optional.of(selectionText(row, PROFILE_ID));
+            object = Optional.of(new PkiId(selectionText(row, "credentialId")));
+        } else if (operation instanceof PkiOperation.ListIssuerGenerations) {
+            authority = Optional.of(new PkiId(selectionText(row, "authorityId")));
+            issuer = Optional.of(new PkiId(selectionText(row, "issuerId")));
+            object = issuer;
+            profile = Optional.of(selectionText(row, PROFILE_ID));
+        } else if (operation instanceof PkiOperation.ListStatus) {
+            authority = Optional.of(new PkiId(selectionText(row, "issuerCaId")));
+            object = Optional.of(new PkiId(selectionText(row, "statusObjectId")));
+        } else if (operation instanceof PkiOperation.ListPublications) {
+            object = Optional.of(new PkiId(selectionText(row, "publicationId")));
+            authority = Optional.of(new PkiId(selectionText(row, "authorityId")));
+            if (row.fields().get("issuerId") instanceof PkiOperationValue.Text value) { issuer = Optional.of(new PkiId(value.value())); }
+            if (row.fields().get(PROFILE_ID) instanceof PkiOperationValue.Text value) { profile = Optional.of(value.value()); }
+        } else if (operation instanceof PkiOperation.ListAlgorithmBindings) {
+            object = Optional.of(new PkiId(selectionText(row, "bindingId")));
+        }
+        Permission.Resource resource = new Permission.Resource(descriptor.resourceType(),
+                new Permission.Scope(realmId, authority, issuer, profile), object, Optional.empty());
         return authorization.authorize(new AuthorizationEngine.Request(realmId, exposure, principal,
-                Permission.Action.AUTHORITY_LIST, resource, Permission.Relationship.ANY,
-                Permission.DataView.METADATA_REDACTED, context, grants, breakGlassIds)).allowed();
+                descriptor.action(), resource, Permission.Relationship.ANY, descriptor.dataView(), context,
+                grants, breakGlassIds)).allowed();
+    }
+
+    private static String selectionText(PkiOperationValue.ObjectValue row, String field) {
+        if (!(row.fields().get(field) instanceof PkiOperationValue.Text value)) {
+            throw new IllegalStateException("Selection metadata is incomplete");
+        }
+        return value.value();
     }
 
     private Permission.Context approvalContext(Request request) {
@@ -782,21 +813,21 @@ public final class ServerOperationGateway {
      * @return the mandated approval category
      */
     // Lifecycle operations whose approval is driven by the target profile's issuance approval
-    // requirement (Task 7), so renewal, replacement, and reissue are governed by the same,
+    // requirement, so renewal, replacement, and reissue are governed by the same,
     // predictable policy as issuing a new certificate under that profile. Issue and replace carry
     // the profile id on the command; renew and reissue resolve the target credential's AUTHORITATIVE
     // profile through the resource-scope resolver (never a caller-supplied claim), so approval
     // strength cannot be weakened by lying about the profile.
     private Optional<String> profileDrivenIssuanceProfileId(AdministrativeOperation operation) {
-        if (!(operation instanceof AdministrativeOperation.Pki pki)) {
+        if (!(operation instanceof AdministrativeOperation.Signing signing)) {
             return Optional.empty();
         }
-        return switch (pki.operation()) {
-            case PkiOperation.IssueCredential issue -> Optional.of(issue.profileId());
-            case PkiOperation.ReplaceCredential replace -> Optional.of(replace.profileId());
-            case PkiOperation.RenewCredential renew -> resourceScopes.credentialScope(renew.credentialId())
+        return switch (signing.operation()) {
+            case PkiSigningOperation.IssueCredential issue -> Optional.of(issue.profileId());
+            case PkiSigningOperation.ReplaceCredential replace -> Optional.of(replace.profileId());
+            case PkiSigningOperation.RenewCredential renew -> resourceScopes.credentialScope(renew.credentialId())
                     .map(PkiResourceScopeResolver.CredentialScope::profileId);
-            case PkiOperation.ReissueCredential reissue -> resourceScopes.credentialScope(reissue.credentialId())
+            case PkiSigningOperation.ReissueCredential reissue -> resourceScopes.credentialScope(reissue.credentialId())
                     .map(PkiResourceScopeResolver.CredentialScope::profileId);
             default -> Optional.empty();
         };
@@ -829,6 +860,9 @@ public final class ServerOperationGateway {
             target = descriptors.require(approvalRequest.targetOperation());
             if (target.resourceType() != approvalRequest.targetResource().type()) {
                 return Optional.empty();
+            } else if (approvalRequest.targetOperation() instanceof AdministrativeOperation.Signing signing) {
+                descriptors.validateResource(signing.operation(), approvalRequest.targetResource());
+                validateSigningScope(signing.operation(), approvalRequest.targetResource());
             }
             if (approvalRequest.targetOperation() instanceof AdministrativeOperation.Pki targetPki) {
                 descriptors.validateResource(targetPki.operation(), approvalRequest.targetResource());
@@ -912,6 +946,30 @@ public final class ServerOperationGateway {
         }
     }
 
+    private Optional<IssuanceExecutionEvidence> signingEvidence(SecurityPrincipal principal, Request request, AuthorizationEngine.Decision decision,
+            Optional<String> claimedApproval, String commitment) {
+        Optional<String> profile = profileDrivenIssuanceProfileId(request.operation());
+        if (profile.isEmpty()) return Optional.empty();
+        PkiId authority = request.resource().scope().authorityId().orElseThrow();
+        return Optional.of(IssuanceExecutionEvidence.administrative(principal.principalId(), realmId.value(),
+                request.correlationId(), issuanceAuthentication(request.authenticationMode()),
+                issuanceAuthorizationPath(decision, claimedApproval), commitment,
+                authority.value(), profile.orElseThrow()));
+    }
+
+    private void validateSigningScope(PkiSigningOperation operation, Permission.Resource resource) {
+        Optional<PkiId> predecessor = switch (operation) {
+            case PkiSigningOperation.RenewCredential value -> Optional.of(value.credentialId());
+            case PkiSigningOperation.ReplaceCredential value -> Optional.of(value.existingCredentialId());
+            case PkiSigningOperation.ReissueCredential value -> Optional.of(value.credentialId());
+            default -> Optional.empty();
+        };
+        if (predecessor.isPresent()
+                && !credentialAuthority(predecessor.orElseThrow()).equals(resource.scope().authorityId())) {
+            throw new SecurityException("Authoritative object scope does not match the request");
+        }
+    }
+
     private Optional<PkiId> credentialAuthority(PkiId credentialId) {
         return resourceScopes.credentialScope(credentialId).map(PkiResourceScopeResolver.CredentialScope::authorityId);
     }
@@ -927,6 +985,21 @@ public final class ServerOperationGateway {
 
     private Request authoritativeRequest(Request request) {
         Request exact = authoritativeControlRequest(request);
+        if (exact.operation() instanceof AdministrativeOperation.Control selected
+                && selected.operation() instanceof ServerControlOperation.ListCapabilities query) {
+            Permission.Resource supplied = exact.resource();
+            if (supplied.type() != Permission.ResourceType.DISCLOSURE
+                    || !supplied.objectId().equals(Optional.of(query.objectId()))
+                    || supplied.scope().authorityId().isPresent() || supplied.scope().issuerId().isPresent()
+                    || supplied.scope().profileId().isPresent() || supplied.scope().responderId().isPresent()
+                    || supplied.ownerPrincipalId().isPresent() || exact.relationship() != Permission.Relationship.ANY) {
+                throw new SecurityException("Capability list must resolve its object scope");
+            }
+            Permission.Resource resource = capabilityObjectResource(query.objectId());
+            return new Request(exact.realmId(), exact.principalId(), exact.authenticationMode(),
+                    exact.transportPrincipalId(), exact.operation(), resource, exact.relationship(), exact.context(),
+                    exact.approvalId(), exact.correlationId());
+        }
         if (!(exact.operation() instanceof AdministrativeOperation.Pki pki)) {
             return exact;
         }
@@ -938,6 +1011,38 @@ public final class ServerOperationGateway {
         return new Request(exact.realmId(), exact.principalId(), exact.authenticationMode(),
                 exact.transportPrincipalId(), exact.operation(), authoritative, Permission.Relationship.ANY,
                 exact.context(), exact.approvalId(), exact.correlationId());
+    }
+
+    private Permission.Resource capabilityObjectResource(PkiId objectId) {
+        DisclosureService.Record disclosure = control.requireDisclosure(objectId);
+        PkiOperation inspect = switch (disclosure.objectType()) {
+            case CA_CERTIFICATE, LEAF_CERTIFICATE -> new PkiOperation.InspectCredential(objectId);
+            case CA_CHAIN -> new PkiOperation.InspectIssuerChainPath(objectId);
+            case CRL, DELTA_CRL, STATUS_OBJECT -> new PkiOperation.InspectStatus(objectId);
+        };
+        PkiOperationOutcome inspected = executor.execute(inspect, CancellationSignal.NONE);
+        if (!(inspected instanceof PkiOperationOutcome.Completed completed)) {
+            throw new SecurityException("Disclosure object metadata is unavailable");
+        }
+        PkiOperationValue.ObjectValue row = new PkiOperationValue.ObjectValue(completed.result().fields());
+        String authorityField = inspect instanceof PkiOperation.InspectStatus ? "issuerCaId" : "authorityId";
+        PkiId authority = new PkiId(selectionText(row, authorityField));
+        Optional<PkiId> issuer = row.fields().get("issuerId") instanceof PkiOperationValue.Text id
+                ? Optional.of(new PkiId(id.value())) : Optional.empty();
+        Optional<String> profile = row.fields().get(PROFILE_ID) instanceof PkiOperationValue.Text id
+                ? Optional.of(id.value()) : Optional.empty();
+        if (inspect instanceof PkiOperation.InspectIssuerChainPath) {
+            PkiOperationOutcome generation = executor.execute(new PkiOperation.InspectIssuerGeneration(issuer.orElseThrow()),
+                    CancellationSignal.NONE);
+            if (!(generation instanceof PkiOperationOutcome.Completed result)
+                    || !(result.result().fields().get(PROFILE_ID) instanceof PkiOperationValue.Text id)) {
+                throw new SecurityException("Disclosure chain profile is unavailable");
+            }
+            profile = Optional.of(id.value());
+        }
+        return new Permission.Resource(Permission.ResourceType.DISCLOSURE,
+                new Permission.Scope(realmId, Optional.of(authority), issuer, profile), Optional.of(objectId),
+                disclosure.ownerPrincipalId());
     }
 
     private static Optional<PkiId> confirmationCredentialId(PkiOperation operation) {
@@ -955,7 +1060,21 @@ public final class ServerOperationGateway {
         Request exact = request;
         if (request.operation() instanceof AdministrativeOperation.Control controlOperation) {
             ServerControlOperation operation = controlOperation.operation();
-            if (operation instanceof ServerControlOperation.RegisterAcmeDirectory registration) {
+            Optional<String> existingApprovalId = switch (operation) {
+                case ServerControlOperation.InspectApproval value -> Optional.of(value.approvalId());
+                case ServerControlOperation.DecideApproval value -> Optional.of(value.approvalId());
+                case ServerControlOperation.CancelApproval value -> Optional.of(value.approvalId());
+                default -> Optional.empty();
+            };
+            if (existingApprovalId.isPresent()) {
+                // The approval ID owns its full persisted scope, including profile coordinates
+                // that the HTTP decision envelope does not accept as caller-controlled fields.
+                Permission.Scope scope = approvals.requireCurrent(existingApprovalId.orElseThrow()).scope();
+                Permission.Resource resource = authoritativeApprovalResource(request.resource(), scope);
+                exact = new Request(request.realmId(), request.principalId(), request.authenticationMode(),
+                        request.transportPrincipalId(), request.operation(), resource, request.relationship(),
+                        request.context(), request.approvalId(), request.correlationId());
+            } else if (operation instanceof ServerControlOperation.RegisterAcmeDirectory registration) {
                 exact = withControlOperation(request,
                         controlExecutor.bindAcmeDirectoryRegistration(registration));
             } else if (operation instanceof ServerControlOperation.RequestApproval approval
@@ -1030,7 +1149,10 @@ public final class ServerOperationGateway {
             Permission.Scope targetScope) {
         if (supplied.type() != Permission.ResourceType.APPROVAL
                 || supplied.objectId().isPresent() || supplied.ownerPrincipalId().isPresent()
-                || supplied.scope().issuerId().isPresent() || supplied.scope().responderId().isPresent()
+                || supplied.scope().issuerId().isPresent()
+                        && !supplied.scope().issuerId().equals(targetScope.issuerId())
+                || supplied.scope().responderId().isPresent()
+                        && !supplied.scope().responderId().equals(targetScope.responderId())
                 || supplied.scope().authorityId().isPresent()
                         && !supplied.scope().authorityId().equals(targetScope.authorityId())
                 || supplied.scope().profileId().isPresent()
@@ -1048,6 +1170,12 @@ public final class ServerOperationGateway {
     }
 
     private void validateControlScope(ServerControlOperation operation, Permission.Resource resource) {
+        if (operation instanceof ServerControlOperation.ConfigurationChoices
+                && (resource.scope().authorityId().isPresent() || resource.scope().issuerId().isPresent()
+                        || resource.scope().profileId().isPresent() || resource.scope().responderId().isPresent()
+                        || resource.objectId().isPresent() || resource.ownerPrincipalId().isPresent())) {
+            throw new SecurityException("Configuration choices require realm scope");
+        }
         Permission.Scope actual = switch (operation) {
             case ServerControlOperation.CreateRoleAssignment value -> value.assignment().scope();
             case ServerControlOperation.InspectRoleAssignment value -> control.requireAssignment(value.assignmentId()).scope();
@@ -1142,5 +1270,12 @@ public final class ServerOperationGateway {
         if (outcome instanceof ServerControlOperationOutcome.OneTimeSensitive) return "SUCCEEDED";
         PkiOperationOutcome ordinary = ((ServerControlOperationOutcome.Ordinary) outcome).outcome();
         return classification(ordinary);
+    }
+
+    private zeroecho.pki.application.PkiSelectionExecutor selectionExecutor() {
+        if (!(executor instanceof zeroecho.pki.application.PkiSelectionExecutor selection)) {
+            throw new IllegalStateException("Authorization-aware selections are unavailable");
+        }
+        return selection;
     }
 }

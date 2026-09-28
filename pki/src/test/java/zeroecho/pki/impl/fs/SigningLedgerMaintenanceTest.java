@@ -199,6 +199,31 @@ final class SigningLedgerMaintenanceTest {
     }
 
     @Test
+    @SuppressWarnings({ "PMD.UnitTestContainsTooManyAsserts",
+            "PMD.UnitTestAssertionsShouldIncludeMessage" })
+    void steadyCapacityPreflightDefersBeforeRotationOrCandidateArtifacts()
+            throws Exception {
+        Fixture fixture = fixture("online-steady-capacity");
+        SigningIndexCapacityBudget.Snapshot before = fixture.budget().snapshot();
+        long remaining = before.maximumBytes() - before.reservedBytes();
+        try (SigningIndexCapacityBudget.Reservation saturated = fixture.budget().reserve(remaining);
+                SigningLedgerMaintenance maintenance = fixture.maintenance()) {
+            SigningLedgerMaintenance.CompactionDeferredException deferred = assertThrows(
+                    SigningLedgerMaintenance.CompactionDeferredException.class,
+                    () -> maintenance.compactOnline(2L, 3L, () -> { }, () -> { },
+                            new Object(), (frame, pointer) -> List.of()));
+            assertEquals(SigningLedgerMaintenance.DeferralReason.STEADY_CAPACITY,
+                    deferred.reason());
+            assertFalse(maintenance.recoveryRequired());
+            assertEquals(1L, maintenance.manifest().activeWal().identity());
+            assertTrue(maintenance.manifest().sealedSegments().isEmpty());
+            assertFalse(fixture.artifacts().contains(2L));
+            assertFalse(fixture.artifacts().contains(3L));
+            assertEquals(1, fixture.generations().statistics().registered());
+        }
+    }
+
+    @Test
     void protectedProgressProbeDefersWithoutRecoveryOrTopologyChange() throws Exception {
         Fixture fixture = fixture("online-protected-progress");
         SigningIndexCapacityBudget pressureBudget = new SigningIndexCapacityBudget(1L);
@@ -798,7 +823,7 @@ final class SigningLedgerMaintenanceTest {
         artifacts.register(new SigningArtifactCatalog.Artifact(1L, manifestActive.name(),
                 SigningArtifactCatalog.Kind.ACTIVE_WAL));
         return new Fixture(root, configuration, manifest, active, generations, index,
-                transientBudget, artifacts, key);
+                budget, transientBudget, artifacts, key);
     }
 
     private static SigningManifestCodec.ActiveWal manifestActive(
@@ -903,7 +928,7 @@ final class SigningLedgerMaintenanceTest {
     private record Fixture(Path root, SigningActiveWal.Configuration configuration,
             SigningManifestCodec.Manifest manifest, SigningActiveWal active,
             SigningGenerationRegistry generations, SigningMvccIndex index,
-            SigningIndexCapacityBudget transientBudget,
+            SigningIndexCapacityBudget budget, SigningIndexCapacityBudget transientBudget,
             SigningArtifactCatalog artifacts, MetadataKey key) {
         private SigningLedgerMaintenance maintenance() {
             return maintenance(stage -> { });

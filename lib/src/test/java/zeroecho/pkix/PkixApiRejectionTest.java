@@ -49,7 +49,7 @@ import zeroecho.pkix.csr.CertificationRequest;
  * Negative/rejection coverage for the {@code zeroecho.pkix} API: malformed inputs
  * are rejected, and a certification request whose embedded key does not match the
  * signing key fails proof-of-possession. Complements the positive round trips in
- * {@link PkixRoundTripTest} (Task 14 conformance).
+ * {@link PkixRoundTripTest} (PKIX conformance).
  */
 class PkixApiRejectionTest {
 

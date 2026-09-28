@@ -112,6 +112,7 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     query,
     headers,
     body: undefined,
+    signal: opts.signal,
   };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -135,18 +136,27 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
   return JSON.parse(res.body) as T;
 }
 
-/** Low-level POST that returns the envelope AND transport metadata, never throwing on HTTP status. */
+/** Low-level response that retains the envelope AND transport metadata, never throwing on HTTP status. */
 export interface RawResult {
   readonly status: number;
   readonly headers: Record<string, string>;
   readonly body: unknown;
 }
 
-export async function postRaw(path: string, body: unknown): Promise<RawResult> {
-  const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json' };
+export function postRaw(path: string, body: unknown, signal?: AbortSignal): Promise<RawResult> {
+  return requestRaw('POST', path, body, signal);
+}
+
+export function getRaw(path: string, signal?: AbortSignal): Promise<RawResult> {
+  return requestRaw('GET', path, undefined, signal);
+}
+
+async function requestRaw(method: 'GET' | 'POST', path: string, body?: unknown, signal?: AbortSignal): Promise<RawResult> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   let res: TransportLike;
   try {
-    res = await currentTransport()({ method: 'POST', path, headers, body: JSON.stringify(body), query: undefined });
+    res = await currentTransport()({ method, path, headers, body: JSON.stringify(body), signal });
   } catch (cause) {
     throw new ApiRequestError({
       status: 0,

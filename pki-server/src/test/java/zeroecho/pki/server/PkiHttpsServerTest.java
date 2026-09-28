@@ -329,7 +329,7 @@ class PkiHttpsServerTest {
         PkiServerConfiguration decoded = PkiServerConfigurationCodec.decode(production.getBytes(
                 java.nio.charset.StandardCharsets.UTF_8));
         assertTrue(decoded.publicListener().isEmpty());
-        assertEquals(PkiServerConfiguration.SigningReconciliation.defaults(), decoded.signingReconciliation());
+        assertEquals(PkiServerConfiguration.AuditProjection.defaults(), decoded.auditProjection());
         assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
                 .replace("\"version\": 7", "\"version\": 5")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
@@ -337,16 +337,28 @@ class PkiHttpsServerTest {
                 .replace("\"version\": 7", "\"version\": 6")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         assertThrows(IllegalArgumentException.class,
-                () -> new PkiServerConfiguration.SigningReconciliation(true, 4, 5, Duration.ofSeconds(30),
-                        Duration.ofSeconds(10), Duration.ofSeconds(2)));
+                () -> new PkiServerConfiguration.AuditProjection(4, 5, Duration.ofSeconds(2)));
         assertThrows(IllegalArgumentException.class,
-                () -> new PkiServerConfiguration.SigningReconciliation(true, 4, 4, Duration.ofSeconds(5),
-                        Duration.ofSeconds(10), Duration.ofSeconds(2)));
-        assertThrows(IllegalArgumentException.class, () -> new PkiServerConfiguration(valid.version(),
-                valid.serverName(), valid.realm(), valid.listener(), valid.authentication(), valid.execution(),
-                valid.runtime(), valid.publicListener(), valid.acmeListener(),
-                new PkiServerConfiguration.SigningReconciliation(false, 4, 4, Duration.ofSeconds(5),
-                        Duration.ofSeconds(5), Duration.ofSeconds(2))));
+                () -> new PkiServerConfiguration.AuditProjection(0, 1, Duration.ofSeconds(2)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PkiServerConfiguration.AuditProjection(4097, 1, Duration.ofSeconds(2)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PkiServerConfiguration.AuditProjection(4, 0, Duration.ofSeconds(2)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PkiServerConfiguration.AuditProjection(4, 4, Duration.ZERO));
+        assertThrows(IllegalArgumentException.class,
+                () -> new PkiServerConfiguration.AuditProjection(4, 4, Duration.ofMinutes(5).plusMillis(1)));
+        assertEquals(4096, new PkiServerConfiguration.AuditProjection(4096, 4096,
+                Duration.ofMinutes(5)).maximumSinkCalls());
+        assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
+                .replace("\"auditProjection\"", "\"signingReconciliation\"")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
+                .replace("\"auditProjection\": {", "\"auditProjection\": {\"enabled\": true, ")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
+                .replace("\"maxSinkCalls\"", "\"maxCalls\"")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         assertThrows(IllegalArgumentException.class, () -> PkiServerConfigurationCodec.decode(production
                 .replace("\"publicListener\": {\"enabled\": false},\n", "")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
@@ -463,6 +475,109 @@ class PkiHttpsServerTest {
                 ((PkiServerAuthenticationResult.Rejected) disabled.authenticate(context)).code());
         System.out.println("...subject-string-authority=false");
         System.out.println("...ok");
+    }
+
+    @Test
+    void approvalHttpOperationsResolveStoredProfileScopeAndPreserveAuthorization() throws Exception {
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        PkiServerConfiguration configuration = HttpServerTestSupport.configuration(temporaryDirectory,
+                tls.clientCertificate());
+        seed(configuration);
+        zeroecho.pki.api.PkiId authority = new zeroecho.pki.api.PkiId("ca:approval-fixture");
+        Permission.Scope allowed = new Permission.Scope(ServerTestSupport.REALM, Optional.of(authority),
+                Optional.empty(), Optional.of("profile-a"));
+        Permission.Scope forbidden = new Permission.Scope(ServerTestSupport.REALM, Optional.of(authority),
+                Optional.empty(), Optional.of("profile-b"));
+        try (ServerRealmContext context = ServerRealmContext.open(configuration.realm(),
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+            context.createPrincipal(ServerTestSupport.principal("requester"), "system");
+            for (Permission.Action action : List.of(Permission.Action.REQUEST_READ_ANY,
+                    Permission.Action.REQUEST_APPROVE, Permission.Action.REQUEST_CANCEL)) {
+                context.grant(ServerTestSupport.grant("profile-approval-" + action.name(), "administrator",
+                        Permission.Effect.ALLOW, action, Permission.ResourceType.APPROVAL, allowed,
+                        Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED), "system");
+            }
+            ApprovalService.Policy policy = new ApprovalService.Policy("profile-approval", 1,
+                    Set.of("administrator"), Set.of(), true, Duration.ofHours(1), true);
+            for (String verb : List.of("inspect", "approve", "cancel")) {
+                String requester = verb.equals("cancel") ? "administrator" : "requester";
+                context.approvals().request("allowed-" + verb, "ca.intermediate.create", ServerTestSupport.DIGEST,
+                        allowed, requester, policy);
+                context.approvals().request("forbidden-" + verb, "ca.intermediate.create", ServerTestSupport.DIGEST,
+                        forbidden, requester, policy);
+            }
+            context.approvals().request("self-approval", "ca.intermediate.create", ServerTestSupport.DIGEST,
+                    allowed, "administrator", policy);
+        }
+        try (PkiHttpsServer server = PkiHttpsServer.start(configuration, PkiSessionRuntimeDependencies.none(),
+                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader());
+                HttpClient client = HttpClient.newBuilder().sslContext(tls.clientContext()).build()) {
+            URI base = URI.create("https://localhost:" + server.address().getPort());
+            for (String verb : List.of("inspect", "approve", "cancel")) {
+                URI endpoint = base.resolve("/admin/v1/operations/security.approval." + verb);
+                String justification = verb.equals("approve") ? ",\"justification\":\"Reviewed\"" : "";
+                String arguments = "\"arguments\":{\"approvalId\":\"allowed-" + verb + "\"" + justification + "}";
+                HttpResponse<String> wrongAuthority = post(client, endpoint,
+                        "{\"version\":1,\"authorityId\":\"ca:wrong\"," + arguments + "}");
+                assertEquals(403, wrongAuthority.statusCode());
+                HttpResponse<String> wrongProfile = post(client, endpoint,
+                        "{\"version\":1,\"arguments\":{\"approvalId\":\"forbidden-" + verb + "\"" + justification + "}}");
+                assertEquals(403, wrongProfile.statusCode());
+                assertTrue(wrongProfile.body().contains("AUTHORIZATION_DENIED"));
+                HttpResponse<String> missing = post(client, endpoint,
+                        "{\"version\":1,\"arguments\":{\"approvalId\":\"missing-approval\"" + justification + "}}");
+                assertEquals(403, missing.statusCode());
+                assertEquals(ApprovalService.State.PENDING,
+                        server.realm().approvals().requireCurrent("allowed-" + verb).state());
+                // Both absent and explicit matching authority coordinates must resolve the saved profile.
+                String authorityField = verb.equals("approve") ? "\"authorityId\":\"ca:approval-fixture\"," : "";
+                HttpResponse<String> succeeded = post(client, endpoint,
+                        "{\"version\":1," + authorityField + arguments + "}");
+                assertEquals(200, succeeded.statusCode(), succeeded.body());
+                assertTrue(succeeded.body().contains("\"status\":\"SUCCEEDED\""));
+            }
+            HttpResponse<String> self = post(client, base.resolve("/admin/v1/operations/security.approval.approve"),
+                    "{\"version\":1,\"arguments\":{\"approvalId\":\"self-approval\",\"justification\":\"Reviewed\"}}");
+            assertEquals(409, self.statusCode());
+            assertTrue(self.body().contains("CONTROL_STATE_CONFLICT"));
+            assertEquals(ApprovalService.State.PENDING, server.realm().approvals().requireCurrent("self-approval").state());
+            assertEquals(ApprovalService.State.APPROVED, server.realm().approvals().requireCurrent("allowed-approve").state());
+            assertEquals(ApprovalService.State.CANCELLED, server.realm().approvals().requireCurrent("allowed-cancel").state());
+            Permission.Resource spoofed = new Permission.Resource(Permission.ResourceType.APPROVAL,
+                    forbidden, Optional.empty(), Optional.empty());
+            ServerOperationGateway.Request request = new ServerOperationGateway.Request(ServerTestSupport.REALM,
+                    "administrator", new AdministrativeOperation.Control(new ServerControlOperation.InspectApproval("allowed-inspect")),
+                    spoofed, Permission.Relationship.ANY, Permission.Context.empty(), Optional.empty(), "scope-spoof");
+            assertInstanceOf(ServerOperationGateway.Outcome.Denied.class,
+                    server.realm().gateway().execute(request, zeroecho.core.io.CancellationSignal.NONE));
+        }
+    }
+
+    @Test
+    void registeredHyphenatedOperationRemainsAuthorizedAndUnknownOperationsStayHidden() throws Exception {
+        HttpServerTestSupport.Fixture tls = HttpServerTestSupport.tls();
+        PkiServerConfiguration configuration = HttpServerTestSupport.configuration(temporaryDirectory,
+                tls.clientCertificate());
+        seed(configuration);
+        try (ServerRealmContext context = ServerRealmContext.open(configuration.realm(),
+                PkiSessionRuntimeDependencies.none(), ServerTestSupport.CLOCK, HttpServerTestSupport.random())) {
+            context.grant(ServerTestSupport.grant("profile-read", "administrator", Permission.Effect.ALLOW,
+                    Permission.Action.PROFILE_READ, Permission.ResourceType.PROFILE,
+                    new Permission.Scope(ServerTestSupport.REALM, Optional.empty(), Optional.empty(), Optional.empty()),
+                    Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED), "system");
+        }
+        try (PkiHttpsServer server = PkiHttpsServer.start(configuration, PkiSessionRuntimeDependencies.none(),
+                ServerTestSupport.CLOCK, HttpServerTestSupport.random(), TestTlsProvider.class.getClassLoader());
+                HttpClient client = HttpClient.newBuilder().sslContext(tls.clientContext()).build()) {
+            URI base = URI.create("https://localhost:" + server.address().getPort());
+            assertEquals(200, get(client, base.resolve("/admin/v1/operations/profile.list-all")).statusCode());
+            HttpResponse<String> listed = post(client, base.resolve("/admin/v1/operations/profile.list-all"),
+                    "{\"version\":1,\"arguments\":{\"limit\":10}}");
+            assertEquals(200, listed.statusCode());
+            assertTrue(listed.body().contains("\"status\":\"SUCCEEDED\""));
+            assertEquals(404, get(client, base.resolve("/admin/v1/operations/profile.not-registered")).statusCode());
+            assertEquals(404, get(client, base.resolve("/admin/v1/operations/security.break-glass.inspect")).statusCode());
+        }
     }
 
     @Test

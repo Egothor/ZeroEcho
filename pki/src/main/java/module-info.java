@@ -59,6 +59,7 @@ module zeroecho.pki {
     exports zeroecho.pki.api.request;
     exports zeroecho.pki.api.revocation;
     exports zeroecho.pki.api.status;
+    exports zeroecho.pki.api.signing;
     exports zeroecho.pki.api.transfer;
     exports zeroecho.pki.application;
 
@@ -67,16 +68,16 @@ module zeroecho.pki {
     exports zeroecho.pki.spi.audit;
     exports zeroecho.pki.spi.bootstrap;
     exports zeroecho.pki.spi.confirmation;
+    exports zeroecho.pki.spi.crypto;
     exports zeroecho.pki.spi.store;
 
     // Default backends, exposed only to sibling modules that must construct them.
-    exports zeroecho.pki.impl.core.async to zeroecho.pki.server, zeroecho.app;
     exports zeroecho.pki.impl.fs to zeroecho.pki.server, zeroecho.app;
 
     // Service usage (backend selection).
     uses zeroecho.pki.spi.async.AsyncBusProvider;
     uses zeroecho.pki.spi.audit.AuditSinkProvider;
-    uses zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
+    uses zeroecho.pki.spi.crypto.SigningProviderFactory;
     uses zeroecho.pki.spi.framework.CredentialFrameworkProvider;
     uses zeroecho.pki.spi.publish.PublisherProvider;
     uses zeroecho.pki.spi.store.PkiStoreProvider;
@@ -86,15 +87,15 @@ module zeroecho.pki {
 
     // Default backends provided to the domain.
     provides zeroecho.core.spi.AlgorithmExecutionCapabilityProvider
-            with zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSignatureWorkflowProvider;
+            with zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSigningProviderFactory;
     provides zeroecho.pki.spi.async.AsyncBusProvider
             with zeroecho.pki.impl.async.FileBackedAsyncBusProvider;
     provides zeroecho.pki.spi.audit.AuditSinkProvider with
             zeroecho.pki.impl.audit.FileAuditSinkProvider,
             zeroecho.pki.impl.audit.InMemoryAuditSinkProvider,
             zeroecho.pki.impl.audit.StdoutAuditSinkProvider;
-    provides zeroecho.pki.spi.crypto.SignatureWorkflowProvider
-            with zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSignatureWorkflowProvider;
+    provides zeroecho.pki.spi.crypto.SigningProviderFactory
+            with zeroecho.pki.impl.crypto.zeroecholib.ZeroEchoLibSigningProviderFactory;
     provides zeroecho.pki.spi.framework.CredentialFrameworkProvider
             with zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFrameworkProvider;
     provides zeroecho.pki.spi.publish.PublisherProvider

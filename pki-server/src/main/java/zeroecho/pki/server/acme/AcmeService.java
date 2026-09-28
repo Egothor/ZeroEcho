@@ -56,7 +56,10 @@ import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.CertificationRequestService;
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
-import zeroecho.pki.api.IssuanceService;
+import zeroecho.pki.api.SemanticSigningService;
+import zeroecho.pki.api.audit.AccessContext;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.Validity;
@@ -71,9 +74,15 @@ import zeroecho.pki.api.confirmation.CredentialConfirmationProofChallenge;
 import zeroecho.pki.api.confirmation.CredentialConfirmationProofChallengeRequest;
 import zeroecho.pki.api.confirmation.CredentialConfirmationProofResult;
 import zeroecho.pki.api.confirmation.CredentialConfirmationProofSubmission;
-import zeroecho.pki.api.credential.CredentialBundle;
 import zeroecho.pki.api.credential.EndEntityProfileBinding;
-import zeroecho.pki.api.issuance.IssueEndEntityCommand;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityIssuanceRequest;
+import zeroecho.pki.api.issuance.CorrelatedIssuancePreparation;
+import zeroecho.pki.api.issuance.EndEntityIssuanceRequest;
+import zeroecho.pki.api.issuance.RetainedIssuanceBinding;
+import zeroecho.pki.api.signing.PreparedSemanticSigningRequest;
+import zeroecho.pki.api.signing.SemanticSigningOperation;
+import zeroecho.pki.api.signing.SigningAcceptanceResolution;
+import zeroecho.pki.api.signing.SigningAcceptanceResult;
 import zeroecho.pki.api.issuance.IssuanceIntent;
 import zeroecho.pki.api.profile.ActiveCertificateProfile;
 import zeroecho.pki.api.profile.CertificateProfileKind;
@@ -86,10 +95,9 @@ import zeroecho.pki.api.revocation.RevocationRecord;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiSession;
 import zeroecho.pki.application.PkiOperationOutcome;
-import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.RevocationEvidenceExecutor;
 import zeroecho.pki.application.RevocationExecutionEvidence;
-import zeroecho.pki.application.SigningIssuanceBinding;
+import zeroecho.pki.application.IssuanceExecutionEvidence;
 import zeroecho.pki.server.CredentialPublicationGate;
 import zeroecho.pki.server.DisclosureService;
 import zeroecho.pki.server.ServerControlStore;
@@ -122,6 +130,22 @@ public final class AcmeService {
     private final Map<String, AcmeExternalAccountBindingProvider> eabProviders;
     private final Map<String, ProviderConfig> eabProviderConfigurations;
     private final Runnable reconciliationWake;
+
+    /**
+     * Returns configured challenge-provider identities and supported challenge types without options.
+     * @return immutable map of non-secret configured provider metadata
+     */
+    public Map<String, Set<AcmeState.ChallengeType>> configuredChallengeProviders() {
+        Map<String, Set<AcmeState.ChallengeType>> result = new java.util.TreeMap<>();
+        providers.forEach((id, provider) -> result.put(id, Set.copyOf(provider.challengeTypes())));
+        return Map.copyOf(result);
+    }
+
+    /**
+     * Returns explicitly configured external-account-binding provider identifiers without options.
+     * @return immutable configured provider identifiers
+     */
+    public Set<String> configuredEabProviders() { return Set.copyOf(eabProviders.keySet()); }
 
     /**
      * Creates a realm-bound ACME service from explicitly enabled providers.
@@ -840,6 +864,7 @@ public final class AcmeService {
     public synchronized AcmeState.Order finalizeOrder(String accountId, String expectedAccountCommitment,
             String orderId, byte[] csrDer, CancellationSignal cancellation) {
         CancellationSignal signal = Objects.requireNonNull(cancellation, "cancellation");
+        byte[] frozenCsr = Objects.requireNonNull(csrDer, "csrDer").clone();
         AcmeState.Account account = requireAuthenticatedAccount(accountId, expectedAccountCommitment);
         AcmeState.Order order = requireOrder(orderId);
         if (!order.accountId().equals(accountId)) throw new IllegalArgumentException("ACME order unavailable");
@@ -862,76 +887,78 @@ public final class AcmeService {
         CertificationRequestService requests = realm.session().requests()
                 .orElseThrow(() -> new IllegalStateException("ACME CSR capability is unavailable"));
         ParsedCertificationRequest parsed = requests.parse(new CertificationRequest(profile.definition().formatId(),
-                new EncodedObject(Encoding.DER, csrDer.clone())));
+                new EncodedObject(Encoding.DER, frozenCsr.clone())));
         requireExactIdentifiers(parsed, order.identifiers());
-        String exactIssuanceCommitment = issuanceCommitment(order, parsed);
-        if (order.issuanceCommitment().filter(value -> !value.equals(exactIssuanceCommitment)).isPresent()) {
-            throw new IllegalStateException("ACME order issuance commitment differs");
-        }
-        if (order.issuanceCommitment().isEmpty()) {
-            AcmeState.Order prepared = copyOrder(order, order.status(), order.credentialId(),
-                    order.signingOperationId(), Optional.of(exactIssuanceCommitment));
-            order = (AcmeState.Order) store.replace(List.of(
-                    new AcmeControlStore.Replacement(order, prepared))).get(0);
-        }
-        IssuanceIntent intent = issuanceIntent(order);
-        SigningIssuanceBinding binding = new SigningIssuanceBinding(order.authorityId(), intent);
-        Optional<PkiId> indexedId = realm.session().issuanceSigningOperationId(binding);
-        if (order.signingOperationId().isPresent() && !order.signingOperationId().equals(indexedId)) {
-            throw new IllegalStateException("ACME signing attachment conflicts with its durable correlation");
-        }
-        Optional<PkiId> recoveredId = indexedId;
-        if (recoveredId.isPresent()) {
-            PkiId operationId = recoveredId.orElseThrow();
-            PkiOperationOutcome recovered = realm.session().issuanceSigningOperation(operationId, binding);
-            if (recovered instanceof PkiOperationOutcome.Pending) {
-                if (order.status() != AcmeState.OrderStatus.PROCESSING
-                        || order.signingOperationId().filter(operationId::equals).isEmpty()) {
-                    AcmeState.Order processing = copyOrder(order, AcmeState.OrderStatus.PROCESSING,
-                            Optional.empty(), Optional.of(operationId));
-                    order = (AcmeState.Order) store.replace(List.of(
-                            new AcmeControlStore.Replacement(order, processing))).get(0);
-                }
-                return order;
-            }
-            if (recovered instanceof PkiOperationOutcome.Failed) {
-                AcmeState.Order invalid = copyOrder(order, AcmeState.OrderStatus.INVALID,
-                        Optional.empty(), Optional.of(operationId));
-                return (AcmeState.Order) store.replace(List.of(
-                        new AcmeControlStore.Replacement(order, invalid))).get(0);
-            }
-            return completeRecoveredOrder(order, directory, accountId, operationId,
-                    (PkiOperationOutcome.Completed) recovered);
-        }
-        IssuanceService issuance = realm.session().issuance()
+        SemanticSigningService signing = realm.session().semanticSigning()
                 .orElseThrow(() -> new IllegalStateException("ACME issuance capability is unavailable"));
         Optional<Validity> validity = order.notBefore().isPresent()
                 ? Optional.of(new Validity(order.notBefore().orElseThrow(), order.notAfter().orElseThrow()))
                 : Optional.empty();
-        CredentialBundle bundle;
+        IssuanceIntent intent = new IssuanceIntent(order.orderId(), issuanceCommitment(order, parsed),
+                order.profile(), order.issuerId(), order.issuancePathId(), order.issuancePathCommitment());
+        CorrelatedEndEntityIssuanceRequest request = new CorrelatedEndEntityIssuanceRequest(
+                new EndEntityIssuanceRequest(order.authorityId(), frozenCsr, order.profile().profileId(), validity), intent);
+        RetainedIssuanceBinding binding = signing.issuanceBinding(request);
+        if (order.issuanceCommitment().filter(value -> !value.equals(binding.effectiveCommitment())).isPresent()) {
+            throw new IllegalStateException("ACME order issuance commitment differs");
+        }
+        if (order.issuanceCommitment().isEmpty()) {
+            AcmeState.Order prepared = copyOrder(order, order.status(), order.credentialId(),
+                    order.signingOperationId(), Optional.of(binding.effectiveCommitment()));
+            order = (AcmeState.Order) store.replace(List.of(
+                    new AcmeControlStore.Replacement(order, prepared))).get(0);
+        }
+        Optional<SemanticSigningOperation> retained = signing.findIssuance(binding);
+        requireSigningAttachment(order, retained);
+        if (retained.isPresent()) {
+            return applySigningSnapshot(order, directory, accountId, retained.orElseThrow());
+        }
+        AccessContext access = new AccessContext(new Principal("ACME_ACCOUNT", accountId),
+                new Purpose("ACME_FINALIZE"), Optional.empty(), Optional.empty());
+        IssuanceExecutionEvidence evidence = IssuanceExecutionEvidence.acme(accountId,
+                realm.configuration().realmId().value(), order.orderId(),
+                order.authorityId().value(), order.profile().profileId());
+        CorrelatedIssuancePreparation preparation = signing.prepareCorrelatedEndEntity(access, request,
+                Optional.of(evidence), signal);
+        if (preparation instanceof CorrelatedIssuancePreparation.Existing existing) {
+            return applySigningSnapshot(order, directory, accountId, existing.operation());
+        }
+        PreparedSemanticSigningRequest prepared = ((CorrelatedIssuancePreparation.Prepared) preparation).prepared();
         try {
-            bundle = issuance.issueEndEntity(new IssueEndEntityCommand(order.authorityId(), parsed,
-                    order.profile().profileId(), validity, Optional.of(intent)), signal);
-        } catch (zeroecho.pki.impl.core.async.PendingSigningOperation pending) {
+            signal.throwIfCancelled();
+        } catch (java.io.InterruptedIOException cancelled) {
+            try {
+                signing.discard(prepared);
+            } catch (RuntimeException cleanup) {
+                cancelled.addSuppressed(cleanup);
+            }
+            throw new PkiException("ACME signing preparation was cancelled", cancelled);
+        }
+        SigningAcceptanceResult accepted;
+        try {
+            // Accept owns custody from invocation onward, including uncertain admission.
+            accepted = signing.accept(prepared);
+        } catch (RuntimeException uncertain) {
+            if (signing.resolve(prepared.receipt()) != SigningAcceptanceResolution.MATCHED) throw uncertain;
+            SemanticSigningOperation recovered = signing.findIssuance(binding).orElseThrow(
+                    () -> new IllegalStateException("ACME retained signing operation is unavailable"));
             tripFinalizeFault(FinalizeFaultPoint.BEFORE_SIGNING_ATTACHMENT);
-            AcmeState.Order processing = copyOrder(order, AcmeState.OrderStatus.PROCESSING,
-                    Optional.empty(), Optional.of(pending.operationId()));
-            return (AcmeState.Order) store.replace(List.of(
-                    new AcmeControlStore.Replacement(order, processing))).get(0);
+            return applySigningSnapshot(order, directory, accountId, recovered);
         }
-        if (!bundle.credential().issuerRef().issuerId().equals(order.issuerId())
-                || !bundle.credential().issuerRef().chainPathId().equals(order.issuancePathId())) {
-            throw new IllegalStateException("ACME issuance selection mismatch");
+        switch (accepted.disposition()) {
+            case CAPACITY_REJECTED -> throw new zeroecho.pki.api.SigningExecutionException(
+                    zeroecho.pki.api.SigningExecutionException.Classification.OVERLOADED,
+                    "Signing admission capacity is exhausted");
+            case CONFLICT -> throw new IllegalStateException("ACME signing correlation conflicts");
+            case ACCEPTED, ATTACHED_EXISTING -> { }
         }
-        validatePublicationCorrelation(account, order, directory, bundle.credential().credentialId());
-        registerPublication(bundle.credential().credentialId(), accountId);
-        AcmeState.Order valid = copyOrder(order, AcmeState.OrderStatus.VALID,
-                Optional.of(bundle.credential().credentialId()));
-        AcmeState.Order committed = (AcmeState.Order) store.replace(List.of(
-                new AcmeControlStore.Replacement(order, valid))).get(0);
-        audit("ACME_CERTIFICATE_ISSUED", accountId, Map.of("order", order.orderId(),
-                "credential", bundle.credential().credentialId().value()));
-        return committed;
+        SemanticSigningOperation acceptedSnapshot = signing.findIssuance(binding).orElseThrow(
+                () -> new IllegalStateException("ACME retained signing operation is unavailable"));
+        if (!acceptedSnapshot.submissionId().id().equals(accepted.receipt().operationId())) {
+            throw new IllegalStateException("ACME signing attachment differs");
+        }
+        tripFinalizeFault(FinalizeFaultPoint.BEFORE_SIGNING_ATTACHMENT);
+        return applySigningSnapshot(order, directory, accountId, acceptedSnapshot);
     }
 
     /**
@@ -955,45 +982,48 @@ public final class AcmeService {
         }
         AcmeState.Directory directory = requireDirectory(order.directoryId());
         validateFrozenOrder(order, directory);
-        SigningIssuanceBinding binding = new SigningIssuanceBinding(order.authorityId(), issuanceIntent(order));
-        Optional<PkiId> indexed = realm.session().issuanceSigningOperationId(binding);
-        if (order.signingOperationId().isPresent() && !order.signingOperationId().equals(indexed)) {
+        RetainedIssuanceBinding binding = retainedBinding(order);
+        SemanticSigningService signing = realm.session().semanticSigning()
+                .orElseThrow(() -> new IllegalStateException("ACME issuance capability is unavailable"));
+        Optional<SemanticSigningOperation> retained = signing.findIssuance(binding);
+        requireSigningAttachment(order, retained);
+        return retained.isEmpty() ? order : applySigningSnapshot(order, directory, accountId, retained.orElseThrow());
+    }
+
+    private static void requireSigningAttachment(AcmeState.Order order,
+            Optional<SemanticSigningOperation> retained) {
+        Optional<PkiId> actual = retained.map(value -> value.submissionId().id());
+        if (order.signingOperationId().isPresent() && !order.signingOperationId().equals(actual)) {
             throw new IllegalStateException("ACME signing attachment conflicts with its durable correlation");
         }
-        Optional<PkiId> operation = indexed;
-        if (operation.isEmpty()) {
-            return order;
-        }
-        PkiId operationId = operation.orElseThrow();
-        PkiOperationOutcome outcome = realm.session().issuanceSigningOperation(operationId, binding);
-        if (outcome instanceof PkiOperationOutcome.Pending) {
-            if (order.status() == AcmeState.OrderStatus.PROCESSING
-                    && order.signingOperationId().filter(operationId::equals).isPresent()) {
-                return order;
+    }
+
+    private AcmeState.Order applySigningSnapshot(AcmeState.Order order, AcmeState.Directory directory,
+            String accountId, SemanticSigningOperation snapshot) {
+        PkiId operationId = snapshot.submissionId().id();
+        return switch (snapshot.state()) {
+            case SIGNING, PUBLISHING -> {
+                if (order.status() == AcmeState.OrderStatus.PROCESSING
+                        && order.signingOperationId().filter(operationId::equals).isPresent()) yield order;
+                AcmeState.Order processing = copyOrder(order, AcmeState.OrderStatus.PROCESSING,
+                        Optional.empty(), Optional.of(operationId));
+                yield (AcmeState.Order) store.replace(List.of(
+                        new AcmeControlStore.Replacement(order, processing))).get(0);
             }
-            AcmeState.Order processing = copyOrder(order, AcmeState.OrderStatus.PROCESSING,
-                    Optional.empty(), Optional.of(operationId));
-            return (AcmeState.Order) store.replace(List.of(
-                    new AcmeControlStore.Replacement(order, processing))).get(0);
-        }
-        if (outcome instanceof PkiOperationOutcome.Failed) {
-            AcmeState.Order invalid = copyOrder(order, AcmeState.OrderStatus.INVALID,
-                    Optional.empty(), Optional.of(operationId));
-            return (AcmeState.Order) store.replace(List.of(
-                    new AcmeControlStore.Replacement(order, invalid))).get(0);
-        }
-        return completeRecoveredOrder(order, directory, accountId, operationId,
-                (PkiOperationOutcome.Completed) outcome);
+            case FAILED, EXPIRED -> {
+                AcmeState.Order invalid = copyOrder(order, AcmeState.OrderStatus.INVALID,
+                        Optional.empty(), Optional.of(operationId));
+                yield (AcmeState.Order) store.replace(List.of(
+                        new AcmeControlStore.Replacement(order, invalid))).get(0);
+            }
+            case COMPLETED -> completeRecoveredOrder(order, directory, accountId, operationId, snapshot);
+        };
     }
 
     private AcmeState.Order completeRecoveredOrder(AcmeState.Order order, AcmeState.Directory directory,
-            String accountId, PkiId operationId, PkiOperationOutcome.Completed completed) {
-        PkiOperationValue value = completed.result().field("credentialId")
+            String accountId, PkiId operationId, SemanticSigningOperation completed) {
+        PkiId credentialId = completed.completedCredentialId()
                 .orElseThrow(() -> new IllegalStateException("Completed issuance lacks its publication identity"));
-        if (!(value instanceof PkiOperationValue.Text text)) {
-            throw new IllegalStateException("Completed issuance publication identity is invalid");
-        }
-        PkiId credentialId = new PkiId(text.value());
         zeroecho.pki.api.credential.Credential credential = realm.session().repository()
                 .credential(credentialId)
                 .orElseThrow(() -> new IllegalStateException("Completed issuance publication is unavailable"));
@@ -1014,9 +1044,10 @@ public final class AcmeService {
         return committed;
     }
 
-    private static IssuanceIntent issuanceIntent(AcmeState.Order order) {
-        return new IssuanceIntent(order.orderId(), order.issuanceCommitment().orElseThrow(), order.profile(),
-                order.issuerId(), order.issuancePathId(), order.issuancePathCommitment());
+    private static RetainedIssuanceBinding retainedBinding(AcmeState.Order order) {
+        return new RetainedIssuanceBinding(order.authorityId(), order.orderId(), order.profile(),
+                order.issuerId(), order.issuancePathId(), order.issuancePathCommitment(),
+                order.issuanceCommitment().orElseThrow());
     }
 
     /**

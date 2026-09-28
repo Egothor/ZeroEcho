@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.cli;
 
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,7 @@ import zeroecho.pki.application.PkiOperationValue;
  *   <li>{@code --arg name=value} &mdash; a text field</li>
  *   <li>{@code --arg-int name=value} &mdash; an integer field</li>
  *   <li>{@code --arg-bool name=true|false} &mdash; a boolean field</li>
+ *   <li>{@code --arg-json name=JSON} &mdash; a bounded structured value</li>
  * </ul>
  *
  * <p>For readability the known local option spellings (for example
@@ -63,6 +65,7 @@ final class PkiRemoteArguments {
     private static final String ARG = "--arg";
     private static final String ARG_INT = "--arg-int";
     private static final String ARG_BOOL = "--arg-bool";
+    private static final String ARG_JSON = "--arg-json";
 
     private PkiRemoteArguments() {
     }
@@ -93,6 +96,7 @@ final class PkiRemoteArguments {
 
     private static Field field(String option, String raw, Map<String, String> mappedNames) {
         return switch (option) {
+            case ARG_JSON -> new Field(nameOf(raw), PkiCliJson.parseArgument(valueOf(raw).getBytes(StandardCharsets.UTF_8)));
             case ARG -> new Field(nameOf(raw), new PkiOperationValue.Text(valueOf(raw)));
             case ARG_INT -> new Field(nameOf(raw), new PkiOperationValue.IntegerValue(parseLong(valueOf(raw))));
             case ARG_BOOL -> new Field(nameOf(raw), new PkiOperationValue.BooleanValue(parseBoolean(valueOf(raw))));
@@ -105,7 +109,7 @@ final class PkiRemoteArguments {
         if (name == null) {
             throw new IllegalArgumentException("Unknown remote operation argument");
         }
-        PkiOperationValue value = "limit".equals(name) || "profileVersion".equals(name)
+        PkiOperationValue value = "limit".equals(name) || "profileVersion".equals(name) || "expectedLifecycleRevision".equals(name)
                 ? new PkiOperationValue.IntegerValue(parseLong(raw)) : new PkiOperationValue.Text(raw);
         return new Field(name, value);
     }

@@ -40,6 +40,11 @@ import java.util.Objects;
 import java.util.Optional;
 
 import zeroecho.pki.api.CertificationRequestService;
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.impl.framework.x509.bc.BcX509Attributes;
+import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.issuance.VerificationPolicy;
@@ -182,6 +187,41 @@ public final class DefaultCertificationRequestService implements CertificationRe
             throw new IllegalArgumentException("request must not be null");
         }
         return framework.requestParser().parse(request);
+    }
+
+    /**
+     * Returns a bounded, fingerprint-checked copy of the retained X.509 CSR.
+     * Attribute lookup is O(A) for the current list-backed attribute set; copying
+     * and hashing D bytes take O(D) time and transient memory. No collaborator is invoked.
+     * @param parsed parsed request retaining one original DER byte attribute
+     * @return independently owned exact request bytes
+     * @throws IllegalArgumentException if the input or retained binding is invalid
+     * @throws PkiException if SHA-256 is unavailable
+     */
+    @Override
+    public CertificationRequest encodedRequest(ParsedCertificationRequest parsed) {
+        if (parsed == null || !BcX509CredentialFramework.FORMAT_ID.equals(parsed.formatId())) {
+            throw new IllegalArgumentException("Retained certification request format is invalid");
+        }
+        List<AttributeValue> values = parsed.attributes().getAll(BcX509Attributes.CSR_DER);
+        if (values.size() != 1 || !(values.getFirst() instanceof AttributeValue.BytesValue bytes)) {
+            throw new IllegalArgumentException("Retained certification request payload is invalid");
+        }
+        byte[] source = bytes.value();
+        if (source.length == 0 || source.length > 1024 * 1024) {
+            throw new IllegalArgumentException("Retained certification request payload is invalid");
+        }
+        byte[] snapshot = source.clone();
+        final String identity;
+        try {
+            identity = "csr:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(snapshot));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new PkiException("Retained certification request fingerprint is unavailable", impossible);
+        }
+        if (!identity.equals(parsed.requestId().value())) {
+            throw new IllegalArgumentException("Retained certification request identity differs");
+        }
+        return new CertificationRequest(parsed.formatId(), new EncodedObject(Encoding.DER, snapshot));
     }
 
     /**

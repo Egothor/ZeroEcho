@@ -44,6 +44,7 @@
 
 export interface TransportRequest {
   readonly method: string;
+  readonly signal?: AbortSignal;
   readonly path: string;
   readonly query?: Record<string, string | number | boolean | undefined> | undefined;
   readonly body?: string | undefined;
@@ -73,6 +74,7 @@ function buildUrl(path: string, query?: TransportRequest['query']): string {
 export const fetchTransport: Transport = async (req) => {
   const init: RequestInit = { method: req.method, headers: req.headers, credentials: 'same-origin' };
   if (req.body !== undefined) init.body = req.body;
+  if (req.signal) init.signal = req.signal;
   const res = await fetch(buildUrl(req.path, req.query), init);
   const headers: Record<string, string> = {};
   res.headers.forEach((value, key) => {

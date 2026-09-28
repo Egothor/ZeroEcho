@@ -63,11 +63,20 @@ PY
 # Requires ZE, CONFIG, WORK to be exported (pki_demo_setup does this).
 run_op() {
   local label="$1" op="$2"; shift 2
-  "${ZE}" pki "${op}" --config "${CONFIG}" --output json "$@" > "${WORK}/out/${label}.json"
+  local code=0
+  "${ZE}" pki "${op}" --config "${CONFIG}" --output json "$@" > "${WORK}/out/${label}.json" || code=$?
+  if (( code != 0 )); then
+    echo "ABORT: ${op} exited ${code}; receipt retained in ${WORK}/out/${label}.json" >&2
+    exit "${code}"
+  fi
   local status
   status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "${WORK}/out/${label}.json")"
   printf '  %-16s %-26s %s\n' "${label}" "${op}" "${status}"
   [ "${status}" = "SUCCEEDED" ] || { echo "ABORT: ${op} -> ${status}"; cat "${WORK}/out/${label}.json"; exit 1; }
+  if [[ "${op}" == publication.process ]] && [[ "$(field "${label}" status)" != SUCCEEDED ]]; then
+    echo "ABORT: publication did not succeed; inspect ${WORK}/out/${label}.json before explicit recovery" >&2
+    exit 1
+  fi
 }
 
 # field <label> <name> -> value of steps[0].output.<name> from out/<label>.json
@@ -100,13 +109,54 @@ export_crl() {
   openssl crl -inform DER -in "${WORK}/certs/$1.der" -outform PEM -out "${WORK}/certs/$1.pem" 2>/dev/null
 }
 
-# ca_cert_credential <caId> -> echoes the CA's current issuance credentialId (quiet, for $(...))
-ca_cert_credential() {
-  "${ZE}" pki ca.inspect --config "${CONFIG}" --output json --ca-id "$1" >"${WORK}/out/_cainsp.json" 2>/dev/null
-  local issuer; issuer="$(json_field "${WORK}/out/_cainsp.json" 0 currentIssuanceIssuerId)"
-  "${ZE}" pki issuer.generation.inspect --config "${CONFIG}" --output json \
-    --issuer-id "${issuer}" >"${WORK}/out/_geninsp.json" 2>/dev/null
-  json_field "${WORK}/out/_geninsp.json" 0 credentialId
+# Inspect a completed CA certificate and wait only for its actual validity start.
+# No mutating command is retried. The CLI itself remains fully synchronous.
+inspect_ca() {
+  local label="$1"
+  run_op "${label}-certificate" credential.inspect --credential-id "$(field "${label}" credentialId)"
+  python3 - "${WORK}/out/${label}-certificate.json" <<'PYWAIT'
+import datetime, json, sys, time
+with open(sys.argv[1]) as source:
+    valid_from = datetime.datetime.fromisoformat(json.load(source)["steps"][0]["output"]["notBefore"].replace("Z", "+00:00")).timestamp()
+deadline = time.monotonic() + 5
+while valid_from > time.time():
+    if time.monotonic() >= deadline:
+        raise SystemExit("Issuer validity has not started within five seconds; stop without resubmitting")
+    time.sleep(min(0.05, max(0, valid_from - time.time())))
+PYWAIT
+}
+
+# These fresh-store scenarios create exactly one intermediate. A credential's
+# authorityId identifies its issuer, so discover the new subject CA in inventory.
+intermediate_ca() {
+  "${ZE}" pki ca.list --config "${CONFIG}" --output json --limit 50 > "${WORK}/out/ca-inventory.json"
+  python3 - "${WORK}/out/ca-inventory.json" <<'PYCA'
+import json, sys
+with open(sys.argv[1]) as source:
+    authorities = json.load(source)["steps"][0]["output"]["authorities"]
+children = [row["caId"] for row in authorities if row["kind"] == "INTERMEDIATE"]
+if len(children) != 1:
+    raise SystemExit("Expected exactly one intermediate in the fresh demo store")
+print(children[0])
+PYCA
+}
+
+# run_plan <name>: retains the full receipt, then exposes step outputs to field().
+run_plan() {
+  local name="$1" code=0
+  "${ZE}" pki run "${WORK}/${name}.json" --config "${CONFIG}" --output json > "${WORK}/out/${name}.json" || code=$?
+  if (( code != 0 )); then
+    echo "ABORT: plan ${name} exited ${code}; receipt retained in ${WORK}/out/${name}.json" >&2
+    exit "${code}"
+  fi
+  python3 - "${WORK}/out/${name}.json" "${WORK}/out" <<'PYSTEPS'
+import json, pathlib, sys
+with open(sys.argv[1]) as source:
+    result = json.load(source)
+for step in result["steps"]:
+    with open(pathlib.Path(sys.argv[2]) / (step["id"] + ".json"), "w") as target:
+        json.dump({"steps": [step]}, target)
+PYSTEPS
 }
 
 pki_demo_setup() {
@@ -114,9 +164,18 @@ pki_demo_setup() {
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   ZE_HOME="${ZE_HOME:-$(cd "${here}/../../.." && pwd)/app/build/install/app}"
   ZE="${ZE_HOME}/bin/app"
+  : "${ZEROECHO_KEYRING_PASSWORD:?Set a nonempty demo keyring password in the environment}"
+  export ZEROECHO_KEYRING_PASSWORD
+  umask 077
   WORK="${1:-$(mktemp -d)}"
+  mkdir -p "${WORK}"
+  WORK="$(cd "${WORK}" && pwd)"
+  if [[ -n "$(ls -A "${WORK}")" ]]; then
+    echo "ABORT: choose an empty work directory" >&2
+    exit 2
+  fi
+  chmod 700 "${WORK}"
   CONFIG="${WORK}/config.json"
-  export ZEROECHO_KEYRING_PASSWORD="${ZEROECHO_KEYRING_PASSWORD:-demo-keyring-passphrase-change-me}"
 
   echo "launcher : ${ZE}"
   echo "workdir  : ${WORK}"
@@ -131,24 +190,26 @@ pki_demo_setup() {
             --keystore-password-env ZEROECHO_KEYRING_PASSWORD >/dev/null
   done
 
-  # 2. Session configuration.
-  cat > "${CONFIG}" <<JSON
-{
-  "version": 2,
-  "store":  { "provider": "fs",     "properties": { "root": "${WORK}/store" } },
-  "audit":  { "provider": "memory", "properties": { "size": "512" } },
-  "signing": {
-    "workflow":  { "provider": "zeroecho-lib", "properties": { "keyringPath": "${KEYRING}" } },
-    "framework": { "provider": "x509-bc", "properties": {} },
-    "signatureAlgorithm": "SHA256withRSA",
-    "signingTtlSeconds": 30,
-    "unlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"
-  },
-  "publishers": [
-    { "provider": "filesystem", "properties": { "root": "${WORK}/published", "targetId": "local" } }
-  ]
+  # 2. Explicit local configuration; JSON encoding also handles unusual paths.
+  python3 - "${CONFIG}" "${WORK}" "${KEYRING}" <<'PYCONFIG'
+import json, pathlib, sys
+work = pathlib.Path(sys.argv[2])
+configuration = {
+    "version": 1, "mode": "local", "operatorId": "demo-local-root",
+    "store": {"provider": "fs", "properties": {"root": str(work / "store")}},
+    "audit": {"provider": "memory", "properties": {"size": "512"}},
+    "signing": {
+        "provider": {"provider": "zeroecho-lib", "properties": {"keyringPath": sys.argv[3]}},
+        "signatureAlgorithm": "zealg:2:9:signature8:zeroecho14:rsa-pkcs1-v1_516:zeroecho.builtin39:ZGlnZXN0PXplcm9lY2hvLnNoYTItMjU2Lm5vbmU", "signingTtlSeconds": 30,
+        "unlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD",
+        "claimLeaseMillis": 30000, "providerCallTimeoutMillis": 20000
+    },
+    "publishers": [{"provider": "filesystem", "properties": {"root": str(work / "published"), "targetId": "local"}}],
+    "bindingProviders": []
 }
-JSON
+with open(sys.argv[1], "w") as target:
+    json.dump(configuration, target, indent=2)
+PYCONFIG
 
   # 3. Certificate profiles (practice-usable definitions).
   cat > "${WORK}/profiles/root-ca.json" <<'JSON'

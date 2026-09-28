@@ -56,7 +56,7 @@ import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
  * @param actorType authenticated actor classification
  * @param actorId authenticated actor identifier (principal or ACME account)
  * @param realmId realm identity
- * @param requestId originating certification-request identity
+ * @param requestId trusted originating invocation correlation identifier
  * @param authentication authentication classification
  * @param authorization authorization classification
  * @param authorizationPath administrative authorization path (absent for ACME)
@@ -168,7 +168,7 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
      *
      * @param principalId bounded authenticated administrator identifier
      * @param realmId bounded authorization realm identifier
-     * @param requestId originating certification-request identifier
+     * @param requestId trusted originating invocation correlation identifier
      * @param authentication non-ACME authentication mechanism
      * @param path administrative grant, approval, or break-glass path
      * @param operationCommitment lowercase 64-hex-character operation commitment
@@ -190,7 +190,7 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
      *
      * @param accountId bounded ACME account identifier
      * @param realmId bounded authorization realm identifier
-     * @param requestId originating certification-request identifier
+     * @param requestId trusted originating invocation correlation identifier
      * @param issuerCaId issuing authority identifier
      * @param profileId frozen certificate-profile identifier
      * @return validated immutable ACME ownership evidence
@@ -260,6 +260,24 @@ public record IssuanceExecutionEvidence(ActorType actorType, String actorId, Str
             return Optional.of(new IssuanceExecutionEvidence(actorType, actorId, realmId, requestId,
                     authentication, authorization, path, operation, issuerCaId, profileId, outcome));
         } catch (IllegalArgumentException | NullPointerException invalid) {
+            throw invalidEvidence();
+        }
+    }
+
+    /**
+     * Decodes a feed payload containing UTF-8 canonical unpadded base64url attributes.
+     * The encoded byte count is bounded before allocation; the existing attribute
+     * decoder enforces canonical framing and its decoded-byte and entry limits.
+     *
+     * @param payload exact evidence-feed bytes, borrowed for this call
+     * @return empty only when this evidence family's vocabulary is absent
+     * @throws IllegalArgumentException if framing or this family's vocabulary is invalid
+     */
+    @SuppressWarnings("PMD.PreserveStackTrace") // Feed values must not escape through exception causes.
+    public static Optional<IssuanceExecutionEvidence> decode(byte[] payload) {
+        try {
+            return decode(EvidencePayloadEncoding.decode(payload));
+        } catch (IllegalArgumentException invalid) {
             throw invalidEvidence();
         }
     }

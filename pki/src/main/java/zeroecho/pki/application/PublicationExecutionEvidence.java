@@ -195,6 +195,24 @@ public record PublicationExecutionEvidence(String sourceType, String sourceId, S
         }
     }
 
+    /**
+     * Decodes a feed payload containing UTF-8 canonical unpadded base64url attributes.
+     * The encoded byte count is bounded before allocation; the existing attribute
+     * decoder enforces canonical framing and its decoded-byte and entry limits.
+     *
+     * @param payload exact evidence-feed bytes, borrowed for this call
+     * @return empty only when this evidence family's vocabulary is absent
+     * @throws IllegalArgumentException if framing or this family's vocabulary is invalid
+     */
+    @SuppressWarnings("PMD.PreserveStackTrace") // Feed values must not escape through exception causes.
+    public static Optional<PublicationExecutionEvidence> decode(byte[] payload) {
+        try {
+            return decode(EvidencePayloadEncoding.decode(payload));
+        } catch (IllegalArgumentException invalid) {
+            throw invalidEvidence();
+        }
+    }
+
     private static AttributeId id(String name) {
         return new AttributeId("urn:zeroecho:pki:publication-evidence:" + name + ":v1");
     }

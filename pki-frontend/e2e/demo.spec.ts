@@ -70,10 +70,13 @@ test('HIGH_RISK create (via Create menu) surfaces the approval-required flow', a
   await page.getByRole('button', { name: 'Create' }).click();
   await page.getByRole('menuitem', { name: 'Create root authority' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('formatId').fill('x509-v3');
-  await dialog.getByLabel('subjectRef').fill('CN=New Root');
-  await dialog.getByLabel('profileId').fill('root-ca-v1');
-  await dialog.getByLabel('keyRef').fill('key-1');
+  await dialog.getByLabel('Certificate format', { exact: true }).click();
+  await page.getByRole('option', { name: /X.509 certificate/ }).click();
+  await dialog.getByLabel('Subject', { exact: true }).fill('CN=New Root');
+  await dialog.getByLabel('Certificate profile', { exact: true }).click();
+  await page.getByRole('option', { name: /Root authority/ }).click();
+  await dialog.getByLabel('Signing key', { exact: true }).click();
+  await page.getByRole('option', { name: /Root authority key/ }).click();
   await dialog.getByRole('button', { name: /Run operation/i }).click();
   await expect(dialog.getByText('Approval required')).toBeVisible();
 });
@@ -92,7 +95,8 @@ test('parameterised listing (Status & CRLs) loads a table after a filter is set'
   await openDemo(page);
   await nav(page).getByRole('link', { name: 'Status & CRLs' }).click();
   // The listing needs an issuer; a filter bar is shown before the table loads.
-  await page.getByLabel('issuerCaId').fill('ca-tls-issuing-01');
+  await page.getByLabel('Issuing authority', { exact: true }).click();
+  await page.getByRole('option', { name: /ca-tls-issuing-01/ }).click();
   await page.getByRole('button', { name: /^(Load|Apply)$/ }).click();
   await expect(page.getByRole('grid')).toBeVisible();
   await expect(page.getByText('crl-tls-014', { exact: false })).toBeVisible();

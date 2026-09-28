@@ -45,7 +45,7 @@ import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
-/** Round-trip, classification, and strict-decode coverage for issuance execution evidence (Task 8a). */
+/** Round-trip, classification, and strict-decode coverage for issuance execution evidence. */
 class IssuanceExecutionEvidenceTest {
     private static final String COMMITMENT = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 

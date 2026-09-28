@@ -141,9 +141,9 @@ final class KeyPossessionProofProviderCompositionTest {
         PkiSessionRuntimeDependencies dependencies = PkiSessionRuntimeDependencies.none()
                 .withKeyPossessionProofProviders(List.of(
                         new TestProvider("not-canonical", new AtomicInteger())));
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(1,
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("unused-store", Map.of()),
-                new ProviderConfig("unused-audit", Map.of()));
+                new ProviderConfig("unused-audit", Map.of()), Optional.empty(), List.of(), List.of());
 
         assertThrows(IllegalArgumentException.class, () -> DefaultPkiSession.open(
                 configuration, dependencies, CLOCK, bootstrap(storesOpened)));
@@ -200,9 +200,9 @@ final class KeyPossessionProofProviderCompositionTest {
         PkiSessionRuntimeDependencies dependencies = PkiSessionRuntimeDependencies.none()
                 .withKeyPossessionProofProviders(List.of(provider))
                 .withCredentialConfirmationProofPolicy(policy);
-        PkiSessionConfiguration configuration = new PkiSessionConfiguration(1,
+        PkiSessionConfiguration configuration = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("store").toString())),
-                new ProviderConfig("memory", Map.of("size", "16")));
+                new ProviderConfig("memory", Map.of("size", "16")), Optional.empty(), List.of(), List.of());
 
         try (PkiSession session = PkiSession.open(configuration, dependencies, CLOCK)) {
             assertSame(session.confirmations(), session.confirmations());
@@ -224,9 +224,9 @@ final class KeyPossessionProofProviderCompositionTest {
     }
 
     private static PkiSessionConfiguration unusedConfiguration() {
-        return new PkiSessionConfiguration(1,
+        return new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("unused-store", Map.of()),
-                new ProviderConfig("unused-audit", Map.of()));
+                new ProviderConfig("unused-audit", Map.of()), Optional.empty(), List.of(), List.of());
     }
 
     private static CredentialConfirmationProofRuntimePolicy proofPolicy(

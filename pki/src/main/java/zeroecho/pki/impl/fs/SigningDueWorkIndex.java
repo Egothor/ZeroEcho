@@ -34,15 +34,20 @@
 package zeroecho.pki.impl.fs;
 
 import java.time.Instant;
+import java.util.AbstractMap;
+import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Set;
+import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
@@ -51,9 +56,10 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 
 /** Bounded due-work ordering that shares the ledger's resident-byte budget. */
 @SuppressWarnings({ "PMD.AvoidLiteralsInIfCondition", "PMD.CloseResource",
-        "PMD.AvoidDuplicateLiterals", "PMD.CommentRequired", "PMD.CompareObjectsWithEquals",
+        "PMD.AvoidDuplicateLiterals", "PMD.AvoidInstantiatingObjectsInLoops",
+        "PMD.CommentRequired", "PMD.CompareObjectsWithEquals",
         "PMD.ConfusingTernary", "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity",
-        "PMD.UseTryWithResources" })
+        "PMD.TooManyMethods", "PMD.UseTryWithResources" })
 final class SigningDueWorkIndex implements AutoCloseable {
     /* default */ static final int FOUR_GIB_MAXIMUM_WORK = 100_000;
     /* default */ static final int FOUR_GIB_ORDERED_LIMIT = 1_000_000;
@@ -71,8 +77,8 @@ final class SigningDueWorkIndex implements AutoCloseable {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final Lock readLock = lock.readLock();
     private final Lock writeLock = lock.writeLock();
-    private final NavigableMap<DueKey, DescriptorSlot> ordered = new TreeMap<>();
-    private final Map<CanonicalOperationId, OperationSlot> byOperation = new HashMap<>();
+    private NavigableMap<DueKey, DescriptorSlot> ordered = new TreeMap<>();
+    private Map<CanonicalOperationId, OperationSlot> byOperation = new HashMap<>();
     private final Set<Admission> admissions = new HashSet<>();
     private IdentityNode identityRoot;
     private long lastIdentityPageNodesVisited;
@@ -103,6 +109,56 @@ final class SigningDueWorkIndex implements AutoCloseable {
         Objects.requireNonNull(operationId, "operationId");
         return new CanonicalOperationId(operationId,
                 SigningFormatSupport.strictUtf8(operationId, MAX_OPERATION_ID_BYTES));
+    }
+
+    /** Installs identity-ordered recovered work with linear bulk construction. */
+    /* default */ void recoverAll(List<RecoveryEntry> identityOrdered) {
+        Objects.requireNonNull(identityOrdered, "identityOrdered");
+        writeLock.lock();
+        try {
+            requireOpen();
+            if (!ordered.isEmpty() || !byOperation.isEmpty() || identityRoot != null
+                    || outstandingAdmissions != 0 || identityOrdered.size() > maximumWork) {
+                throw new IllegalStateException("signing due-work recovery target is invalid");
+            }
+            long candidateCanonicalBytes = validateRecoveryIdentityOrder(identityOrdered);
+            long candidateBytes = Math.multiplyExact(identityOrdered.size(), ENTRY_FIXED_BYTES);
+            SigningIndexCapacityBudget.Reservation reservation = capacity.reserve(candidateBytes);
+            try {
+                List<OperationSlot> identitySlots = recoverySlots(identityOrdered);
+                List<OperationSlot> dueOrdered = orderRecoveryByDueTime(identitySlots);
+                NavigableMap<DueKey, DescriptorSlot> candidateOrdered =
+                        new TreeMap<>(new SortedRecoveryMap(recoveryEntries(dueOrdered)));
+                Map<CanonicalOperationId, OperationSlot> candidateByOperation =
+                        new HashMap<>(hashCapacity(identitySlots.size()));
+                Map<Long, Integer> generationCounts = new HashMap<>();
+                for (OperationSlot slot : identitySlots) {
+                    candidateByOperation.put(slot.operationId, slot);
+                    generationCounts.merge(slot.publishedDescriptor.pointer.generationId(),
+                            1, Math::addExact);
+                }
+                SigningGenerationRegistry.CurrentReferences references =
+                        generations.acquireCurrentCounts(referenceOwner, generationCounts);
+                try {
+                    IdentityNode candidateRoot = buildBalancedIdentity(
+                            identitySlots, 0, identitySlots.size(), null);
+                    ordered = candidateOrdered;
+                    byOperation = candidateByOperation;
+                    identityRoot = candidateRoot;
+                    canonicalIdBytes = candidateCanonicalBytes;
+                    reservedBytes = candidateBytes;
+                    admittedIdentities = identitySlots.size();
+                    references.transfer();
+                    reservation.transfer();
+                } finally {
+                    references.close();
+                }
+            } finally {
+                reservation.close();
+            }
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     /** Reserves one new due-work entry before its operation identity exists. */
@@ -152,8 +208,17 @@ final class SigningDueWorkIndex implements AutoCloseable {
             Instant nextEligibleAt, SignWorkflowStore.State state,
             SigningMvccIndex.RecordPointer pointer,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
-        return prepareUpdate(null, operationId, nextEligibleAt, state, pointer, false,
+        return prepareUpdate(null, operationId, nextEligibleAt, state, pointer, null, false,
                 false, admissionClass);
+    }
+
+    /* default */ PreparedChange prepareUpdate(CanonicalOperationId operationId,
+            Instant nextEligibleAt, SignWorkflowStore.State state,
+            SigningMvccIndex.RecordPointer pointer,
+            SigningTransitionWorkspaceSizing.AdmissionClass admissionClass,
+            SignWorkflowStore.SchedulingCoordinates scheduling) {
+        return prepareUpdate(null, operationId, nextEligibleAt, state, pointer,
+                Objects.requireNonNull(scheduling, "scheduling"), false, false, admissionClass);
     }
 
     /** Consumes one bound admission into a hidden initial due-work entry. */
@@ -161,8 +226,18 @@ final class SigningDueWorkIndex implements AutoCloseable {
             CanonicalOperationId operationId, Instant nextEligibleAt,
             SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer) {
         Objects.requireNonNull(admission, "admission");
-        return prepareUpdate(admission, operationId, nextEligibleAt, state, pointer, false,
+        return prepareUpdate(admission, operationId, nextEligibleAt, state, pointer, null, false,
                 false, SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
+    }
+
+    /* default */ PreparedChange prepareUpdate(Admission admission,
+            CanonicalOperationId operationId, Instant nextEligibleAt,
+            SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer,
+            SignWorkflowStore.SchedulingCoordinates scheduling) {
+        Objects.requireNonNull(admission, "admission");
+        return prepareUpdate(admission, operationId, nextEligibleAt, state, pointer,
+                Objects.requireNonNull(scheduling, "scheduling"), false, false,
+                SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
     /* default */ PreparedChange prepareRetained(CanonicalOperationId operationId,
@@ -175,13 +250,21 @@ final class SigningDueWorkIndex implements AutoCloseable {
             Instant orderedAt, SigningMvccIndex.RecordPointer pointer,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
         return prepareUpdate(null, operationId, orderedAt, SignWorkflowStore.State.RETIRED,
-                pointer, true, false, admissionClass);
+                pointer, null, true, false, admissionClass);
     }
 
     /* default */ PreparedChange prepareMalformed(CanonicalOperationId operationId,
             SigningMvccIndex.RecordPointer pointer) {
         return prepareUpdate(null, operationId, Instant.MIN, SignWorkflowStore.State.INTENT,
-                pointer, true, true,
+                pointer, null, true, true,
+                SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
+    }
+
+    /* default */ PreparedChange prepareMalformed(CanonicalOperationId operationId,
+            SigningMvccIndex.RecordPointer pointer,
+            SignWorkflowStore.SchedulingCoordinates scheduling) {
+        return prepareUpdate(null, operationId, Instant.MIN, SignWorkflowStore.State.INTENT,
+                pointer, Objects.requireNonNull(scheduling, "scheduling"), true, true,
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
@@ -189,14 +272,25 @@ final class SigningDueWorkIndex implements AutoCloseable {
             CanonicalOperationId operationId, SigningMvccIndex.RecordPointer pointer) {
         Objects.requireNonNull(admission, "admission");
         return prepareUpdate(admission, operationId, Instant.MIN,
-                SignWorkflowStore.State.INTENT, pointer, true, true,
+                SignWorkflowStore.State.INTENT, pointer, null, true, true,
+                SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
+    }
+
+    /* default */ PreparedChange prepareMalformed(Admission admission,
+            CanonicalOperationId operationId, SigningMvccIndex.RecordPointer pointer,
+            SignWorkflowStore.SchedulingCoordinates scheduling) {
+        Objects.requireNonNull(admission, "admission");
+        return prepareUpdate(admission, operationId, Instant.MIN,
+                SignWorkflowStore.State.INTENT, pointer,
+                Objects.requireNonNull(scheduling, "scheduling"), true, true,
                 SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
     }
 
     private PreparedChange prepareUpdate(Admission admission,
             CanonicalOperationId operationId,
             Instant nextEligibleAt, SignWorkflowStore.State state,
-            SigningMvccIndex.RecordPointer pointer, boolean retainRetired,
+            SigningMvccIndex.RecordPointer pointer,
+            SignWorkflowStore.SchedulingCoordinates scheduling, boolean retainRetired,
             boolean malformed,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
         Objects.requireNonNull(operationId, "operationId");
@@ -221,8 +315,10 @@ final class SigningDueWorkIndex implements AutoCloseable {
             long delta = previous == null ? ENTRY_FIXED_BYTES : 0L;
             SigningIndexCapacityBudget.Reservation reservation = admission == null
                     ? capacity.reserve(delta, admissionClass) : admission.reservation;
+            ReplacementTarget replacementTarget = new ReplacementTarget(
+                    operationSlot, previous, reservation);
             return prepareReplacement(admission, operationId, nextEligibleAt, state, pointer,
-                    malformed, operationSlot, previous, reservation);
+                    scheduling, malformed, replacementTarget);
         } finally {
             writeLock.unlock();
         }
@@ -251,8 +347,11 @@ final class SigningDueWorkIndex implements AutoCloseable {
 
     private PreparedChange prepareReplacement(Admission admission, CanonicalOperationId operationId,
             Instant nextEligibleAt, SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer,
-            boolean malformed, OperationSlot operationSlot, DueKey previous,
-            SigningIndexCapacityBudget.Reservation reservation) {
+            SignWorkflowStore.SchedulingCoordinates scheduling, boolean malformed,
+            ReplacementTarget replacementTarget) {
+        OperationSlot operationSlot = replacementTarget.operationSlot;
+        DueKey previous = replacementTarget.previous;
+        SigningIndexCapacityBudget.Reservation reservation = replacementTarget.reservation;
         SigningGenerationRegistry.CurrentReferences reference = null;
         boolean transferred = false;
         boolean consumed = false;
@@ -260,9 +359,13 @@ final class SigningDueWorkIndex implements AutoCloseable {
             reference = generations.acquireCurrent(referenceOwner,
                     List.of(pointer.generationId()));
             DueKey replacement = new DueKey(nextEligibleAt, operationId);
-            WorkDescriptor descriptor = new WorkDescriptor(operationId.value,
-                    nextEligibleAt, state, pointer, malformed);
             DescriptorSlot previousSlot = previousDescriptor(previous);
+            SignWorkflowStore.SchedulingCoordinates effectiveScheduling = scheduling;
+            if (effectiveScheduling == null && previousSlot != null) {
+                effectiveScheduling = previousSlot.published.scheduling;
+            }
+            WorkDescriptor descriptor = new WorkDescriptor(operationId.value,
+                    nextEligibleAt, state, pointer, effectiveScheduling, malformed);
             DescriptorSlot replacementSlot = ordered.get(replacement);
             boolean insertedReplacement = replacementSlot == null;
             replacementSlot = prepareDescriptorSlot(replacement, replacementSlot, previousSlot);
@@ -613,6 +716,112 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
+    private static long validateRecoveryIdentityOrder(List<RecoveryEntry> entries) {
+        CanonicalOperationId previous = null;
+        long bytes = 0L;
+        for (RecoveryEntry entry : entries) {
+            Objects.requireNonNull(entry, "recoveryEntry");
+            if (previous != null && previous.compareTo(entry.operationId) >= 0) {
+                throw new IllegalArgumentException(
+                        "signing due-work recovery identity order is invalid");
+            }
+            previous = entry.operationId;
+            bytes = Math.addExact(bytes, entry.operationId.bytes.length);
+        }
+        return bytes;
+    }
+
+    private static List<OperationSlot> recoverySlots(List<RecoveryEntry> entries) {
+        List<OperationSlot> slots = new ArrayList<>(entries.size());
+        for (RecoveryEntry entry : entries) {
+            OperationSlot slot = new OperationSlot(entry.operationId);
+            DueKey key = new DueKey(entry.nextEligibleAt, entry.operationId);
+            WorkDescriptor descriptor = new WorkDescriptor(entry.operationId.value,
+                    entry.nextEligibleAt, entry.state, entry.pointer, entry.scheduling,
+                    entry.malformed);
+            slot.published = key;
+            slot.publishedDescriptor = descriptor;
+            slots.add(slot);
+        }
+        return slots;
+    }
+
+    /** Stable fixed-width radix order; identity order breaks equal timestamps. */
+    private static List<OperationSlot> orderRecoveryByDueTime(List<OperationSlot> identityOrdered) {
+        OperationSlot[] ordered = identityOrdered.toArray(OperationSlot[]::new);
+        OperationSlot[] scratch = new OperationSlot[ordered.length];
+        int[] counts = new int[256];
+        int[] positions = new int[counts.length];
+        for (int pass = 0; pass < 12; pass++) {
+            Arrays.fill(counts, 0);
+            for (OperationSlot slot : ordered) {
+                counts[timeSymbol(slot.published.nextEligibleAt, pass)]++;
+            }
+            int position = 0;
+            for (int symbol = 0; symbol < counts.length; symbol++) {
+                positions[symbol] = position;
+                position += counts[symbol];
+            }
+            for (OperationSlot slot : ordered) {
+                int symbol = timeSymbol(slot.published.nextEligibleAt, pass);
+                scratch[positions[symbol]++] = slot;
+            }
+            OperationSlot[] exchanged = ordered;
+            ordered = scratch;
+            scratch = exchanged;
+        }
+        return List.copyOf(Arrays.asList(ordered));
+    }
+
+    private static int timeSymbol(Instant instant, int pass) {
+        if (pass < Integer.BYTES) {
+            return instant.getNano() >>> pass * Byte.SIZE & 0xff;
+        }
+        long sortableSeconds = instant.getEpochSecond() ^ Long.MIN_VALUE;
+        return (int) (sortableSeconds >>> (pass - Integer.BYTES) * Byte.SIZE & 0xffL);
+    }
+
+    private static List<Map.Entry<DueKey, DescriptorSlot>> recoveryEntries(
+            List<OperationSlot> orderedSlots) {
+        List<Map.Entry<DueKey, DescriptorSlot>> entries = new ArrayList<>(orderedSlots.size());
+        DueKey previous = null;
+        for (OperationSlot slot : orderedSlots) {
+            DueKey key = slot.published;
+            if (previous != null && previous.compareTo(key) >= 0) {
+                throw new IllegalArgumentException("signing due-work recovery order is invalid");
+            }
+            DescriptorSlot descriptor = new DescriptorSlot();
+            descriptor.published = slot.publishedDescriptor;
+            entries.add(Map.entry(key, descriptor));
+            previous = key;
+        }
+        return entries;
+    }
+
+    private static IdentityNode buildBalancedIdentity(List<OperationSlot> slots,
+            int from, int to, IdentityNode parent) {
+        if (from >= to) {
+            return null;
+        }
+        int middle = (from + to) >>> 1;
+        OperationSlot slot = slots.get(middle);
+        IdentityNode node = new IdentityNode(slot);
+        slot.identityNode = node;
+        node.parent = parent;
+        node.left = buildBalancedIdentity(slots, from, middle, node);
+        node.right = buildBalancedIdentity(slots, middle + 1, to, node);
+        refresh(node);
+        return node;
+    }
+
+    private static int hashCapacity(int entries) {
+        if (entries == 0) {
+            return 1;
+        }
+        long capacity = Math.addExact(entries, Math.max(1L, entries / 3L));
+        return (int) Math.min(Integer.MAX_VALUE, capacity);
+    }
+
     private void insertIdentity(OperationSlot operationSlot) {
         IdentityNode inserted = new IdentityNode(operationSlot);
         operationSlot.identityNode = inserted;
@@ -800,6 +1009,28 @@ final class SigningDueWorkIndex implements AutoCloseable {
         }
     }
 
+    /** One decoded active state supplied in strict canonical-identity order. */
+    /* default */ record RecoveryEntry(CanonicalOperationId operationId,
+            Instant nextEligibleAt, SignWorkflowStore.State state,
+            SigningMvccIndex.RecordPointer pointer,
+            SignWorkflowStore.SchedulingCoordinates scheduling, boolean malformed) {
+        /* default */ RecoveryEntry(CanonicalOperationId operationId, Instant nextEligibleAt,
+                SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer,
+                boolean malformed) {
+            this(operationId, nextEligibleAt, state, pointer, null, malformed);
+        }
+        RecoveryEntry {
+            Objects.requireNonNull(operationId, "operationId");
+            Objects.requireNonNull(nextEligibleAt, "nextEligibleAt");
+            Objects.requireNonNull(state, "state");
+            Objects.requireNonNull(pointer, "pointer");
+        }
+    }
+
+    private record ReplacementTarget(OperationSlot operationSlot, DueKey previous,
+            SigningIndexCapacityBudget.Reservation reservation) {
+    }
+
     /** One validated identity object reused by all lifecycle transitions. */
     /* default */ static final class CanonicalOperationId {
         private final String value;
@@ -894,6 +1125,38 @@ final class SigningDueWorkIndex implements AutoCloseable {
     private static final class DescriptorSlot {
         private WorkDescriptor published;
         private WorkDescriptor pending;
+    }
+
+    /** Read-only sorted view that lets {@link TreeMap} use its linear bulk builder. */
+    private static final class SortedRecoveryMap extends AbstractMap<DueKey, DescriptorSlot>
+            implements SortedMap<DueKey, DescriptorSlot> {
+        private final List<Map.Entry<DueKey, DescriptorSlot>> entries;
+
+        private SortedRecoveryMap(List<Map.Entry<DueKey, DescriptorSlot>> entries) {
+            super();
+            this.entries = List.copyOf(entries);
+        }
+
+        @Override public Comparator<? super DueKey> comparator() { return null; }
+        @Override public DueKey firstKey() { return entries.getFirst().getKey(); }
+        @Override public DueKey lastKey() { return entries.getLast().getKey(); }
+        @Override public SortedMap<DueKey, DescriptorSlot> subMap(DueKey fromKey, DueKey toKey) {
+            throw new UnsupportedOperationException("recovery map is a bulk-build view");
+        }
+        @Override public SortedMap<DueKey, DescriptorSlot> headMap(DueKey toKey) {
+            throw new UnsupportedOperationException("recovery map is a bulk-build view");
+        }
+        @Override public SortedMap<DueKey, DescriptorSlot> tailMap(DueKey fromKey) {
+            throw new UnsupportedOperationException("recovery map is a bulk-build view");
+        }
+        @Override public Set<Map.Entry<DueKey, DescriptorSlot>> entrySet() {
+            return new AbstractSet<>() {
+                @Override public Iterator<Map.Entry<DueKey, DescriptorSlot>> iterator() {
+                    return entries.iterator();
+                }
+                @Override public int size() { return entries.size(); }
+            };
+        }
     }
 
     /** Rollback-capable due projection prepared before WAL admission. */
@@ -1006,7 +1269,7 @@ final class SigningDueWorkIndex implements AutoCloseable {
 
     /* default */ record WorkDescriptor(String operationId, Instant nextEligibleAt,
             SignWorkflowStore.State state, SigningMvccIndex.RecordPointer pointer,
-            boolean malformed) {
+            SignWorkflowStore.SchedulingCoordinates scheduling, boolean malformed) {
         WorkDescriptor {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(nextEligibleAt, "nextEligibleAt");

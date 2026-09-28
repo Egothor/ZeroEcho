@@ -95,7 +95,7 @@ public final class PkiServerConfigurationCodec {
     public static PkiServerConfiguration decode(byte[] document) {
         Fields root = Fields.of(StrictJson.parse(document, MAXIMUM_CONFIGURATION_BYTES));
         root.allowed(Set.of("version", "serverName", "realm", "listener", "authentication", "execution",
-                "runtime", "publicListener", "acmeListener", "signingReconciliation"));
+                "runtime", "publicListener", "acmeListener", "auditProjection"));
         int encodedVersion = root.integer("version");
         if (encodedVersion != PkiServerConfiguration.CURRENT_VERSION) {
             throw new IllegalArgumentException("Unsupported server schema version");
@@ -105,7 +105,7 @@ public final class PkiServerConfigurationCodec {
                 authentication(root.object("authentication")), execution(root.object("execution")),
                 runtime(root.object("runtime")), publicListener(root.object("publicListener")),
                 acmeListener(root.object("acmeListener")),
-                signingReconciliation(root.object("signingReconciliation")));
+                auditProjection(root.object("auditProjection")));
         root.complete();
         return configuration;
     }
@@ -215,45 +215,52 @@ public final class PkiServerConfigurationCodec {
     }
 
     private static PkiSessionConfiguration.SigningConfiguration signing(Fields value) {
-        Set<String> allowed = Set.of("workflow", "framework", "signatureAlgorithm",
-                "signingTtlMillis", "unlockEnvironmentVariable", "certificateSignatureBinding",
-                "crlSignatureBinding", "subjectPublicKeyBinding", "laneCount", "queueCapacity",
-                "gracefulDrainMillis", "forcedCancellationMillis", "signingServices", "caRouting");
-        value.allowed(allowed);
-        List<PkiSessionConfiguration.SigningServiceConfiguration> signingServices = new ArrayList<>();
-        for (PkiOperationValue item : value.optionalList("signingServices")) {
-            signingServices.add(signingService(Fields.of(item)));
-        }
-        Map<String, String> caRouting = new LinkedHashMap<>();
-        value.optionalObject("caRouting").ifPresent(routing -> {
-            for (Map.Entry<String, PkiOperationValue> entry : routing.remaining().entrySet()) {
-                caRouting.put(entry.getKey(), Fields.text(entry.getValue()));
-            }
-            routing.consumeAll();
-        });
+        value.allowed(Set.of("provider", "signatureAlgorithm", "signingTtlMillis",
+                "unlockEnvironmentVariable", "topology", "pureEdDsaMaximumTbsBytes"));
+        Optional<Long> maximum = value.optionalLong("pureEdDsaMaximumTbsBytes");
         PkiSessionConfiguration.SigningConfiguration result = new PkiSessionConfiguration.SigningConfiguration(
-                provider(value.object("workflow")), provider(value.object("framework")),
-                value.text("signatureAlgorithm"), Duration.ofMillis(value.longValue("signingTtlMillis")),
-                value.optionalText("unlockEnvironmentVariable"), value.optionalText("certificateSignatureBinding"),
-                value.optionalText("crlSignatureBinding"), value.optionalText("subjectPublicKeyBinding"),
-                value.optionalInteger("laneCount").orElse(
-                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_LANE_COUNT),
-                value.optionalInteger("queueCapacity").orElse(
-                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_QUEUE_CAPACITY),
-                Duration.ofMillis(value.optionalLong("gracefulDrainMillis").orElse(
-                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_GRACEFUL_DRAIN.toMillis())),
-                Duration.ofMillis(value.optionalLong("forcedCancellationMillis").orElse(
-                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_FORCED_CANCELLATION.toMillis())),
-                List.copyOf(signingServices), Map.copyOf(caRouting));
+                provider(value.object("provider")), value.text("signatureAlgorithm"),
+                Duration.ofMillis(value.longValue("signingTtlMillis")),
+                value.optionalText("unlockEnvironmentVariable"), topology(value.object("topology")),
+                maximum.isPresent() ? java.util.OptionalLong.of(maximum.orElseThrow())
+                        : java.util.OptionalLong.empty());
         value.complete();
         return result;
     }
 
-    private static PkiSessionConfiguration.SigningServiceConfiguration signingService(Fields value) {
-        value.allowed(Set.of("serviceId", "workflow"));
-        PkiSessionConfiguration.SigningServiceConfiguration result =
-                new PkiSessionConfiguration.SigningServiceConfiguration(value.text("serviceId"),
-                        provider(value.object("workflow")));
+    private static PkiSessionConfiguration.SigningTopology topology(Fields value) {
+        value.exact("coordinator", "exactGroups", "catchAll");
+        Fields limits = value.object("coordinator");
+        limits.exact("pageSize", "claimLeaseMillis", "providerCallTimeoutMillis",
+                "idlePollIntervalMillis", "closeTimeoutMillis");
+        PkiSessionConfiguration.SigningCoordinatorLimits coordinator =
+                new PkiSessionConfiguration.SigningCoordinatorLimits(limits.integer("pageSize"),
+                        Duration.ofMillis(limits.longValue("claimLeaseMillis")),
+                        Duration.ofMillis(limits.longValue("providerCallTimeoutMillis")),
+                        Duration.ofMillis(limits.longValue("idlePollIntervalMillis")),
+                        Duration.ofMillis(limits.longValue("closeTimeoutMillis")));
+        limits.complete();
+        List<PkiSessionConfiguration.SigningKeyGroup> groups = new ArrayList<>();
+        for (PkiOperationValue item : value.list("exactGroups")) {
+            Fields group = Fields.of(item);
+            group.exact("keyRefs", "lanePool");
+            List<zeroecho.pki.api.KeyRef> keys = new ArrayList<>();
+            for (PkiOperationValue key : group.list("keyRefs")) {
+                keys.add(new zeroecho.pki.api.KeyRef(Fields.text(key)));
+            }
+            groups.add(new PkiSessionConfiguration.SigningKeyGroup(keys, lanePool(group.object("lanePool"))));
+            group.complete();
+        }
+        PkiSessionConfiguration.SigningTopology result = new PkiSessionConfiguration.SigningTopology(
+                coordinator, groups, lanePool(value.object("catchAll")));
+        value.complete();
+        return result;
+    }
+
+    private static PkiSessionConfiguration.SigningLanePool lanePool(Fields value) {
+        value.exact("laneCount", "prefetchSize");
+        PkiSessionConfiguration.SigningLanePool result = new PkiSessionConfiguration.SigningLanePool(
+                value.integer("laneCount"), value.integer("prefetchSize"));
         value.complete();
         return result;
     }
@@ -351,13 +358,10 @@ public final class PkiServerConfigurationCodec {
         return result;
     }
 
-    private static PkiServerConfiguration.SigningReconciliation signingReconciliation(Fields value) {
-        value.exact("enabled", "maxRecords", "maxCalls", "passTimeoutMillis", "providerCallTimeoutMillis",
-                "idleIntervalMillis");
-        PkiServerConfiguration.SigningReconciliation result = new PkiServerConfiguration.SigningReconciliation(
-                value.bool("enabled"), value.integer("maxRecords"), value.integer("maxCalls"),
-                Duration.ofMillis(value.longValue("passTimeoutMillis")),
-                Duration.ofMillis(value.longValue("providerCallTimeoutMillis")),
+    private static PkiServerConfiguration.AuditProjection auditProjection(Fields value) {
+        value.exact("maxRecords", "maxSinkCalls", "idleIntervalMillis");
+        PkiServerConfiguration.AuditProjection result = new PkiServerConfiguration.AuditProjection(
+                value.integer("maxRecords"), value.integer("maxSinkCalls"),
                 Duration.ofMillis(value.longValue("idleIntervalMillis")));
         value.complete();
         return result;

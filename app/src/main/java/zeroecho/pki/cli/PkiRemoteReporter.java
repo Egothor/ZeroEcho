@@ -73,6 +73,7 @@ final class PkiRemoteReporter {
         writer.println("operation: " + result.operation());
         switch (result) {
             case PkiRemoteResult.Succeeded success -> {
+                success.operationId().ifPresent(id -> writer.println("  operationId: " + id));
                 for (Map.Entry<String, PkiOperationValue> field : success.result().fields().entrySet()) {
                     writer.println("  " + field.getKey() + ": " + PkiCliValueJson.human(field.getValue()));
                 }
@@ -80,12 +81,17 @@ final class PkiRemoteReporter {
             case PkiRemoteResult.Pending pending -> {
                 writer.println("  code: OPERATION_PENDING");
                 writer.println("  operationId: " + pending.operationId());
+                pending.observationFailure().ifPresent(failure -> {
+                    writer.println("  observationFailure: " + failure.classification());
+                    writer.println("  observationCode: " + failure.code());
+                });
             }
             case PkiRemoteResult.ApprovalRequired approval -> {
                 writer.println("  code: APPROVAL_REQUIRED");
                 writer.println("  operationCommitment: " + approval.operationCommitment());
             }
             case PkiRemoteResult.Failed failure -> {
+                failure.operationId().ifPresent(id -> writer.println("  operationId: " + id));
                 writer.println("  classification: " + failure.classification());
                 writer.println("  code: " + failure.code());
                 writer.println("  recoveryRequired: " + failure.recoveryRequired());
@@ -105,14 +111,23 @@ final class PkiRemoteReporter {
             generator.writeStringProperty("operation", result.operation());
             switch (result) {
                 case PkiRemoteResult.Succeeded success -> {
+                    success.operationId().ifPresent(id -> generator.writeStringProperty("operationId", id));
                     generator.writeName("result");
                     PkiCliValueJson.writeValue(generator, success.result());
                 }
-                case PkiRemoteResult.Pending pending ->
+                case PkiRemoteResult.Pending pending -> {
                     generator.writeStringProperty("operationId", pending.operationId());
+                    pending.observationFailure().ifPresent(failure -> {
+                        generator.writeObjectPropertyStart("observationFailure");
+                        generator.writeStringProperty("classification", failure.classification());
+                        generator.writeStringProperty("code", failure.code());
+                        generator.writeEndObject();
+                    });
+                }
                 case PkiRemoteResult.ApprovalRequired approval ->
                     generator.writeStringProperty("operationCommitment", approval.operationCommitment());
                 case PkiRemoteResult.Failed failure -> {
+                    failure.operationId().ifPresent(id -> generator.writeStringProperty("operationId", id));
                     generator.writeStringProperty("failure", failure.classification());
                     generator.writeStringProperty("code", failure.code());
                     generator.writeBooleanProperty("recoveryRequired", failure.recoveryRequired());

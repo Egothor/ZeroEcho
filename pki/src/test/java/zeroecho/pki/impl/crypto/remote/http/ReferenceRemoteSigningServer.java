@@ -79,12 +79,14 @@ public final class ReferenceRemoteSigningServer implements AutoCloseable {
     private final HttpsServer server;
     private final ExecutorService executor;
     private final RemoteSigningTransport delegate;
+    private final Map<String, String> responseOverrides;
 
     private ReferenceRemoteSigningServer(HttpsServer server, ExecutorService executor,
-            RemoteSigningTransport delegate) {
+            RemoteSigningTransport delegate, Map<String, String> responseOverrides) {
         this.server = server;
         this.executor = executor;
         this.delegate = delegate;
+        this.responseOverrides = Map.copyOf(responseOverrides);
     }
 
     /**
@@ -97,6 +99,31 @@ public final class ReferenceRemoteSigningServer implements AutoCloseable {
      */
     public static ReferenceRemoteSigningServer start(RemoteSigningTransport delegate, SSLContext serverContext)
             throws Exception {
+        return start(delegate, serverContext, Map.of());
+    }
+
+    /**
+     * Starts a server that injects untrusted reason text into every status wire response.
+     *
+     * @param delegate in-process signing service to expose
+     * @param serverContext mutually-authenticated server TLS context
+     * @param reason untrusted raw wire reason
+     * @return a running server
+     * @throws Exception if the server cannot bind or start
+     */
+    public static ReferenceRemoteSigningServer startWithResponseReason(RemoteSigningTransport delegate,
+            SSLContext serverContext, String reason) throws Exception {
+        return start(delegate, serverContext, Map.of("reason", reason));
+    }
+
+    /** Starts a server that overrides selected untrusted status response fields. */
+    /* default */ static ReferenceRemoteSigningServer startWithStatusOverrides(RemoteSigningTransport delegate,
+            SSLContext serverContext, Map<String, String> responseOverrides) throws Exception {
+        return start(delegate, serverContext, responseOverrides);
+    }
+
+    private static ReferenceRemoteSigningServer start(RemoteSigningTransport delegate, SSLContext serverContext,
+            Map<String, String> responseOverrides) throws Exception {
         HttpsServer server = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setHttpsConfigurator(new HttpsConfigurator(serverContext) {
             @Override
@@ -108,7 +135,8 @@ public final class ReferenceRemoteSigningServer implements AutoCloseable {
         });
         ExecutorService executor = Executors.newFixedThreadPool(4);
         server.setExecutor(executor);
-        ReferenceRemoteSigningServer instance = new ReferenceRemoteSigningServer(server, executor, delegate);
+        ReferenceRemoteSigningServer instance = new ReferenceRemoteSigningServer(server, executor, delegate,
+                responseOverrides);
         server.createContext("/v1/sign", instance::handle);
         server.start();
         return instance;
@@ -156,8 +184,8 @@ public final class ReferenceRemoteSigningServer implements AutoCloseable {
             case "capabilities" -> encodeCapabilities(delegate.capabilities());
             case "submit" -> encodeStatus(delegate.submit(decodeRequest(in), control()));
             case "status" -> encodeStatus(delegate.status(field(in, "operationId"), control()));
-            case "cancel" -> Map.of("accepted", Boolean.toString(delegate.cancel(field(in, "operationId"),
-                    Long.parseLong(field(in, "fencingToken")), field(in, "reason"), control())));
+            case "cancel" -> encodeStatus(delegate.cancel(field(in, "operationId"),
+                    Long.parseLong(field(in, "fencingToken")), field(in, "reason"), control()));
             case "publicKey" -> Map.of("spki", Base64.getEncoder()
                     .encodeToString(delegate.publicKeyInfo(field(in, "keyHandle"), control())));
             default -> throw new IllegalArgumentException("Unknown op: " + op);
@@ -171,27 +199,49 @@ public final class ReferenceRemoteSigningServer implements AutoCloseable {
                 field(in, "algorithmId"), field(in, "contentSha256"), Long.parseLong(field(in, "contentLength")),
                 Base64.getDecoder().decode(field(in, "content")), field(in, "principalType"),
                 field(in, "principalName"), field(in, "purpose"),
-                deadline.isEmpty() ? Optional.empty() : Optional.of(Instant.parse(deadline)));
+                deadline.isEmpty() ? Optional.empty() : Optional.of(Instant.parse(deadline)),
+                Integer.parseInt(field(in, "protocolVersion")),
+                zeroecho.pki.spi.crypto.SigningInputCapabilities.Mode.valueOf(field(in, "inputMode")),
+                field(in, "digestId"), new zeroecho.pki.spi.crypto.SigningProvider.ConfigurationCommitment(
+                        Base64.getDecoder().decode(field(in, "configurationCommitment"))));
     }
 
-    private static Map<String, String> encodeStatus(RemoteSigningStatus status) {
+    private Map<String, String> encodeStatus(RemoteSigningStatus status) {
         Map<String, String> out = new LinkedHashMap<>();
         out.put("operationId", status.operationId());
         out.put("state", status.state().name());
         out.put("updatedAt", status.updatedAt().toString());
-        out.put("reason", status.reason().orElse(""));
+        out.put("reason", "");
         out.put("signature", status.signature().map(Base64.getEncoder()::encodeToString).orElse(""));
         out.put("signatureEncoding", status.signatureEncoding());
+        out.putAll(responseOverrides);
         return out;
     }
 
-    private static Map<String, String> encodeCapabilities(RemoteCapabilities capabilities) {
+    private Map<String, String> encodeCapabilities(RemoteCapabilities capabilities) {
         List<String> algorithms = new ArrayList<>(capabilities.supportedAlgorithms());
         Collections.sort(algorithms);
         Map<String, String> out = new LinkedHashMap<>();
         out.put("algorithms", String.join(HttpsRemoteSigningTransport.ALGORITHM_SEPARATOR, algorithms));
+        out.put("protocolVersion", Integer.toString(capabilities.protocolVersion()));
+        out.put("rawMessageMaximum", Long.toString(capabilities.inputCapabilities().rawMessageMaximum()));
+        java.util.Map<String, zeroecho.core.spec.AlgorithmIdentity> mappings =
+                new java.util.TreeMap<>(capabilities.inputCapabilities().prehashedDigests());
+        out.put("prehashCount", Integer.toString(mappings.size()));
+        int index = 0;
+        for (java.util.Map.Entry<String, zeroecho.core.spec.AlgorithmIdentity> entry : mappings.entrySet()) {
+            out.put("prehashAlgorithm." + index, entry.getKey());
+            out.put("prehashDigest." + index, entry.getValue().canonicalForm());
+            index++;
+        }
         out.put("configurationCommitment",
                 Base64.getEncoder().encodeToString(capabilities.configurationCommitment()));
+        responseOverrides.forEach((key, value) -> {
+            if (out.containsKey(key)) {
+                out.put(key, value);
+            }
+        });
+        out.remove(responseOverrides.get("omitCapabilityField"));
         return out;
     }
 

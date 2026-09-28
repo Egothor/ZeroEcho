@@ -220,6 +220,32 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
     }
 
+    /* default */ void requirePrefix(RevocationTransitionFeed.HighWatermark prefix, long boundary,
+            CancellationSignal cancellation) throws IOException {
+        Objects.requireNonNull(prefix, "prefix");
+        Objects.requireNonNull(cancellation, "cancellation").throwIfCancelled();
+        Optional<RevocationTransitionFeed.Position> position;
+        if (prefix.globalRevision() == 0) {
+            if (boundary != RevocationTransitionFrameCodec.PREAMBLE_BYTES
+                    || !prefix.transitionCommitment().equals(
+                            RevocationTransitionFrameCodec.initialCommitment(prefix.sourceStoreId()).value())) {
+                throw new IllegalArgumentException("Revocation genesis prefix is invalid");
+            }
+            position = Optional.empty();
+        } else {
+            position = Optional.of(PositionCodec.encode(prefix.sourceStoreId(), prefix.globalRevision(),
+                    new RevocationTransitionFrameCodec.Commitment(prefix.transitionCommitment()), boundary));
+        }
+        try (RevocationTransitionFeed captured = feed(position)) {
+            if (!prefix.sourceStoreId().equals(captured.highWatermark().sourceStoreId())) {
+                throw new IllegalArgumentException("Revocation prefix source differs");
+            }
+            // Opening alone does not validate the resumed commitment against its successor.
+            captured.next(cancellation);
+            cancellation.throwIfCancelled();
+        }
+    }
+
     /* default */ RevocationSnapshot snapshot() throws IOException {
         lifecycle.writeLock().lock();
         try {
@@ -295,7 +321,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
                     FileChannel destination = FileChannel.open(target, StandardOpenOption.CREATE_NEW,
                             StandardOpenOption.WRITE)) {
                 ByteBuffer buffer = ByteBuffer.allocate(TRANSFER_BYTES);
-                long position = 0L;
+                long position = 0;
                 while (position < captured.boundary()) {
                     buffer.clear();
                     buffer.limit((int) Math.min(buffer.capacity(), captured.boundary() - position));
@@ -327,7 +353,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
                 throw new IOException("Copied revocation prefix identity or boundary is invalid");
             }
             long offset = RevocationTransitionFrameCodec.PREAMBLE_BYTES;
-            long revision = 0L;
+            long revision = 0;
             RevocationTransitionFrameCodec.Commitment commitment =
                     RevocationTransitionFrameCodec.initialCommitment(store);
             while (offset < expected.boundary()) {
@@ -532,6 +558,11 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         }
 
         @Override
+        public MetadataStoreId sourceStoreId() {
+            return head.storeId();
+        }
+
+        @Override
         public long revision() {
             return head.globalRevision();
         }
@@ -614,6 +645,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         private final FilesystemRevocationCheckpoint.Cursor cursor;
         private final FileChannel logChannel;
         private RevocationRecord current;
+        private long currentGlobalRevision;
         private long ordinal = -1L;
         private boolean closed;
 
@@ -638,7 +670,9 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
                 throw new IOException("Checkpoint current state has no authoritative frame");
             }
             RevocationTransitionFrameCodec.CompleteRecord frame = read.record().orElseThrow();
-            if (!frame.data().credentialId().equals(entry.credentialId())
+            if (frame.data().globalRevision() <= 0
+                    || frame.data().globalRevision() > owner.head.globalRevision()
+                    || !frame.data().credentialId().equals(entry.credentialId())
                     || frame.data().globalRevision() != entry.globalRevision()
                     || frame.data().transition().revision() != entry.credentialRevision()
                     || frame.recordEnd() != entry.frameEnd()
@@ -649,6 +683,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
             }
             ordinal = Math.addExact(ordinal, 1L);
             current = record(frame);
+            currentGlobalRevision = frame.data().globalRevision();
             return true;
         }
 
@@ -658,6 +693,14 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
                 throw new IllegalStateException("Revocation cursor is not positioned");
             }
             return current;
+        }
+
+        @Override
+        public long currentGlobalRevision() {
+            if (current == null) {
+                throw new IllegalStateException("Revocation cursor is not positioned");
+            }
+            return currentGlobalRevision;
         }
 
         @Override
@@ -733,7 +776,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
                     restore(PositionCodec.decode(afterExclusive.orElseThrow()), afterExclusive.orElseThrow());
                 } else {
                     offset = RevocationTransitionFrameCodec.PREAMBLE_BYTES;
-                    globalRevision = 0L;
+                    globalRevision = 0;
                     globalCommitment = RevocationTransitionFrameCodec.initialCommitment(actualStoreId);
                 }
                 initialized = true;
@@ -798,7 +841,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
         @Override public void closeFromOwner() throws IOException { closeInternal(false); }
 
         private void restore(PositionState state, Position supplied) {
-            if (!head.storeId().equals(state.storeId()) || state.globalRevision() <= 0L
+            if (!head.storeId().equals(state.storeId()) || state.globalRevision() <= 0
                     || state.globalRevision() > head.globalRevision()
                     || state.nextBoundary() <= RevocationTransitionFrameCodec.PREAMBLE_BYTES
                     || state.nextBoundary() > head.boundary()) {
@@ -1042,7 +1085,7 @@ final class FilesystemRevocationAuthority implements AutoCloseable {
                 throw new IOException("Revocation history belongs to another store");
             }
             offset = RevocationTransitionFrameCodec.PREAMBLE_BYTES;
-            globalRevision = 0L;
+            globalRevision = 0;
             globalCommitment = RevocationTransitionFrameCodec.initialCommitment(actual);
             previousCredential = null;
             current = null;

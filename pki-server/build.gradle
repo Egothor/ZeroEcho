@@ -61,6 +61,7 @@ application {
 }
 
 tasks.named('test') {
+    useJUnitPlatform { excludeTags 'frontend-integration', 'packaged-integration' }
     dependsOn tasks.named('installDist')
     jvmArgs("-javaagent:${configurations.mockitoAgent.singleFile}")
 }
@@ -78,4 +79,46 @@ jar {
 javadoc {
     options.links("https://www.egothor.org/javadoc/zeroecho/lib")
     options.links("https://www.egothor.org/javadoc/zeroecho/pki")
+}
+
+// Explicit browser gate: ordinary JVM tests never require Node or a browser.
+tasks.register('frontendIntegrationTest', Test) {
+    description = 'Runs the built SPA against a temporary real PKI HTTPS backend.'
+    group = 'verification'
+    dependsOn tasks.named('testClasses'), ':pki-frontend:npmBuild'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'frontend-integration' }
+    systemProperty 'frontend.directory', project(':pki-frontend').projectDir.absolutePath
+    doFirst {
+        def frontendNode = project(':pki-frontend').extensions.getByName('node')
+        def nodeDirectory = frontendNode.resolvedNodeDir.get().asFile
+        def executable = new File(nodeDirectory, frontendNode.resolvedPlatform.get().isWindows() ? 'node.exe' : 'bin/node')
+        systemProperty 'frontend.node', providers.gradleProperty('frontendNode').getOrElse(executable.absolutePath)
+    }
+    systemProperty 'frontend.browser', providers.gradleProperty('frontendBrowser').getOrElse('')
+    outputs.upToDateWhen { false }
+    testLogging { showStandardStreams = true }
+}
+
+// Explicit distribution/container gate; no image pull or build occurs inside the test.
+tasks.register('packagedIntegrationTest', Test) {
+    description = 'Verifies packaged nginx, PKI server, SPA and CLI through real mTLS.'
+    group = 'verification'
+    dependsOn tasks.named('testClasses'), ':app:installDist'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'packaged-integration' }
+    systemProperty 'packaged.repository', rootProject.projectDir.absolutePath
+    systemProperty 'packaged.serverImage', providers.gradleProperty('packagedServerImage').getOrElse('localhost/zeroecho-pki-server:integration-test')
+    systemProperty 'packaged.nginxImage', providers.gradleProperty('packagedNginxImage').getOrElse('localhost/zeroecho-pki-nginx:integration-test')
+    systemProperty 'frontend.browser', providers.gradleProperty('frontendBrowser').getOrElse('')
+    doFirst {
+        def frontendNode = project(':pki-frontend').extensions.getByName('node')
+        def nodeDirectory = frontendNode.resolvedNodeDir.get().asFile
+        def executable = new File(nodeDirectory, frontendNode.resolvedPlatform.get().isWindows() ? 'node.exe' : 'bin/node')
+        systemProperty 'frontend.node', providers.gradleProperty('frontendNode').getOrElse(executable.absolutePath)
+    }
+    outputs.upToDateWhen { false }
+    testLogging { showStandardStreams = true }
 }

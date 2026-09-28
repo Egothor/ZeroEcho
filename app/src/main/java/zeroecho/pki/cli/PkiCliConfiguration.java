@@ -39,6 +39,9 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.OptionalLong;
+import zeroecho.pki.application.LocalPkiSessionConfiguration;
+import zeroecho.pki.application.LocalSigningConfiguration;
 
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSessionConfiguration;
@@ -47,68 +50,42 @@ import zeroecho.pki.spi.ProviderConfig;
 /** Strict versioned CLI configuration loader. */
 final class PkiCliConfiguration {
 
-    private static final int VERSION_ONE = 1;
-    private static final int VERSION_TWO = 2;
-    private static final int VERSION_THREE = 3;
-    private static final int VERSION_FOUR = 4;
-    private static final Set<String> ROOT_FIELDS_V1 = Set.of("version", "store", "audit");
-    private static final Set<String> ROOT_FIELDS_V2 = Set.of("version", "store", "audit", "signing", "publishers");
-    private static final Set<String> ROOT_FIELDS_V3 = Set.of("version", "store", "audit", "signing", "publishers",
-            "bindingProviders");
-    private static final Set<String> ROOT_FIELDS_V4 = ROOT_FIELDS_V3;
+    private static final Set<String> REQUIRED_FIELDS = Set.of("version", "mode", "operatorId", "store", "audit",
+            "publishers", "bindingProviders");
+    private static final Set<String> ROOT_FIELDS = Set.of("version", "mode", "operatorId", "store", "audit",
+            "signing", "publishers", "bindingProviders");
     private static final Set<String> PROVIDER_FIELDS = Set.of("provider", "properties");
-    private static final Set<String> SIGNING_FIELDS = Set.of("workflow", "framework",
-            "signatureAlgorithm", "signingTtlSeconds", "unlockEnvironmentVariable",
-            "certificateSignatureBinding", "crlSignatureBinding", "subjectPublicKeyBinding",
-            "laneCount", "queueCapacity", "gracefulDrainSeconds", "forcedCancellationSeconds",
-            "signingServices", "caRouting");
-    private static final Set<String> SIGNING_SERVICE_FIELDS = Set.of("serviceId", "workflow");
-    private static final Set<String> SIGNING_REQUIRED_FIELDS = Set.of("workflow", "framework",
-            "signatureAlgorithm", "signingTtlSeconds");
+    private static final Set<String> SIGNING_REQUIRED_FIELDS = Set.of("provider", "signatureAlgorithm",
+            "signingTtlSeconds", "claimLeaseMillis", "providerCallTimeoutMillis");
+    private static final Set<String> SIGNING_FIELDS = Set.of("provider", "signatureAlgorithm", "signingTtlSeconds",
+            "claimLeaseMillis", "providerCallTimeoutMillis", "unlockEnvironmentVariable", "pureEdDsaMaximumTbsBytes");
     private static final String STDOUT_PROVIDER = "stdout";
 
     private PkiCliConfiguration() {
     }
 
-    /* default */ static PkiSessionConfiguration read(Path path) throws java.io.IOException {
+    /* default */ static LocalPkiSessionConfiguration read(Path path) throws java.io.IOException {
         byte[] document = PkiCliFiles.readRegularFile(path, PkiCliJson.MAXIMUM_DOCUMENT_BYTES);
         PkiOperationValue.ObjectValue root = object(PkiCliJson.parse(document));
-        int version = Math.toIntExact(integer(required(root, "version")));
-        if (version == VERSION_ONE) {
-            requireExactFields(root.fields(), ROOT_FIELDS_V1);
-        } else if (version == VERSION_TWO) {
-            requireFields(root.fields(), ROOT_FIELDS_V2);
-        } else if (version == VERSION_THREE) {
-            requireFields(root.fields(), ROOT_FIELDS_V3);
-        } else if (version == VERSION_FOUR) {
-            requireFields(root.fields(), ROOT_FIELDS_V4);
-        } else {
-            throw new IllegalArgumentException("Unsupported CLI configuration version");
+        if (!root.fields().keySet().containsAll(REQUIRED_FIELDS)
+                || !ROOT_FIELDS.containsAll(root.fields().keySet())
+                || integer(required(root, "version")) != 1L || !"local".equals(text(required(root, "mode")))) {
+            throw new IllegalArgumentException("Local CLI configuration fields or version are invalid");
         }
         ProviderConfig store = provider(required(root, "store"));
         ProviderConfig audit = provider(required(root, "audit"));
         if (STDOUT_PROVIDER.equals(audit.backendId())) {
             throw new IllegalArgumentException("CLI audit provider must not write to standard output");
         }
-        if (version == VERSION_ONE) {
-            return new PkiSessionConfiguration(version, store, audit);
-        }
-        java.util.Optional<PkiSessionConfiguration.SigningConfiguration> signing = java.util.Optional
+        java.util.Optional<LocalSigningConfiguration> signing = java.util.Optional
                 .ofNullable(root.fields().get("signing")).map(PkiCliConfiguration::signing);
-        PkiOperationValue publisherValue = root.fields().get("publishers");
-        List<ProviderConfig> publishers = publisherValue == null ? List.of()
-                : list(publisherValue).values().stream().map(PkiCliConfiguration::provider).toList();
-        PkiOperationValue bindingProviderValue = root.fields().get("bindingProviders");
-        List<PkiSessionConfiguration.BindingProviderConfiguration> bindingProviders = bindingProviderValue == null
-                ? List.of() : list(bindingProviderValue).values().stream()
+        List<ProviderConfig> publishers = list(required(root, "publishers")).values().stream()
+                .map(PkiCliConfiguration::provider).toList();
+        List<PkiSessionConfiguration.BindingProviderConfiguration> bindingProviders =
+                list(required(root, "bindingProviders")).values().stream()
                         .map(PkiCliConfiguration::bindingProvider).toList();
-        return new PkiSessionConfiguration(version, store, audit, signing, publishers, bindingProviders);
-    }
-
-    private static void requireFields(Map<String, PkiOperationValue> actual, Set<String> allowed) {
-        if (!actual.keySet().containsAll(ROOT_FIELDS_V1) || !allowed.containsAll(actual.keySet())) {
-            throw new IllegalArgumentException("CLI document fields are invalid");
-        }
+        return new LocalPkiSessionConfiguration(store, audit, text(required(root, "operatorId")), signing,
+                publishers, bindingProviders);
     }
 
     private static PkiSessionConfiguration.BindingProviderConfiguration bindingProvider(PkiOperationValue value) {
@@ -125,54 +102,20 @@ final class PkiCliConfiguration {
                 expected == null ? java.util.Optional.empty() : java.util.Optional.of(text(expected)));
     }
 
-    private static PkiSessionConfiguration.SigningConfiguration signing(PkiOperationValue value) {
+    private static LocalSigningConfiguration signing(PkiOperationValue value) {
         PkiOperationValue.ObjectValue object = object(value);
         if (!object.fields().keySet().containsAll(SIGNING_REQUIRED_FIELDS)
                 || !SIGNING_FIELDS.containsAll(object.fields().keySet())) {
             throw new IllegalArgumentException("Signing configuration fields are invalid");
         }
-        PkiOperationValue servicesValue = object.fields().get("signingServices");
-        List<PkiSessionConfiguration.SigningServiceConfiguration> signingServices = servicesValue == null
-                ? List.of()
-                : list(servicesValue).values().stream().map(PkiCliConfiguration::signingService).toList();
-        PkiOperationValue routingValue = object.fields().get("caRouting");
-        Map<String, String> caRouting = new LinkedHashMap<>();
-        if (routingValue != null) {
-            for (Map.Entry<String, PkiOperationValue> entry : object(routingValue).fields().entrySet()) {
-                caRouting.put(entry.getKey(), text(entry.getValue()));
-            }
-        }
-        return new PkiSessionConfiguration.SigningConfiguration(provider(required(object, "workflow")),
-                provider(required(object, "framework")), text(required(object, "signatureAlgorithm")),
+        PkiOperationValue maximum = object.fields().get("pureEdDsaMaximumTbsBytes");
+        return new LocalSigningConfiguration(provider(required(object, "provider")),
+                text(required(object, "signatureAlgorithm")),
                 Duration.ofSeconds(integer(required(object, "signingTtlSeconds"))),
                 optionalText(object, "unlockEnvironmentVariable"),
-                optionalText(object, "certificateSignatureBinding"), optionalText(object, "crlSignatureBinding"),
-                optionalText(object, "subjectPublicKeyBinding"),
-                optionalInteger(object, "laneCount",
-                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_LANE_COUNT),
-                optionalInteger(object, "queueCapacity",
-                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_QUEUE_CAPACITY),
-                Duration.ofSeconds(optionalLong(object, "gracefulDrainSeconds",
-                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_GRACEFUL_DRAIN.toSeconds())),
-                Duration.ofSeconds(optionalLong(object, "forcedCancellationSeconds",
-                        PkiSessionConfiguration.SigningConfiguration.DEFAULT_FORCED_CANCELLATION.toSeconds())),
-                List.copyOf(signingServices), Map.copyOf(caRouting));
-    }
-
-    private static PkiSessionConfiguration.SigningServiceConfiguration signingService(PkiOperationValue value) {
-        PkiOperationValue.ObjectValue object = object(value);
-        requireExactFields(object.fields(), SIGNING_SERVICE_FIELDS);
-        return new PkiSessionConfiguration.SigningServiceConfiguration(text(required(object, "serviceId")),
-                provider(required(object, "workflow")));
-    }
-
-    private static int optionalInteger(PkiOperationValue.ObjectValue object, String name, int defaultValue) {
-        return Math.toIntExact(optionalLong(object, name, defaultValue));
-    }
-
-    private static long optionalLong(PkiOperationValue.ObjectValue object, String name, long defaultValue) {
-        PkiOperationValue value = object.fields().get(name);
-        return value == null ? defaultValue : integer(value);
+                Duration.ofMillis(integer(required(object, "claimLeaseMillis"))),
+                Duration.ofMillis(integer(required(object, "providerCallTimeoutMillis"))),
+                maximum == null ? OptionalLong.empty() : OptionalLong.of(integer(maximum)));
     }
 
     private static ProviderConfig provider(PkiOperationValue value) {

@@ -36,6 +36,7 @@ package zeroecho.pki.impl.framework.x509;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigInteger;
 import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -179,6 +180,35 @@ public final class StreamingDerReader {
     }
 
     /**
+     * Validates bounded canonical DER and locates the signature algorithm and SPKI
+     * in one complete unsigned certificate TBS. This structural inspection does
+     * not validate certificate policy, names, validity semantics or signatures.
+     * The returned spans refer to the original bytes without reencoding them.
+     *
+     * @param encoded complete unsigned TBSCertificate DER, borrowed for this call
+     * @param maximumBytes positive caller-selected element bound
+     * @return immutable offsets and lengths within the supplied TBS
+     * @throws NullPointerException if the input is null
+     * @throws IllegalArgumentException if the bound is not positive
+     * @throws IOException if DER, certificate field tags or span bounds are invalid
+     */
+    public CertificateTbsLayout inspectUnsignedCertificateTbs(byte[] encoded, int maximumBytes) throws IOException {
+        int length = validate(encoded, maximumBytes);
+        try (CountedInput input = new CountedInput(new ByteArrayInputStream(encoded))) {
+            Header tbs = HeaderReader.read(input);
+            requireSequence(tbs);
+            if (checkedAdd(tbs.valueOffset(), tbs.length()) != length) {
+                throw new IOException("Unsigned certificate TBS has trailing data");
+            }
+            AlgorithmAndKey fields = inspectTbs(new ByteArrayContent(encoded), SignedObjectKind.CERTIFICATE,
+                    tbs, CancellationSignal.NONE, null);
+            return new CertificateTbsLayout(length, Math.toIntExact(fields.algorithmOffset()),
+                    Math.toIntExact(fields.algorithmLength()), Math.toIntExact(fields.spkiOffset()),
+                    Math.toIntExact(fields.spkiLength()));
+        }
+    }
+
+    /**
      * Validates and locates the signed portions of one certificate or CRL.
      *
      * @param content original repeatable DER
@@ -189,6 +219,59 @@ public final class StreamingDerReader {
      */
     public SignedObjectLayout inspectSignedObject(RepeatableContent content, SignedObjectKind kind,
             CancellationSignal cancellation) throws IOException {
+        return inspectSignedObject(content, kind, cancellation, null);
+    }
+
+    /**
+     * Inspects one canonical CRL and its CRL-level number extensions without materialization.
+     * Requires one noncritical CRL number and permits at most one critical delta indicator.
+     * Each recognized extension contains exactly one nonnegative canonical DER INTEGER
+     * of at most 159 bits; entry extensions do not provide these coordinates. This
+     * does not verify a signature, issuer identity, content ownership or base eligibility.
+     * Work is O(B) over encoded bytes with fixed-bounded streaming memory.
+     * @param content repeatable complete CRL content
+     * @param cancellation cancellation checked during traversal
+     * @return structural layout and exact bounded semantic numbers
+     * @throws IOException if DER or recognized extensions are invalid, missing, duplicated,
+     *         incorrectly critical, truncated, or cancellation is requested
+     */
+    public CrlSemanticLayout inspectCrlSemantics(RepeatableContent content, CancellationSignal cancellation)
+            throws IOException {
+        CrlNumbers numbers = new CrlNumbers();
+        SignedObjectLayout layout = inspectSignedObject(content, SignedObjectKind.CRL, cancellation, numbers);
+        if (numbers.crlNumber == null) { throw new IOException("CRL number extension is missing"); }
+        cancellation.throwIfCancelled();
+        return new CrlSemanticLayout(layout, numbers.crlNumber, Optional.ofNullable(numbers.deltaIndicator));
+    }
+
+    /**
+     * Resource-free semantic projection of a structurally valid CRL.
+     * @param layout exact signed-object spans and update times
+     * @param crlNumber required nonnegative CRL number, at most 159 bits
+     * @param deltaIndicator optional nonnegative base number, at most 159 bits
+     */
+    public record CrlSemanticLayout(SignedObjectLayout layout, BigInteger crlNumber,
+            Optional<BigInteger> deltaIndicator) {
+        /** Validates the immutable bounded projection. */
+        public CrlSemanticLayout {
+            Objects.requireNonNull(layout, "layout");
+            Objects.requireNonNull(crlNumber, "crlNumber");
+            Objects.requireNonNull(deltaIndicator, "deltaIndicator");
+            if (crlNumber.signum() < 0 || crlNumber.bitLength() > 159
+                    || deltaIndicator.filter(value -> value.signum() < 0 || value.bitLength() > 159).isPresent()) {
+                throw new IllegalArgumentException("CRL semantic number is outside its bound");
+            }
+        }
+    }
+
+    /** Per-inspection CRL extension values used to validate number relationships. */
+    private static final class CrlNumbers {
+        private BigInteger crlNumber;
+        private BigInteger deltaIndicator;
+    }
+
+    private SignedObjectLayout inspectSignedObject(RepeatableContent content, SignedObjectKind kind,
+            CancellationSignal cancellation, CrlNumbers numbers) throws IOException {
         validate(content, cancellation);
         try (CountedInput input = new CountedInput(content.openStream())) {
             Header outer = HeaderReader.read(input);
@@ -197,7 +280,7 @@ public final class StreamingDerReader {
             Header tbs = HeaderReader.read(input);
             requireSequence(tbs);
             long tbsTotalLength = tbs.encodedLength();
-            AlgorithmAndKey inner = inspectTbs(content, kind, tbs, cancellation);
+            AlgorithmAndKey inner = inspectTbs(content, kind, tbs, cancellation, numbers);
             skip(input, tbs.length(), cancellation);
             Header outerAlgorithm = HeaderReader.read(input);
             requireSequence(outerAlgorithm);
@@ -224,30 +307,33 @@ public final class StreamingDerReader {
     }
 
     private static AlgorithmAndKey inspectTbs(RepeatableContent content, SignedObjectKind kind, Header tbs,
-            CancellationSignal cancellation) throws IOException {
+            CancellationSignal cancellation, CrlNumbers numbers) throws IOException {
         try (CountedInput input = new CountedInput(content.openStream())) {
             skip(input, tbs.valueOffset(), cancellation);
-            Header child = HeaderReader.read(input);
+            long tbsEnd = checkedAdd(tbs.valueOffset(), tbs.length());
+            Header child = kind == SignedObjectKind.CERTIFICATE
+                    ? readWithin(input, tbsEnd) : HeaderReader.read(input);
             if (kind == SignedObjectKind.CERTIFICATE) {
                 if (child.contextSpecific(0)) {
                     skip(input, child.length(), cancellation);
-                    child = HeaderReader.read(input);
+                    child = readWithin(input, tbsEnd);
                 }
                 requireUniversal(child, 2);
                 skip(input, child.length(), cancellation);
-                child = HeaderReader.read(input);
+                child = readWithin(input, tbsEnd);
             } else {
-                return inspectCrlTbs(input, tbs, child, cancellation);
+                return inspectCrlTbs(input, tbs, child, cancellation, numbers);
             }
             requireSequence(child);
             long algorithmOffset = child.start();
             long algorithmLength = child.encodedLength();
             skip(input, child.length(), cancellation);
             for (int index = 0; index < 3; index++) {
-                Header field = HeaderReader.read(input);
+                Header field = readWithin(input, tbsEnd);
+                requireSequence(field);
                 skip(input, field.length(), cancellation);
             }
-            Header spki = HeaderReader.read(input);
+            Header spki = readWithin(input, tbsEnd);
             requireSequence(spki);
             return new AlgorithmAndKey(algorithmOffset, algorithmLength, spki.start(), spki.encodedLength(),
                     -1L, 0L, Optional.empty(), Optional.empty());
@@ -255,7 +341,7 @@ public final class StreamingDerReader {
     }
 
     private static AlgorithmAndKey inspectCrlTbs(CountedInput input, Header tbs, Header firstChild,
-            CancellationSignal cancellation) throws IOException {
+            CancellationSignal cancellation, CrlNumbers numbers) throws IOException {
         long tbsEnd = checkedAdd(tbs.valueOffset(), tbs.length());
         Header child = firstChild;
         boolean v2 = false;
@@ -296,7 +382,7 @@ public final class StreamingDerReader {
             if (!v2) {
                 throw new IOException("CRL extensions require TBSCertList v2");
             }
-            readExplicitExtensions(input, optional, cancellation);
+            readExplicitExtensions(input, optional, cancellation, numbers);
             optional = input.position() < tbsEnd ? readWithin(input, tbsEnd) : null;
         }
         if (optional != null || input.position() != tbsEnd) {
@@ -390,13 +476,13 @@ public final class StreamingDerReader {
     }
 
     private static void readExplicitExtensions(CountedInput input, Header explicit,
-            CancellationSignal cancellation) throws IOException {
+            CancellationSignal cancellation, CrlNumbers numbers) throws IOException {
         if (!explicit.constructed()) {
             throw new IOException("CRL extensions must be [0] EXPLICIT");
         }
         long end = checkedAdd(explicit.valueOffset(), explicit.length());
         Header extensions = readWithin(input, end);
-        readExtensions(input, extensions, cancellation);
+        readExtensions(input, extensions, cancellation, numbers);
         if (input.position() != end) {
             throw new IOException("Malformed explicit CRL extensions");
         }
@@ -404,6 +490,11 @@ public final class StreamingDerReader {
 
     private static void readExtensions(CountedInput input, Header extensions, CancellationSignal cancellation)
             throws IOException {
+        readExtensions(input, extensions, cancellation, null);
+    }
+
+    private static void readExtensions(CountedInput input, Header extensions, CancellationSignal cancellation,
+            CrlNumbers numbers) throws IOException {
         requireSequence(extensions);
         long end = checkedAdd(extensions.valueOffset(), extensions.length());
         if (input.position() == end) {
@@ -413,32 +504,78 @@ public final class StreamingDerReader {
             cancellation.throwIfCancelled();
             Header extension = readWithin(input, end);
             requireSequence(extension);
-            readExtension(input, extension, cancellation);
+            readExtension(input, extension, cancellation, numbers);
         }
         if (input.position() != end) {
             throw new IOException("Malformed Extensions");
         }
     }
 
-    private static void readExtension(CountedInput input, Header extension, CancellationSignal cancellation)
-            throws IOException {
+    private static void readExtension(CountedInput input, Header extension, CancellationSignal cancellation,
+            CrlNumbers numbers) throws IOException {
         long end = checkedAdd(extension.valueOffset(), extension.length());
         Header oid = readWithin(input, end);
         requirePrimitiveUniversal(oid, 6);
-        PrimitiveReader.read(input, oid, cancellation);
+        int recognized = 0;
+        if (numbers != null && oid.length() == 3L) {
+            // The preceding canonical-DER pass already validated this OID encoding.
+            int first = input.readRequired();
+            int second = input.readRequired();
+            int last = input.readRequired();
+            if (first == 0x55 && second == 0x1d && (last == 20 || last == 27)) { recognized = last; }
+        } else {
+            PrimitiveReader.read(input, oid, cancellation);
+        }
+        boolean critical = false;
         Header value = readWithin(input, end);
         if (value.universal() && value.tagNumber() == 1) {
             requirePrimitiveUniversal(value, 1);
             if (value.length() != 1L || input.readRequired() != 0xff) {
                 throw new IOException("Extension critical DEFAULT FALSE must be omitted");
             }
+            critical = true;
             value = readWithin(input, end);
         }
         requirePrimitiveUniversal(value, 4);
-        skip(input, value.length(), cancellation);
+        if (recognized == 0) {
+            skip(input, value.length(), cancellation);
+        } else {
+            if (critical != (recognized == 27)
+                    || recognized == 20 && numbers.crlNumber != null
+                    || recognized == 27 && numbers.deltaIndicator != null) {
+                throw new IOException("CRL number extension is duplicated or incorrectly critical");
+            }
+            BigInteger number = readCrlNumber(input, value, cancellation);
+            if (recognized == 20) { numbers.crlNumber = number; }
+            else { numbers.deltaIndicator = number; }
+        }
         if (input.position() != end) {
             throw new IOException("Malformed Extension");
         }
+    }
+
+    private static BigInteger readCrlNumber(CountedInput input, Header octets, CancellationSignal cancellation)
+            throws IOException {
+        cancellation.throwIfCancelled();
+        // A 159-bit nonnegative INTEGER needs at most 20 value bytes and two TLV bytes.
+        if (octets.length() < 3L || octets.length() > 22L) {
+            throw new IOException("CRL number encoding exceeds its bound");
+        }
+        long end = checkedAdd(octets.valueOffset(), octets.length());
+        Header integer = readWithin(input, end);
+        requirePrimitiveUniversal(integer, 2);
+        if (integer.length() < 1L || integer.length() > 20L
+                || checkedAdd(integer.valueOffset(), integer.length()) != end) {
+            throw new IOException("CRL number must contain one bounded INTEGER");
+        }
+        byte[] bytes = new byte[(int) integer.length()];
+        for (int index = 0; index < bytes.length; index++) { bytes[index] = (byte) input.readRequired(); }
+        if ((bytes[0] & 0x80) != 0 || bytes.length > 1 && bytes[0] == 0 && (bytes[1] & 0x80) == 0) {
+            throw new IOException("CRL number INTEGER is negative or noncanonical");
+        }
+        BigInteger number = new BigInteger(bytes);
+        if (number.bitLength() > 159) { throw new IOException("CRL number exceeds 159 bits"); }
+        return number;
     }
 
     private static Header readWithin(CountedInput input, long end) throws IOException {
@@ -590,6 +727,31 @@ public final class StreamingDerReader {
         public SignedObjectLayout {
             Objects.requireNonNull(thisUpdate, "thisUpdate");
             Objects.requireNonNull(nextUpdate, "nextUpdate");
+        }
+    }
+
+    /**
+     * Immutable complete-TLV spans within one validated unsigned certificate TBS.
+     *
+     * @param encodedLength complete TBS length
+     * @param algorithmOffset signature AlgorithmIdentifier TLV offset
+     * @param algorithmLength signature AlgorithmIdentifier TLV length
+     * @param subjectPublicKeyInfoOffset SPKI TLV offset
+     * @param subjectPublicKeyInfoLength SPKI TLV length
+     */
+    public record CertificateTbsLayout(int encodedLength, int algorithmOffset, int algorithmLength,
+            int subjectPublicKeyInfoOffset, int subjectPublicKeyInfoLength) {
+        /**
+         * Validates positive lengths and overflow-safe containment of both spans.
+         * @throws IllegalArgumentException if a length is not positive
+         * @throws IndexOutOfBoundsException if either span lies outside the TBS
+         */
+        public CertificateTbsLayout {
+            if (encodedLength <= 0 || algorithmLength <= 0 || subjectPublicKeyInfoLength <= 0) {
+                throw new IllegalArgumentException("Certificate TBS span length must be positive");
+            }
+            Objects.checkFromIndexSize(algorithmOffset, algorithmLength, encodedLength);
+            Objects.checkFromIndexSize(subjectPublicKeyInfoOffset, subjectPublicKeyInfoLength, encodedLength);
         }
     }
 

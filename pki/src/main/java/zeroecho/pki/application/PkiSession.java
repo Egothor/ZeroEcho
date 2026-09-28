@@ -34,16 +34,14 @@
 package zeroecho.pki.application;
 
 import java.time.Clock;
-import java.util.Objects;
 import java.util.Optional;
 
-import zeroecho.pki.api.CaService;
 import zeroecho.pki.api.CertificationRequestService;
-import zeroecho.pki.api.IssuanceService;
 import zeroecho.pki.api.PublicationService;
 import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.RevocationService;
-import zeroecho.pki.api.StatusObjectService;
+import zeroecho.pki.api.SigningService;
+import zeroecho.pki.api.SemanticSigningService;
 import zeroecho.pki.api.algorithm.X509AlgorithmBindingRegistry;
 import zeroecho.pki.api.confirmation.CredentialConfirmationService;
 import zeroecho.pki.api.PkiId;
@@ -53,8 +51,11 @@ import zeroecho.pki.api.PkiId;
  *
  * <p>A session is constructed from one validated immutable configuration and is
  * suitable for one CLI plan or for the complete lifetime of a future server.
- * It creates no scheduler, thread or executor. Implementations reject service
- * access after close.</p>
+ * Unconfigured sessions create no signing threads. A configured signing service
+ * opened through {@code open} owns a bounded reactor for the session lifetime.
+ * {@code openLocal} executes signing on the caller thread without constructing a
+ * reactor. Local calls are sequential, including closing only after the current
+ * command returns. Implementations reject service access after close.</p>
  */
 public interface PkiSession extends AutoCloseable {
 
@@ -96,6 +97,32 @@ public interface PkiSession extends AutoCloseable {
     }
 
     /**
+     * Opens a standalone caller-thread session with a declared local root operator.
+     * @param configuration immutable local configuration
+     * @param dependencies process-local key-access and audit capabilities
+     * @return exclusive lifecycle-owned session without a signing reactor
+     * @throws IllegalArgumentException if provider configuration is invalid
+     * @throws RuntimeException if resource construction fails
+     */
+    static PkiSession openLocal(LocalPkiSessionConfiguration configuration, PkiSessionRuntimeDependencies dependencies) {
+        return openLocal(configuration, dependencies, Clock.systemUTC());
+    }
+
+    /**
+     * Opens a standalone session with one authoritative lifecycle clock.
+     * @param configuration immutable local configuration
+     * @param dependencies process-local key-access and audit capabilities
+     * @param clock authoritative session clock
+     * @return exclusive lifecycle-owned session without a signing reactor
+     * @throws IllegalArgumentException if provider configuration is invalid
+     * @throws RuntimeException if resource construction fails
+     */
+    static PkiSession openLocal(LocalPkiSessionConfiguration configuration, PkiSessionRuntimeDependencies dependencies,
+            Clock clock) {
+        return DefaultPkiSession.openLocal(configuration, dependencies, clock);
+    }
+
+    /**
      * Returns the profile lifecycle service.
      *
      * @return session-owned profile service
@@ -118,15 +145,6 @@ public interface PkiSession extends AutoCloseable {
     RevocationService revocations();
 
     /**
-     * Returns the configured CA service.
-     *
-     * @return service, or empty for a read-only session
-     */
-    default Optional<CaService> authorities() {
-        return Optional.empty();
-    }
-
-    /**
      * Returns the certification-request service.
      *
      * @return service, or empty when X.509 is unavailable
@@ -136,36 +154,59 @@ public interface PkiSession extends AutoCloseable {
     }
 
     /**
-     * Returns the issuance service.
-     *
-     * @return service, or empty when signing is unavailable
-     */
-    default Optional<IssuanceService> issuance() {
-        return Optional.empty();
-    }
-
-    /**
-     * Returns the status-object service.
-     *
-     * @return service, or empty when signing is unavailable
-     */
-    default Optional<StatusObjectService> statusObjects() {
-        return Optional.empty();
-    }
-
-    /**
-     * Returns the confined OCSP responder service.
-     *
-     * @return service, or empty when signing is unavailable
-     */
-    default Optional<OcspResponseService> ocsp() { return Optional.empty(); }
-
-    /**
      * Returns the publication service.
      *
      * @return service, or empty when no destination is enabled
      */
     default Optional<PublicationService> publications() {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the configured durable signing service, if enabled.
+     *
+     * @return session-owned signing service, or empty when unconfigured
+     */
+    default Optional<SigningService> signing() {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the semantic lifecycle facade sharing the configured signing runtime.
+     *
+     * @return session-owned semantic service, or empty when signing is unconfigured
+     * @throws IllegalStateException if the session is closed
+     */
+    default Optional<SemanticSigningService> semanticSigning() {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns shared signing-command preparation and completed-result projection.
+     *
+     * @return borrowed service, or empty when signing is unconfigured
+     * @throws IllegalStateException if the session is closed
+     */
+    default Optional<PkiSigningCommands> signingCommands() {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the borrowed sequential caller-thread signing executor.
+     * @return local executor, or empty in reactive sessions and when signing is unconfigured
+     * @throws IllegalStateException if the session is closed
+     */
+    default Optional<LocalSigningExecutor> localSigning() {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns OCSP response generation over the configured signing reactor.
+     *
+     * @return borrowed session service, or empty when signing is unconfigured
+     * @throws IllegalStateException if the session is closed
+     */
+    default Optional<OcspResponseService> ocsp() {
         return Optional.empty();
     }
 
@@ -200,10 +241,33 @@ public interface PkiSession extends AutoCloseable {
     PkiOperationExecutor operations();
 
     /**
-     * Opens the append-ordered issuance success-evidence feed strictly after {@code afterSequenceExclusive}.
+     * Reports whether optional terminal signing and internal-proof evidence is enabled.
+     * @return true only when the underlying store maintains the opt-in feed
+     */
+    default boolean supportsSigningEvidenceFeed() { return false; }
+
+    /**
+     * Opens the append-ordered best-effort signing/proof evidence feed. Each marker
+     * identifies either the parent operation or its distinct internal proof step.
+     * Successful appends survive workflow purge; missing entries can be recovered
+     * only while the authoritative workflow remains retained.
+     * @param afterSequenceExclusive last projected sequence, or -1 to read from the start
+     * @return caller-owned closeable evidence feed
+     * @throws UnsupportedOperationException if signing evidence is disabled or unsupported
+     * @throws IllegalStateException if the owning store or session is closed or unavailable
+     */
+    default zeroecho.pki.spi.store.AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
+        throw new UnsupportedOperationException("Signing evidence feed is not supported");
+    }
+
+    /**
+     * Opens the append-ordered issuance success-evidence feed strictly after
+     * {@code afterSequenceExclusive}.
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
-     * @return closeable append-ordered evidence feed for the issuance audit projector (Task 8a)
+     * @return caller-owned closeable evidence feed for the issuance audit projector
+     * @throws IllegalStateException if the session is closed
+     * @throws UnsupportedOperationException if the session or store does not support the feed
      */
     default zeroecho.pki.spi.store.AuditEvidenceFeed openIssuanceEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Issuance evidence feed is not supported by this session");
@@ -214,7 +278,9 @@ public interface PkiSession extends AutoCloseable {
      * {@code afterSequenceExclusive}.
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
-     * @return closeable append-ordered evidence feed for the status audit projector (Task 8a)
+     * @return caller-owned closeable evidence feed for the status-generation audit projector
+     * @throws IllegalStateException if the session is closed
+     * @throws UnsupportedOperationException if the session or store does not support the feed
      */
     default zeroecho.pki.spi.store.AuditEvidenceFeed openStatusEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Status evidence feed is not supported by this session");
@@ -225,110 +291,10 @@ public interface PkiSession extends AutoCloseable {
      * {@code afterSequenceExclusive}.
      *
      * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
-     * @return closeable append-ordered evidence feed for the publication audit projector (Task 8a)
+     * @return closeable append-ordered evidence feed for the publication audit projector
      */
     default zeroecho.pki.spi.store.AuditEvidenceFeed openPublicationEvidenceFeed(long afterSequenceExclusive) {
         throw new UnsupportedOperationException("Publication evidence feed is not supported by this session");
-    }
-
-    /**
-     * Opens the append-ordered signing terminal-outcome success-evidence feed strictly after
-     * {@code afterSequenceExclusive}.
-     *
-     * @param afterSequenceExclusive last projected sequence, or {@code -1} to read from the start
-     * @return closeable append-ordered evidence feed for the signing audit projector (Task 8a)
-     */
-    default zeroecho.pki.spi.store.AuditEvidenceFeed openSigningEvidenceFeed(long afterSequenceExclusive) {
-        throw new UnsupportedOperationException("Signing evidence feed is not supported by this session");
-    }
-
-    /**
-     * Reports whether the underlying store maintains the signing terminal-outcome evidence log.
-     *
-     * @return {@code true} only when signing key-usage audit is enabled; default {@code false}
-     */
-    default boolean supportsSigningEvidenceFeed() {
-        return false;
-    }
-
-    /**
-     * Returns the typed durable outcome of one outer signing operation.
-     *
-     * @param operationId private durable operation identifier
-     * @return completed, pending, or failed outcome; unknown identifiers are
-     *         returned as {@link PkiOperationFailure#NOT_FOUND}
-     */
-    default PkiOperationOutcome signingOperation(PkiId operationId) {
-        Objects.requireNonNull(operationId, "operationId");
-        return new PkiOperationOutcome.Failed("signing.operation", PkiOperationFailure.NOT_FOUND,
-                "OBJECT_NOT_FOUND");
-    }
-
-    /**
-     * Resolves one durable signing-backed domain operation by its trusted
-     * idempotency identity, without scanning the signing population.
-     * @param correlationId nonblank trusted idempotency identity
-     * @return completed, pending, or not-found outcome
-     */
-    default PkiOperationOutcome signingOperation(String correlationId) {
-        if (correlationId == null || correlationId.isBlank()) {
-            throw new IllegalArgumentException("correlationId must not be blank");
-        }
-        return new PkiOperationOutcome.Failed("signing.operation",
-                PkiOperationFailure.NOT_FOUND, "OBJECT_NOT_FOUND");
-    }
-
-    /**
-     * Returns the private operation id atomically indexed by a domain correlation.
-     * @param correlationId nonblank trusted idempotency identity
-     * @return exact private operation identifier, or empty when absent
-     */
-    default Optional<PkiId> signingOperationId(String correlationId) {
-        if (correlationId == null || correlationId.isBlank()) {
-            throw new IllegalArgumentException("correlationId must not be blank");
-        }
-        return Optional.empty();
-    }
-
-    /**
-     * Returns the exact original authorization projection for a durable signing operation.
-     *
-     * <p>The projection is recovered from the authoritative domain continuation
-     * and contains no requester identity. Callers must authorize the current
-     * principal against it before exposing operation status.</p>
-     *
-     * @param operationId private durable operation identifier
-     * @return immutable authorization projection, or empty when unavailable
-     */
-    default Optional<SigningOperationAuthorization> signingOperationAuthorization(PkiId operationId) {
-        Objects.requireNonNull(operationId, "operationId");
-        return Optional.empty();
-    }
-
-    /**
-     * Resolves and validates the operation indexed by one exact frozen issuance.
-     *
-     * @param binding expected authority, issuer, path, profile, and issuance commitment
-     * @return the matching private operation identifier, when present
-     */
-    default Optional<PkiId> issuanceSigningOperationId(SigningIssuanceBinding binding) {
-        Objects.requireNonNull(binding, "binding");
-        return Optional.empty();
-    }
-
-    /**
-     * Returns an issuance operation only after validating its complete frozen binding.
-     *
-     * @param operationId private durable operation identifier
-     * @param binding expected authority, issuer, path, profile, and issuance commitment
-     * @return completed, pending, or failed operation outcome
-     */
-    default PkiOperationOutcome issuanceSigningOperation(PkiId operationId,
-            SigningIssuanceBinding binding) {
-        Objects.requireNonNull(operationId, "operationId");
-        Objects.requireNonNull(binding, "binding");
-        return new PkiOperationOutcome.Failed("signing.operation", PkiOperationFailure.NOT_FOUND,
-                "OBJECT_NOT_FOUND");
     }
 
     /**
@@ -337,43 +303,6 @@ public interface PkiSession extends AutoCloseable {
      * @return session-owned read-only repository
      */
     PkiRepository repository();
-
-    /**
-     * Performs one synchronous, bounded signing-recovery pass.
-     *
-     * <p>The session creates no scheduler. Callers own invocation cadence and must
-     * carry the preceding result's complete {@link SigningReconciliationContinuation},
-     * including its cursor, frozen high-watermark, wrap boundary, and phase. Use
-     * {@link SigningReconciliationRequest#continueFrom} to replace pass bounds
-     * without separating that continuation state. A session without signing
-     * returns an empty, end-reached result.</p>
-     *
-     * @param request validated pass bounds and cancellation
-     * @return aggregate safe pass result
-     * @throws IllegalStateException if the session is closed
-     */
-    SigningReconciliationResult reconcileSigning(SigningReconciliationRequest request);
-
-    /**
-     * Registers one best-effort reconciliation wake listener for provider
-     * advisories. The returned handle unregisters it. Polling remains authoritative.
-     *
-     * @param listener non-blocking wake signal
-     * @return registration handle, or an inert handle when signing is disabled
-     */
-    default AutoCloseable registerSigningAdvisoryWake(Runnable listener) {
-        Objects.requireNonNull(listener, "listener");
-        return () -> { };
-    }
-
-    /**
-     * Returns bounded signing runtime metrics.
-     *
-     * @return snapshot, or empty when signing is disabled
-     */
-    default Optional<SigningExecutionMetrics> signingExecutionMetrics() {
-        return Optional.empty();
-    }
 
     /**
      * Closes services and backend resources in reverse construction order.

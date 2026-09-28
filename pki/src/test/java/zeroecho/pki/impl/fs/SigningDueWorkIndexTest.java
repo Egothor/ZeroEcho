@@ -75,6 +75,33 @@ final class SigningDueWorkIndexTest {
     }
 
     @Test
+    void bulkRecoveryBuildsDueAndIdentityOrderWithoutIncrementalInsertion() {
+        try (SigningDueWorkIndex index = index(8)) {
+            List<SigningDueWorkIndex.RecoveryEntry> identityOrdered = List.of(
+                    recovery(index, "op-a", BASE.plusNanos(1L), 1L),
+                    recovery(index, "op-b", Instant.MIN, 2L),
+                    recovery(index, "op-c", BASE, 3L),
+                    recovery(index, "op-d", BASE, 4L));
+
+            index.recoverAll(identityOrdered);
+
+            try (SigningDueWorkIndex.Selection selection =
+                    index.selectThrough(Instant.MAX, 8);
+                    SigningDueWorkIndex.IdentitySelection identity = index.pageThrough(
+                            Instant.MAX, Optional.empty(), Optional.empty(), 8)) {
+                assertEquals(List.of("op-b", "op-c", "op-d", "op-a"),
+                        selection.records().stream()
+                                .map(SigningDueWorkIndex.WorkDescriptor::operationId).toList());
+                assertEquals(List.of("op-a", "op-b", "op-c", "op-d"),
+                        identity.records().stream()
+                                .map(SigningDueWorkIndex.WorkDescriptor::operationId).toList());
+            }
+            assertEquals(4, index.statistics().workCount());
+            assertEquals(4L, index.statistics().admittedIdentities());
+        }
+    }
+
+    @Test
     void oneAdmittedIdentityIsReusedForUpdateRemoveAndRetire() {
         try (SigningDueWorkIndex index = index(10)) {
             SigningDueWorkIndex.CanonicalOperationId operation = index.admit("operation");
@@ -117,6 +144,8 @@ final class SigningDueWorkIndexTest {
             index.update(second, BASE, SignWorkflowStore.State.INTENT, pointer(2L));
             assertThrows(IllegalStateException.class, () -> index.update(
                     third, BASE, SignWorkflowStore.State.INTENT, pointer(3L)));
+            assertFalse(index.contains(third),
+                    "resident due-index rejection must publish no durable-work projection");
             index.update(first, BASE.plusSeconds(1L), SignWorkflowStore.State.DISPATCHED, pointer(4L));
             index.retire(second);
             index.update(third, BASE, SignWorkflowStore.State.INTENT, pointer(6L));
@@ -354,5 +383,11 @@ final class SigningDueWorkIndexTest {
         return new SigningMvccIndex.RecordPointer(1L,
                 SigningWalContainerCodec.HEADER_BYTES + sequence * 64L, 64, sequence,
                 SigningWalFrameCodec.RecordType.MUTATION);
+    }
+
+    private static SigningDueWorkIndex.RecoveryEntry recovery(SigningDueWorkIndex index,
+            String operationId, Instant nextEligibleAt, long sequence) {
+        return new SigningDueWorkIndex.RecoveryEntry(index.admit(operationId), nextEligibleAt,
+                SignWorkflowStore.State.INTENT, pointer(sequence), false);
     }
 }

@@ -34,6 +34,7 @@
 package zeroecho.pkix.bc;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
@@ -42,22 +43,22 @@ import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 
+import org.bouncycastle.asn1.ASN1EncodableVector;
+import org.bouncycastle.asn1.ASN1Encoding;
+import org.bouncycastle.asn1.ASN1GeneralizedTime;
 import org.bouncycastle.asn1.ASN1Integer;
+import org.bouncycastle.asn1.ASN1Sequence;
+import org.bouncycastle.asn1.DERGeneralizedTime;
+import org.bouncycastle.asn1.DERNull;
 import org.bouncycastle.asn1.DEROctetString;
+import org.bouncycastle.asn1.DERSequence;
 import org.bouncycastle.asn1.ocsp.OCSPObjectIdentifiers;
 import org.bouncycastle.asn1.ocsp.ResponderID;
+import org.bouncycastle.asn1.ocsp.ResponseData;
+import org.bouncycastle.asn1.ocsp.RevokedInfo;
+import org.bouncycastle.asn1.x509.CRLReason;
 import org.bouncycastle.asn1.x509.Extensions;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.ocsp.BasicOCSPResp;
-import org.bouncycastle.cert.ocsp.BasicOCSPRespBuilder;
-import org.bouncycastle.cert.ocsp.CertificateID;
-import org.bouncycastle.cert.ocsp.CertificateStatus;
-import org.bouncycastle.cert.ocsp.OCSPException;
-import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
-import org.bouncycastle.cert.ocsp.RespID;
-import org.bouncycastle.cert.ocsp.RevokedStatus;
-import org.bouncycastle.cert.ocsp.UnknownStatus;
 
 import zeroecho.pkix.ocsp.CertId;
 import zeroecho.pkix.ocsp.CertStatus;
@@ -102,63 +103,78 @@ final class BcOcspResponseBuilder implements OcspResponseBuilder {
     }
 
     @Override
+    public byte[] buildTbs() {
+        try {
+            return responseData().getEncoded(ASN1Encoding.DER);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Cannot assemble OCSP response data", failure);
+        }
+    }
+
+    @Override
     public byte[] build(ContentSigner signer, List<X509Certificate> chain) {
         Objects.requireNonNull(responderId, "responderId");
         Objects.requireNonNull(producedAt, "producedAt");
         Objects.requireNonNull(signer, "signer");
         try {
-            BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(toRespId(responderId));
-            for (SingleResponse response : responses) {
-                builder.addResponse(toCertificateId(response.certId()), toStatus(response.status()),
-                        Date.from(response.thisUpdate()),
-                        response.nextUpdate() == null ? null : Date.from(response.nextUpdate()), (Extensions) null);
+            ResponseData data = responseData();
+            ASN1Sequence certificates = BcOcspEncoding.certificates(chain);
+            byte[] signature;
+            try {
+                try (OutputStream output = signer.contentStream()) {
+                    output.write(data.getEncoded(ASN1Encoding.DER));
+                }
+                signature = Objects.requireNonNull(signer.signature(), "signature");
+            } catch (IOException | RuntimeException failure) {
+                throw new IllegalStateException("Cannot sign OCSP response data", failure);
             }
-            if (nonce != null) {
-                ExtensionsGenerator generator = new ExtensionsGenerator();
-                generator.addExtension(OCSPObjectIdentifiers.id_pkix_ocsp_nonce, false,
-                        new DEROctetString(nonce));
-                builder.setResponseExtensions(generator.generate());
-            }
-            BasicOCSPResp basic = builder.build(new BcContentSignerAdapter(signer), toHolders(chain),
-                    Date.from(producedAt));
-            return new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic).getEncoded();
-        } catch (OCSPException | IOException | CertificateEncodingException failure) {
+            return BcOcspEncoding.assemble(data, BcAlgorithmIdentifiers.toBc(signer.algorithm()), signature, certificates);
+        } catch (IOException | CertificateEncodingException failure) {
             throw new IllegalStateException("Cannot assemble OCSP response", failure);
         }
     }
 
-    private static RespID toRespId(ResponderId responderId) {
+    private ResponseData responseData() throws IOException {
+        Objects.requireNonNull(responderId, "responderId");
+        Objects.requireNonNull(producedAt, "producedAt");
+        ASN1EncodableVector entries = new ASN1EncodableVector(responses.size());
+        for (SingleResponse response : responses) {
+            entries.add(new org.bouncycastle.asn1.ocsp.SingleResponse(toCertificateId(response.certId()),
+                    toStatus(response.status()), new DERGeneralizedTime(Date.from(response.thisUpdate())),
+                    response.nextUpdate() == null ? null : new DERGeneralizedTime(Date.from(response.nextUpdate())),
+                    (Extensions) null));
+        }
+        Extensions extensions = null;
+        if (nonce != null) {
+            ExtensionsGenerator generator = new ExtensionsGenerator();
+            generator.addExtension(OCSPObjectIdentifiers.id_pkix_ocsp_nonce, false, new DEROctetString(nonce));
+            extensions = generator.generate();
+        }
+        return new ResponseData(toRespId(responderId), new ASN1GeneralizedTime(Date.from(producedAt)),
+                new DERSequence(entries), extensions);
+    }
+
+    private static ResponderID toRespId(ResponderId responderId) {
         return switch (responderId) {
-            case ResponderId.ByName byName -> new RespID(BcExtensions.toX500Name(byName.name()));
-            case ResponderId.ByKey byKey ->
-                    new RespID(new ResponderID(new DEROctetString(byKey.keyHash())));
+            case ResponderId.ByName byName -> new ResponderID(BcExtensions.toX500Name(byName.name()));
+            case ResponderId.ByKey byKey -> new ResponderID(new DEROctetString(byKey.keyHash()));
         };
     }
 
-    private static CertificateID toCertificateId(CertId certId) {
-        org.bouncycastle.asn1.ocsp.CertID asn1 = new org.bouncycastle.asn1.ocsp.CertID(
-                BcAlgorithmIdentifiers.toBc(certId.hashAlgorithm()),
+    private static org.bouncycastle.asn1.ocsp.CertID toCertificateId(CertId certId) {
+        return new org.bouncycastle.asn1.ocsp.CertID(BcAlgorithmIdentifiers.toBc(certId.hashAlgorithm()),
                 new DEROctetString(certId.issuerNameHash()), new DEROctetString(certId.issuerKeyHash()),
                 new ASN1Integer(certId.serialNumber()));
-        return new CertificateID(asn1);
     }
 
-    private static CertificateStatus toStatus(CertStatus status) {
+    private static org.bouncycastle.asn1.ocsp.CertStatus toStatus(CertStatus status) {
         return switch (status) {
-            case CertStatus.Good ignored -> CertificateStatus.GOOD;
-            case CertStatus.Unknown ignored -> new UnknownStatus();
-            case CertStatus.Revoked revoked -> revoked.reason()
-                    .map(reason -> new RevokedStatus(Date.from(revoked.revocationTime()), reason.code()))
-                    .orElseGet(() -> new RevokedStatus(Date.from(revoked.revocationTime()), 0));
+            case CertStatus.Good ignored -> new org.bouncycastle.asn1.ocsp.CertStatus();
+            case CertStatus.Unknown ignored -> new org.bouncycastle.asn1.ocsp.CertStatus(2, DERNull.INSTANCE);
+            // Preserve the signed builder's existing unspecified-reason encoding.
+            case CertStatus.Revoked revoked -> new org.bouncycastle.asn1.ocsp.CertStatus(new RevokedInfo(
+                    new ASN1GeneralizedTime(Date.from(revoked.revocationTime())),
+                    CRLReason.lookup(revoked.reason().map(reason -> reason.code()).orElse(0))));
         };
-    }
-
-    private static X509CertificateHolder[] toHolders(List<X509Certificate> chain)
-            throws IOException, CertificateEncodingException {
-        List<X509CertificateHolder> holders = new ArrayList<>();
-        for (X509Certificate certificate : chain) {
-            holders.add(new X509CertificateHolder(certificate.getEncoded()));
-        }
-        return holders.toArray(new X509CertificateHolder[0]);
     }
 }

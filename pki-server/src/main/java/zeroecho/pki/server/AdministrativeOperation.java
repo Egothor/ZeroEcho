@@ -36,10 +36,11 @@ package zeroecho.pki.server;
 import java.util.Objects;
 
 import zeroecho.pki.application.PkiOperation;
+import zeroecho.pki.application.PkiSigningOperation;
 
 /** One closed administrative namespace spanning PKI and server-control families. */
 public sealed interface AdministrativeOperation permits AdministrativeOperation.Pki,
-        AdministrativeOperation.Control {
+        AdministrativeOperation.Signing, AdministrativeOperation.Control {
     /**
      * Returns the stable operation identity.
      *
@@ -55,6 +56,16 @@ public sealed interface AdministrativeOperation permits AdministrativeOperation.
     record Pki(PkiOperation operation) implements AdministrativeOperation {
         /** Validates the typed PKI operation. */
         public Pki { Objects.requireNonNull(operation, "operation"); }
+        @Override public String name() { return operation.name(); }
+    }
+
+    /**
+     * Server-owned inputs for one semantic signing acceptance.
+     * @param operation exact closed signing input
+     */
+    record Signing(PkiSigningOperation operation) implements AdministrativeOperation {
+        /** Validates the signing input. */
+        public Signing { Objects.requireNonNull(operation, "operation"); }
         @Override public String name() { return operation.name(); }
     }
 

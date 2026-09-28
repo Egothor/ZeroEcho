@@ -84,16 +84,25 @@ final class SigningRecoveryBenchmarkTest {
         assertEquals(50L, result.openNanos());
         assertEquals(9, result.capacity().currentKeys());
         assertEquals(2, result.capacity().dueWork());
-        assertEquals(2, result.capacity().ownerWork());
+        assertEquals(0, result.capacity().ownerWork());
         assertEquals(2, result.capacity().projectedIdentities());
         assertEquals(0, result.capacity().retentionRecords());
-        assertEquals(13L, result.capacity().generationCurrentReferences());
+        assertEquals(11L, result.capacity().generationCurrentReferences());
         assertEquals(0L, result.capacity().generationSnapshotPins());
         assertEquals(9, result.recovery().checkpointEntries());
         assertEquals(2, result.recovery().sealedSegments());
         assertEquals(2L, result.recovery().sealedFrames());
         assertEquals(0L, result.recovery().activeFrames());
         assertEquals(0L, result.recovery().unreferencedArtifacts());
+        assertEquals(2L, result.projectionRecovery().envelopesVisited());
+        assertEquals(2L, result.projectionRecovery().statesVisited());
+        assertEquals(2L, result.projectionRecovery().bindingsVisited());
+        assertEquals(0L, result.projectionRecovery().outerRecordsVisited());
+        assertEquals(2L, result.projectionRecovery().activeEntriesBuilt());
+        assertEquals(2L, result.projectionRecovery().statePointersRetained());
+        assertTrue(result.projectionRecovery().peakTrackedEnvelopeWorkspaceBytes() > 0L);
+        assertEquals(0L,
+                result.projectionRecovery().currentTrackedEnvelopeWorkspaceBytes());
         assertEquals(SigningWalContainerCodec.HEADER_BYTES, result.artifacts().activeBytes());
         String json = result.toJson(configuration);
         assertTrue(json.contains("\"schema\":\"zeroecho-signing-production-recovery-v1\""));
@@ -103,10 +112,17 @@ final class SigningRecoveryBenchmarkTest {
         assertTrue(json.contains("\"fullFilesystemPkiStoreReopenMeasured\":false"));
         assertTrue(json.contains("\"primaryMvccReferences\":9"));
         assertTrue(json.contains("\"dueReferences\":2"));
-        assertTrue(json.contains("\"ownerReferences\":2"));
-        assertTrue(json.contains("\"expectedRegistryTotal\":13"));
+        assertTrue(json.contains("\"ownerReferences\":0"));
+        assertTrue(json.contains("\"expectedRegistryTotal\":11"));
         assertTrue(json.contains("\"timeComplexity\":"
-                + "\"O(M log M + W log W + F + S)\""));
+                + "\"O(W + H + Z + F + S)\""));
+        assertTrue(json.contains("\"projectionRecovery\":{"
+                + "\"envelopesVisited\":2,\"statesVisited\":2,\"bindingsVisited\":2,"
+                + "\"outerRecordsVisited\":0,\"activeEntriesBuilt\":2,"
+                + "\"statePointersRetained\":2,\"peakTrackedEnvelopeWorkspaceBytes\":"
+                + result.projectionRecovery().peakTrackedEnvelopeWorkspaceBytes()
+                + ",\"currentTrackedEnvelopeWorkspaceBytes\":0}"));
+        assertFalse(json.contains("envelopePointers" + "Retained"));
         assertTrue(json.contains("\"usedHeapDeltaIsRetainedAttribution\":false"));
         assertTrue(json.contains("\"allocationScope\":\"CALLER_THREAD_ONLY\""));
         assertTrue(json.contains("\"allocationExcludesOtherThreads\":true"));

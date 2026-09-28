@@ -77,6 +77,7 @@ import java.util.function.BooleanSupplier;
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops",
         "PMD.AvoidLiteralsInIfCondition", "PMD.AvoidMessageDigestField", "PMD.AvoidSynchronizedStatement",
         "PMD.AvoidUsingVolatile", "PMD.CommentDefaultAccessModifier", "PMD.CommentRequired",
+        "PMD.CloseResource", "PMD.CompareObjectsWithEquals", "PMD.ConfusingTernary",
         "PMD.CyclomaticComplexity", "PMD.DoNotUseThreads", "PMD.ExceptionAsFlowControl",
         "PMD.PreserveStackTrace" })
 final class SigningActiveWal implements AutoCloseable {
@@ -89,6 +90,7 @@ final class SigningActiveWal implements AutoCloseable {
     private static final Operations SYSTEM_OPERATIONS = new SystemOperations();
     private static final NanoClock SYSTEM_CLOCK = System::nanoTime;
     private static final GroupWaitStrategy SYSTEM_WAIT = TimeUnit.NANOSECONDS::timedWait;
+    private static final RecoveryOpenFaultInjector NO_RECOVERY_OPEN_FAULT = (stage, channel) -> { };
 
     private final Object lock = new Object();
     private final Configuration configuration;
@@ -112,8 +114,9 @@ final class SigningActiveWal implements AutoCloseable {
     private final AtomicLong maximumWriteNanos = new AtomicLong();
     private final AtomicLong maximumForceNanos = new AtomicLong();
 
-    private volatile State state = State.OPEN;
+    private volatile State state = State.PASSIVE;
     private volatile IOException lifecycleFailure;
+    private boolean writerStarted;
     private int outstandingSlots;
     private long outstandingPayloadBytes;
     private long outstandingEncodedBytes;
@@ -150,7 +153,6 @@ final class SigningActiveWal implements AutoCloseable {
         this.fileCommitment = restored.fileCommitment();
         writerThread = new Thread(this::runWriter, "zeroecho-signing-wal-writer");
         writerThread.setDaemon(true);
-        writerThread.start();
     }
 
     /* default */ static SigningActiveWal open(Path path, Descriptor descriptor,
@@ -161,13 +163,32 @@ final class SigningActiveWal implements AutoCloseable {
     /** Opens a read-only validated WAL state, repairing only its proven suffix. */
     /* default */ static SigningActiveWal reopenValidated(Path path, Descriptor descriptor,
             Configuration configuration, ValidatedState validated) throws IOException {
-        return reopenValidated(path, descriptor, configuration, validated,
-                SYSTEM_OPERATIONS, SYSTEM_CLOCK, SYSTEM_WAIT);
+        SigningActiveWal result = reopenValidatedPassive(path, descriptor, configuration,
+                validated, SYSTEM_OPERATIONS, SYSTEM_CLOCK, SYSTEM_WAIT);
+        return startAfterOpen(result);
     }
 
     /* default */ static SigningActiveWal reopenValidated(Path path, Descriptor descriptor,
             Configuration configuration, ValidatedState validated, Operations operations,
             NanoClock clock, GroupWaitStrategy waitStrategy) throws IOException {
+        SigningActiveWal result = reopenValidatedPassive(path, descriptor, configuration,
+                validated, operations, clock, waitStrategy);
+        return startAfterOpen(result);
+    }
+
+    /** Opens and repairs a validated WAL without starting its writer. */
+    /* default */ static SigningActiveWal reopenValidatedPassive(Path path,
+            Descriptor descriptor, Configuration configuration, ValidatedState validated,
+            Operations operations, NanoClock clock, GroupWaitStrategy waitStrategy)
+            throws IOException {
+        return reopenValidatedPassive(path, descriptor, configuration, validated, operations,
+                clock, waitStrategy, NO_RECOVERY_OPEN_FAULT);
+    }
+
+    /* default */ static SigningActiveWal reopenValidatedPassive(Path path,
+            Descriptor descriptor, Configuration configuration, ValidatedState validated,
+            Operations operations, NanoClock clock, GroupWaitStrategy waitStrategy,
+            RecoveryOpenFaultInjector faults) throws IOException {
         Objects.requireNonNull(path, "path");
         Objects.requireNonNull(descriptor, "descriptor");
         Objects.requireNonNull(configuration, "configuration");
@@ -175,12 +196,14 @@ final class SigningActiveWal implements AutoCloseable {
         Objects.requireNonNull(operations, "operations");
         Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(waitStrategy, "waitStrategy");
+        Objects.requireNonNull(faults, "faults");
         WalChannel opened = null;
         try {
             if (!operations.exists(path) || !operations.isRegularFile(path)) {
                 throw new IOException("signing active WAL validated identity is unavailable");
             }
             opened = operations.openExisting(path);
+            faults.after(RecoveryOpenStage.AFTER_PASSIVE_WAL_OPEN, opened);
             if (opened.size() != validated.observedLength()) {
                 throw new IOException("signing active WAL changed after validation");
             }
@@ -188,8 +211,14 @@ final class SigningActiveWal implements AutoCloseable {
             ByteBuffer headerBytes = ByteBuffer.allocate(SigningWalContainerCodec.HEADER_BYTES);
             SigningFormatSupport.readFully(opened, headerBytes,
                     "signing active WAL container is truncated");
-            if (!descriptor.header().equals(SigningWalContainerCodec.decode(headerBytes.array()))) {
-                throw new IOException("signing active WAL descriptor is inconsistent");
+            SigningWalContainerCodec.Header header;
+            try {
+                header = SigningWalContainerCodec.decode(headerBytes.array());
+            } catch (IOException malformed) {
+                throw new MalformedRecoveryDataException();
+            }
+            if (!descriptor.header().equals(header)) {
+                throw new MalformedRecoveryDataException();
             }
             if (validated.position() < SigningWalContainerCodec.HEADER_BYTES
                     || validated.position() > validated.observedLength()) {
@@ -204,6 +233,7 @@ final class SigningActiveWal implements AutoCloseable {
                             "signing active WAL tail repair durability is uncertain", failure);
                 }
             }
+            faults.after(RecoveryOpenStage.AFTER_TAIL_REPAIR, opened);
             MessageDigest fileCommitment = digestPrefix(opened, validated.position());
             opened.position(validated.position());
             RestoredState restored = new RestoredState(validated.position(),
@@ -245,11 +275,49 @@ final class SigningActiveWal implements AutoCloseable {
             } else {
                 restored = initialize(opened, parent, descriptor, operations);
             }
-            return new SigningActiveWal(descriptor, configuration, opened, restored,
-                    clock, waitStrategy);
+            SigningActiveWal result = new SigningActiveWal(descriptor, configuration, opened,
+                    restored, clock, waitStrategy);
+            return startAfterOpen(result);
         } catch (IOException | RuntimeException failure) {
             closeAfterOpenFailure(opened, failure);
             throw failure;
+        }
+    }
+
+    private static SigningActiveWal startAfterOpen(SigningActiveWal wal) throws IOException {
+        try {
+            wal.startWriter();
+            return wal;
+        } catch (RuntimeException failure) {
+            try {
+                wal.close();
+            } catch (IOException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
+    }
+
+    /** Starts the single writer exactly once after recovery validation completes. */
+    /* default */ void startWriter() {
+        synchronized (lock) {
+            if (state != State.PASSIVE || writerStarted || outstandingSlots != 0
+                    || frameReservationActive || !queue.isEmpty()) {
+                throw new IllegalStateException("signing active WAL writer start is invalid");
+            }
+            writerStarted = true;
+            state = State.OPEN;
+            try {
+                writerThread.start();
+            } catch (RuntimeException failure) {
+                state = State.RECOVERY_REQUIRED;
+                try {
+                    channel.close();
+                } catch (IOException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+                throw failure;
+            }
         }
     }
 
@@ -386,6 +454,69 @@ final class SigningActiveWal implements AutoCloseable {
                     clock.nanoTime(), sequence, revision, new SigningRecordPointerSlot()));
             lock.notifyAll();
             return acknowledgement;
+        }
+    }
+
+    /** Appends and forces one deterministic recovery record before the writer starts. */
+    /* default */ CommitResult appendRecovery(SigningWalFrameCodec.RecordType recordType,
+            UUID transactionId, byte[] payload) throws IOException {
+        Objects.requireNonNull(recordType, "recordType");
+        Objects.requireNonNull(transactionId, "transactionId");
+        Objects.requireNonNull(payload, "payload");
+        if (recordType == SigningWalFrameCodec.RecordType.BATCH_COMMIT
+                || payload.length > SigningWalFrameCodec.MAX_PAYLOAD_BYTES) {
+            throw new IllegalArgumentException("signing WAL recovery fields are invalid");
+        }
+        Pending pending;
+        synchronized (lock) {
+            if (state != State.PASSIVE || writerStarted || frameReservationActive
+                    || outstandingSlots != 0 || !queue.isEmpty()) {
+                throw new IllegalStateException("signing WAL recovery append is invalid");
+            }
+            long encodedBytes = encodedReservationBytes(payload.length);
+            if (payload.length > configuration.maximumQueuedPayloadBytes()
+                    || encodedBytes > configuration.maximumBatchBytes()
+                    || Math.addExact(position, encodedBytes)
+                            > configuration.maximumSegmentBytes()) {
+                throw new RotationRequiredException();
+            }
+            byte[] ownedPayload = configuration.payloadCopier().copy(payload);
+            if (ownedPayload == payload || ownedPayload.length != payload.length) {
+                throw new IllegalStateException("signing WAL payload copy is invalid");
+            }
+            long sequence = Math.incrementExact(lastReservedSequence);
+            long revision = Math.incrementExact(lastReservedRevision);
+            outstandingSlots = 1;
+            outstandingPayloadBytes = payload.length;
+            outstandingEncodedBytes = encodedBytes;
+            lastReservedSequence = sequence;
+            lastReservedRevision = revision;
+            pending = new Pending(recordType, transactionId, ownedPayload,
+                    new Acknowledgement(), clock.nanoTime(), sequence, revision,
+                    new SigningRecordPointerSlot());
+        }
+        commit(new Batch(List.of(pending)));
+        try {
+            return pending.acknowledgement().get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IOException("signing WAL recovery append was interrupted", interrupted);
+        } catch (ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            synchronized (lock) {
+                if (state == State.PASSIVE) {
+                    state = State.RECOVERY_REQUIRED;
+                    lifecycleFailure = new RecoveryRequiredException(
+                            "signing active WAL recovery append failed", cause);
+                }
+            }
+            if (cause instanceof IOException ioFailure) {
+                throw ioFailure;
+            }
+            if (cause instanceof RuntimeException runtimeFailure) {
+                throw runtimeFailure;
+            }
+            throw new IOException("signing WAL recovery append failed", cause);
         }
     }
 
@@ -858,11 +989,23 @@ final class SigningActiveWal implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        boolean closePassive = false;
         synchronized (lock) {
-            if (state == State.OPEN) {
+            if (state == State.CLOSED) {
+                return;
+            }
+            if (!writerStarted) {
+                if (state == State.PASSIVE) {
+                    state = State.CLOSING;
+                }
+                closePassive = channel.isOpen();
+            } else if (state == State.OPEN) {
                 state = State.CLOSING;
                 lock.notifyAll();
             }
+        }
+        if (closePassive) {
+            closeOwnedChannel();
         }
         boolean interrupted = false;
         while (writerThread.isAlive()) {
@@ -905,6 +1048,11 @@ final class SigningActiveWal implements AutoCloseable {
                     maximumBatchWaitNanos.get(), writeNanos.sum(), maximumWriteNanos.get(),
                     forceNanos.sum(), maximumForceNanos.get(), bytesAppended.sum());
         }
+    }
+
+    /** Returns whether the lifecycle-owned channel remains open for cleanup verification. */
+    /* default */ boolean channelOpen() {
+        return channel.isOpen();
     }
 
     /** Returns one immutable forced prefix from the container baseline. */
@@ -1043,11 +1191,25 @@ final class SigningActiveWal implements AutoCloseable {
     }
 
     /* default */ enum State {
+        PASSIVE,
         OPEN,
         CLOSING,
         ROTATION_REQUIRED,
         CLOSED,
         RECOVERY_REQUIRED
+    }
+
+    /** Deterministic passive-open boundaries used by recovery cleanup tests. */
+    /* default */ enum RecoveryOpenStage {
+        AFTER_PASSIVE_WAL_OPEN,
+        AFTER_TAIL_REPAIR
+    }
+
+    /** Package-local fault seam for passive recovery open. */
+    /* default */
+    @FunctionalInterface
+    interface RecoveryOpenFaultInjector {
+        void after(RecoveryOpenStage stage, WalChannel channel) throws IOException;
     }
 
     /* default */ enum FailureOutcome {
@@ -1394,6 +1556,11 @@ final class SigningActiveWal implements AutoCloseable {
         private RecoveryRequiredException(String message, Throwable cause) {
             super(message, cause);
         }
+    }
+
+    /** Internal marker for malformed bytes discovered after the read-only preflight. */
+    /* default */ static final class MalformedRecoveryDataException extends IOException {
+        private static final long serialVersionUID = 1L;
     }
 
     @FunctionalInterface

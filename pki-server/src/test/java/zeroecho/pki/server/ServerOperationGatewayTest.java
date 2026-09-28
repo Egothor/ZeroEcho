@@ -77,6 +77,7 @@ import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiResourceScopeResolver;
+import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.pki.application.RevocationEvidenceExecutor;
 import zeroecho.pki.application.RevocationExecutionEvidence;
 import zeroecho.pki.server.acme.AcmeService;
@@ -300,7 +301,7 @@ class ServerOperationGatewayTest {
             AtomicReference<RevocationExecutionEvidence> evidence = new AtomicReference<>();
             ServerOperationGateway gateway = gateway(opened, calls, evidence,
                     Map.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK, policy));
-            PkiOperation operation = new PkiOperation.CreateAuthority(new zeroecho.pki.api.FormatId("x509"),
+            PkiSigningOperation operation = new PkiSigningOperation.CreateAuthority(new zeroecho.pki.api.FormatId("x509"),
                     new zeroecho.pki.api.SubjectRef("subject-a"), "profile-a", new zeroecho.pki.api.KeyRef("key-a"));
             Permission.Resource resource = new Permission.Resource(Permission.ResourceType.AUTHORITY, realmScope,
                     Optional.empty(), Optional.empty());
@@ -339,7 +340,7 @@ class ServerOperationGatewayTest {
             ServerOperationGateway gateway = gateway(opened, calls, Map.of(), success, new TestScopeResolver(),
                     new AtomicReference<>(), opened.audit(), () -> { }, issuanceEvidence);
             PkiId credentialId = new PkiId("cred-renew");
-            PkiOperation operation = new PkiOperation.RenewCredential(credentialId);
+            PkiSigningOperation operation = new PkiSigningOperation.RenewCredential(credentialId);
             ServerOperationGateway.Outcome executed = gateway.execute(
                     request(operation, credentialResource(credentialId), Optional.empty()), CancellationSignal.NONE);
             assertInstanceOf(ServerOperationGateway.Outcome.Executed.class, executed);
@@ -859,6 +860,7 @@ class ServerOperationGatewayTest {
                     breakGlass, disclosure, publication, auditorViews, Optional.empty(),
                     new OperationSecurityDescriptors(), (operation, cancellation) ->
                     new PkiOperationOutcome.Completed(new PkiOperationResult("test", Map.of())),
+                    (request, evidence, cancellation) -> { throw new AssertionError("Unexpected signing"); },
                     new TestScopeResolver(), Map.of(),
                     profileId -> zeroecho.pki.api.profile.IssuanceApprovalRequirement.NONE,
                     ServerTestSupport.CLOCK, opened.audit(), () -> { });
@@ -928,9 +930,13 @@ class ServerOperationGatewayTest {
     void descriptorRegistryRejectsUnknownAndDuplicateOperations() {
         System.out.println("descriptorRegistryRejectsUnknownAndDuplicateOperations");
         OperationSecurityDescriptors descriptors = new OperationSecurityDescriptors();
-        assertEquals(101, descriptors.descriptors().size());
-        assertEquals(47, descriptors.descriptors().values().stream()
+        assertEquals(107, descriptors.descriptors().size());
+        assertEquals(41, descriptors.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
+        assertEquals(10, descriptors.descriptors().values().stream()
+                .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());
+        assertEquals(descriptors.descriptors().size(), descriptors.descriptors().values().stream()
+                .map(OperationSecurityDescriptors.Descriptor::operationId).distinct().count());
         OperationSecurityDescriptors.Descriptor descriptor = descriptors.descriptors()
                 .get(PkiOperation.InspectAuthority.NAME);
         OperationSecurityDescriptors limited = new OperationSecurityDescriptors(List.of(descriptor));
@@ -945,9 +951,9 @@ class ServerOperationGatewayTest {
         // Trust-affecting intermediate-CA and issuance-path operations are HIGH_RISK dual-control
         // (owner decision 2026-09-05; see docs/admin-dual-control-operations.md).
         assertEquals(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK,
-                descriptors.descriptors().get(PkiOperation.CreateIntermediate.NAME).approvalCategory());
+                descriptors.descriptors().get(PkiSigningOperation.CreateIntermediate.NAME).approvalCategory());
         assertEquals(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK,
-                descriptors.descriptors().get(PkiOperation.IssueIntermediateCertificate.NAME).approvalCategory());
+                descriptors.descriptors().get(PkiSigningOperation.IssueIntermediateCertificate.NAME).approvalCategory());
         assertEquals(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK,
                 descriptors.descriptors().get(PkiOperation.SelectIssuancePath.NAME).approvalCategory());
         assertEquals(OperationSecurityDescriptors.ApprovalCategory.NONE,
@@ -992,7 +998,7 @@ class ServerOperationGatewayTest {
                     matching.execute(request(retry, retryResource, Optional.empty()), CancellationSignal.NONE));
             assertEquals(1, calls.get());
 
-            // Negative (Task 12+): caller holds a valid grant for the declared authority, but the publication is
+            // Negative authorization case: caller holds a valid grant for the declared authority, but the publication is
             // owned by a DIFFERENT authority; the resolved-owner binding must deny it.
             ServerOperationGateway crossOwner = gateway(opened, calls, Map.of(),
                     new PkiOperationOutcome.Completed(new PkiOperationResult("test", Map.of())),
@@ -1166,7 +1172,12 @@ class ServerOperationGatewayTest {
                 opened.store(), RoleTemplateCatalog.load(ServerOperationGatewayTest.class.getClassLoader()),
                 authorization, approvals, breakGlass, disclosure, publication, auditorViews, Optional.empty(),
                 new OperationSecurityDescriptors(),
-                new TestEvidenceExecutor(calls, result, evidence, issuanceEvidence), resourceScopes, policies,
+                new TestEvidenceExecutor(calls, result, evidence, issuanceEvidence),
+                (request, exactEvidence, cancellation) -> {
+                    exactEvidence.ifPresent(value -> issuanceEvidence.set(value.attributes()));
+                    calls.incrementAndGet();
+                    return result;
+                }, resourceScopes, policies,
                 profileId -> zeroecho.pki.api.profile.IssuanceApprovalRequirement.NONE,
                 ServerTestSupport.CLOCK, auditSink, wake, () -> { });
     }
@@ -1177,10 +1188,6 @@ class ServerOperationGatewayTest {
             implements zeroecho.pki.application.PkiOperationExecutor, RevocationEvidenceExecutor {
         @Override public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
             calls.incrementAndGet(); return result;
-        }
-        @Override public PkiOperationOutcome execute(PkiOperation operation,
-                zeroecho.pki.api.attr.AttributeSet exactEvidence, CancellationSignal cancellation) {
-            issuanceEvidence.set(exactEvidence); calls.incrementAndGet(); return result;
         }
         @Override public PkiOperationOutcome executeRevocation(PkiOperation.RevokeCredential operation,
                 RevocationExecutionEvidence exactEvidence, CancellationSignal cancellation) {
@@ -1195,10 +1202,23 @@ class ServerOperationGatewayTest {
 
     private static ServerOperationGateway.Request request(PkiOperation operation, Permission.Resource resource,
             Optional<String> approval) {
-        String principalId = operation instanceof PkiOperation.CreateAuthority ? "officer" : "auditor";
+        String principalId = "auditor";
         return new ServerOperationGateway.Request(ServerTestSupport.REALM, principalId,
                 operation, resource, Permission.Relationship.ANY, Permission.Context.empty(), approval,
                 "correlation-a");
+    }
+
+    private static ServerOperationGateway.Request controlRequest(String principalId,
+            PkiSigningOperation operation, Permission.Resource resource, Optional<String> approval) {
+        return new ServerOperationGateway.Request(ServerTestSupport.REALM, principalId,
+                new AdministrativeOperation.Signing(operation), resource, Permission.Relationship.ANY,
+                Permission.Context.empty(), approval, "correlation-control");
+    }
+
+    private static ServerOperationGateway.Request request(PkiSigningOperation operation,
+            Permission.Resource resource, Optional<String> approval) {
+        String principal = operation instanceof PkiSigningOperation.CreateAuthority ? "officer" : "auditor";
+        return controlRequest(principal, operation, resource, approval);
     }
 
     private static ServerOperationGateway.Request controlRequest(String principalId,

@@ -35,260 +35,244 @@ package zeroecho.pki.cli;
 
 import java.io.IOException;
 import java.net.URLEncoder;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
-import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLHandshakeException;
 
 import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.application.PkiOperationValue;
 
-/**
- * Executes one PKI operation against a running {@code pki-server} over its
- * mutual-TLS admin HTTP API and returns a terminal (or bounded-wait-exhausted)
- * {@link PkiRemoteResult}.
- *
- * <p>The transport POSTs the request envelope to
- * {@code /admin/v1/operations/{operationId}} and interprets the HTTP status and
- * response envelope together. A {@code 202 PENDING} signing hand-off is resolved
- * by polling {@code /admin/v1/signing-operations/{id}} until it terminalizes or
- * the {@code --pending-wait} deadline elapses, mirroring the local bounded-wait
- * behavior; a still-pending operation is returned as {@link PkiRemoteResult.Pending}
- * for a clean operator resume.</p>
- */
-final class RemotePkiOperationTransport {
-
+/** Submit-once remote execution and caller-thread observation of a retained receipt. */
+final class RemotePkiOperationTransport { // NOPMD - CyclomaticComplexity totals independent cohesive operations; method-level checks remain enabled.
+    private static final int HTTP_UNAUTHORIZED = 401;
     private static final String OPERATIONS_PATH = "/admin/v1/operations/";
     private static final String SIGNING_PATH = "/admin/v1/signing-operations/";
-    private static final int HTTP_OK = 200;
-    private static final int HTTP_ACCEPTED = 202;
-    private static final int HTTP_BAD_REQUEST = 400;
-    private static final int HTTP_UNAUTHORIZED = 401;
-    private static final int HTTP_FORBIDDEN = 403;
-    private static final int HTTP_NOT_FOUND = 404;
-    private static final int HTTP_CONFLICT = 409;
-    private static final int HTTP_UNPROCESSABLE = 422;
-    private static final int HTTP_TOO_MANY = 429;
-    private static final int HTTP_INTERNAL = 500;
-    private static final int HTTP_UNAVAILABLE = 503;
-    private static final int HTTP_GATEWAY_TIMEOUT = 504;
-
+    private static final Set<String> SIGNING_OPERATIONS = Set.of("ca.create", "ca.intermediate.create",
+            "ca.intermediate.issue", "ca.rollover", "ca.rotate", "credential.issue", "credential.renew",
+            "credential.replace", "credential.reissue", "status.generate");
     private final PkiHttpExchange exchange;
     private final Duration pendingWait;
-    private final long pollMillis;
+    private final Duration pollInterval;
 
-    /**
-     * Creates a transport over one open HTTP exchange.
-     *
-     * @param exchange open admin-API exchange
-     * @param pendingWait bounded wait for a pending signing operation to terminalize
-     * @param pollInterval interval between signing-operation status polls
-     */
-    /* default */ RemotePkiOperationTransport(PkiHttpExchange exchange, Duration pendingWait,
-            Duration pollInterval) {
+    /* default */ RemotePkiOperationTransport(PkiHttpExchange exchange, Duration pendingWait, Duration pollInterval) {
         this.exchange = Objects.requireNonNull(exchange, "exchange");
         this.pendingWait = Objects.requireNonNull(pendingWait, "pendingWait");
-        if (pendingWait.isNegative()) {
-            throw new IllegalArgumentException("pendingWait must not be negative");
+        this.pollInterval = Objects.requireNonNull(pollInterval, "pollInterval");
+        if (pendingWait.isNegative() || pollInterval.isNegative() || pollInterval.isZero()) {
+            throw new IllegalArgumentException("Invalid observation duration");
         }
-        this.pollMillis = Math.max(1L, Objects.requireNonNull(pollInterval, "pollInterval").toMillis());
     }
 
-    /**
-     * Submits one operation and resolves it to a terminal (or wait-exhausted) result.
-     *
-     * @param operationId dotted server operation identifier
-     * @param arguments typed operation arguments
-     * @param authorityId authority scope, absent for realm-wide operations
-     * @param approvalId prior approval identifier, absent on first submission
-     * @param deadline optional ISO-8601 execution deadline
-     * @param cancellation cooperative cancellation signal
-     * @return terminal or still-pending remote result
-     * @throws PkiRemoteTransportException on TLS, authentication, connection, or protocol failure
-     */
-    /* default */ PkiRemoteResult submit(String operationId, PkiOperationValue.ObjectValue arguments,
+    /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  @SuppressWarnings({ "PMD.PreserveStackTrace" })
+                  PkiRemoteResult submit(String operation, PkiOperationValue.ObjectValue arguments,
             Optional<String> authorityId, Optional<String> approvalId, Optional<String> deadline,
             CancellationSignal cancellation) throws PkiRemoteTransportException {
-        Objects.requireNonNull(operationId, "operationId");
-        Objects.requireNonNull(cancellation, "cancellation");
-        if (cancellation.isCancelled()) {
-            return new PkiRemoteResult.Failed(operationId, "CANCELLED", "REMOTE_CANCELLED", false, false);
+        if (cancelled(cancellation)) {
+            return new PkiRemoteResult.Failed(operation, "CANCELLED", "REMOTE_CANCELLED", false, false);
         }
         byte[] body = PkiRemoteEnvelope.encodeRequest(authorityId, approvalId, deadline, arguments);
-        PkiHttpExchange.Response response = send(PkiHttpExchange.Request.post(OPERATIONS_PATH
-                + encodeSegment(operationId), body));
-        PkiRemoteResult result = interpret(response, operationId, Optional.empty());
-        if (result instanceof PkiRemoteResult.Pending pending) {
-            return awaitPending(pending, cancellation);
+        PkiHttpExchange.Response response;
+        try {
+            response = exchange.send(PkiHttpExchange.Request.post(OPERATIONS_PATH + segment(operation), body));
+        } catch (PkiHttpExchange.InvalidResponseException invalid) {
+            throw new PkiRemoteTransportException(9, "INTERNAL_FAILURE", "REMOTE_PROTOCOL_INVALID");
+        } catch (SSLHandshakeException handshake) {
+            throw new PkiRemoteTransportException(3, "CONFIGURATION_FAILURE", "REMOTE_TLS_HANDSHAKE_FAILED");
+        } catch (IOException uncertain) {
+            return new PkiRemoteResult.Failed(operation, "EXTERNAL_OUTCOME_UNKNOWN",
+                    "REMOTE_ACCEPTANCE_UNKNOWN", false, true);
         }
-        return result;
+        PkiRemoteResult result = interpret(response, operation, Optional.empty());
+        return result instanceof PkiRemoteResult.Pending pending ? awaitPending(pending, cancellation) : result;
     }
 
-    // CLI polling deliberately uses the caller thread; no executor or background lifecycle is created.
+    /* default */ PkiRemoteResult inspect(String operationId, CancellationSignal cancellation) {
+        requireIdentifier(operationId);
+        PkiRemoteResult.Pending pending = pending("signing.operation", operationId);
+        if (cancelled(cancellation)) { return interrupted(pending); }
+        return observe(pending, Duration.ofSeconds(60), false);
+    }
+
+    // Observation is confined to the CLI caller; it never advances or cancels server work.
     @SuppressWarnings("PMD.DoNotUseThreads")
-    private PkiRemoteResult awaitPending(PkiRemoteResult.Pending pending, CancellationSignal cancellation)
-            throws PkiRemoteTransportException {
-        if (pendingWait.isZero()) {
-            return pending;
-        }
-        long deadlineNanos = System.nanoTime() + pendingWait.toNanos();
-        PkiRemoteResult current = pending;
-        while (current instanceof PkiRemoteResult.Pending waiting && !cancellation.isCancelled()
-                && System.nanoTime() < deadlineNanos) {
+    private PkiRemoteResult awaitPending(PkiRemoteResult.Pending initialPending, CancellationSignal cancellation) {
+        PkiRemoteResult.Pending pending = initialPending;
+        long started = System.nanoTime();
+        long budget = pendingWait.toNanos();
+        while (true) {
+            if (cancelled(cancellation)) { return interrupted(pending); }
+            long remaining = budget - (System.nanoTime() - started);
+            if (remaining <= 0) { return pending; }
             try {
-                Thread.sleep(pollMillis);
+                Thread.sleep(Duration.ofNanos(Math.min(pollInterval.toNanos(), remaining)));
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
-                return current;
+                return interrupted(pending);
             }
-            PkiHttpExchange.Response response = send(PkiHttpExchange.Request.get(SIGNING_PATH
-                    + encodeSegment(waiting.operationId())));
-            current = interpret(response, waiting.operation(), Optional.of(waiting.operationId()));
-        }
-        return current;
-    }
-
-    private PkiRemoteResult interpret(PkiHttpExchange.Response response, String operationId,
-            Optional<String> knownPendingId) throws PkiRemoteTransportException {
-        int status = response.statusCode();
-        if (status == HTTP_UNAUTHORIZED) {
-            throw new PkiRemoteTransportException(PkiExitCodes.CONFIGURATION_FAILURE, "CONFIGURATION_FAILURE",
-                    "REMOTE_AUTHENTICATION_FAILED");
-        }
-        Optional<PkiRemoteEnvelope.ResponseEnvelope> envelope = tryDecode(response.body());
-        String operation = envelope.flatMap(PkiRemoteEnvelope.ResponseEnvelope::operation).orElse(operationId);
-        Optional<String> statusToken = envelope.flatMap(PkiRemoteEnvelope.ResponseEnvelope::status);
-        if (statusToken.isPresent()) {
-            Optional<PkiRemoteResult> resolved = fromStatusToken(statusToken.orElseThrow(), operation, envelope,
-                    response, status, knownPendingId);
-            if (resolved.isPresent()) {
-                return resolved.orElseThrow();
+            if (cancelled(cancellation)) { return interrupted(pending); }
+            remaining = budget - (System.nanoTime() - started);
+            if (remaining <= 0) { return pending; }
+            PkiRemoteResult observed = observe(pending, Duration.ofNanos(Math.min(
+                    Duration.ofSeconds(60).toNanos(), remaining)), remaining <= Duration.ofSeconds(60).toNanos());
+            if (!(observed instanceof PkiRemoteResult.Pending next) || next.observationFailure().isPresent()) {
+                return observed;
             }
+            pending = next;
         }
-        return synthesize(status, operation, envelope, response, knownPendingId);
     }
 
-    private Optional<PkiRemoteResult> fromStatusToken(String statusToken, String operation,
-            Optional<PkiRemoteEnvelope.ResponseEnvelope> envelope, PkiHttpExchange.Response response, int status,
-            Optional<String> knownPendingId) throws PkiRemoteTransportException {
-        return switch (statusToken) {
-            case "SUCCEEDED" -> Optional.of(new PkiRemoteResult.Succeeded(operation, resultOf(envelope)));
-            case "PENDING" -> Optional.of(pendingResult(operation, envelope, response, knownPendingId));
-            case "APPROVAL_REQUIRED" -> Optional.of(approvalResult(operation, envelope));
-            case "FAILED" -> Optional.of(failedResult(operation, envelope, status));
-            default -> Optional.empty();
-        };
+    // Standalone execution checks or restores interruption; it neither creates threads nor runs in a J2EE container.
+    @SuppressWarnings({ "PMD.DoNotUseThreads" })
+    private PkiRemoteResult observe(PkiRemoteResult.Pending pending, Duration timeout, boolean budgetLimited) {
+        try {
+            PkiHttpExchange.Response response = exchange.send(new PkiHttpExchange.Request(
+                    PkiHttpExchange.Method.GET, SIGNING_PATH + segment(pending.operationId()), Optional.empty(), timeout));
+            return interpret(response, pending.operation(), Optional.of(pending.operationId()));
+        } catch (PkiHttpExchange.InvalidResponseException invalid) {
+            return observationFailure(pending, "INTERNAL_FAILURE", "REMOTE_PROTOCOL_INVALID", 9);
+        } catch (HttpTimeoutException timeoutFailure) {
+            return budgetLimited ? pending : observationFailure(pending, "RESOURCE_FAILURE", "REMOTE_OBSERVATION_FAILED", 8);
+        } catch (IOException failure) {
+            return Thread.currentThread().isInterrupted() ? interrupted(pending)
+                    : observationFailure(pending, "RESOURCE_FAILURE", "REMOTE_OBSERVATION_FAILED", 8);
+        } catch (PkiRemoteTransportException failure) {
+            return observationFailure(pending, failure.category(), failure.code(), failure.exitCode());
+        }
     }
 
-    private PkiRemoteResult synthesize(int status, String operation,
-            Optional<PkiRemoteEnvelope.ResponseEnvelope> envelope, PkiHttpExchange.Response response,
-            Optional<String> knownPendingId) throws PkiRemoteTransportException {
+    // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+    @SuppressWarnings({ "PMD.PreserveStackTrace" })
+    private static PkiRemoteResult interpret(PkiHttpExchange.Response response, String requested,
+            Optional<String> knownId) throws PkiRemoteTransportException {
+        if (response.statusCode() == HTTP_UNAUTHORIZED) {
+            throw new PkiRemoteTransportException(3, "CONFIGURATION_FAILURE", "REMOTE_AUTHENTICATION_FAILED");
+        }
+        try {
+            return interpretEnvelope(response, requested, knownId);
+        } catch (IllegalArgumentException | java.util.NoSuchElementException malformed) {
+            throw new PkiRemoteTransportException(9, "INTERNAL_FAILURE", "REMOTE_PROTOCOL_INVALID");
+        }
+    }
+
+    private static PkiRemoteResult interpretEnvelope(PkiHttpExchange.Response response, String requested,
+            Optional<String> knownId) {
+        PkiRemoteEnvelope.ResponseEnvelope envelope = PkiRemoteEnvelope.decodeResponse(response.body());
+        String operation = envelope.operation().orElseThrow();
+        String status = envelope.status().orElseThrow();
+        Optional<String> bodyId = responseIdentity(envelope, operation, status, requested, knownId);
+        int http = response.statusCode();
         return switch (status) {
-            case HTTP_OK -> new PkiRemoteResult.Succeeded(operation, resultOf(envelope));
-            case HTTP_ACCEPTED -> pendingResult(operation, envelope, response, knownPendingId);
-            case HTTP_CONFLICT -> approvalResult(operation, envelope);
-            case HTTP_FORBIDDEN -> classified(operation, "AUTHORIZATION_DENIED", status);
-            case HTTP_BAD_REQUEST -> classified(operation, "VALIDATION_FAILURE", status);
-            case HTTP_UNPROCESSABLE -> classified(operation, "POLICY_REJECTION", status);
-            case HTTP_NOT_FOUND -> classified(operation, "NOT_FOUND", status);
-            case HTTP_TOO_MANY -> classified(operation, "OVERLOADED", status);
-            case HTTP_UNAVAILABLE -> classified(operation, "RESOURCE_FAILURE", status);
-            case HTTP_GATEWAY_TIMEOUT -> classified(operation, "DEADLINE_EXCEEDED", status);
-            case HTTP_INTERNAL -> classified(operation, "INTERNAL_FAILURE", status);
-            default -> classified(operation, "INTERNAL_FAILURE", status);
+            case "SUCCEEDED" -> succeeded(envelope, http, requested, knownId, bodyId);
+            case "PENDING" -> {
+                if (http != 202 || envelope.failure().isPresent()) { throw invalid(); }
+                yield pending(requested, bodyId.orElseThrow(RemotePkiOperationTransport::invalid));
+            }
+            case "APPROVAL_REQUIRED" -> approvalRequired(envelope, http, requested, knownId);
+            case "FAILED" -> failed(envelope, http, requested, bodyId.or(() -> knownId));
+            default -> throw invalid();
         };
     }
 
-    private static PkiRemoteResult failedResult(String operation,
-            Optional<PkiRemoteEnvelope.ResponseEnvelope> envelope, int status) {
-        Optional<PkiRemoteEnvelope.Failure> failure = envelope
-                .flatMap(PkiRemoteEnvelope.ResponseEnvelope::failure);
-        if (failure.isPresent()) {
-            PkiRemoteEnvelope.Failure detail = failure.orElseThrow();
-            return new PkiRemoteResult.Failed(operation, detail.classification(), detail.code(),
-                    detail.recoveryRequired(), detail.reconciliationRequired());
+    private static Optional<String> responseIdentity(PkiRemoteEnvelope.ResponseEnvelope envelope,
+            String operation, String status, String requested, Optional<String> knownId) {
+        String expectedOperation = knownId.isPresent() ? "signing.operation" : requested;
+        if (!operation.equals(expectedOperation)
+                && !("FAILED".equals(status) && Set.of("operation", "request").contains(operation))) { throw invalid(); }
+        Optional<String> bodyId = envelope.result().flatMap(value -> text(value, "operationId"));
+        bodyId.ifPresent(RemotePkiOperationTransport::requireIdentifier);
+        if (knownId.isPresent() && bodyId.isPresent() && !knownId.equals(bodyId)) { throw invalid(); }
+        return bodyId;
+    }
+
+    private static PkiRemoteResult succeeded(PkiRemoteEnvelope.ResponseEnvelope envelope, int http,
+            String requested, Optional<String> knownId, Optional<String> bodyId) {
+        if (http != 200 || envelope.failure().isPresent()
+                || (knownId.isEmpty() && SIGNING_OPERATIONS.contains(requested))) { throw invalid(); }
+        PkiOperationValue.ObjectValue fields = envelope.result().orElseThrow(RemotePkiOperationTransport::invalid);
+        if (knownId.isPresent() || "signing.operation".equals(envelope.operation().orElseThrow()) || bodyId.isPresent()) {
+            if (bodyId.isEmpty()) { throw invalid(); }
+            validateCompletion(fields);
         }
-        return classified(operation, "INTERNAL_FAILURE", status);
+        return new PkiRemoteResult.Succeeded(requested, fields, bodyId);
     }
 
-    private static PkiRemoteResult classified(String operation, String classification, int status) {
-        return new PkiRemoteResult.Failed(operation, classification, "REMOTE_STATUS_" + status, false, false);
+    private static PkiRemoteResult approvalRequired(PkiRemoteEnvelope.ResponseEnvelope envelope, int http,
+            String requested, Optional<String> knownId) {
+        if (http != 409 || knownId.isPresent() || envelope.failure().isEmpty()
+                || !"APPROVAL_REQUIRED".equals(envelope.failure().orElseThrow().code())
+                || !"APPROVAL_REQUIRED".equals(envelope.failure().orElseThrow().classification())) { throw invalid(); }
+        String commitment = text(envelope.result().orElseThrow(RemotePkiOperationTransport::invalid),
+                "operationCommitment").orElseThrow(RemotePkiOperationTransport::invalid);
+        if (!commitment.matches("[0-9a-f]{64}")) { throw invalid(); }
+        return new PkiRemoteResult.ApprovalRequired(requested, commitment);
     }
 
-    private PkiRemoteResult pendingResult(String operation,
-            Optional<PkiRemoteEnvelope.ResponseEnvelope> envelope, PkiHttpExchange.Response response,
-            Optional<String> knownPendingId) throws PkiRemoteTransportException {
-        Optional<String> fromResult = envelope.flatMap(PkiRemoteEnvelope.ResponseEnvelope::result)
-                .flatMap(object -> text(object, "operationId"));
-        Optional<String> identifier = fromResult
-                .or(() -> response.location().map(RemotePkiOperationTransport::lastSegment))
-                .or(() -> knownPendingId);
-        if (identifier.isEmpty()) {
-            throw new PkiRemoteTransportException(PkiExitCodes.RESOURCE_FAILURE, "RESOURCE_FAILURE",
-                    "REMOTE_PENDING_IDENTIFIER_MISSING");
+    private static PkiRemoteResult failed(PkiRemoteEnvelope.ResponseEnvelope envelope, int http,
+            String requested, Optional<String> operationId) {
+        if (http < 400 || http > 599) { throw invalid(); }
+        PkiRemoteEnvelope.Failure failure = envelope.failure().orElseThrow(RemotePkiOperationTransport::invalid);
+        if (!failure.classification().matches("[A-Z][A-Z0-9_]{0,127}")
+                || !failure.code().matches("[A-Z][A-Z0-9_]{0,127}")) { throw invalid(); }
+        return new PkiRemoteResult.Failed(requested, failure.classification(), failure.code(),
+                failure.recoveryRequired(), failure.reconciliationRequired(), operationId);
+    }
+
+    private static void validateCompletion(PkiOperationValue.ObjectValue result) {
+        String kind = text(result, "kind").orElseThrow(RemotePkiOperationTransport::invalid);
+        String encoding = text(result, "encoding").orElseThrow(RemotePkiOperationTransport::invalid);
+        String digest = text(result, "resultSha256").orElseThrow(RemotePkiOperationTransport::invalid);
+        for (String optionalId : Set.of("credentialId", "statusObjectId")) {
+            text(result, optionalId).ifPresent(value -> { if (value.isBlank()) { throw invalid(); } });
         }
-        return new PkiRemoteResult.Pending(operation, identifier.orElseThrow());
+        if (!Set.of("CA", "ISSUANCE", "STATUS").contains(kind)
+                || !Set.of("DER", "PEM", "BINARY").contains(encoding) || !digest.matches("[0-9a-f]{64}")) { throw invalid(); }
     }
 
-    private static PkiRemoteResult approvalResult(String operation,
-            Optional<PkiRemoteEnvelope.ResponseEnvelope> envelope) {
-        Optional<String> commitment = envelope.flatMap(PkiRemoteEnvelope.ResponseEnvelope::result)
-                .flatMap(object -> text(object, "operationCommitment"));
-        if (commitment.isPresent()) {
-            return new PkiRemoteResult.ApprovalRequired(operation, commitment.orElseThrow());
-        }
-        return new PkiRemoteResult.Failed(operation, "POLICY_REJECTION", "REMOTE_APPROVAL_REQUIRED", false, false);
-    }
-
-    private static PkiOperationValue.ObjectValue resultOf(
-            Optional<PkiRemoteEnvelope.ResponseEnvelope> envelope) {
-        return envelope.flatMap(PkiRemoteEnvelope.ResponseEnvelope::result)
-                .orElseGet(() -> new PkiOperationValue.ObjectValue(new LinkedHashMap<>()));
-    }
-
-    private static Optional<String> text(PkiOperationValue.ObjectValue object, String name) {
-        PkiOperationValue value = object.fields().get(name);
-        return value instanceof PkiOperationValue.Text textValue ? Optional.of(textValue.value())
-                : Optional.empty();
-    }
-
-    // A remote error body is untrusted and optional; every decoder runtime failure means "no envelope".
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    private static Optional<PkiRemoteEnvelope.ResponseEnvelope> tryDecode(byte[] body) {
-        if (body == null || body.length == 0) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(PkiRemoteEnvelope.decodeResponse(body));
-        } catch (RuntimeException failure) {
-            return Optional.empty();
+    /* default */ static void requireIdentifier(String identifier) {
+        if (identifier == null || identifier.isBlank() || identifier.length() > 512 || identifier.contains("/")) {
+            throw invalid();
         }
     }
 
-    // The CLI boundary intentionally replaces provider exception graphs with stable non-sensitive codes.
-    @SuppressWarnings("PMD.PreserveStackTrace")
-    private PkiHttpExchange.Response send(PkiHttpExchange.Request request) throws PkiRemoteTransportException {
-        try {
-            return exchange.send(request);
-        } catch (SSLException tls) {
-            throw new PkiRemoteTransportException(PkiExitCodes.CONFIGURATION_FAILURE, "CONFIGURATION_FAILURE",
-                    "REMOTE_TLS_HANDSHAKE_FAILED");
-        } catch (IOException network) {
-            throw new PkiRemoteTransportException(PkiExitCodes.RESOURCE_FAILURE, "RESOURCE_FAILURE",
-                    "REMOTE_CONNECTION_FAILED");
-        }
+    private static Optional<String> text(PkiOperationValue.ObjectValue object, String field) {
+        PkiOperationValue value = object.fields().get(field);
+        if (value == null) { return Optional.empty(); }
+        if (!(value instanceof PkiOperationValue.Text text)) { throw invalid(); }
+        return Optional.of(text.value());
     }
 
-    private static String lastSegment(String path) {
-        String trimmed = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
-        int slash = trimmed.lastIndexOf('/');
-        return slash < 0 ? trimmed : trimmed.substring(slash + 1);
+    private static PkiRemoteResult.Pending pending(String operation, String identifier) {
+        return new PkiRemoteResult.Pending(operation, identifier, Optional.empty());
     }
 
-    private static String encodeSegment(String segment) {
-        return URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20");
+    private static PkiRemoteResult.Pending interrupted(PkiRemoteResult.Pending pending) {
+        return observationFailure(pending, "CANCELLED", "REMOTE_OBSERVATION_INTERRUPTED", 130);
+    }
+
+    private static PkiRemoteResult.Pending observationFailure(PkiRemoteResult.Pending pending,
+            String classification, String code, int exit) {
+        return new PkiRemoteResult.Pending(pending.operation(), pending.operationId(), Optional.of(
+                new PkiRemoteResult.ObservationFailure(classification, code, exit)));
+    }
+
+    // Standalone execution checks or restores interruption; it neither creates threads nor runs in a J2EE container.
+    @SuppressWarnings({ "PMD.DoNotUseThreads" })
+    private static boolean cancelled(CancellationSignal cancellation) {
+        return Thread.currentThread().isInterrupted() || cancellation.isCancelled();
+    }
+
+    private static IllegalArgumentException invalid() {
+        return new IllegalArgumentException("Invalid remote protocol");
+    }
+
+    private static String segment(String value) {
+        String encoded = URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+        return ".".equals(value) || "..".equals(value) ? encoded.replace(".", "%2E") : encoded;
     }
 }

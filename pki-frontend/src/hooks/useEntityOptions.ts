@@ -33,54 +33,94 @@
  ******************************************************************************/
 
 import { useQuery } from '@tanstack/react-query';
-import { executeOperation } from '@/api/operations';
+import { executeOperation, type FieldValue } from '@/api/operations';
 import { operationSpec } from '@/api/operationCatalog';
-import { refSource } from '@/api/entityRefs';
+import { contextValue, refSource, resultAt, type RefSource, type SelectionContext } from '@/api/entityRefs';
+import { displayLabel } from '@/api/labels';
 
 export interface EntityOption {
   readonly id: string;
   readonly label: string;
+  readonly description: string;
+  readonly record: Readonly<Record<string, unknown>>;
 }
-
 export interface EntityOptions {
-  readonly ids: readonly string[];
-  readonly labels: ReadonlyMap<string, string>;
+  readonly items: readonly EntityOption[];
+  readonly next?: string | number;
 }
 
-const EMPTY: EntityOptions = { ids: [], labels: new Map() };
+function readable(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return '';
+  return typeof value === 'string' && /^[A-Z_]+$/.test(value) ? displayLabel(value) : String(value);
+}
 
-/**
- * Loads candidate identifiers for a reference field by running the entity's list
- * operation. Fetches lazily (when the picker is opened) and tolerates a denied
- * or missing list operation by returning no suggestions — the field then behaves
- * as a plain free-entry search box. The server remains authoritative.
- */
-export function useEntityOptions(ref: string | undefined, enabled: boolean) {
-  const source = refSource(ref);
-  return useQuery<EntityOptions>({
-    queryKey: ['entityOptions', ref],
-    enabled: enabled && !!source,
-    staleTime: 60_000,
-    queryFn: async () => {
-      if (!source) return EMPTY;
-      const spec = operationSpec(source.operationId);
-      if (!spec) return EMPTY;
-      const outcome = await executeOperation(spec, source.args as Record<string, never>);
-      if (outcome.kind !== 'succeeded') return EMPTY;
-      const rows = (outcome.envelope.result?.[source.resultKey] as Record<string, unknown>[] | undefined) ?? [];
-      const labels = new Map<string, string>();
-      const ids: string[] = [];
-      for (const row of rows) {
-        const id = row[source.idKey];
-        if (typeof id !== 'string') continue;
-        ids.push(id);
-        const label = source.labelKeys
-          .map((k) => row[k])
-          .filter((v) => v !== undefined && v !== null && v !== '')
-          .join(' · ');
-        if (label) labels.set(id, label);
-      }
-      return { ids, labels };
-    },
+/** Search authorized pages incrementally, keeping at most one page and no cursor history. */
+export async function loadEntityOptions(source: RefSource, context: SelectionContext, search = '', after?: string | number, signal?: AbortSignal): Promise<EntityOptions> {
+  const spec = operationSpec(source.operationId);
+  if (!spec) throw new Error('This selection source is unavailable.');
+  const values: Record<string, FieldValue> = { ...source.args };
+  for (const [argument, input] of Object.entries(source.inputs ?? {})) {
+    const value = contextValue(context, input);
+    if (value === undefined || value === '') throw new Error(`Choose ${input === '$authority' ? 'an authority' : input === '$issuer' ? 'an issuer generation' : displayLabel(input)} first.`);
+    values[argument] = value;
+  }
+  for (const input of Object.values(source.filterBy ?? {})) {
+    if (!contextValue(context, input)) throw new Error(`Choose ${displayLabel(input)} first.`);
+  }
+  let cursor = after;
+  do {
+    if (signal?.aborted) throw new Error('Selection cancelled.');
+    if (source.paging === 'cursor') values['after'] = typeof cursor === 'string' ? cursor : undefined;
+    if (source.paging === 'offset') values['offset'] = typeof cursor === 'number' ? cursor : 0;
+    const outcome = await executeOperation(spec, values, { signal });
+    if (outcome.kind !== 'succeeded') throw new Error(outcome.envelope.failure?.messageKey ?? 'Selection is unavailable.');
+    const result = outcome.envelope.result;
+    const rows = resultAt(result, source.resultKey);
+    if (!Array.isArray(rows)) throw new Error('The server returned an invalid selection list.');
+    const page = (source.pagePath ? resultAt(result, source.pagePath) : result) as Record<string, unknown> | null;
+    let next: string | number | undefined;
+    if (source.paging === 'cursor' && page?.['truncated'] === true) {
+      const token = page['nextCursor'];
+      if (typeof token !== 'string' || !token || (typeof cursor === 'string' && token <= cursor)) throw new Error('The server returned an invalid continuation.');
+      next = token;
+    } else if (source.paging === 'offset' && page?.['hasMore'] === true) {
+      const offset = page['nextOffset'];
+      if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset <= Number(cursor ?? 0)) throw new Error('The server returned an invalid continuation.');
+      next = offset;
+    }
+    const items = new Map<string, EntityOption>();
+    for (const candidate of rows) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error('The server returned an invalid selection item.');
+      const row = candidate as Record<string, unknown>;
+      if (Object.entries(source.filterBy ?? {}).some(([key, input]) => row[key] !== contextValue(context, input))) continue;
+      const identity = row[source.idKey];
+      if (typeof identity !== 'string' && typeof identity !== 'number') throw new Error('A selection item has no identity.');
+      const id = String(identity);
+      const details = source.labelKeys.map((key) => readable(row[key])).filter(Boolean);
+      const label = typeof row['displayName'] === 'string' && row['displayName'] ? row['displayName']
+        : typeof row['alias'] === 'string' && row['alias'] ? row['alias']
+        : `${displayLabel(source.label)}${details.length ? ` · ${details.join(' · ')}` : ''}`;
+      const description = id;
+      if (`${label} ${id}`.toLowerCase().includes(search.trim().toLowerCase())) items.set(id, { id, label, description, record: row });
+    }
+    if (items.size > 0 || next === undefined) return { items: [...items.values()], next };
+    // Empty filtered pages can still have a continuation, especially with scoped control lists.
+    cursor = next;
+  } while (cursor !== undefined);
+  return { items: [] };
+}
+
+export function useEntityOptions(ref: string | undefined, enabled: boolean, context: SelectionContext = {}, search = '', after?: string | number) {
+  const source = refSource(ref, context);
+  const missing = source && [...Object.values(source.inputs ?? {}), ...Object.values(source.filterBy ?? {})]
+    .find((name) => { const value = contextValue(context, name); return value === undefined || value === ''; });
+  const query = useQuery<EntityOptions>({
+    queryKey: ['entityOptions', ref, context, search, after],
+    enabled: enabled && !!source && !missing,
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+    queryFn: ({ signal }) => loadEntityOptions(source!, context, search, after, signal),
   });
+  return { ...query, prerequisite: missing ? `Choose ${missing === '$authority' ? 'an authority' : missing === '$issuer' ? 'an issuer generation' : displayLabel(missing)} first.` : undefined };
 }

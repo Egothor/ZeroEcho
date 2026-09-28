@@ -69,3 +69,44 @@ jar {
 javadoc {
     options.links("https://www.egothor.org/javadoc/zeroecho/lib")
 }
+
+// Deployment-only profile seeding entry point, outside the public CLI catalog.
+// Reuse the application plugin's runtime classpath and script generator.
+def profileBootstrapScripts = tasks.register('profileBootstrapScripts', CreateStartScripts) {
+    applicationName = 'zeroecho-pki-profile-bootstrap'
+    mainClass = 'zeroecho.pki.cli.PkiProfileBootstrap'
+    outputDir = layout.buildDirectory.dir('profile-bootstrap-scripts').get().asFile
+    classpath = tasks.named('startScripts').get().classpath
+}
+distributions {
+    main {
+        contents {
+            from(profileBootstrapScripts) {
+                into 'bin'
+                filePermissions { unix('rwxr-xr-x') }
+            }
+        }
+    }
+}
+
+// Test-only local recovery and performance gates; ordinary unit tests remain independent of installed processes.
+tasks.named('test') {
+    useJUnitPlatform { excludeTags 'packaged-local-recovery', 'local-performance' }
+}
+
+['packagedLocalRecoveryTest': 'packaged-local-recovery', 'localPerformanceTest': 'local-performance'].each { taskName, tag ->
+    tasks.register(taskName, Test) {
+        group = 'verification'
+        description = tag == 'local-performance'
+                ? 'Records informational local/reactive signing and packaged startup samples without performance thresholds.'
+                : 'Verifies process-interrupted local signing recovery through the installed public CLI.'
+        dependsOn tasks.named('testClasses'), tasks.named('installDist')
+        testClassesDirs = sourceSets.test.output.classesDirs
+        classpath = sourceSets.test.runtimeClasspath
+        useJUnitPlatform { includeTags tag }
+        systemProperty 'pki.validation.executable', layout.buildDirectory.file('install/app/bin/app').get().asFile.absolutePath
+        systemProperty 'pki.validation.output', rootProject.layout.buildDirectory.dir("pki-validation/${tag}").get().asFile.absolutePath
+        maxParallelForks = 1
+        outputs.upToDateWhen { false }
+    }
+}

@@ -56,6 +56,7 @@ node {
     // Pinned toolchain — reproducible builds, no reliance on a host Node.
     version = '22.11.0'
     npmVersion = '10.9.0'
+    npmInstallCommand = 'ci'
     download = true
     // Keep the downloaded toolchain and node_modules inside the module.
     workDir = file("${projectDir}/.gradle/nodejs")
@@ -66,7 +67,6 @@ node {
 // Reproducible, lockfile-exact install (fails if package-lock.json is stale).
 tasks.named('npmInstall') {
     // Use `npm ci` semantics: exact, from the committed lockfile.
-    args = ['ci']
     inputs.file('package.json')
     inputs.file('package-lock.json')
     outputs.dir('node_modules')
@@ -104,11 +104,12 @@ def npmBuild = tasks.register('npmBuild', com.github.gradle.node.npm.task.NpmTas
     inputs.file('tsconfig.json')
     inputs.file('package.json')
     inputs.file('package-lock.json')
+    inputs.file(rootProject.file('LICENSE-binary.txt'))
     outputs.dir("${projectDir}/dist")
 }
 
-// The Playwright browser-to-server e2e suite is opt-in (needs a running server
-// + provisioned mTLS material); do not run it in the default build.
+// The opt-in demo browser suite uses the built SPA and Vite preview by default.
+// The real backend fixture is the separate :pki-server:frontendIntegrationTest task.
 def npmE2e = tasks.register('npmE2e', com.github.gradle.node.npm.task.NpmTask) {
     dependsOn npmBuild
     args = ['run', 'test:e2e']

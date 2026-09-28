@@ -57,7 +57,7 @@ import zeroecho.core.spec.AlgorithmSuite;
 import zeroecho.core.spi.AlgorithmExecutionCapabilities;
 import zeroecho.core.spi.AlgorithmExecutionCapability;
 import zeroecho.pki.api.status.StatusObject;
-import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
 
 /**
@@ -418,7 +418,7 @@ public final class X509AuthoritySnapshot {
      *                                  SIGN plan
      */
     public X509SignedObjectCompletion completeStatusObject(StatusObject statusObject,
-            X509ExecutionPlan<SignatureWorkflow> signingPlan) {
+            X509ExecutionPlan<SigningProvider> signingPlan) {
         Objects.requireNonNull(statusObject, "statusObject");
         authorize(signingPlan, signingPlan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
         return new X509SignedObjectCompletion(statusObject, signingPlan, provenanceToken);
@@ -436,7 +436,7 @@ public final class X509AuthoritySnapshot {
         if (!completion.isOwnedBy(provenanceToken)) {
             throw new IllegalArgumentException("X.509 status completion authority mismatch");
         }
-        X509ExecutionPlan<SignatureWorkflow> plan = completion.signingPlan();
+        X509ExecutionPlan<SigningProvider> plan = completion.signingPlan();
         authorize(plan, plan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
         return completion.statusObject();
     }
@@ -450,7 +450,7 @@ public final class X509AuthoritySnapshot {
      * @throws IllegalArgumentException if the completion belongs to another live
      *                                  runtime
      */
-    public X509ExecutionPlan<SignatureWorkflow> requireStatusSigningPlan(X509SignedObjectCompletion completion) {
+    public X509ExecutionPlan<SigningProvider> requireStatusSigningPlan(X509SignedObjectCompletion completion) {
         requireStatusCompletion(completion);
         return completion.signingPlan();
     }

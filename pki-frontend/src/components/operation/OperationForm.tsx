@@ -34,6 +34,7 @@
 
 import { useMemo, useState } from 'react';
 import {
+  Alert,
   Accordion,
   AccordionDetails,
   AccordionSummary,
@@ -46,11 +47,17 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import type { OperationSpec } from '@/api/operationSchema';
-import type { ExecuteExtras, FieldValue } from '@/api/operations';
+import { buildRequest, type ExecuteExtras, type FieldValue } from '@/api/operations';
+import { changeFormValue, selectionFields, selectionContextKey, hasValue } from '@/api/formSelections';
+import { displayLabel } from '@/api/labels';
+import { operationSpec } from '@/api/operationCatalog';
+import { useDerivedValues } from '@/hooks/useDerivedValues';
 import { OperationField } from '@/components/operation/OperationField';
 
 interface Props {
   readonly spec: OperationSpec;
+  readonly embedded?: boolean;
+  readonly onEdited?: () => void;
   readonly busy?: boolean;
   readonly initialApprovalId?: string;
   /** Pre-filled field values (e.g. the id of the row an action was invoked from). */
@@ -59,7 +66,7 @@ interface Props {
 }
 
 function initialValues(spec: OperationSpec, prefill?: Partial<Record<string, FieldValue>>): Record<string, FieldValue> {
-  const v: Record<string, FieldValue> = {};
+  const v: Record<string, FieldValue> = { __objectKind: 'credential', __validityMode: 'PROFILE_MAXIMUM' };
   for (const f of spec.fields) {
     if (f.type === 'boolean') v[f.name] = false;
     else if (f.type === 'enumSet' || f.type === 'stringSet') v[f.name] = [];
@@ -75,12 +82,14 @@ function initialValues(spec: OperationSpec, prefill?: Partial<Record<string, Fie
 }
 
 /** Renders a typed, validated form for one operation and submits its values. */
-export function OperationForm({ spec, busy, initialApprovalId, initialValues: prefill, onSubmit }: Props) {
-  const [values, setValues] = useState<Record<string, FieldValue>>(() => initialValues(spec, prefill));
+export function OperationForm({ spec, embedded, onEdited, busy, initialApprovalId, initialValues: prefill, onSubmit }: Props) {
+  const [enteredValues, setValues] = useState<Record<string, FieldValue>>(() => initialValues(spec, prefill));
   const [approvalId, setApprovalId] = useState(initialApprovalId ?? '');
   const [deadline, setDeadline] = useState('');
 
-  const set = (name: string, value: FieldValue) => setValues((prev) => ({ ...prev, [name]: value }));
+  const derived = useDerivedValues(spec, enteredValues);
+  const values = { ...enteredValues, ...derived.values };
+  const set = (name: string, value: FieldValue) => { onEdited?.(); setValues((prev) => changeFormValue(spec, prev, name, value)); };
 
   const needsAuthorityInput = spec.scope === 'authority' && !spec.authorityFrom;
 
@@ -91,36 +100,54 @@ export function OperationForm({ spec, busy, initialApprovalId, initialValues: pr
     onSubmit(values, extra);
   };
 
+  const target = spec.id === 'security.approval.request' ? operationSpec(String(values.targetOperation ?? '')) : undefined;
+  const contextFields = selectionFields(spec, values);
+  const validityError = spec.id === 'acme.directory.register' && values.__validityMode === 'CUSTOM' && !derived.loading
+    && (!Number.isSafeInteger(Number(values.maximumValidityMillis)) || Number(values.maximumValidityMillis) <= 0
+      || Number(values.maximumValidityMillis) > Number(values.__profileMaximumValidityMillis));
+  const ready = spec.fields.filter((f) => f.required && !f.hidden).every((f) => hasValue(values[f.name]))
+    && contextFields.filter((f) => f.required).every((f) => hasValue(values[f.name]))
+    && (!needsAuthorityInput || hasValue(values['__authorityId']));
+
   const hasFields = spec.fields.length > 0 || needsAuthorityInput;
   const authorityHint = useMemo(
-    () => (spec.authorityFrom ? `Authority is taken from “${spec.authorityFrom}”.` : undefined),
+    () => (spec.authorityFrom ? `Authority is taken from “${displayLabel(spec.authorityFrom)}”.` : undefined),
     [spec.authorityFrom],
   );
 
   return (
-    <Box component="form" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+    <Box component={embedded ? 'div' : 'form'} onSubmit={(e: React.FormEvent) => { e.preventDefault(); submit(); }}>
       <Stack spacing={2}>
+        {validityError && <Alert severity="error">Choose a positive validity no greater than {String(values.__profileMaximumValidityMillis ?? 'the profile maximum')} milliseconds.</Alert>}
+        {derived.error && <Alert severity="error">{derived.error.message}</Alert>}
+        {derived.loading && <Alert severity="info">Reading selected record…</Alert>}
         {needsAuthorityInput && (
-          <TextField
-            fullWidth
-            size="small"
-            required
-            label="Authority id"
-            value={(values['__authorityId'] as string) ?? ''}
-            onChange={(e) => set('__authorityId', e.target.value)}
-            helperText="This authority-scoped operation requires the owning authority id."
+          <OperationField
+            field={{ name: '__authorityId', type: 'pkiId', required: true, label: 'Authority', ref: 'authority' }}
+            value={values['__authorityId']} context={values} disabled={busy}
+            onChange={(value) => set('__authorityId', value)}
           />
         )}
 
-        {spec.fields.map((field) => (
+        {[...contextFields, ...spec.fields.filter((field) => !field.hidden && !(spec.id === 'security.approval.request' && ['targetArguments', 'targetAuthorityId'].includes(field.name)))].map((field) => (
           <OperationField
-            key={field.name}
-            field={field}
+            key={`${field.name}:${selectionContextKey(field, values)}`}
+            field={field.name === 'maximumValidityMillis' && spec.id === 'acme.directory.register' ? { ...field, readOnly: values.__validityMode !== 'CUSTOM', help: `Profile / ACME upper bound: ${String(values.__profileMaximumValidityMillis ?? 'loading')} milliseconds.` } : field}
+            context={values}
             value={values[field.name]}
             onChange={(v) => set(field.name, v)}
             disabled={busy}
           />
         ))}
+
+        {target && target.id !== 'security.approval.request' && <Box sx={{ borderLeft: 2, borderColor: 'divider', pl: 2 }}>
+          <Typography variant="subtitle2">Prepare {target.title}</Typography>
+          <OperationForm key={target.id} spec={target} embedded busy={busy} onEdited={() => setValues((prev) => ({ ...prev, targetArguments: '', targetAuthorityId: '' }))} onSubmit={(targetValues) => {
+            const { request } = buildRequest(target, targetValues);
+            setValues((prev) => ({ ...prev, targetArguments: JSON.stringify(request.arguments), targetAuthorityId: request.authorityId ?? '' }));
+          }} />
+          {values.targetArguments && <Alert severity="success">Target arguments prepared. You can now request approval.</Alert>}
+        </Box>}
 
         {authorityHint && (
           <Typography variant="caption" color="text.secondary">
@@ -142,14 +169,9 @@ export function OperationForm({ spec, busy, initialApprovalId, initialValues: pr
           </AccordionSummary>
           <AccordionDetails sx={{ px: 0 }}>
             <Stack spacing={2}>
-              <TextField
-                fullWidth
-                size="small"
-                label="Approval id (optional)"
-                value={approvalId}
-                onChange={(e) => setApprovalId(e.target.value)}
-                helperText="Supply for a previously approved HIGH_RISK operation."
-                disabled={busy}
+              <OperationField
+                field={{ name: 'approvalId', type: 'text', required: false, ref: 'approval', label: 'Approval' }}
+                value={approvalId} onChange={(value) => setApprovalId(String(value ?? ''))} disabled={busy}
               />
               <TextField
                 fullWidth
@@ -166,8 +188,8 @@ export function OperationForm({ spec, busy, initialApprovalId, initialValues: pr
         </Accordion>
 
         <Box>
-          <Button type="submit" variant="contained" startIcon={<PlayArrowIcon />} disabled={busy}>
-            {busy ? 'Running…' : 'Run operation'}
+          <Button type={embedded ? 'button' : 'submit'} onClick={embedded ? submit : undefined} variant="contained" startIcon={<PlayArrowIcon />} disabled={busy || !ready || derived.loading || !!derived.error || validityError}>
+            {busy ? 'Running…' : embedded ? 'Use these arguments' : 'Run operation'}
           </Button>
         </Box>
       </Stack>

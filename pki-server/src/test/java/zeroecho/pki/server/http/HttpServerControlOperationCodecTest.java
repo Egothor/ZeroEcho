@@ -57,6 +57,32 @@ class HttpServerControlOperationCodecTest {
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
     @Test
+    void selectionControlQueriesUseBoundedRealmInputAndExactPermissionDescriptors() {
+        HttpOperationCodec.Decoded configuration = decode(ServerControlOperation.ConfigurationChoices.NAME,
+                "{\"version\":1,\"arguments\":{\"limit\":10,\"after\":\"local:key.prv\"}}");
+        assertInstanceOf(ServerControlOperation.ConfigurationChoices.class,
+                ((zeroecho.pki.server.AdministrativeOperation.Control) configuration.operation()).operation());
+        HttpOperationCodec.Decoded capability = decode(ServerControlOperation.ListCapabilities.NAME,
+                "{\"version\":1,\"arguments\":{\"objectId\":\"credential-a\",\"limit\":10,\"after\":\"cap-a\"}}");
+        assertInstanceOf(ServerControlOperation.ListCapabilities.class,
+                ((zeroecho.pki.server.AdministrativeOperation.Control) capability.operation()).operation());
+        assertEquals(zeroecho.pki.server.Permission.Action.SERVER_CONFIGURATION_READ,
+                DESCRIPTORS.require(ServerControlOperation.ConfigurationChoices.NAME).action());
+        assertEquals(zeroecho.pki.server.Permission.Action.DISCLOSURE_READ,
+                DESCRIPTORS.require(ServerControlOperation.ListCapabilities.NAME).action());
+        for (int limit : new int[] {0, 1001}) {
+            assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.ConfigurationChoices.NAME,
+                    "{\"version\":1,\"arguments\":{\"limit\":" + limit + "}}"));
+        }
+        assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.ConfigurationChoices.NAME,
+                "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"limit\":1}}"));
+        assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.ListCapabilities.NAME,
+                "{\"version\":1,\"arguments\":{\"objectId\":\"credential-a\",\"limit\":1,\"after\":\"bad cursor\"}}"));
+        assertThrows(IllegalArgumentException.class, () -> decode(ServerControlOperation.ConfigurationChoices.NAME,
+                "{\"version\":1,\"arguments\":{\"limit\":1,\"providerOptions\":{}}}"));
+    }
+
+    @Test
     void decodesPrincipalRegistrationIntoClosedControlType() {
         System.out.println("decodesPrincipalRegistrationIntoClosedControlType");
         String json = "{\"version\":1,\"arguments\":{\"principalId\":\"operator-a\","

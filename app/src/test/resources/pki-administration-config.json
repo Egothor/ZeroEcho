@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 1,
   "store": {
     "provider": "fs",
     "properties": {
@@ -20,5 +20,8 @@
         "targetId": "local-artifacts"
       }
     }
-  ]
+  ],
+  "mode": "local",
+  "operatorId": "packaged-cli-operator",
+  "bindingProviders": []
 }

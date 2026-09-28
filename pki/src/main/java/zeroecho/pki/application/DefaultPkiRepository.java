@@ -33,6 +33,7 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;
@@ -41,14 +42,15 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.math.BigInteger;
 
-import java.security.cert.X509CRL;
 import java.security.cert.X509Certificate;
 
 import zeroecho.pkix.Pkix;
 
 import zeroecho.core.io.RepeatableContent;
+import zeroecho.core.io.CancellationSignal;
 import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.ca.CaRecord;
@@ -57,6 +59,7 @@ import zeroecho.pki.api.ca.IssuerGeneration;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
+import zeroecho.pki.impl.framework.x509.StreamingDerReader;
 import zeroecho.pki.impl.framework.x509.bc.BcX509CredentialFramework;
 import zeroecho.pki.spi.store.PkiStore;
 
@@ -176,15 +179,41 @@ final class DefaultPkiRepository implements PkiRepository {
 
     private static void validateCrl(RepeatableContent content, long expectedLength, String expectedDigest)
             throws IOException {
-        byte[] bytes;
-        try (InputStream input = content.openStream()) {
-            bytes = input.readAllBytes();
+        try (RepeatableContent inspection = new RepeatableContent() {
+            @Override public InputStream openStream() throws IOException {
+                return new BufferedInputStream(content.openStream(), 16 * 1024);
+            }
+            @Override public OptionalLong length() { return content.length(); }
+            @Override public String contentId() { return content.contentId(); }
+            @Override public void close() {
+                // Inspection owns its readers; the repository retains source ownership.
+            }
+        }) {
+            new StreamingDerReader().inspectSignedObject(inspection, StreamingDerReader.SignedObjectKind.CRL,
+                    CancellationSignal.NONE);
         }
+        MessageDigest digest;
         try {
-            X509CRL crl = Pkix.parseCrl(bytes);
-            requireCanonical(crl.getEncoded(), expectedLength, expectedDigest, "CRL");
-        } catch (IllegalArgumentException | java.security.cert.CRLException failure) {
-            throw new IOException("Repository CRL is not canonical DER", failure);
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+        // A separate full pass binds the structurally validated, immutable bytes to
+        // the durable reference without relying on a store-specific stream wrapper.
+        long length = 0L;
+        byte[] buffer = new byte[16 * 1024];
+        try (InputStream input = content.openStream()) {
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                if (read > expectedLength - length) {
+                    throw new IOException("Repository CRL content length mismatch");
+                }
+                length += read;
+                digest.update(buffer, 0, read);
+            }
+        }
+        if (length != expectedLength || !HexFormat.of().formatHex(digest.digest()).equals(expectedDigest)) {
+            throw new IOException("Repository CRL content integrity mismatch");
         }
     }
 

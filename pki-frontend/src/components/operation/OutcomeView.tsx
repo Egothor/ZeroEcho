@@ -41,12 +41,13 @@ const ResultView = lazy(() => import('@/components/ResultView').then((m) => ({ d
 
 interface Props {
   readonly outcome: ExecuteOutcome;
+  readonly onCheckStatus?: () => void;
+  readonly checkingStatus?: boolean;
   /** Invoked when the operator chooses to create an approval for a HIGH_RISK operation. */
-  readonly onRequestApproval?: (operationCommitment: string) => void;
 }
 
 /** Renders the terminal (or pending) outcome of an operation execution. */
-export function OutcomeView({ outcome, onRequestApproval }: Props) {
+export function OutcomeView({ outcome, onCheckStatus, checkingStatus }: Props) {
   switch (outcome.kind) {
     case 'succeeded':
       return (
@@ -81,13 +82,7 @@ export function OutcomeView({ outcome, onRequestApproval }: Props) {
       return (
         <Alert
           severity="warning"
-          action={
-            onRequestApproval && (
-              <Button color="inherit" size="small" onClick={() => onRequestApproval(outcome.operationCommitment)}>
-                Create approval
-              </Button>
-            )
-          }
+
         >
           <AlertTitle>Approval required</AlertTitle>
           <Typography variant="body2" sx={{ mb: 1 }}>
@@ -107,9 +102,20 @@ export function OutcomeView({ outcome, onRequestApproval }: Props) {
         <Alert severity="info">
           <AlertTitle>Pending</AlertTitle>
           <Typography variant="body2">
-            The operation is still pending after the wait budget (a remote signer has not returned yet). It can be
-            resumed later
-            {outcome.signingOperationId ? ` via signing operation ${outcome.signingOperationId}.` : '.'}
+            The server accepted this operation. Signing or publication is still in progress.
+            Ending this local wait does not cancel the operation.
+          </Typography>
+          <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
+            Operation: {outcome.operationId}
+          </Typography>
+          {outcome.pollingError && <Typography variant="body2">{outcome.pollingError}</Typography>}
+          {onCheckStatus && (
+            <Button onClick={onCheckStatus} disabled={checkingStatus} color="inherit" size="small">
+              {checkingStatus ? 'Checking…' : 'Check status'}
+            </Button>
+          )}
+          <Typography variant="caption">
+            Check this operation before submitting another request.
           </Typography>
         </Alert>
       );

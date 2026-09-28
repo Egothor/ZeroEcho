@@ -65,8 +65,7 @@
  * normalization,</li>
  * <li>algorithm identifier mapping between ASN.1 OIDs and ZeroEcho canonical
  * algorithm identifiers,</li>
- * <li>bridging of Bouncy Castle signing interfaces to the PKI signing
- * orchestration boundary.</li>
+ * <li>verification of Bouncy Castle request and signed-object structures.</li>
  * </ul>
  *
  * <h2>Architectural boundaries</h2>
@@ -77,10 +76,9 @@
  * {@code zeroecho.pki.spi.framework}.</li>
  * <li>Persistent state and higher-level PKI lifecycle orchestration remain
  * outside this package.</li>
- * <li>Private key operations are not performed directly here; signing is
- * delegated through PKI signing boundaries such as
- * {@link zeroecho.pki.impl.core.async.PkiSigningBus} and
- * {@link zeroecho.pki.spi.crypto.SignatureWorkflow}.</li>
+ * <li>P1a session composition performs no private-key or signing operation in
+ * this package. Provider execution is exposed through
+ * {@link zeroecho.pki.spi.crypto.SigningProvider} for later reactor composition.</li>
  * </ul>
  *
  * <h2>Wiring model</h2>

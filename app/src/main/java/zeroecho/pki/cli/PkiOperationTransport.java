@@ -34,7 +34,6 @@
 package zeroecho.pki.cli;
 
 import zeroecho.core.io.CancellationSignal;
-import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationOutcome;
 
 /**
@@ -67,7 +66,7 @@ interface PkiOperationTransport extends AutoCloseable {
      * @param cancellation cooperative cancellation signal
      * @return completed, pending, or safely-classified failure outcome
      */
-    PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation);
+    PkiLocalResult execute(PkiLocalCommand operation, CancellationSignal cancellation);
 
     /**
      * Releases any transport-owned resources. The default releases nothing so a

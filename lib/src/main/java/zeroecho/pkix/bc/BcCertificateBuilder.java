@@ -50,10 +50,17 @@ import java.util.Set;
 import javax.security.auth.x500.X500Principal;
 
 import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.ASN1Encoding;
+import org.bouncycastle.asn1.ASN1Integer;
+import org.bouncycastle.asn1.x509.ExtensionsGenerator;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import org.bouncycastle.asn1.x509.Time;
+import org.bouncycastle.asn1.x509.V3TBSCertificateGenerator;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 
 import zeroecho.pkix.BasicConstraints;
+import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pkix.CertificateExtension;
 import zeroecho.pkix.ExtendedKeyUsage;
 import zeroecho.pkix.GeneralName;
@@ -61,7 +68,7 @@ import zeroecho.pkix.KeyUsage;
 import zeroecho.pkix.cert.CertificateBuilder;
 import zeroecho.pkix.sign.ContentSigner;
 
-/** BouncyCastle-backed {@link CertificateBuilder} yielding a JDK certificate. */
+/** BouncyCastle-backed builder for canonical unsigned bodies and JDK certificates. */
 final class BcCertificateBuilder implements CertificateBuilder {
 
     private BigInteger serialNumber;
@@ -151,6 +158,45 @@ final class BcCertificateBuilder implements CertificateBuilder {
     public CertificateBuilder addExtension(CertificateExtension extension) {
         extensions.add(BcExtensions.generic(extension));
         return this;
+    }
+
+    @Override
+    public byte[] buildTbs(AlgorithmIdentifier signatureAlgorithm) {
+        Objects.requireNonNull(signatureAlgorithm, "signatureAlgorithm");
+        Objects.requireNonNull(serialNumber, "serialNumber");
+        Objects.requireNonNull(subject, "subject");
+        Objects.requireNonNull(issuer, "issuer");
+        Objects.requireNonNull(notBefore, "notBefore");
+        Objects.requireNonNull(notAfter, "notAfter");
+        if (serialNumber.signum() <= 0 || !notAfter.isAfter(notBefore)) {
+            throw new IllegalArgumentException("Certificate serial and validity must be positive");
+        }
+        SubjectPublicKeyInfo spki = publicKeyInfoDer != null
+                ? SubjectPublicKeyInfo.getInstance(publicKeyInfoDer)
+                : BcExtensions.spki(Objects.requireNonNull(publicKey, "publicKey"));
+        V3TBSCertificateGenerator generator = new V3TBSCertificateGenerator();
+        generator.setSerialNumber(new ASN1Integer(serialNumber));
+        generator.setIssuer(BcExtensions.toX500Name(issuer));
+        generator.setSubject(BcExtensions.toX500Name(subject));
+        generator.setStartDate(new Time(Date.from(notBefore)));
+        generator.setEndDate(new Time(Date.from(notAfter)));
+        generator.setSubjectPublicKeyInfo(spki);
+        generator.setSignature(BcAlgorithmIdentifiers.toBc(signatureAlgorithm));
+        ExtensionsGenerator selectedExtensions = new ExtensionsGenerator();
+        if (addSubjectKeyIdentifier) {
+            selectedExtensions.addExtension(BcExtensions.subjectKeyIdentifier(spki));
+        }
+        for (Extension extension : extensions) {
+            selectedExtensions.addExtension(extension);
+        }
+        if (!selectedExtensions.isEmpty()) {
+            generator.setExtensions(selectedExtensions.generate());
+        }
+        try {
+            return generator.generateTBSCertificate().getEncoded(ASN1Encoding.DER);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Cannot encode certificate body", failure);
+        }
     }
 
     @Override

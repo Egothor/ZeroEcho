@@ -34,6 +34,7 @@
 package zeroecho.pki.impl.fs;
 
 import java.nio.file.Path;
+import java.math.BigInteger;
 import java.util.Objects;
 import java.util.Set;
 import java.util.logging.Level;
@@ -52,9 +53,9 @@ import zeroecho.pki.spi.store.PkiStoreRuntimeDependencies;
  * </p>
  * <ul>
  * <li>{@code root} - store root directory (required)</li>
- * <li>{@code signing-evidence-audit} - {@code true} to record per-signing terminal-outcome
- * (CA key-usage) audit evidence at the cost of an extra durable commit per terminal signing
- * outcome (optional, default {@code false})</li>
+ * <li>{@code initialCrlNumber} - initial number for new CRL scope counters;
+ * canonical unsigned decimal from zero through {@code 2^159 - 1}, default one.
+ * Existing counters are not reset.</li>
  * </ul>
  */
 public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
@@ -74,7 +75,7 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
 
     @Override
     public Set<String> supportedKeys() {
-        return Set.of("root", "signing-evidence-audit");
+        return Set.of("root", "initialCrlNumber");
     }
 
     /**
@@ -101,6 +102,7 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
         PkiStoreProvider.super.validateConfig(config);
         String rootString = config.require("root");
         Path.of(rootString);
+        options(config);
         for (String key : config.properties().keySet()) {
             if (!supportedKeys().contains(key) && LOG.isLoggable(Level.WARNING)) {
                 LOG.warning("Ignoring unknown PKI store configuration key: " + key);
@@ -122,11 +124,20 @@ public final class FilesystemPkiStoreProvider implements PkiStoreProvider {
         String rootString = config.require("root");
         Path root = Path.of(rootString);
 
-        // Signing (CA key-usage) audit evidence is an operator opt-in (default off) because it costs one
-        // additional durable force per terminal signing outcome; enable it with "signing-evidence-audit=true".
-        boolean signingEvidenceAudit = config.get("signing-evidence-audit")
-                .map(value -> Boolean.parseBoolean(value.trim())).orElse(false);
-        FsPkiStoreOptions options = FsPkiStoreOptions.defaults().withSigningEvidenceAudit(signingEvidenceAudit);
-        return new FilesystemPkiStore(root, options, dependencies.clock());
+        return new FilesystemPkiStore(root, options(config), dependencies.clock());
+    }
+
+    /* default */ static FsPkiStoreOptions options(ProviderConfig config) {
+        String value = config.get("initialCrlNumber").orElse("1");
+        if (value.isEmpty() || value.length() > 48 || value.length() > 1 && value.charAt(0) == '0') {
+            throw new IllegalArgumentException("initialCrlNumber must be a canonical unsigned decimal integer");
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char digit = value.charAt(index);
+            if (digit < '0' || digit > '9') {
+                throw new IllegalArgumentException("initialCrlNumber must be a canonical unsigned decimal integer");
+            }
+        }
+        return FsPkiStoreOptions.defaults().withInitialCrlNumber(new BigInteger(value));
     }
 }

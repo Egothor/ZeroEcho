@@ -62,6 +62,13 @@ public interface RevocationSnapshot extends AutoCloseable {
     String snapshotId();
 
     /**
+     * Returns the durable source-store identity captured with this snapshot.
+     * Revisions are comparable only within the same source identity.
+     * @return captured authoritative source-store identity
+     */
+    MetadataStoreId sourceStoreId();
+
+    /**
      * Returns the captured authoritative revision.
      *
      * @return captured authoritative global revision
@@ -137,6 +144,16 @@ public interface RevocationSnapshot extends AutoCloseable {
          * @throws IllegalStateException if the cursor is not positioned on a value
          */
         RevocationRecord current();
+
+        /**
+         * Returns the authoritative global transition revision of the current state.
+         * This is the revision of its exact validated log frame, not the credential-local
+         * revision or cursor ordinal. It is positive and at most the snapshot revision.
+         * @return current state's global revision within the snapshot source store
+         * @throws IllegalStateException if no current value exists, including after
+         *         end of input, a failed advance or closure
+         */
+        long currentGlobalRevision();
 
         /**
          * Returns the zero-based current ordinal.

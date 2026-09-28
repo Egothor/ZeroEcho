@@ -43,6 +43,7 @@ import java.util.Set;
 import javax.security.auth.x500.X500Principal;
 
 import zeroecho.pkix.BasicConstraints;
+import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pkix.CertificateExtension;
 import zeroecho.pkix.ExtendedKeyUsage;
 import zeroecho.pkix.GeneralName;
@@ -50,7 +51,7 @@ import zeroecho.pkix.KeyUsage;
 import zeroecho.pkix.sign.ContentSigner;
 
 /**
- * A fluent builder for a signed X.509 v3 certificate that yields a standard
+ * A fluent builder for an unsigned X.509 v3 certificate body or a signed standard
  * {@link X509Certificate}.
  *
  * <p>
@@ -59,6 +60,8 @@ import zeroecho.pkix.sign.ContentSigner;
  * supplied {@link ContentSigner} — so the private key never enters the builder.
  * Typed setters are provided for the common extensions; arbitrary extensions can
  * be added with {@link #addExtension(CertificateExtension)}.
+ * For deferred signing, {@link #buildTbs(AlgorithmIdentifier)} returns the exact
+ * canonical unsigned body without a signer invocation.
  * </p>
  *
  * <p>
@@ -176,6 +179,22 @@ public interface CertificateBuilder {
      * @return this builder
      */
     CertificateBuilder addExtension(CertificateExtension extension);
+
+    /**
+     * Encodes the configured unsigned X.509 v3 {@code TBSCertificate} as canonical DER.
+     * The supplied identifier is embedded exactly as the certificate signature
+     * algorithm. This method performs no signing and invokes no content signer.
+     *
+     * <p>Required fields and extensions are the same as for {@link #build(ContentSigner)}.
+     * Local time and auxiliary memory are linear in the resulting TBS byte size.</p>
+     *
+     * @param signatureAlgorithm exact signature algorithm and parameter representation
+     * @return newly allocated canonical DER of the unsigned certificate body
+     * @throws NullPointerException if the algorithm or a required field is missing
+     * @throws IllegalArgumentException if fields or extensions cannot form a certificate body
+     * @throws IllegalStateException if DER encoding fails
+     */
+    byte[] buildTbs(AlgorithmIdentifier signatureAlgorithm);
 
     /**
      * Signs the assembled {@code tbsCertificate} with the given signer and returns

@@ -36,7 +36,12 @@ package zeroecho.pki.cli;
 import java.util.Objects;
 
 import zeroecho.core.io.CancellationSignal;
-import zeroecho.pki.application.PkiOperation;
+import java.util.Optional;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
+import zeroecho.pki.application.LocalSigningExecutor;
+import zeroecho.pki.application.LocalSigningResult;
+import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiSession;
 
@@ -62,7 +67,40 @@ final class LocalPkiOperationTransport implements PkiOperationTransport {
     }
 
     @Override
-    public PkiOperationOutcome execute(PkiOperation operation, CancellationSignal cancellation) {
-        return session.operations().execute(operation, cancellation);
+    public PkiLocalResult execute(PkiLocalCommand command, CancellationSignal cancellation) {
+        if (command instanceof PkiLocalCommand.Core core) {
+            PkiOperationOutcome outcome = session.operations().execute(core.operation(), cancellation);
+            return new PkiLocalResult(outcome, outcome instanceof PkiOperationOutcome.Pending pending
+                    ? Optional.of(pending.operationId()) : Optional.empty());
+        }
+        Optional<PkiId> requested = switch (command) {
+            case PkiLocalCommand.Inspect inspect -> Optional.of(inspect.operationId());
+            case PkiLocalCommand.Complete complete -> Optional.of(complete.operationId());
+            default -> Optional.empty();
+        };
+        String name = switch (command) {
+            case PkiLocalCommand.Signing signing -> signing.operation().name();
+            case PkiLocalCommand.Inspect ignored -> PkiLocalCommand.INSPECT;
+            case PkiLocalCommand.Complete ignored -> PkiLocalCommand.COMPLETE;
+            default -> throw new IllegalArgumentException("Unsupported local command");
+        };
+        Optional<LocalSigningExecutor> executor = session.localSigning();
+        if (executor.isEmpty()) {
+            return new PkiLocalResult(new PkiOperationOutcome.Failed(name,
+                    PkiOperationFailure.VALIDATION_FAILURE, "CAPABILITY_NOT_CONFIGURED"), requested);
+        }
+        if (command instanceof PkiLocalCommand.Inspect inspect) {
+            return new PkiLocalResult(executor.orElseThrow().inspect(inspect.operationId(), cancellation), requested);
+        }
+        LocalSigningResult result = command instanceof PkiLocalCommand.Signing signing
+                ? executor.orElseThrow().execute(signing.operation(), cancellation)
+                : executor.orElseThrow().complete(((PkiLocalCommand.Complete) command).operationId(), cancellation);
+        if (result instanceof LocalSigningResult.Completed completed) {
+            return new PkiLocalResult(new PkiOperationOutcome.Completed(completed.result()),
+                    Optional.of(completed.receipt().operationId()));
+        }
+        LocalSigningResult.Failed failed = (LocalSigningResult.Failed) result;
+        return new PkiLocalResult(failed.failure(), failed.receipt().map(
+                SigningAcceptanceReceipt::operationId).or(() -> requested));
     }
 }

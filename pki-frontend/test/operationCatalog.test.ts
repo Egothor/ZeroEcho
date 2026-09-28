@@ -34,13 +34,14 @@
 
 import { describe, expect, it } from 'vitest';
 import { OPERATIONS, operationSpec, operationsForNav } from '@/api/operationCatalog';
-import { REF_SOURCES } from '@/api/entityRefs';
+import { REF_SOURCES, refSource } from '@/api/entityRefs';
 
 describe('operation catalog', () => {
-  it('contains all 101 operations (47 PKI + 54 control)', () => {
-    expect(OPERATIONS).toHaveLength(101);
-    expect(OPERATIONS.filter((o) => o.family === 'PKI_OPERATION')).toHaveLength(47);
-    expect(OPERATIONS.filter((o) => o.family === 'SERVER_CONTROL_OPERATION')).toHaveLength(54);
+  it('contains all 107 operations (41 PKI + 10 signing + 56 control)', () => {
+    expect(OPERATIONS).toHaveLength(107);
+    expect(OPERATIONS.filter((o) => o.family === 'PKI_OPERATION')).toHaveLength(41);
+    expect(OPERATIONS.filter((o) => o.family === 'SIGNING_OPERATION')).toHaveLength(10);
+    expect(OPERATIONS.filter((o) => o.family === 'SERVER_CONTROL_OPERATION')).toHaveLength(56);
   });
 
   it('has unique operation ids', () => {
@@ -84,7 +85,7 @@ describe('operation catalog', () => {
     for (const op of OPERATIONS) {
       for (const f of op.fields) {
         if (f.ref) {
-          expect(REF_SOURCES[f.ref], `${op.id}.${f.name} -> ${f.ref}`).toBeTruthy();
+          expect(refSource(f.ref), `${op.id}.${f.name} -> ${f.ref}`).toBeTruthy();
         }
       }
     }

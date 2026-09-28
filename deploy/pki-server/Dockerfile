@@ -1,4 +1,36 @@
 # syntax=docker/dockerfile:1.7
+# Copyright (C) 2025, Leo Galambos
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification,
+# are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. All advertising materials mentioning features or use of this software must
+#    display the following acknowledgement:
+#    This product includes software developed by the Egothor project.
+#
+# 4. Neither the name of the copyright holder nor the names of its contributors
+#    may be used to endorse or promote products derived from this software without
+#    specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+# ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 ###############################################################################
 # ZeroEcho PKI administrative server — container image
 #
@@ -14,15 +46,10 @@
 # The CLI is used ONLY by entrypoint.sh for the startup profile reconcile against
 # the same on-disk store, BEFORE the server opens it (see entrypoint.sh).
 #
-# NOTE ON BUILDING: this repository is built via Gradle on a POSIX toolchain
-# (the project's WSL Fedora + JDK 25 box). The `build` stage below reproduces
-# `:pki-server:installDist` and `:app:installDist` on a JDK 25 image. If your CI
-# already produced those trees, skip the source build and inject them instead by
-# passing `--build-arg PREBUILT=1` and mounting/copying the installDist trees to
-# the build context under `context/pki-server` and `context/app` (see the
-# PREBUILT stage). No container engine was available in the authoring
-# environment, so this Dockerfile has been statically validated only — it has
-# NOT been built or run here.
+# Build from source with the default target, or reuse CI distributions:
+#   docker build --target prebuilt -f deploy/pki-server/Dockerfile .
+# Populate context/pki-server and context/app with their installDist contents.
+# Both targets share the same runtime configuration and entrypoint.
 ###############################################################################
 
 # --- Base image pins ---------------------------------------------------------
@@ -47,20 +74,10 @@ RUN --mount=type=cache,target=/root/.gradle \
     ./gradlew --no-daemon :pki-server:installDist :app:installDist
 
 ###############################################################################
-# Stage 1b: accept pre-built installDist trees from the build context instead.
-# Enable by building the `prebuilt` target, e.g.:
-#   docker build --target prebuilt -f deploy/pki-server/Dockerfile .
-# with context/pki-server and context/app populated by your CI.
+# Shared runtime: independent of the source-build stage.
 ###############################################################################
-FROM ${JRE_IMAGE} AS prebuilt-src
-WORKDIR /src
-COPY context/pki-server /src/pki-server/build/install/zeroecho-pki-server
-COPY context/app        /src/app/build/install/app
-
-###############################################################################
-# Stage 2: slim runtime.
-###############################################################################
-FROM ${JRE_IMAGE} AS runtime
+FROM ${JRE_IMAGE} AS runtime-base
+COPY LICENSE-binary.txt /opt/zeroecho/LICENSE-binary.txt
 
 # curl is required for the container HEALTHCHECK (mTLS probe of /health/ready).
 RUN set -eux; \
@@ -76,14 +93,9 @@ RUN groupadd --gid ${APP_GID} zeroecho && \
     useradd  --uid ${APP_UID} --gid ${APP_GID} --home-dir /opt/zeroecho \
              --shell /usr/sbin/nologin --no-create-home zeroecho
 
-# Application distributions.
-COPY --from=build /src/pki-server/build/install/zeroecho-pki-server /opt/zeroecho/server
-COPY --from=build /src/app/build/install/app                         /opt/zeroecho/app
-
-# Entry point.
+# Entry point shared by source and prebuilt images.
 COPY deploy/pki-server/entrypoint.sh /opt/zeroecho/entrypoint.sh
-RUN chmod 0555 /opt/zeroecho/entrypoint.sh && \
-    chmod 0555 /opt/zeroecho/server/bin/zeroecho-pki-server /opt/zeroecho/app/bin/app
+RUN chmod 0555 /opt/zeroecho/entrypoint.sh
 
 # Data directories. Pre-creating them OWNED by the runtime user means a freshly
 # created (empty) Docker named volume inherits this ownership on first mount.
@@ -99,6 +111,7 @@ ENV PATH="/opt/zeroecho/server/bin:/opt/zeroecho/app/bin:${PATH}" \
     ZEROECHO_SERVER_HOME=/opt/zeroecho/server \
     ZEROECHO_APP_HOME=/opt/zeroecho/app \
     ZEROECHO_SERVER_CONFIG=/etc/zeroecho/server-config.json \
+    ZEROECHO_PROFILE_BOOTSTRAP_CONFIG=/etc/zeroecho/profile-bootstrap.json \
     ZEROECHO_PROFILES_DIR=/etc/zeroecho/profiles \
     ZEROECHO_STORE_DIR=/var/lib/zeroecho/store \
     ZEROECHO_AUDIT_DIR=/var/lib/zeroecho/audit \
@@ -134,3 +147,23 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
         "https://127.0.0.1:${ZEROECHO_ADMIN_PORT}/health/ready" || exit 1
 
 ENTRYPOINT ["/opt/zeroecho/entrypoint.sh"]
+
+###############################################################################
+# Prebuilt target: no dependency on the Gradle source-build stage.
+###############################################################################
+FROM runtime-base AS prebuilt
+COPY context/pki-server/ /opt/zeroecho/server/
+COPY context/app/ /opt/zeroecho/app/
+USER root
+RUN chmod 0555 /opt/zeroecho/server/bin/zeroecho-pki-server /opt/zeroecho/app/bin/app /opt/zeroecho/app/bin/zeroecho-pki-profile-bootstrap
+USER zeroecho
+
+###############################################################################
+# Default target: distributions built from the checked-out source.
+###############################################################################
+FROM runtime-base AS runtime
+COPY --from=build /src/pki-server/build/install/zeroecho-pki-server/ /opt/zeroecho/server/
+COPY --from=build /src/app/build/install/app/ /opt/zeroecho/app/
+USER root
+RUN chmod 0555 /opt/zeroecho/server/bin/zeroecho-pki-server /opt/zeroecho/app/bin/app /opt/zeroecho/app/bin/zeroecho-pki-profile-bootstrap
+USER zeroecho

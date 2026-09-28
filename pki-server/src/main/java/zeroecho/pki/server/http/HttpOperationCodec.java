@@ -59,6 +59,7 @@ import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.OperationSecurityDescriptors;
 import zeroecho.pki.application.OcspResponseService;
+import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.pki.server.AdministrativeOperation;
 import zeroecho.pki.server.ApprovalService;
 import zeroecho.pki.server.DisclosureService;
@@ -109,6 +110,18 @@ final class HttpOperationCodec {
             validateAuthority(pki, authority);
             scope = new Permission.Scope(realmId, authority, Optional.empty(), profile(pki));
             objectId = objectId(pki);
+        } else if (descriptor.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION) {
+            PkiSigningOperation signing = signingOperation(operationId, arguments);
+            operation = new AdministrativeOperation.Signing(signing);
+            boolean realmWide = signing instanceof PkiSigningOperation.CreateAuthority;
+            if (realmWide == authority.isPresent()) {
+                throw new IllegalArgumentException(realmWide
+                        ? "Realm-wide operation must not specify authorityId"
+                        : "Authority-scoped operation requires authorityId");
+            }
+            validateAuthority(signing, authority);
+            scope = new Permission.Scope(realmId, authority, Optional.empty(), profile(signing));
+            objectId = objectId(signing);
         } else {
             ServerControlOperation control = control(operationId, arguments, realmId, authority, descriptors);
             operation = new AdministrativeOperation.Control(control);
@@ -125,24 +138,130 @@ final class HttpOperationCodec {
         return new Decoded(operation, resource, context, approval, deadline);
     }
 
+    private static PkiSigningOperation signingOperation(String id, Fields fields) {
+        return switch (id) {
+            case PkiSigningOperation.CreateAuthority.NAME -> {
+                fields.exact("formatId", "subjectRef", "profileId", "keyRef");
+                yield new PkiSigningOperation.CreateAuthority(new FormatId(fields.text("formatId")),
+                        new SubjectRef(fields.text("subjectRef")), fields.text("profileId"),
+                        new KeyRef(fields.text("keyRef")));
+            }
+            case PkiSigningOperation.IssueCredential.NAME -> {
+                fields.exact("issuerCaId", "requestId", "profileId");
+                yield new PkiSigningOperation.IssueCredential(fields.pkiId("issuerCaId"), fields.pkiId("requestId"),
+                        fields.text("profileId"));
+            }
+            case PkiSigningOperation.RenewCredential.NAME -> {
+                fields.exact("credentialId");
+                yield new PkiSigningOperation.RenewCredential(fields.pkiId("credentialId"));
+            }
+            case PkiSigningOperation.ReplaceCredential.NAME -> {
+                fields.exact("existingCredentialId", "requestId", "profileId");
+                yield new PkiSigningOperation.ReplaceCredential(fields.pkiId("existingCredentialId"),
+                        fields.pkiId("requestId"), fields.text("profileId"));
+            }
+            case PkiSigningOperation.ReissueCredential.NAME -> {
+                fields.exact("credentialId");
+                yield new PkiSigningOperation.ReissueCredential(fields.pkiId("credentialId"));
+            }
+            case PkiSigningOperation.RolloverCaCertificate.NAME -> {
+                fields.allowed(Set.of("caId", "issuerCaId"));
+                yield new PkiSigningOperation.RolloverCaCertificate(fields.pkiId("caId"),
+                        fields.optionalText("issuerCaId").map(PkiId::new));
+            }
+            case PkiSigningOperation.RotateCaKey.NAME -> {
+                fields.allowed(Set.of("caId", "newKeyRef", "issuerCaId"));
+                yield new PkiSigningOperation.RotateCaKey(fields.pkiId("caId"),
+                        fields.optionalText("newKeyRef").map(KeyRef::new),
+                        fields.optionalText("issuerCaId").map(PkiId::new));
+            }
+            case PkiSigningOperation.GenerateStatus.NAME -> {
+                fields.exact("issuerCaId", "type", "formatId");
+                yield new PkiSigningOperation.GenerateStatus(fields.pkiId("issuerCaId"),
+                        StatusObjectType.valueOf(fields.text("type")), new FormatId(fields.text("formatId")));
+            }
+            case PkiSigningOperation.CreateIntermediate.NAME -> {
+                fields.allowed(Set.of("formatId", "issuerCaId", "subjectRef", "profileId", "keyRef"));
+                yield new PkiSigningOperation.CreateIntermediate(new FormatId(fields.text("formatId")),
+                        fields.pkiId("issuerCaId"), new SubjectRef(fields.text("subjectRef")),
+                        fields.text("profileId"), fields.optionalText("keyRef").map(KeyRef::new));
+            }
+            case PkiSigningOperation.IssueIntermediateCertificate.NAME -> {
+                fields.allowed(Set.of("formatId", "issuerCaId", "subjectCaId", "profileId", "notBefore", "notAfter"));
+                yield new PkiSigningOperation.IssueIntermediateCertificate(new FormatId(fields.text("formatId")),
+                        fields.pkiId("issuerCaId"), fields.pkiId("subjectCaId"), fields.text("profileId"),
+                        requestedValidity(fields));
+            }
+            default -> throw new IllegalArgumentException("Signing operation is unsupported");
+        };
+    }
+
+    private static void validateAuthority(PkiSigningOperation operation, Optional<PkiId> authority) {
+        Optional<PkiId> embedded = switch (operation) {
+            case PkiSigningOperation.IssueCredential value -> Optional.of(value.issuerCaId());
+            case PkiSigningOperation.GenerateStatus value -> Optional.of(value.issuerCaId());
+            case PkiSigningOperation.RolloverCaCertificate value -> Optional.of(value.caId());
+            case PkiSigningOperation.RotateCaKey value -> Optional.of(value.caId());
+            case PkiSigningOperation.CreateIntermediate value -> Optional.of(value.issuerCaId());
+            case PkiSigningOperation.IssueIntermediateCertificate value -> Optional.of(value.issuerCaId());
+            default -> Optional.empty();
+        };
+        if (embedded.isPresent() && !embedded.equals(authority)) {
+            throw new IllegalArgumentException("Operation and authority scope differ");
+        }
+    }
+
+    private static Optional<String> profile(PkiSigningOperation operation) {
+        return switch (operation) {
+            case PkiSigningOperation.IssueCredential value -> Optional.of(value.profileId());
+            case PkiSigningOperation.ReplaceCredential value -> Optional.of(value.profileId());
+            case PkiSigningOperation.CreateIntermediate value -> Optional.of(value.profileId());
+            case PkiSigningOperation.IssueIntermediateCertificate value -> Optional.of(value.profileId());
+            default -> Optional.empty();
+        };
+    }
+
+    private static Optional<PkiId> objectId(PkiSigningOperation operation) {
+        return switch (operation) {
+            case PkiSigningOperation.RenewCredential value -> Optional.of(value.credentialId());
+            case PkiSigningOperation.ReplaceCredential value -> Optional.of(value.existingCredentialId());
+            case PkiSigningOperation.ReissueCredential value -> Optional.of(value.credentialId());
+            case PkiSigningOperation.RolloverCaCertificate value -> Optional.of(value.caId());
+            case PkiSigningOperation.RotateCaKey value -> Optional.of(value.caId());
+            case PkiSigningOperation.IssueIntermediateCertificate value -> Optional.of(value.subjectCaId());
+            default -> Optional.empty();
+        };
+    }
+
+
     private static PkiOperation operation(String id, Fields fields, Optional<PkiId> authority) {
         return switch (id) {
             case PkiOperation.ListAuthorities.NAME -> {
-                fields.exact("limit"); yield new PkiOperation.ListAuthorities(fields.integer("limit"));
+                fields.allowed(Set.of("limit", "after")); yield new PkiOperation.ListAuthorities(fields.integer("limit"), fields.optionalText("after"));
             }
             case PkiOperation.InspectAuthority.NAME -> {
                 fields.exact("caId"); yield new PkiOperation.InspectAuthority(fields.pkiId("caId"));
-            }
-            case PkiOperation.CreateAuthority.NAME -> {
-                fields.exact("formatId", "subjectRef", "profileId", "keyRef");
-                yield new PkiOperation.CreateAuthority(new FormatId(fields.text("formatId")),
-                        new SubjectRef(fields.text("subjectRef")), fields.text("profileId"),
-                        new KeyRef(fields.text("keyRef")));
             }
             case PkiOperation.TransitionAuthority.NAME -> {
                 fields.exact("caId", "state", "reason");
                 yield new PkiOperation.TransitionAuthority(fields.pkiId("caId"),
                         CaState.valueOf(fields.text("state")), fields.text("reason"));
+            }
+            case PkiOperation.ListProfiles.NAME -> {
+                fields.allowed(Set.of("limit", "after"));
+                yield new PkiOperation.ListProfiles(fields.integer("limit"), fields.optionalText("after"));
+            }
+            case PkiOperation.ListRequests.NAME -> {
+                fields.allowed(Set.of("limit", "after"));
+                yield new PkiOperation.ListRequests(fields.integer("limit"), fields.optionalText("after"));
+            }
+            case PkiOperation.SearchCredentials.NAME -> {
+                fields.allowed(Set.of("limit", "after"));
+                yield new PkiOperation.SearchCredentials(authority.orElseThrow(), fields.integer("limit"), fields.optionalText("after"));
+            }
+            case PkiOperation.ListIssuerGenerations.NAME -> {
+                fields.allowed(Set.of("limit", "after"));
+                yield new PkiOperation.ListIssuerGenerations(authority.orElseThrow(), fields.integer("limit"), fields.optionalText("after"));
             }
             case PkiOperation.ListProfileVersions.NAME -> {
                 fields.exact("profileId"); yield new PkiOperation.ListProfileVersions(fields.text("profileId"));
@@ -187,48 +306,14 @@ final class HttpOperationCodec {
                 yield new PkiOperation.RevokePendingCredentialConfirmation(
                         fields.pkiId("credentialId"), fields.optionalText("justification"));
             }
-            case PkiOperation.IssueCredential.NAME -> {
-                fields.exact("issuerCaId", "requestId", "profileId");
-                yield new PkiOperation.IssueCredential(fields.pkiId("issuerCaId"), fields.pkiId("requestId"),
-                        fields.text("profileId"));
-            }
             case PkiOperation.RevokeCredential.NAME -> {
                 fields.allowed(Set.of("credentialId", "reason", "justification"));
                 yield new PkiOperation.RevokeCredential(fields.pkiId("credentialId"),
                         RevocationReason.valueOf(fields.text("reason")), fields.optionalText("justification"));
             }
-            case PkiOperation.RenewCredential.NAME -> {
-                fields.exact("credentialId");
-                yield new PkiOperation.RenewCredential(fields.pkiId("credentialId"));
-            }
-            case PkiOperation.ReplaceCredential.NAME -> {
-                fields.exact("existingCredentialId", "requestId", "profileId");
-                yield new PkiOperation.ReplaceCredential(fields.pkiId("existingCredentialId"),
-                        fields.pkiId("requestId"), fields.text("profileId"));
-            }
-            case PkiOperation.ReissueCredential.NAME -> {
-                fields.exact("credentialId");
-                yield new PkiOperation.ReissueCredential(fields.pkiId("credentialId"));
-            }
-            case PkiOperation.RolloverCaCertificate.NAME -> {
-                fields.allowed(Set.of("caId", "issuerCaId"));
-                yield new PkiOperation.RolloverCaCertificate(fields.pkiId("caId"),
-                        fields.optionalText("issuerCaId").map(PkiId::new));
-            }
-            case PkiOperation.RotateCaKey.NAME -> {
-                fields.allowed(Set.of("caId", "newKeyRef", "issuerCaId"));
-                yield new PkiOperation.RotateCaKey(fields.pkiId("caId"),
-                        fields.optionalText("newKeyRef").map(KeyRef::new),
-                        fields.optionalText("issuerCaId").map(PkiId::new));
-            }
             case PkiOperation.ReadRevocationHistory.NAME -> {
                 fields.exact("credentialId", "limit");
                 yield new PkiOperation.ReadRevocationHistory(fields.pkiId("credentialId"), fields.integer("limit"));
-            }
-            case PkiOperation.GenerateStatus.NAME -> {
-                fields.exact("issuerCaId", "type", "formatId");
-                yield new PkiOperation.GenerateStatus(fields.pkiId("issuerCaId"),
-                        StatusObjectType.valueOf(fields.text("type")), new FormatId(fields.text("formatId")));
             }
             case PkiOperation.InspectPublication.NAME -> {
                 fields.exact("publicationId");
@@ -251,12 +336,12 @@ final class HttpOperationCodec {
                 yield new PkiOperation.InspectStatus(fields.pkiId("statusObjectId"));
             }
             case PkiOperation.ListStatus.NAME -> {
-                fields.exact("issuerCaId", "limit");
-                yield new PkiOperation.ListStatus(fields.pkiId("issuerCaId"), fields.integer("limit"));
+                fields.allowed(Set.of("issuerCaId", "limit", "after"));
+                yield new PkiOperation.ListStatus(fields.pkiId("issuerCaId"), fields.integer("limit"), fields.optionalText("after"));
             }
             case PkiOperation.ListPublications.NAME -> {
-                fields.exact("limit");
-                yield new PkiOperation.ListPublications(fields.integer("limit"));
+                fields.allowed(Set.of("limit", "after"));
+                yield new PkiOperation.ListPublications(fields.integer("limit"), fields.optionalText("after"));
             }
             case PkiOperation.RegisterPublication.NAME -> {
                 fields.exact("publicationId", "sourceType", "sourceId", "targetType", "targetId");
@@ -274,18 +359,6 @@ final class HttpOperationCodec {
             case PkiOperation.ReconcilePublication.NAME -> {
                 fields.exact("publicationId");
                 yield new PkiOperation.ReconcilePublication(fields.pkiId("publicationId"));
-            }
-            case PkiOperation.CreateIntermediate.NAME -> {
-                fields.allowed(Set.of("formatId", "issuerCaId", "subjectRef", "profileId", "keyRef"));
-                yield new PkiOperation.CreateIntermediate(new FormatId(fields.text("formatId")),
-                        fields.pkiId("issuerCaId"), new SubjectRef(fields.text("subjectRef")),
-                        fields.text("profileId"), fields.optionalText("keyRef").map(KeyRef::new));
-            }
-            case PkiOperation.IssueIntermediateCertificate.NAME -> {
-                fields.allowed(Set.of("formatId", "issuerCaId", "subjectCaId", "profileId", "notBefore", "notAfter"));
-                yield new PkiOperation.IssueIntermediateCertificate(new FormatId(fields.text("formatId")),
-                        fields.pkiId("issuerCaId"), fields.pkiId("subjectCaId"), fields.text("profileId"),
-                        requestedValidity(fields));
             }
             case PkiOperation.InspectIssuerGeneration.NAME -> {
                 fields.exact("issuerId");
@@ -310,9 +383,9 @@ final class HttpOperationCodec {
                         fields.pkiId("parentPathId"));
             }
             case PkiOperation.ListAlgorithmBindings.NAME -> {
-                fields.allowed(Set.of("origin", "role", "limit"));
+                fields.allowed(Set.of("origin", "role", "limit", "after"));
                 yield new PkiOperation.ListAlgorithmBindings(fields.optionalText("origin"),
-                        fields.optionalText("role"), fields.integer("limit"));
+                        fields.optionalText("role"), fields.integer("limit"), fields.optionalText("after"));
             }
             case PkiOperation.InspectAlgorithmBinding.NAME -> {
                 fields.exact("bindingId");
@@ -452,6 +525,12 @@ final class HttpOperationCodec {
                     targetOperation = new AdministrativeOperation.Pki(targetPki);
                     targetScope = new Permission.Scope(realmId, targetAuthority, Optional.empty(), profile(targetPki));
                     targetObject = objectId(targetPki);
+                } else if (targetDescriptor.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION) {
+                    PkiSigningOperation targetSigning = signingOperation(targetId, targetFields);
+                    targetOperation = new AdministrativeOperation.Signing(targetSigning);
+                    targetScope = new Permission.Scope(realmId, targetAuthority, Optional.empty(),
+                            profile(targetSigning));
+                    targetObject = objectId(targetSigning);
                 } else {
                     ServerControlOperation targetControl = control(targetId, targetFields, realmId,
                             targetAuthority, descriptors);
@@ -508,6 +587,14 @@ final class HttpOperationCodec {
             }
             case ServerControlOperation.RevokeBreakGlass.NAME -> {
                 fields.exact("breakGlassId"); yield new ServerControlOperation.RevokeBreakGlass(fields.text("breakGlassId"));
+            }
+            case ServerControlOperation.ConfigurationChoices.NAME -> {
+                fields.allowed(Set.of("limit", "after"));
+                yield new ServerControlOperation.ConfigurationChoices(fields.integer("limit"), fields.optionalText("after"));
+            }
+            case ServerControlOperation.ListCapabilities.NAME -> {
+                fields.allowed(Set.of("objectId", "limit", "after"));
+                yield new ServerControlOperation.ListCapabilities(fields.pkiId("objectId"), fields.integer("limit"), fields.optionalText("after"));
             }
             case ServerControlOperation.InspectDisclosure.NAME -> {
                 fields.exact("objectId"); yield new ServerControlOperation.InspectDisclosure(fields.pkiId("objectId"));
@@ -664,6 +751,14 @@ final class HttpOperationCodec {
     private static Permission.Scope controlScope(ServerControlOperation operation, RealmId realmId,
             Optional<PkiId> authority) {
         return switch (operation) {
+            case ServerControlOperation.ConfigurationChoices ignored -> {
+                if (authority.isPresent()) { throw new IllegalArgumentException("Configuration choices require realm scope"); }
+                yield new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty());
+            }
+            case ServerControlOperation.ListCapabilities ignored -> {
+                if (authority.isPresent()) { throw new IllegalArgumentException("Capability selection resolves authoritative object scope"); }
+                yield new Permission.Scope(realmId, Optional.empty(), Optional.empty(), Optional.empty());
+            }
             case ServerControlOperation.CreateRoleAssignment value -> value.assignment().scope();
             case ServerControlOperation.CreateGrant value -> value.grant().scope();
             case ServerControlOperation.EvaluateAuthorization value -> value.resource().scope();
@@ -692,6 +787,7 @@ final class HttpOperationCodec {
 
     private static Optional<PkiId> controlObject(ServerControlOperation operation) {
         return switch (operation) {
+            case ServerControlOperation.ListCapabilities value -> Optional.of(value.objectId());
             case ServerControlOperation.InspectDisclosure value -> Optional.of(value.objectId());
             case ServerControlOperation.SetDisclosure value -> Optional.of(value.objectId());
             case ServerControlOperation.EnrollCredentialPublication value -> Optional.of(value.credentialId());
@@ -711,8 +807,9 @@ final class HttpOperationCodec {
     }
 
     private static boolean realmWide(PkiOperation operation) {
-        return operation instanceof PkiOperation.ListAuthorities
-                || operation instanceof PkiOperation.CreateAuthority
+        return operation instanceof PkiOperation.ListProfiles
+                || operation instanceof PkiOperation.ListRequests
+                || operation instanceof PkiOperation.ListAuthorities
                 || operation instanceof PkiOperation.ListAlgorithmBindings
                 || operation instanceof PkiOperation.InspectAlgorithmBinding
                 || operation instanceof PkiOperation.InspectRequest
@@ -734,14 +831,10 @@ final class HttpOperationCodec {
         Optional<PkiId> embedded = switch (operation) {
             case PkiOperation.InspectAuthority value -> Optional.of(value.caId());
             case PkiOperation.TransitionAuthority value -> Optional.of(value.caId());
-            case PkiOperation.IssueCredential value -> Optional.of(value.issuerCaId());
-            case PkiOperation.GenerateStatus value -> Optional.of(value.issuerCaId());
             case PkiOperation.ListStatus value -> Optional.of(value.issuerCaId());
+            case PkiOperation.SearchCredentials value -> Optional.of(value.authorityId());
+            case PkiOperation.ListIssuerGenerations value -> Optional.of(value.authorityId());
             case PkiOperation.ListPendingCredentialConfirmations value -> Optional.of(value.authorityId());
-            case PkiOperation.RolloverCaCertificate value -> Optional.of(value.caId());
-            case PkiOperation.RotateCaKey value -> Optional.of(value.caId());
-            case PkiOperation.CreateIntermediate value -> Optional.of(value.issuerCaId());
-            case PkiOperation.IssueIntermediateCertificate value -> Optional.of(value.issuerCaId());
             case PkiOperation.SelectIssuancePath value -> Optional.of(value.caId());
             case PkiOperation.RegisterIssuerChainPath value -> Optional.of(value.caId());
             default -> Optional.empty();
@@ -756,10 +849,6 @@ final class HttpOperationCodec {
             case PkiOperation.ListProfileVersions value -> Optional.of(value.profileId());
             case PkiOperation.InspectProfile value -> Optional.of(value.profileId());
             case PkiOperation.ActivateProfile value -> Optional.of(value.profileId());
-            case PkiOperation.IssueCredential value -> Optional.of(value.profileId());
-            case PkiOperation.ReplaceCredential value -> Optional.of(value.profileId());
-            case PkiOperation.CreateIntermediate value -> Optional.of(value.profileId());
-            case PkiOperation.IssueIntermediateCertificate value -> Optional.of(value.profileId());
             case PkiOperation.ListPendingCredentialConfirmations value -> value.profileId();
             default -> Optional.empty();
         };
@@ -776,11 +865,6 @@ final class HttpOperationCodec {
             case PkiOperation.RevokePendingCredentialConfirmation value ->
                 Optional.of(value.credentialId());
             case PkiOperation.RevokeCredential value -> Optional.of(value.credentialId());
-            case PkiOperation.RenewCredential value -> Optional.of(value.credentialId());
-            case PkiOperation.ReplaceCredential value -> Optional.of(value.existingCredentialId());
-            case PkiOperation.ReissueCredential value -> Optional.of(value.credentialId());
-            case PkiOperation.RolloverCaCertificate value -> Optional.of(value.caId());
-            case PkiOperation.RotateCaKey value -> Optional.of(value.caId());
             case PkiOperation.InspectRequest value -> Optional.of(value.requestId());
             case PkiOperation.VerifyRequest value -> Optional.of(value.requestId());
             case PkiOperation.ReadRevocationHistory value -> Optional.of(value.credentialId());
@@ -791,7 +875,6 @@ final class HttpOperationCodec {
             case PkiOperation.RegisterPublication value -> Optional.of(value.publicationId());
             case PkiOperation.RetryPublication value -> Optional.of(value.publicationId());
             case PkiOperation.ReconcilePublication value -> Optional.of(value.publicationId());
-            case PkiOperation.IssueIntermediateCertificate value -> Optional.of(value.subjectCaId());
             case PkiOperation.InspectIssuerGeneration value -> Optional.of(value.issuerId());
             case PkiOperation.InspectIssuerChainPath value -> Optional.of(value.pathId());
             case PkiOperation.ListIssuerChainPaths value -> Optional.of(value.issuerId());

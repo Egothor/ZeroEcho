@@ -56,7 +56,7 @@ class PkiCliRemoteTest {
         System.out.println("remoteModeIsSelectedByUrlAndClientMaterialAndPostsEnvelope");
         FakeExchange[] captured = new FakeExchange[1];
         PkiCli.RemoteExchangeFactory factory = target -> {
-            captured[0] = new FakeExchange(request -> ok("{\"version\":1,"
+            captured[0] = new FakeExchange(request -> ok("{\"version\":1,\"requestId\":\"test\",\"failure\":null,"
                     + "\"operation\":\"credential.inspect\",\"status\":\"SUCCEEDED\","
                     + "\"result\":{\"credentialId\":\"cred-1\"}}"));
             return captured[0];
@@ -108,7 +108,7 @@ class PkiCliRemoteTest {
         System.out.println("remotePendingExitsForResumeWhenWaitIsZero");
         PkiCli.RemoteExchangeFactory factory = target -> new FakeExchange(request -> new PkiHttpExchange.Response(
                 202, Optional.of("/admin/v1/signing-operations/sign-1"),
-                "{\"version\":1,\"operation\":\"credential.issue\",\"status\":\"PENDING\",\"result\":{}}"
+                "{\"version\":1,\"requestId\":\"test\",\"failure\":null,\"operation\":\"credential.issue\",\"status\":\"PENDING\",\"result\":{\"operationId\":\"sign-1\"}}"
                         .getBytes(StandardCharsets.UTF_8)));
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         int code = PkiCli.execute(new String[] { "credential.issue", "--url", "https://pki.example.org:8443",
@@ -126,7 +126,7 @@ class PkiCliRemoteTest {
         System.out.println("remoteModeReachesControlFamilyOperationWithGenericArguments");
         FakeExchange[] captured = new FakeExchange[1];
         PkiCli.RemoteExchangeFactory factory = target -> {
-            captured[0] = new FakeExchange(request -> ok("{\"version\":1,"
+            captured[0] = new FakeExchange(request -> ok("{\"version\":1,\"requestId\":\"test\",\"failure\":null,"
                     + "\"operation\":\"security.principal.list\",\"status\":\"SUCCEEDED\",\"result\":{}}"));
             return captured[0];
         };
@@ -173,6 +173,91 @@ class PkiCliRemoteTest {
         // The configuration file is missing, so the configuration read fails before the session opens.
         assertEquals(PkiExitCodes.CONFIGURATION_FAILURE, code);
         System.out.println("...opened=" + opened[0] + " ok");
+    }
+
+    @Test
+    void rejectsConflictingDuplicateIncompleteAndDeferredOptionsBeforeOpeningAnything() {
+        String[][] cases = {
+            { "ca.list", "--url", "https://pki.example", "--client-keystore", "client.p12", "--config", "missing" },
+            { "ca.list", "--url", "https://pki.example", "--url", "https://other", "--client-keystore", "client.p12" },
+            { "ca.list", "--url", "https://pki.example", "--client-cert", "client.pem" },
+            { "ca.list", "--url", "https://pki.example", "--client-keystore", "client.p12", "--limit", "1", "--arg-int", "limit=2" },
+            { "ca.list", "--config", "missing", "--pending-wait", "0" },
+            { "signing.operation.complete", "--url", "https://pki.example", "--client-keystore", "client.p12", "--operation-id", "id" },
+            { "signing.operation.inspect", "--url", "https://pki.example", "--client-keystore", "client.p12", "--operation-id", "id", "--pending-wait", "0" },
+            { "signing.operation.inspect", "--url", "https://pki.example", "--client-keystore", "client.p12", "--operation-id", "id", "--approval-id", "approval" }
+        };
+        for (String[] arguments : cases) {
+            String[] json = java.util.Arrays.copyOf(arguments, arguments.length + 2);
+            json[arguments.length] = "--output";
+            json[arguments.length + 1] = "json";
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            assertEquals(2, PkiCli.execute(json, output, FORBIDDEN_OPENER, () -> false,
+                    target -> { throw new AssertionError("Invalid invocation opened transport"); }));
+            assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"code\":\"INVOCATION_INVALID\""));
+        }
+    }
+
+    @Test
+    void malformedRemoteOperationNamesFailBeforeExchange() {
+        for (String operation : List.of("abc", "a.", "profile.list--all", "profile.-list", "a".repeat(129) + ".b")) {
+            assertEquals(2, PkiCli.execute(new String[] { operation, "--url", "https://pki.example",
+                    "--client-keystore", "client.p12" }, new ByteArrayOutputStream(), FORBIDDEN_OPENER, () -> false,
+                    target -> { throw new AssertionError("Malformed name opened exchange"); }));
+        }
+    }
+
+    @Test
+    void hyphenatedRemoteOperationsAndOptionLookingValuesRemainIntact() {
+        FakeExchange[] captured = new FakeExchange[1];
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int code = PkiCli.execute(new String[] { "profile.list-all", "--url", "https://pki.example",
+                "--client-keystore", "client.p12", "--subject-ref", "--url", "--expected-lifecycle-revision", "7",
+                "--output", "json" }, output, FORBIDDEN_OPENER, () -> false, target -> {
+                    captured[0] = new FakeExchange(request -> ok("{\"version\":1,\"requestId\":\"test\",\"failure\":null,\"operation\":\"profile.list-all\","
+                            + "\"status\":\"SUCCEEDED\",\"result\":{}}"));
+                    return captured[0];
+                });
+        assertEquals(0, code);
+        String body = new String(captured[0].requests.get(0).body().orElseThrow(), StandardCharsets.UTF_8);
+        assertTrue(body.contains("\"subjectRef\":\"--url\""));
+        assertTrue(body.contains("\"expectedLifecycleRevision\":7"));
+        assertEquals("/admin/v1/operations/profile.list-all", captured[0].requests.get(0).path());
+    }
+
+    @Test
+    void explicitInspectionUsesOnlyGetAndRetainsPendingReceipt() {
+        FakeExchange[] exchange = new FakeExchange[1];
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int exit = PkiCli.execute(new String[] { "signing.operation.inspect", "--url", "https://pki.example",
+                "--client-keystore", "client.p12", "--operation-id", "sign-1", "--output", "json" }, output,
+                FORBIDDEN_OPENER, () -> false, target -> {
+                    exchange[0] = new FakeExchange(request -> new PkiHttpExchange.Response(202, Optional.empty(),
+                            ("{\"version\":1,\"requestId\":\"test\",\"operation\":\"signing.operation\","
+                            + "\"status\":\"PENDING\",\"result\":{\"operationId\":\"sign-1\"},\"failure\":null}")
+                            .getBytes(StandardCharsets.UTF_8)));
+                    return exchange[0];
+                });
+        assertEquals(7, exit);
+        assertEquals(1, exchange[0].requests.size());
+        assertEquals(PkiHttpExchange.Method.GET, exchange[0].requests.getFirst().method());
+        assertEquals("/admin/v1/signing-operations/sign-1", exchange[0].requests.getFirst().path());
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operationId\":\"sign-1\""));
+    }
+
+    @Test
+    void structuredArgumentsRoundTripThroughCliWithoutOpeningLocalSession() {
+        FakeExchange[] exchange = new FakeExchange[1];
+        int exit = PkiCli.execute(new String[] { "security.approval.request", "--url", "https://pki.example",
+                "--client-keystore", "client.p12", "--arg-json", "targetArguments={\"names\":[\"one\",\"two\"],\"limit\":2,\"active\":true}" },
+                new ByteArrayOutputStream(), FORBIDDEN_OPENER, () -> false, target -> {
+                    exchange[0] = new FakeExchange(request -> ok("{\"version\":1,\"requestId\":\"test\","
+                            + "\"operation\":\"security.approval.request\",\"status\":\"SUCCEEDED\",\"result\":{},\"failure\":null}"));
+                    return exchange[0];
+                });
+        assertEquals(0, exit);
+        String body = new String(exchange[0].requests.getFirst().body().orElseThrow(), StandardCharsets.UTF_8);
+        assertTrue(body.contains("\"targetArguments\":{\"names\":[\"one\",\"two\"],\"limit\":2,\"active\":true}"));
     }
 
     private static PkiHttpExchange.Response ok(String json) {

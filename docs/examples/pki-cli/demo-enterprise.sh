@@ -84,16 +84,19 @@ done
 echo "== build two roots and one issuing CA =="
 run_op root-a ca.create \
   --format-id x509 --subject-ref "CN=Example Root CA A" --profile-id root-ca --key-ref zeroecho-lib:root.prv
-ROOT_A="$(field root-a caId)"; echo "  Root A         : ${ROOT_A}"
+inspect_ca root-a
+ROOT_A="$(field root-a-certificate authorityId)"; echo "  Root A         : ${ROOT_A}"
 
 run_op root-b ca.create \
   --format-id x509 --subject-ref "CN=Example Root CA B" --profile-id root-ca --key-ref zeroecho-lib:root-b.prv
-ROOT_B="$(field root-b caId)"; echo "  Root B         : ${ROOT_B}"
+inspect_ca root-b
+ROOT_B="$(field root-b-certificate authorityId)"; echo "  Root B         : ${ROOT_B}"
 
 run_op inter ca.intermediate.create \
   --format-id x509 --issuer-ca-id "${ROOT_A}" --subject-ref "CN=Example Issuing CA" \
   --profile-id intermediate-ca --key-ref zeroecho-lib:intermediate.prv
-INTER="$(field inter caId)"; echo "  Issuing CA     : ${INTER}"
+inspect_ca inter
+INTER="$(intermediate_ca)"; echo "  Issuing CA     : ${INTER}"
 
 echo "== inspect issuer generations / paths (before cross-certification) =="
 run_op inter-inspect ca.inspect --ca-id "${INTER}"
@@ -108,7 +111,7 @@ echo "== cross-certify the issuing CA under Root B =="
 run_op cross ca.intermediate.issue \
   --format-id x509 --issuer-ca-id "${ROOT_B}" --subject-ca-id "${INTER}" --profile-id intermediate-ca
 echo "  cross-cert     : $(field cross credentialId)"
-echo "  cross issuer   : $(field cross issuerCaId) (Root B) over subject $(field cross subjectCaId)"
+echo "  cross issuer   : ${ROOT_B} (Root B) over subject ${INTER}"
 
 echo "== inspect the issuing CA's issuer generation after cross-certification =="
 run_op gen-inspect issuer.generation.inspect --issuer-id "${ISSUER_ID}"
@@ -153,9 +156,9 @@ run_op pub-crl publication.register \
 run_op proc-crl publication.process --publication-id "$(field pub-crl publicationId)"
 
 echo "== export certificates + CRL to files (for openssl inspection) =="
-export_cert root-a       "$(ca_cert_credential "${ROOT_A}")"
-export_cert root-b       "$(ca_cert_credential "${ROOT_B}")"
-export_cert issuing-ca   "$(ca_cert_credential "${INTER}")"
+export_cert root-a       "$(field root-a credentialId)"
+export_cert root-b       "$(field root-b credentialId)"
+export_cert issuing-ca   "$(field inter credentialId)"
 export_cert issuing-ca-cross "$(field cross credentialId)"   # cross-cert under Root B
 for c in web01 web02 gtw alice bob carol; do export_cert "${c}" "$(field "${c}" credentialId)"; done
 export_cert alice-reissued "$(field reissue-alice credentialId)"

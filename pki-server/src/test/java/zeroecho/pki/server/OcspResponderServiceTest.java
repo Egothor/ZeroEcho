@@ -132,7 +132,7 @@ class OcspResponderServiceTest {
                     repository, bindings, Optional.of(signing), ServerTestSupport.CLOCK);
             recovered.validateAll();
             assertEquals(responderId, recovered.requireActiveAlias("root").responderId());
-            verify(signing, atLeast(3)).validateSigningBinding(credentialId, keyRef,
+            verify(signing, atLeast(3)).validateSigningBinding(ServerTestSupport.AUTHORITY, credentialId, keyRef,
                     "SHA256withRSA", Optional.empty());
             when(bindings.commitment()).thenReturn("f".repeat(64));
             assertThrows(IllegalStateException.class, recovered::validateAll);
@@ -177,7 +177,7 @@ class OcspResponderServiceTest {
                     Set.of(OcspResponseService.CertIdHash.SHA256), 16_384, 8, Duration.ofMinutes(1));
             OcspResponderService.Responder registered = service.register(registration);
             assertEquals(OcspResponderService.SigningMode.DELEGATED_RESPONDER, registered.signingMode());
-            verify(signing).validateSigningBinding(responderCredential, responderKey,
+            verify(signing).validateSigningBinding(ServerTestSupport.AUTHORITY, responderCredential, responderKey,
                     "SHA256withRSA", Optional.empty());
         }
         System.out.println("...delegated-eku-and-key-usage=true");

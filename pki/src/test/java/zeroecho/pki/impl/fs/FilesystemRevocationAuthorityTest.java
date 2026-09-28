@@ -36,6 +36,7 @@ package zeroecho.pki.impl.fs;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -81,6 +82,9 @@ import zeroecho.pki.api.revocation.RevocationTransition;
 import zeroecho.pki.application.RevocationExecutionEvidence;
 import zeroecho.pki.impl.core.StoreBackedEffectiveCredentialStatusResolver;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
+import zeroecho.pki.spi.store.MetadataStoreId;
+import zeroecho.pki.spi.store.RevocationSnapshot;
+import zeroecho.pki.spi.store.RevocationTransitionFeed;
 
 final class FilesystemRevocationAuthorityTest {
     private static final Instant TIME = Instant.parse("2026-07-01T12:00:00Z");
@@ -88,6 +92,119 @@ final class FilesystemRevocationAuthorityTest {
 
     @TempDir
     private Path temporaryDirectory;
+
+    @Test
+    void snapshotGlobalRevisionsAndSourceSurviveEqualTimesClearAndCheckpointReopen() throws Exception {
+        Path root = temporaryDirectory.resolve("snapshot-global-revisions");
+        MetadataStoreId source;
+        String checkpoint;
+        PkiId firstId;
+        PkiId secondId;
+        try (FilesystemPkiStore store = store(root)) {
+            Credential first = credential(store, "global-a");
+            Credential second = credential(store, "global-b");
+            firstId = first.credentialId();
+            secondId = second.credentialId();
+            store.putCredential(first);
+            store.putCredential(second);
+            transition(store, hold(first));
+            transition(store, hold(second));
+            try (RevocationSnapshot captured = store.openRevocationSnapshot();
+                    RevocationTransitionFeed feed = store.openRevocationTransitionFeed(Optional.empty())) {
+                source = captured.sourceStoreId();
+                assertEquals(feed.highWatermark().sourceStoreId(), source);
+                assertEquals(2L, captured.revision());
+                store.requireRevocationPrefix(new RevocationTransitionFeed.HighWatermark(source, captured.revision(),
+                        captured.commitment()), captured.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+                assertSnapshotRevisions(captured, java.util.Map.of(firstId, 1L, secondId, 2L));
+                // All three transitions share the same timestamp. The first two local revisions are both one.
+                transition(store, unhold(first));
+                store.requireRevocationPrefix(new RevocationTransitionFeed.HighWatermark(source, captured.revision(),
+                        captured.commitment()), captured.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+                assertSnapshotRevisions(captured, java.util.Map.of(firstId, 1L, secondId, 2L));
+            }
+            try (RevocationSnapshot latest = store.openRevocationSnapshot()) {
+                checkpoint = latest.snapshotId();
+                assertEquals(source, latest.sourceStoreId());
+                assertEquals(3L, latest.revision());
+                assertSnapshotRevisions(latest, java.util.Map.of(firstId, 3L, secondId, 2L));
+            }
+            try (RevocationSnapshot reused = store.openRevocationSnapshot()) {
+                assertEquals(checkpoint, reused.snapshotId());
+                assertEquals(source, reused.sourceStoreId());
+                assertSnapshotRevisions(reused, java.util.Map.of(firstId, 3L, secondId, 2L));
+            }
+        }
+        try (FilesystemPkiStore reopened = store(root);
+                RevocationSnapshot snapshot = reopened.openRevocationSnapshot()) {
+            assertEquals(source, snapshot.sourceStoreId());
+            assertEquals(checkpoint, snapshot.snapshotId());
+            assertEquals(3L, snapshot.revision());
+            assertSnapshotRevisions(snapshot, java.util.Map.of(firstId, 3L, secondId, 2L));
+        }
+    }
+
+    private static void assertSnapshotRevisions(RevocationSnapshot snapshot, java.util.Map<PkiId, Long> expected)
+            throws IOException {
+        java.util.Map<PkiId, Long> actual = new java.util.HashMap<>();
+        try (RevocationSnapshot.Cursor cursor = snapshot.openCursor()) {
+            while (cursor.next()) {
+                long revision = cursor.currentGlobalRevision();
+                assertTrue(revision > 0 && revision <= snapshot.revision());
+                assertEquals(TIME, cursor.current().transition().time());
+                assertEquals(revision == 3L ? 2L : 1L, cursor.current().transition().revision());
+                assertEquals(revision == 3L ? RevocationState.CLEAR : RevocationState.HELD,
+                        cursor.current().transition().state());
+                assertNull(actual.put(cursor.current().credentialId(), revision));
+            }
+        }
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void globalRevisionHasTheSameCursorPositionAndClosureGuardsAsCurrentState() throws Exception {
+        try (FilesystemPkiStore store = store(temporaryDirectory.resolve("snapshot-position"))) {
+            Credential first = credential(store, "position-a");
+            Credential second = credential(store, "position-b");
+            store.putCredential(first);
+            store.putCredential(second);
+            transition(store, hold(first));
+            transition(store, hold(second));
+            try (RevocationSnapshot snapshot = store.openRevocationSnapshot()) {
+                RevocationSnapshot.Cursor failed = snapshot.openCursor();
+                try (failed) {
+                    assertUnpositioned(failed);
+                    assertTrue(failed.next());
+                    assertEquals(1L, failed.currentGlobalRevision());
+                    assertThrows(IOException.class, () -> failed.next(() -> true));
+                    assertUnpositioned(failed);
+                }
+                assertUnpositioned(failed);
+                assertThrows(IllegalStateException.class, failed::next);
+                try (RevocationSnapshot.Cursor exhausted = snapshot.openCursor()) {
+                    assertTrue(exhausted.next());
+                    assertTrue(exhausted.next());
+                    assertEquals(2L, exhausted.currentGlobalRevision());
+                    assertFalse(exhausted.next());
+                    assertUnpositioned(exhausted);
+                }
+            }
+            RevocationSnapshot owner = store.openRevocationSnapshot();
+            RevocationSnapshot.Cursor cursor = owner.openCursor();
+            try (owner; cursor) {
+                assertTrue(cursor.next());
+                owner.close();
+                assertUnpositioned(cursor);
+                assertThrows(IllegalStateException.class, cursor::next);
+            }
+        }
+    }
+
+    private static void assertUnpositioned(RevocationSnapshot.Cursor cursor) {
+        assertThrows(IllegalStateException.class, cursor::current);
+        assertThrows(IllegalStateException.class, cursor::currentGlobalRevision);
+        assertThrows(IllegalStateException.class, cursor::ordinal);
+    }
 
     @Test
     void legalTransitionsAreContiguousDurableAndPermanentIsTerminal() throws Exception {
@@ -396,7 +513,7 @@ final class FilesystemRevocationAuthorityTest {
         Files.write(legacyCredential, new byte[] { 0x03, 0x04 });
 
         IllegalStateException failure = assertThrows(IllegalStateException.class, () -> store(root));
-        assertEquals("Filesystem store open failed: code=STORE_OPEN_FAILED", failure.getMessage());
+        assertEquals("Filesystem store format unsupported: code=STORE_FORMAT_UNSUPPORTED", failure.getMessage());
         assertFalse(Files.exists(root.resolve(FsPaths.VERSION_FILE)));
         assertArrayEquals(new byte[] { 0x01, 0x02 }, Files.readAllBytes(legacyJournal));
         System.out.println("unversionedLegacyJournalStoreIsRejected...ok");
@@ -513,7 +630,7 @@ final class FilesystemRevocationAuthorityTest {
     }
 
     private static Credential credential(FilesystemPkiStore store, String suffix) throws IOException {
-        return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
+        return new Credential(new PkiId("credential:" + suffix), new FormatId("revocation-test-binary"),
                 new IssuerRef(new PkiId("ca:issuer")), new SubjectRef("CN=" + suffix),
                 new Validity(TIME.minusSeconds(60), TIME.plusSeconds(60)), suffix, new PkiId("key:" + suffix),
                 new CaProfileBinding(new zeroecho.pki.api.profile.CertificateProfileRef("default", 1, new byte[32])),

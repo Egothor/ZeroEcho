@@ -37,23 +37,27 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import java.time.Instant;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
-import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
+import zeroecho.pki.api.content.DurableContentReference;
+import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.SignWorkflowStore;
-import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.store.StagedContentStore;
 
 final class SigningWorkProjectionTest {
-    private static final String CONTENT_ID = "123e4567-e89b-42d3-a456-426614174000";
-
     @Test
-    void admissionSkipsOwnerProjectionAndTransfersOnlyToInitialRecordDueWork() throws Exception {
+    void admissionTransfersOnlyToInitialStateDueWork() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations();
         SigningIndexCapacityBudget capacity = new SigningIndexCapacityBudget(32_768L);
         SigningDueWorkIndex due = new SigningDueWorkIndex(1, capacity, generations,
@@ -62,24 +66,12 @@ final class SigningWorkProjectionTest {
         SigningDueWorkIndex owners = new SigningDueWorkIndex(8, capacity, generations,
                 SigningGenerationRegistry.Owner.OWNER);
         SigningWorkProjection projection = new SigningWorkProjection(
-                due, retention, owners, capacity);
+                due, retention, owners, capacity, stagedContent());
         String operationId = operationId(1);
         try {
-            SigningDueWorkIndex.Admission admission = due.reserveAdmission();
-            SigningTransactionPayloadCodec.Payload ownerOnly = SigningTransactionPayloadCodec
-                    .commitPayload(List.of(ownerMutation(operationId)));
-            try (SigningWorkProjection.Prepared prepared = projection.prepare(
-                    ownerOnly, pointer(1L), admission)) {
-                prepared.publish();
-            }
-            assertThrows(IllegalStateException.class, due::reserveAdmission,
-                    "owner projection must not consume the due admission");
-            admission.close();
-
             try (SigningDueWorkIndex.Admission recordAdmission = due.reserveAdmission()) {
-                SigningTransactionPayloadCodec.Payload record = SigningTransactionPayloadCodec
-                        .commitPayload(List.of(recordMutation(operationId,
-                                SignWorkflowStore.State.INTENT)));
+                SigningTransactionPayloadCodec.Payload record = acceptancePayload(
+                        operationId, SignWorkflowStore.State.INTENT);
                 try (SigningWorkProjection.Prepared prepared = projection.prepare(
                         record, pointer(2L), recordAdmission)) {
                     prepared.publish();
@@ -108,12 +100,11 @@ final class SigningWorkProjectionTest {
         SigningDueWorkIndex owners = new SigningDueWorkIndex(8, capacity, generations,
                 SigningGenerationRegistry.Owner.OWNER);
         SigningWorkProjection projection = new SigningWorkProjection(
-                due, retention, owners, capacity);
+                due, retention, owners, capacity, stagedContent());
         try {
             SigningDueWorkIndex.Admission admission = due.reserveAdmission();
-            SigningTransactionPayloadCodec.Payload record = SigningTransactionPayloadCodec
-                    .commitPayload(List.of(recordMutation(operationId(2),
-                            SignWorkflowStore.State.INTENT)));
+            SigningTransactionPayloadCodec.Payload record = acceptancePayload(
+                    operationId(2), SignWorkflowStore.State.INTENT);
             SigningWorkProjection.Prepared prepared = projection.prepare(
                     record, pointer(1L), admission);
             assertThrows(IllegalStateException.class, due::reserveAdmission);
@@ -145,21 +136,19 @@ final class SigningWorkProjectionTest {
         SigningDueWorkIndex owners = new SigningDueWorkIndex(8, capacity, generations,
                 SigningGenerationRegistry.Owner.OWNER);
         SigningWorkProjection projection = new SigningWorkProjection(
-                due, retention, owners, capacity);
+                due, retention, owners, capacity, stagedContent());
         String operationId = operationId(3);
         try {
             SigningMvccIndex.RecordPointer first = pointer(1L);
-            SigningTransactionPayloadCodec.Payload active = SigningTransactionPayloadCodec
-                    .commitPayload(List.of(recordMutation(operationId,
-                            SignWorkflowStore.State.INTENT), ownerMutation(operationId)));
+            SigningTransactionPayloadCodec.Payload active = acceptancePayload(
+                    operationId, SignWorkflowStore.State.INTENT);
             try (SigningWorkProjection.Prepared prepared = projection.prepare(active, first)) {
                 prepared.publish();
             }
             assertEquals(1, due.statistics().workCount());
             assertEquals(0, retention.size());
-            assertEquals(1, owners.statistics().workCount());
-            long sharedBytes = 160L + operationId.length() * 2L;
-            assertEquals(sharedBytes + 448L, capacity.snapshot().reservedBytes());
+            assertEquals(0, owners.statistics().workCount());
+            assertEquals(1, projection.statistics().identities());
 
             SigningMvccIndex.RecordPointer second = pointer(2L);
             SigningTransactionPayloadCodec.Payload expired = SigningTransactionPayloadCodec
@@ -169,24 +158,23 @@ final class SigningWorkProjectionTest {
                 prepared.publish();
             }
             assertEquals(0, due.statistics().workCount());
-            assertEquals(1, retention.size());
-            assertEquals(1, owners.statistics().workCount());
-            assertEquals(sharedBytes + 384L, capacity.snapshot().reservedBytes());
+            assertEquals(0, retention.size());
+            assertEquals(0, owners.statistics().workCount());
+            assertEquals(0, projection.statistics().identities());
 
             SigningMvccIndex.RecordPointer third = pointer(3L);
             SigningTransactionPayloadCodec.Payload retired = SigningTransactionPayloadCodec
                     .commitPayload(List.of(recordMutation(operationId,
                             SignWorkflowStore.State.RETIRED)));
-            try (SigningWorkProjection.Prepared prepared = projection.prepare(retired, third)) {
-                prepared.publish();
-            }
+            assertThrows(IllegalArgumentException.class,
+                    () -> projection.prepare(retired, third));
             assertEquals(0, due.statistics().workCount());
-            assertEquals(1, retention.size());
+            assertEquals(0, retention.size());
 
             SigningMvccIndex.RecordPointer fourth = pointer(4L);
             SigningTransactionPayloadCodec.Payload deleted = SigningTransactionPayloadCodec
-                    .commitPayload(List.of(delete(SigningWorkProjection.RECORD_NAMESPACE,
-                            operationId), delete(ownerKey(operationId))));
+                    .commitPayload(List.of(delete(SigningWorkProjection.STATE_NAMESPACE,
+                            operationId)));
             try (SigningWorkProjection.Prepared prepared = projection.prepare(deleted, fourth)) {
                 prepared.publish();
             }
@@ -202,7 +190,7 @@ final class SigningWorkProjectionTest {
     }
 
     @Test
-    void recoveryRejectsLegacyOwnerKeyBeforePublishingMembership() throws Exception {
+    void bulkRecoveryRejectsForeignNamespaceBeforePublishingMembership() throws Exception {
         SigningGenerationRegistry generations = publishedGenerations();
         SigningIndexCapacityBudget capacity = new SigningIndexCapacityBudget(32_768L);
         SigningDueWorkIndex due = new SigningDueWorkIndex(8, capacity, generations,
@@ -211,15 +199,15 @@ final class SigningWorkProjectionTest {
         SigningDueWorkIndex owners = new SigningDueWorkIndex(8, capacity, generations,
                 SigningGenerationRegistry.Owner.OWNER);
         SigningWorkProjection projection = new SigningWorkProjection(
-                due, retention, owners, capacity);
+                due, retention, owners, capacity, stagedContent());
         String operationId = operationId(4);
         try {
-            MetadataKey legacy = new MetadataKey(
-                    SigningWorkProjection.OWNER_NAMESPACE, operationId);
-
-            assertThrows(java.io.IOException.class,
-                    () -> projection.recover(legacy, new byte[] { 1 }, pointer(1L)));
-            assertFalse(projection.containsOwner(operationId));
+            MetadataKey foreign = new MetadataKey("io.zeroecho.pki.legacy-owner", operationId);
+            assertThrows(IllegalArgumentException.class,
+                    () -> projection.recoverAll(List.of(
+                            new SigningWorkProjection.RecoveredState(
+                                    foreign, new byte[] { 1 }, pointer(1L))), Map.of()));
+            assertFalse(projection.containsOperation(operationId));
             assertEquals(0, owners.statistics().workCount());
         } finally {
             projection.close();
@@ -231,32 +219,186 @@ final class SigningWorkProjectionTest {
         assertEquals(0L, capacity.snapshot().reservedBytes());
     }
 
+    @Test
+    void recoveryRetainsOnlyValidatedSchedulingCoordinates() throws Exception {
+        String operationId = operationId(5);
+        try (ProjectionFixture fixture = new ProjectionFixture()) {
+            SigningWorkProjection.RecoveryStatistics statistics = fixture.projection.recoverAll(
+                    List.of(recoveredState(operationId, SignWorkflowStore.State.INTENT)),
+                    Map.of(operationId, new SignWorkflowStore.SchedulingPlan(schedulingCoordinates(), Optional.empty())));
+
+            assertEquals(new SigningWorkProjection.RecoveryStatistics(1L, 1L, 1L),
+                    statistics);
+            try (SigningDueWorkIndex.IdentitySelection page = fixture.due.pageThrough(
+                    java.time.Instant.EPOCH, Optional.empty(), Optional.empty(), 1)) {
+                SigningDueWorkIndex.WorkDescriptor due = page.records().getFirst();
+                assertEquals(operationId, due.operationId());
+                assertEquals(new SignWorkflowStore.SchedulingCoordinates(
+                        new KeyRef("projection-key"), new PkiId("projection-authority")),
+                        due.scheduling());
+                assertFalse(due.malformed());
+            }
+        }
+    }
+
+    @Test
+    void recoveryRejectsMissingCoordinatesAndMismatchedStateIdentity() throws Exception {
+        String operationId = operationId(7);
+        String otherOperationId = operationId(8);
+
+        try (ProjectionFixture fixture = new ProjectionFixture()) {
+            assertThrows(IllegalArgumentException.class, () -> fixture.projection.recoverAll(
+                    List.of(recoveredState(operationId, SignWorkflowStore.State.INTENT)),
+                    Map.of()));
+        }
+        try (ProjectionFixture fixture = new ProjectionFixture()) {
+            assertThrows(IllegalArgumentException.class, () -> fixture.projection.recoverAll(
+                    List.of(new SigningWorkProjection.RecoveredState(
+                            new MetadataKey(SigningWorkProjection.STATE_NAMESPACE, operationId),
+                            recordMutation(otherOperationId, SignWorkflowStore.State.INTENT)
+                                    .contentInternal(), pointer(1L))),
+                    Map.of(operationId, new SignWorkflowStore.SchedulingPlan(schedulingCoordinates(), Optional.empty()))));
+        }
+    }
+
+    @Test
+    void malformedRecoveredStateStillUsesValidatedEnvelopeCoordinates() throws Exception {
+        String operationId = operationId(9);
+        try (ProjectionFixture fixture = new ProjectionFixture()) {
+            fixture.projection.recoverAll(List.of(new SigningWorkProjection.RecoveredState(
+                    new MetadataKey(SigningWorkProjection.STATE_NAMESPACE, operationId),
+                    new byte[] { 1 }, pointer(1L))),
+                    Map.of(operationId, new SignWorkflowStore.SchedulingPlan(schedulingCoordinates(), Optional.empty())));
+
+            try (SigningDueWorkIndex.IdentitySelection page = fixture.due.pageThrough(
+                    java.time.Instant.EPOCH, Optional.empty(), Optional.empty(), 1)) {
+                SigningDueWorkIndex.WorkDescriptor due = page.records().getFirst();
+                assertEquals(new SignWorkflowStore.SchedulingCoordinates(
+                        new KeyRef("projection-key"), new PkiId("projection-authority")),
+                        due.scheduling());
+                assertEquals(true, due.malformed());
+            }
+        }
+    }
+
+    @Test
+    void acceptanceEnvelopeCodecBytesAndVersionRemainStable() throws Exception {
+        byte[] encoded = envelopeBytes(operationId(10));
+        assertEquals(11, Byte.toUnsignedInt(encoded[Integer.BYTES]));
+        byte[] oldVersion = encoded.clone();
+        oldVersion[Integer.BYTES] = 10;
+        assertThrows(IllegalStateException.class, () -> FsCodec.decode(
+                FsCodec.SIGN_ACCEPTANCE_ENVELOPE, oldVersion, stagedContent()));
+        assertEquals("8bcffca9b5efafccada02119530ea9a61c61b821000e573fd60a80a7f9da3164",
+                HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(encoded)));
+    }
+
     private static SigningTransactionPayloadCodec.Mutation recordMutation(String operationId,
             SignWorkflowStore.State state) {
-        Instant createdAt = Instant.parse("2026-01-01T00:00:00Z");
-        SignWorkflowStore.Record record = new SignWorkflowStore.Record(new PkiId(operationId),
-                "test", "fingerprint", new SignatureWorkflow.ConfigurationCommitment(new byte[32]),
-                new Principal("test", "owner"), createdAt,
-                createdAt.plusSeconds(60L), new EncodedObject(Encoding.BINARY, new byte[] { 1 }),
-                state, 0L, 0L, Optional.empty(), Optional.empty(), Optional.empty(),
-                Optional.empty(), 0, Optional.empty(), Optional.empty());
+        SignWorkflowStore.MutableState record = new SignWorkflowStore.MutableState(
+                new PkiId(operationId), state, 0L, 0L, Optional.empty(), Optional.empty(),
+                Optional.of(state.name()), Optional.empty(), Optional.empty(), 0,
+                Optional.empty(), Optional.empty(), SignWorkflowStore.InitialAttemptPhase.NOT_APPLICABLE, zeroecho.pki.spi.store.SignWorkflowStore.Stage.SINGLE, java.util.Optional.empty());
         return new SigningTransactionPayloadCodec.Mutation(
                 SigningTransactionPayloadCodec.MutationKind.CREATE,
-                new MetadataKey(SigningWorkProjection.RECORD_NAMESPACE, operationId), -1L,
-                FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record));
+                new MetadataKey(SigningWorkProjection.STATE_NAMESPACE, operationId), -1L,
+                FsCodec.encode(FsCodec.SIGN_MUTABLE_STATE, record));
     }
 
-    private static SigningTransactionPayloadCodec.Mutation ownerMutation(String operationId) {
-        return new SigningTransactionPayloadCodec.Mutation(
-                SigningTransactionPayloadCodec.MutationKind.CREATE,
-                ownerKey(operationId), -1L,
-                new byte[] { 1 });
+    private static SigningWorkProjection.RecoveredState recoveredState(String operationId,
+            SignWorkflowStore.State state) {
+        return new SigningWorkProjection.RecoveredState(
+                new MetadataKey(SigningWorkProjection.STATE_NAMESPACE, operationId),
+                recordMutation(operationId, state).contentInternal(), pointer(1L));
     }
 
-    private static MetadataKey ownerKey(String operationId) {
-        return new MetadataKey(SigningWorkProjection.OWNER_NAMESPACE,
-                CONTENT_ID + ':' + operationId);
+    private static SignWorkflowStore.SchedulingCoordinates schedulingCoordinates() {
+        return new SignWorkflowStore.SchedulingCoordinates(
+                new KeyRef("projection-key"), new PkiId("projection-authority"));
     }
+
+    private static SigningTransactionPayloadCodec.Payload acceptancePayload(String operationId,
+            SignWorkflowStore.State state) {
+        SigningTransactionPayloadCodec.Mutation envelopeMutation =
+                new SigningTransactionPayloadCodec.Mutation(
+                        SigningTransactionPayloadCodec.MutationKind.CREATE,
+                        new MetadataKey(SigningWorkProjection.ENVELOPE_NAMESPACE, operationId),
+                        -1L, envelopeBytes(operationId));
+        return SigningTransactionPayloadCodec.commitPayload(List.of(
+                envelopeMutation, recordMutation(operationId, state)));
+    }
+
+    private static byte[] envelopeBytes(String operationId) {
+        return FsCodec.encode(FsCodec.SIGN_ACCEPTANCE_ENVELOPE,
+                acceptanceEnvelope(operationId));
+    }
+
+    private static SignWorkflowStore.AcceptanceEnvelope acceptanceEnvelope(String operationId) {
+        SignWorkflowStore.AcceptanceCommand command = new SignWorkflowStore.AcceptanceCommand(
+                new PkiId(operationId), "test", new SigningProvider.ConfigurationCommitment(
+                        new byte[SigningProvider.ConfigurationCommitment.BYTE_LENGTH]),
+                new AccessContext(new Principal("SERVICE", "test"), new Purpose("TEST"),
+                        Optional.empty(), Optional.empty()),
+                new KeyRef("projection-key"), new PkiId("projection-authority"),
+                "test", Encoding.BINARY, java.time.Instant.EPOCH,
+                java.time.Instant.EPOCH.plusSeconds(60L), REFERENCE, Optional.empty(), SignWorkflowStore.Mode.NORMAL, java.util.Optional.empty());
+        return SignWorkflowStore.AcceptanceEnvelope.from(command);
+    }
+
+    private static StagedContentStore stagedContent() {
+        return (StagedContentStore) java.lang.reflect.Proxy.newProxyInstance(
+                StagedContentStore.class.getClassLoader(),
+                new Class<?>[] { StagedContentStore.class }, (proxy, method, arguments) -> {
+                    if ("restoreReference".equals(method.getName())) {
+                        if (!REFERENCE.storeId().equals(arguments[0])
+                                || !REFERENCE.contentId().equals(arguments[1])
+                                || REFERENCE.encoding() != arguments[2]
+                                || REFERENCE.length() != (Long) arguments[3]
+                                || !REFERENCE.sha256().equals(arguments[4])
+                                || REFERENCE.lifecycle() != arguments[5]) {
+                            throw new IllegalArgumentException(
+                                    "Persisted content reference is inconsistent");
+                        }
+                        return REFERENCE;
+                    }
+                    if ("contentStoreId".equals(method.getName())) {
+                        return REFERENCE.storeId();
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                });
+    }
+
+    private static final class ProjectionFixture implements AutoCloseable {
+        private final SigningGenerationRegistry generations = publishedGenerations();
+        private final SigningIndexCapacityBudget capacity =
+                new SigningIndexCapacityBudget(32_768L);
+        private final SigningDueWorkIndex due = new SigningDueWorkIndex(8, capacity,
+                generations, SigningGenerationRegistry.Owner.DUE);
+        private final SigningRetentionIndex retention = new SigningRetentionIndex(8, capacity);
+        private final SigningDueWorkIndex owners = new SigningDueWorkIndex(8, capacity,
+                generations, SigningGenerationRegistry.Owner.OWNER);
+        private final SigningWorkProjection projection = new SigningWorkProjection(
+                due, retention, owners, capacity, stagedContent());
+
+        @Override public void close() {
+            projection.close();
+            due.close();
+            retention.close();
+            owners.close();
+            generations.close();
+            assertEquals(0L, capacity.snapshot().reservedBytes());
+        }
+    }
+
+    private static final DurableContentReference REFERENCE = new DurableContentReference() {
+        @Override public String storeId() { return "test-store"; }
+        @Override public String contentId() { return "test-content"; }
+        @Override public Encoding encoding() { return Encoding.BINARY; }
+        @Override public long length() { return 0L; }
+        @Override public String sha256() { return "0".repeat(64); }
+        @Override public Lifecycle lifecycle() { return Lifecycle.OPERATION; }
+    };
 
     private static SigningTransactionPayloadCodec.Mutation delete(String namespace,
             String operationId) {

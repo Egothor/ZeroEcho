@@ -120,10 +120,8 @@ public final class BcX509CredentialFramework implements CredentialFramework {
      * </ul>
      *
      * <p>
-     * Status-object generation is intentionally left unsupported in this default
-     * configuration and may be supplied explicitly through
-     * {@link #wired(BcX509StatusObjectGenerator)}. Credential issuance is not
-     * exposed by the framework facade.
+     * Status-object generation and credential issuance are intentionally not
+     * exposed by this verification-only framework.
      * </p>
      *
      * @param authority trusted authority snapshot used for parsing and proof verification
@@ -157,59 +155,6 @@ public final class BcX509CredentialFramework implements CredentialFramework {
         this.status = Objects.requireNonNull(status, "status");
         this.attributeMapper = Objects.requireNonNull(attributeMapper, "attributeMapper");
         this.authority = Objects.requireNonNull(authority, "authority");
-    }
-
-    /**
-     * Creates a fully wired X.509 framework instance using the current parser,
-     * proof-of-possession verifier and attribute mapper together with the supplied
-     * status-object generator.
-     *
-     * <p>
-     * The current instance is not modified. A new immutable framework instance is
-     * returned.
-     * </p>
-     *
-     * @param statusObjectGenerator concrete X.509 status-object generator; must not
-     *                              be {@code null}
-     * @return new fully wired framework instance
-     * @throws NullPointerException if {@code statusObjectGenerator} is {@code null}
-     */
-    public BcX509CredentialFramework wired(BcX509StatusObjectGenerator statusObjectGenerator) {
-        Objects.requireNonNull(statusObjectGenerator, "statusObjectGenerator");
-        return new BcX509CredentialFramework(requestParser, popVerifier, statusObjectGenerator, attributeMapper,
-                authority);
-    }
-
-    /**
-     * Creates a fully wired X.509 framework instance with an explicitly supplied
-     * proof-of-possession verifier.
-     *
-     * <p>
-     * This variant is intended for deployments that need to override the default
-     * X.509 proof-of-possession verification behavior while keeping the existing
-     * parser and framework attribute mapper.
-     * </p>
-     *
-     * <p>
-     * The current instance is not modified. A new immutable framework instance is
-     * returned.
-     * </p>
-     *
-     * @param statusObjectGenerator     concrete X.509 status-object generator; must
-     *                                  not be {@code null}
-     * @param proofOfPossessionVerifier explicit proof-of-possession verifier to use
-     *                                  in the returned instance; must not be
-     *                                  {@code null}
-     * @return new fully wired framework instance using the supplied proof-of-
-     *         possession verifier
-     * @throws NullPointerException if any argument is {@code null}
-     */
-    public BcX509CredentialFramework wired(BcX509StatusObjectGenerator statusObjectGenerator,
-            ProofOfPossessionVerifier proofOfPossessionVerifier) {
-        Objects.requireNonNull(statusObjectGenerator, "statusObjectGenerator");
-        Objects.requireNonNull(proofOfPossessionVerifier, "proofOfPossessionVerifier");
-        return new BcX509CredentialFramework(requestParser, proofOfPossessionVerifier, statusObjectGenerator,
-                attributeMapper, authority);
     }
 
     /**

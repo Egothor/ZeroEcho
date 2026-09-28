@@ -819,7 +819,7 @@ public final class OcspResponderService {
         if (proveSigning) {
             try {
                 signing.orElseThrow(() -> new IllegalStateException("OCSP signing service is unavailable"))
-                        .validateSigningBinding(value.responderCredentialId(), value.signingKeyRef(),
+                        .validateSigningBinding(value.authorityId(), value.responderCredentialId(), value.signingKeyRef(),
                                 value.signatureAlgorithm(), value.signatureBindingId());
             } catch (IllegalStateException failure) {
                 throw failure;

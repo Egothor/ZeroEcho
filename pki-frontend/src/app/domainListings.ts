@@ -41,11 +41,8 @@ import type { OperationSpec } from '@/api/operationSchema';
  * A domain with listings renders as a real admin screen: an auto-loaded,
  * paginated, sortable, filterable table of entities, with per-row actions
  * (inspect + mutations pre-filled with the row's id) and Create actions. A
- * multi-entity area (e.g. Roles & Grants, ACME) declares several listings and is
- * rendered with a tab per entity. Domains without a realm-wide list operation
- * (credentials, requests, profiles, issuer generations, status objects, chain
- * paths) have no entry and fall back to the operation browser (see
- * docs/backend-gap-analysis.md).
+ * multi-entity area declares several listings and is rendered with a tab per
+ * entity. Scoped lists require their authority or issuer selection first.
  */
 export interface DomainListing {
   /** Tab / section label. */
@@ -72,41 +69,47 @@ export interface DomainListing {
 }
 
 export const DOMAIN_LISTINGS: Record<string, readonly DomainListing[]> = {
+  requests: [
+    { title: 'Certificate requests', listOperationId: 'request.list', args: { limit: 100 }, resultKey: 'requests', idKey: 'requestId', idArg: 'requestId', entity: 'request', createOperationIds: ['request.import'] },
+  ],
+  issuance: [
+    { title: 'Certificates', listOperationId: 'credential.search', args: { limit: 100 }, resultKey: 'credentials', idKey: 'credentialId', idArg: 'credentialId', entity: 'certificate', createOperationIds: ['credential.issue'] },
+  ],
   authorities: [
     { title: 'Authorities', listOperationId: 'ca.list', args: { limit: 200 }, resultKey: 'authorities', idKey: 'caId', idArg: 'caId', entity: 'authority', createOperationIds: ['ca.create', 'ca.intermediate.create', 'ca.intermediate.issue'] },
   ],
   principals: [
-    { title: 'Principals', listOperationId: 'security.principal.list', args: { offset: 0, limit: 200 }, resultKey: 'principals', idKey: 'principalId', idArg: 'principalId', entity: 'principal', createOperationIds: ['security.principal.register'] },
+    { title: 'Principals', listOperationId: 'security.principal.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'principalId', idArg: 'principalId', entity: 'principal', createOperationIds: ['security.principal.register'] },
   ],
   access: [
-    { title: 'Grants', listOperationId: 'security.grant.list', args: { offset: 0, limit: 200 }, resultKey: 'grants', idKey: 'grantId', idArg: 'grantId', entity: 'grant', createOperationIds: ['security.grant.create'] },
-    { title: 'Role assignments', listOperationId: 'security.role-assignment.list', args: { offset: 0, limit: 200 }, resultKey: 'roleAssignments', idKey: 'assignmentId', idArg: 'assignmentId', entity: 'role assignment', createOperationIds: ['security.role-assignment.create'] },
-    { title: 'Role templates', listOperationId: 'security.role-template.list', args: {}, resultKey: 'roleTemplates', idKey: 'templateId', idArg: 'templateId', entity: 'role template' },
+    { title: 'Grants', listOperationId: 'security.grant.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'grantId', idArg: 'grantId', entity: 'grant', createOperationIds: ['security.grant.create'] },
+    { title: 'Role assignments', listOperationId: 'security.role-assignment.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'assignmentId', idArg: 'assignmentId', entity: 'role assignment', createOperationIds: ['security.role-assignment.create'] },
+    { title: 'Role templates', listOperationId: 'security.role-template.list', args: {}, resultKey: 'value', idKey: 'templateId', idArg: 'templateId', entity: 'role template' },
   ],
   approvals: [
-    { title: 'Approvals', listOperationId: 'security.approval.list', args: { offset: 0, limit: 200 }, resultKey: 'approvals', idKey: 'approvalId', idArg: 'approvalId', entity: 'approval', createOperationIds: ['security.approval.request'] },
+    { title: 'Approvals', listOperationId: 'security.approval.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'approvalId', idArg: 'approvalId', entity: 'approval', createOperationIds: ['security.approval.request'] },
   ],
   'break-glass': [
-    { title: 'Break-glass', listOperationId: 'security.break-glass.list', args: { offset: 0, limit: 200 }, resultKey: 'breakGlass', idKey: 'breakGlassId', idArg: 'breakGlassId', entity: 'break-glass grant', createOperationIds: ['security.break-glass.create'] },
+    { title: 'Break-glass', listOperationId: 'security.break-glass.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'breakGlassId', idArg: 'breakGlassId', entity: 'break-glass grant', createOperationIds: ['security.break-glass.create'] },
   ],
   publication: [
     { title: 'Publications', listOperationId: 'publication.list', args: { limit: 200 }, resultKey: 'publications', idKey: 'publicationId', idArg: 'publicationId', entity: 'publication', createOperationIds: ['publication.register'] },
   ],
   acme: [
-    { title: 'Directories', listOperationId: 'acme.directory.list', args: { offset: 0, limit: 200 }, resultKey: 'acmeDirectories', idKey: 'directoryId', idArg: 'directoryId', entity: 'ACME directory', createOperationIds: ['acme.directory.register'] },
-    { title: 'Accounts', listOperationId: 'acme.account.list', args: { offset: 0, limit: 200 }, resultKey: 'acmeAccounts', idKey: 'accountId', idArg: 'accountId', entity: 'ACME account' },
+    { title: 'Directories', listOperationId: 'acme.directory.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'directoryId', idArg: 'directoryId', entity: 'ACME directory', createOperationIds: ['acme.directory.register'] },
+    { title: 'Accounts', listOperationId: 'acme.account.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'accountId', idArg: 'accountId', entity: 'ACME account' },
   ],
   ocsp: [
-    { title: 'Responders', listOperationId: 'ocsp.responder.list', args: { offset: 0, limit: 200 }, resultKey: 'ocspResponders', idKey: 'responderId', idArg: 'responderId', entity: 'OCSP responder', createOperationIds: ['ocsp.responder.register'] },
+    { title: 'Responders', listOperationId: 'ocsp.responder.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'responderId', idArg: 'responderId', entity: 'OCSP responder', createOperationIds: ['ocsp.responder.register'] },
   ],
   configuration: [
-    { title: 'Algorithm bindings', listOperationId: 'algorithm.binding.list', args: { limit: 200 }, resultKey: 'algorithmBindings', idKey: 'bindingId', idArg: 'bindingId', entity: 'algorithm binding' },
+    { title: 'Algorithm bindings', listOperationId: 'algorithm.binding.list', args: { limit: 200 }, resultKey: 'bindings', idKey: 'bindingId', idArg: 'bindingId', entity: 'algorithm binding' },
   ],
   repository: [
-    { title: 'Repository aliases', listOperationId: 'repository.alias.list', args: { offset: 0, limit: 200 }, resultKey: 'repositoryAliases', idKey: 'authorityId', idArg: 'authorityId', entity: 'repository alias', createOperationIds: ['repository.alias.set'] },
+    { title: 'Repository aliases', listOperationId: 'repository.alias.list', args: { offset: 0, limit: 200 }, resultKey: 'value.items', idKey: 'authorityId', idArg: 'authorityId', entity: 'repository alias', createOperationIds: ['repository.alias.set'] },
   ],
   audit: [
-    { title: 'Audit trail', listOperationId: 'security.audit.search', args: { limit: 200 }, resultKey: 'auditRecords', idKey: 'objectId', idArg: 'objectId', entity: 'audit record' },
+    { title: 'Audit trail', listOperationId: 'security.audit.search', args: { limit: 200 }, resultKey: 'value.events', idKey: 'objectId', idArg: 'objectId', entity: 'audit record' },
   ],
   // Parameterised listings: the list operation requires a key (issuer, profile,
   // credential, authority) supplied through the table's filter bar before it loads.
@@ -114,10 +117,12 @@ export const DOMAIN_LISTINGS: Record<string, readonly DomainListing[]> = {
     { title: 'Status objects', listOperationId: 'inventory.status', args: { limit: 200 }, resultKey: 'statusObjects', idKey: 'statusObjectId', idArg: 'statusObjectId', entity: 'status object', createOperationIds: ['status.generate'] },
   ],
   issuers: [
-    { title: 'Chain paths', listOperationId: 'issuer.path.list', args: {}, resultKey: 'chainPaths', idKey: 'pathId', idArg: 'pathId', entity: 'chain path', createOperationIds: ['issuer.path.register'] },
+    { title: 'Issuer generations', listOperationId: 'issuer.generation.list', args: { limit: 100 }, resultKey: 'generations', idKey: 'issuerId', idArg: 'issuerId', entity: 'issuer generation' },
+    { title: 'Chain paths', listOperationId: 'issuer.path.list', args: {}, resultKey: 'paths', idKey: 'pathId', idArg: 'pathId', entity: 'chain path', createOperationIds: ['issuer.path.register'] },
   ],
   profiles: [
-    { title: 'Profile versions', listOperationId: 'profile.list', args: {}, resultKey: 'profiles', idKey: 'profileVersion', idArg: 'profileVersion', entity: 'profile version', createOperationIds: ['profile.register'] },
+    { title: 'Profiles', listOperationId: 'profile.list-all', args: { limit: 100 }, resultKey: 'profiles', idKey: 'profileId', idArg: 'profileId', entity: 'profile', createOperationIds: ['profile.register'] },
+    { title: 'Profile versions', listOperationId: 'profile.list', args: {}, resultKey: 'versions', idKey: 'profileVersion', idArg: 'profileVersion', entity: 'profile version', createOperationIds: ['profile.register'] },
   ],
   revocation: [
     { title: 'Revocations', listOperationId: 'revocation.snapshot', args: { limit: 200 }, resultKey: 'revocations', idKey: 'credentialId', idArg: 'credentialId', entity: 'revocation' },

@@ -59,7 +59,7 @@ describe('demo backend', () => {
 
   it('filters the operation catalog by persona', async () => {
     const admin = parse(await backend('ADMINISTRATOR').get('/admin/v1/operations'));
-    expect(admin['count']).toBe(101);
+    expect(admin['count']).toBe(107);
 
     const publicUser = parse(await backend('PUBLIC_USER').get('/admin/v1/operations'));
     expect(publicUser['count']).toBe(discoverableOperations('PUBLIC_USER').length);
@@ -80,7 +80,7 @@ describe('demo backend', () => {
     expect((env['failure'] as Record<string, unknown>)['code']).toBe('AUTHORIZATION_DENIED');
   });
 
-  it('requires approval for HIGH_RISK operations, then succeeds with an approval id', async () => {
+  it('requires approval for HIGH_RISK operations, then accepts signing with an approval id', async () => {
     const b = backend('ADMINISTRATOR');
     const args = { version: 1, authorityId: 'x', arguments: { formatId: 'f', subjectRef: 's', profileId: 'p', keyRef: 'k' } };
     const first = await b.post('/admin/v1/operations/ca.create', args);
@@ -89,8 +89,13 @@ describe('demo backend', () => {
     expect((parse(first)['result'] as Record<string, unknown>)['operationCommitment']).toBeTruthy();
 
     const second = await b.post('/admin/v1/operations/ca.create', { ...args, approvalId: 'ap-1' });
-    expect(second.status).toBe(200);
-    expect(parse(second)['status']).toBe('SUCCEEDED');
+    expect(second.status).toBe(202);
+    expect(parse(second)['status']).toBe('PENDING');
+    const receipt = parse(second)['result'] as { operationId: string };
+    const polled = await b.get(`/admin/v1/signing-operations/${receipt.operationId}`);
+    expect(polled.status).toBe(200);
+    expect(parse(polled)['result']).toMatchObject({ operationId: receipt.operationId, kind: 'CA', encoding: 'DER' });
+    expect(parse(polled)['result']).not.toHaveProperty('completed');
   });
 
   it('returns seeded records for list operations', async () => {

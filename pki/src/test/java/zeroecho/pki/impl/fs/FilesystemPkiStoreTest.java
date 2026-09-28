@@ -772,6 +772,44 @@ public final class FilesystemPkiStoreTest {
         }
     }
 
+    @Test
+    void initializationCrashMatrixLeavesUnsupportedUnversionedRootWithoutRetryMutation()
+            throws Exception {
+        for (FilesystemPkiStore.InitializationFaultPoint point
+                : FilesystemPkiStore.InitializationFaultPoint.values()) {
+            Path root = tmp.resolve("store-init-" + point);
+            FilesystemPkiStore.installInitializationFault(point);
+            try {
+                assertThrows(IllegalStateException.class,
+                        () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
+            } finally {
+                FilesystemPkiStore.clearInitializationFault();
+            }
+            assertUnsupportedUnversionedWithoutMutation(root);
+        }
+
+        for (DurableMetadataFiles.FaultPoint point : List.of(
+                DurableMetadataFiles.FaultPoint.TEMP_CREATE,
+                DurableMetadataFiles.FaultPoint.WRITE,
+                DurableMetadataFiles.FaultPoint.FILE_FORCE,
+                DurableMetadataFiles.FaultPoint.MOVE,
+                DurableMetadataFiles.FaultPoint.DIRECTORY_FORCE_AFTER_MOVE)) {
+            Path root = tmp.resolve("store-init-namespace-" + point);
+            DurableMetadataFiles.installFault(current -> {
+                if (current == point) {
+                    throw new IOException("injected namespace publication failure");
+                }
+            });
+            try {
+                assertThrows(IllegalStateException.class,
+                        () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
+            } finally {
+                DurableMetadataFiles.clearFault();
+            }
+            assertUnsupportedUnversionedWithoutMutation(root);
+        }
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("noncanonicalVersionMarkers")
     void noncanonicalVersionMarkerIsRejectedBeforeMutation(String fixtureName, byte[] marker) throws Exception {
@@ -785,7 +823,7 @@ public final class FilesystemPkiStoreTest {
         IllegalStateException failure = assertThrows(IllegalStateException.class,
                 () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
 
-        assertEquals("Filesystem store open failed: code=STORE_OPEN_FAILED", failure.getMessage());
+        assertEquals("Filesystem store format unsupported: code=STORE_FORMAT_UNSUPPORTED", failure.getMessage());
         assertFalse(failure.toString().contains(root.toString()));
         assertEquals(Set.of(FsPaths.VERSION_FILE, "sentinel.bin"), directEntryNames(root));
         assertArrayEquals(marker, Files.readAllBytes(version));
@@ -812,7 +850,7 @@ public final class FilesystemPkiStoreTest {
         IllegalStateException failure = assertThrows(IllegalStateException.class,
                 () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
 
-        assertEquals("Filesystem store open failed: code=STORE_OPEN_FAILED", failure.getMessage());
+        assertEquals("Filesystem store format unsupported: code=STORE_FORMAT_UNSUPPORTED", failure.getMessage());
         assertFalse(failure.toString().contains(root.toString()));
         assertEquals(Set.of(FsPaths.VERSION_FILE, "sentinel.bin"), directEntryNames(root));
         assertEquals(lastOffset + 1L, originalSize);
@@ -830,7 +868,7 @@ public final class FilesystemPkiStoreTest {
     }
 
     @Test
-    void incompleteV6RootIsRejectedBeforeLockOrDirectoryMutation() throws Exception {
+    void oldV6RootIsRejectedBeforeLockOrDirectoryMutation() throws Exception {
         Path root = tmp.resolve("store-incomplete-v6");
         Files.createDirectories(root);
         Files.writeString(root.resolve(FsPaths.VERSION_FILE), "v6", StandardCharsets.US_ASCII);
@@ -841,7 +879,7 @@ public final class FilesystemPkiStoreTest {
         }
         IllegalStateException failure = assertThrows(IllegalStateException.class,
                 () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
-        assertEquals("Filesystem store open failed: code=STORE_OPEN_FAILED", failure.getMessage());
+        assertEquals("Filesystem store format unsupported: code=STORE_FORMAT_UNSUPPORTED", failure.getMessage());
         List<String> after;
         try (java.util.stream.Stream<Path> entries = Files.list(root)) {
             after = entries.map(path -> path.getFileName().toString()).sorted().toList();
@@ -877,9 +915,7 @@ public final class FilesystemPkiStoreTest {
             assertEquals(credentialId, restored.getIssuerGeneration(
                     restoredAuthority.currentIssuanceIssuerId()).orElseThrow().credentialId());
         }
-        try (java.util.stream.Stream<Path> records = Files.list(snapshot.resolve("credentials").resolve("by-id"))) {
-            assertEquals(2, records.filter(Files::isRegularFile).count());
-        }
+        assertFalse(Files.exists(snapshot.resolve("credentials")));
         assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".content")));
         assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".meta")));
         assertFalse(Files.exists(snapshot.resolve("staged-content").resolve(sourceContentId + ".owners")));
@@ -1005,8 +1041,14 @@ public final class FilesystemPkiStoreTest {
             CaRecord inconsistent = TestObjects.minimalCaRecord(source, "ca-inconsistent", CaState.ACTIVE);
             source.putCa(valid);
             source.putCa(inconsistent);
-            Files.delete(new FsPaths(root).credentialPath(source.getIssuerGeneration(
-                    inconsistent.currentIssuanceIssuerId()).orElseThrow().credentialId()));
+            MetadataKey missing = AuthorityMetadataCodec.credentialKey(source.getIssuerGeneration(
+                    inconsistent.currentIssuanceIssuerId()).orElseThrow().credentialId());
+            try (MetadataSnapshot pinned = source.metadataStore().snapshot();
+                    MetadataSnapshot.Record record = pinned.get(missing).orElseThrow();
+                    MetadataTransaction transaction = source.metadataStore().beginTransaction()) {
+                transaction.delete(missing, record.recordRevision());
+                assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
+            }
 
             FsPkiStoreOptions strict = strictSnapshotOptions();
             assertThrows(IllegalStateException.class,
@@ -1101,7 +1143,10 @@ public final class FilesystemPkiStoreTest {
         dumpTree(snapshot);
 
         assertTrue(Files.exists(snapshot.resolve("VERSION")));
-        assertTrue(Files.exists(snapshot.resolve("cas").resolve("by-id")));
+        assertFalse(Files.exists(snapshot.resolve("cas")));
+        try (FilesystemPkiStore restored = new FilesystemPkiStore(snapshot, options)) {
+            assertEquals(1, restored.listCas().size());
+        }
 
         System.out.println("snapshotExportClonesNewRootNonStrict...ok");
     }
@@ -1414,13 +1459,60 @@ public final class FilesystemPkiStoreTest {
         }
     }
 
+    private static void assertUnsupportedUnversionedWithoutMutation(Path root)
+            throws Exception {
+        assertTrue(Files.isDirectory(root));
+        assertFalse(Files.exists(root.resolve(FsPaths.VERSION_FILE)));
+        assertFalse(directEntryNames(root).isEmpty());
+        byte[] before = rootFingerprint(root);
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> new FilesystemPkiStore(root, FsPkiStoreOptions.defaults()));
+
+        assertEquals("Filesystem store format unsupported: code=STORE_FORMAT_UNSUPPORTED",
+                failure.getMessage());
+        assertFalse(failure.toString().contains(root.toString()));
+        assertArrayEquals(before, rootFingerprint(root));
+    }
+
+    private static byte[] rootFingerprint(Path root) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException failure) {
+            throw new AssertionError(failure);
+        }
+        byte[] buffer = new byte[8192];
+        try (Stream<Path> paths = Files.walk(root)) {
+            for (Path path : paths.sorted().toList()) {
+                if (path.equals(root)) {
+                    continue;
+                }
+                digest.update(Files.isDirectory(path) ? (byte) 1 : (byte) 2);
+                digest.update(root.relativize(path).toString().getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 0);
+                if (Files.isRegularFile(path)) {
+                    try (InputStream input = Files.newInputStream(path)) {
+                        int read;
+                        while ((read = input.read(buffer)) >= 0) {
+                            if (read > 0) {
+                                digest.update(buffer, 0, read);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return digest.digest();
+    }
+
     private static FsPkiStoreOptions nonStrictSnapshotOptions() {
         FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
         return new FsPkiStoreOptions(defaults.caHistoryPolicy(), defaults.profileHistoryPolicy(),
                 defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), false,
                 defaults.signingOperationHorizon(), defaults.signingIdPermittedSkew(),
                 defaults.signingMaximumGroupSize(), defaults.signingResidentIndexBudgetBytes(),
-                defaults.signingCompactionTransientBudgetBytes(), defaults.signingEvidenceAudit());
+                defaults.signingCompactionTransientBudgetBytes(), defaults.initialCrlNumber(), false);
     }
 
     private static FsPkiStoreOptions strictSnapshotOptions() {
@@ -1429,7 +1521,7 @@ public final class FilesystemPkiStoreTest {
                 defaults.revocationHistoryPolicy(), defaults.workflowHistoryPolicy(), true,
                 defaults.signingOperationHorizon(), defaults.signingIdPermittedSkew(),
                 defaults.signingMaximumGroupSize(), defaults.signingResidentIndexBudgetBytes(),
-                defaults.signingCompactionTransientBudgetBytes(), defaults.signingEvidenceAudit());
+                defaults.signingCompactionTransientBudgetBytes(), defaults.initialCrlNumber(), false);
     }
 
     private static void sleepMillis(long ms) throws InterruptedException {

@@ -1,7 +1,7 @@
 # PKI failure model
 
 This document defines the consistent, stable, and safe failure semantics used
-across the `pki` and `pki-server` modules (work-plan Task 4, issue #16). It is the
+across the `pki` and `pki-server` modules (issue #16). It is the
 authoritative reference for how failures are classified, carried, redacted, and
 translated into external protocol outcomes.
 
@@ -32,10 +32,17 @@ translated into external protocol outcomes.
 ### Structural carriage
 
 `PkiException` carries an optional typed `PkiFailureReason` (`failureReason()`).
-Producers attach the reason; consumers read it and map it through an **exhaustive
-switch** on the classification. `DefaultPkiOperationExecutor.classify` reads the
-structural reason before any other check, so every store/domain failure that carries
-a reason is classified without inspecting message text.
+`DefaultPkiOperationExecutor.classify` maps the
+owner-approved `STORE_DURABILITY_UNCONFIRMED` case to application classification
+`RECOVERY_REQUIRED` and stable external code `RECOVERY_REQUIRED`. The internal
+reason token, exception message and cause remain internal. Classification does
+not retry the failed operation or inspect message text.
+
+Broader exhaustive reason mapping is not restored in the current executor.
+Other `PkiException` reasons retain the existing `POLICY_REJECTION` fallback;
+exception-type and internal control-marker classifications remain unchanged.
+The enum's declared classification describes its semantic reason family, not a
+claim that every application consumer currently implements that mapping.
 
 Store and domain layers each own their reason families, all carried structurally:
 
@@ -46,10 +53,9 @@ Store and domain layers each own their reason families, all carried structurally
 - **Publication** — `PUBLICATION_*` (`DefaultPublicationService`).
 - **Authority / issuance lookup** — `ISSUER_CA_NOT_FOUND`, `ISSUER_CA_NOT_ACTIVE`,
   `ISSUER_GENERATION_NOT_FOUND`, `ISSUER_CHAIN_PATH_NOT_FOUND`, `ISSUER_CREDENTIAL_NOT_FOUND`,
-  `CREDENTIAL_NOT_FOUND`, `STATUS_TARGET_NOT_FOUND` (`DefaultCaService`, `DefaultIssuanceService`,
-  `IssuerAuthorities`, `DefaultStatusObjectService`) — the previously-untyped authority/credential/
-  status lookups now carry a typed reason, so they classify as `NOT_FOUND`/`POLICY_REJECTION` from the
-  structure alone.
+  `CREDENTIAL_NOT_FOUND`, `STATUS_TARGET_NOT_FOUND` remain declared reason families.
+  Current point-inspection operations use the executor's internal missing-object
+  marker to return `NOT_FOUND`; the declared reason families do not imply exhaustive application mapping.
 - **Issuance** — profile-validation rejections carry their stable code on the typed
   `ProfileValidationRejection`; the issuance path reads `rejectionCode()` directly.
 - **Algorithm identity** — an unresolved identity throws the typed
@@ -76,16 +82,16 @@ external model:
 These are deliberate and reviewed; they are not the internal message-parsing
 anti-pattern this model removes.
 
-1. **Type-only structural fallback in `classify()` (prose parsing RETIRED, 2026-09-06).**
-   The former natural-language markers (`not found`, `does not exist`, `changed concurrently`,
-   `CONFLICT`) have been removed. Every domain producer whose outcome is caller-meaningful now
-   carries a typed `PkiFailureReason` (classified by its classification) or a typed internal marker
-   (`MissingObjectException`, `OperationConflictException`, `CapabilityUnavailableException`,
-   `ExternalOutcomeUnknownException`). The remaining fallback branches on the exception **type only**:
-   an untyped `IllegalArgumentException` → `VALIDATION_FAILURE`, a bare `PkiException` →
-   `POLICY_REJECTION`, an `IllegalStateException` → `RESOURCE_FAILURE`, else `INTERNAL_FAILURE`. No
-   code path inspects message text. Guarded by `PkiOperationExecutorTest`
-   (`classifiesTypedNotFoundReasonStructurally`, `doesNotClassifyNotFoundOrConflictFromMessageTextAlone`).
+1. **Type-only structural fallback in `classify()`.** The executor's internal
+   markers (`Missing`, `Conflict`, `CapabilityMissing`, `ExternalUnknown`) carry
+   control flow without message parsing. Typed `STORE_DURABILITY_UNCONFIRMED`
+   maps to `RECOVERY_REQUIRED`; other `PkiException` values retain
+   `POLICY_REJECTION`. An `IllegalArgumentException` maps to `VALIDATION_FAILURE`,
+   an `IllegalStateException` to `RESOURCE_FAILURE`, and other failures to
+   `INTERNAL_FAILURE`. The focused `PkiOperationInspectionTest` cases
+   `mapsTypedStoreDurabilityUncertaintyToSafeRecoveryOutcomeWithoutRetry` and
+   `preservesPolicyClassificationForMessageTokensAndOtherTypedReasons` verify the
+   approved narrow durability translation through the public executor boundary.
 2. **Jackson strict-duplicate detection.** `STRICT_DUPLICATE_DETECTION` is a stable,
    documented Jackson behavior whose only signal is the exception message; the library
    exposes no typed duplicate-field exception. Matching that narrow third-party marker

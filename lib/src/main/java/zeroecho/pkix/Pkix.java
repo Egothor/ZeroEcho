@@ -400,6 +400,34 @@ public final class Pkix {
     }
 
     /**
+     * Reassembles a successful OCSP response from unsigned {@code ResponseData},
+     * an encoded signature algorithm, a raw signature and an ordered certificate
+     * chain. Certificates are embedded in the supplied order without sorting or
+     * trust validation. An empty chain omits the optional {@code certs} field,
+     * matching the three-argument overload. No signer is invoked and the raw
+     * signature is not cryptographically verified by assembly.
+     *
+     * <p>Inputs remain caller-owned and are not retained. The returned DER array
+     * is independent. Time and auxiliary memory are linear in response-data,
+     * algorithm, signature and total embedded-certificate bytes. No aggregate
+     * live-response size limit is introduced.</p>
+     *
+     * @param tbsResponseData nonnull DER-encoded unsigned {@code ResponseData}
+     * @param signatureAlgorithmDer nonnull DER-encoded signature {@code AlgorithmIdentifier}
+     * @param signature nonnull raw signature bytes
+     * @param chain nonnull certificate list in exact embedding order, with no null elements
+     * @return freshly encoded successful OCSP response DER
+     * @throws NullPointerException if an argument or a chain element is null
+     * @throws IllegalArgumentException if DER parsing or certificate encoding fails
+     */
+    public static byte[] assembleOcspResponse(byte[] tbsResponseData, byte[] signatureAlgorithmDer,
+            byte[] signature, List<X509Certificate> chain) {
+        return provider().assembleOcspResponse(Objects.requireNonNull(tbsResponseData, "tbsResponseData"),
+                Objects.requireNonNull(signatureAlgorithmDer, "signatureAlgorithmDer"),
+                Objects.requireNonNull(signature, "signature"), Objects.requireNonNull(chain, "chain"));
+    }
+
+    /**
      * Returns the DER encoding of an X.509 {@code AlgorithmIdentifier}.
      *
      * @param algorithm the algorithm identifier

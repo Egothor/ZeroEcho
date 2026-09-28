@@ -56,7 +56,7 @@ import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
 import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
 import zeroecho.pki.impl.framework.x509.X509SecurityFloor;
 import zeroecho.pki.impl.framework.x509.X509SuiteCompatibility;
-import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.SigningProvider;
 
 /**
  * Edge inspection of a canonically validated signed X.509 object.
@@ -142,7 +142,7 @@ public final class BcX509SignedObjectValidator {
      * @throws IllegalArgumentException if the plan belongs to another runtime
      */
     public CertificateBindings validateGeneratedCertificate(RepeatableContent content,
-            X509ExecutionPlan<SignatureWorkflow> plan, CancellationSignal cancellation) throws IOException {
+            X509ExecutionPlan<SigningProvider> plan, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(plan, "plan");
         authority.authorize(plan, plan.executor(), AlgorithmExecutionCapability.Direction.SIGN);
         return validateCertificate(content, Optional.of(plan.selection().requested()), cancellation);
@@ -165,7 +165,7 @@ public final class BcX509SignedObjectValidator {
      *                     validation fails
      * @throws IllegalArgumentException if the plan belongs to another runtime
      */
-    public void validateGeneratedCrl(RepeatableContent content, X509ExecutionPlan<SignatureWorkflow> plan,
+    public void validateGeneratedCrl(RepeatableContent content, X509ExecutionPlan<SigningProvider> plan,
             X509Certificate issuerCertificate, Instant expectedThisUpdate,
             Optional<Instant> expectedNextUpdate, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(content, "content");
@@ -240,7 +240,7 @@ public final class BcX509SignedObjectValidator {
      * @param cancellation         operation cancellation signal
      * @throws IOException if parsing, binding, or signature validation fails
      */
-    public void validateGeneratedOcsp(RepeatableContent content, X509ExecutionPlan<SignatureWorkflow> plan,
+    public void validateGeneratedOcsp(RepeatableContent content, X509ExecutionPlan<SigningProvider> plan,
             X509Certificate responderCertificate, Instant expectedThisUpdate,
             Optional<Instant> expectedNextUpdate, CancellationSignal cancellation) throws IOException {
         Objects.requireNonNull(content, "content");

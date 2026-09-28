@@ -74,9 +74,15 @@ export interface FieldSpec {
    * fields that name a NEW id being created.
    */
   readonly ref?: string;
+  /** Only for genuinely new values outside the known PKI inventory, such as external key references. */
+  readonly allowNew?: boolean;
+  /** Continuation is managed by the UI, never transcribed by the operator. */
+  readonly hidden?: boolean;
+  readonly readOnly?: boolean;
 }
 
-export type OperationFamily = 'PKI_OPERATION' | 'SERVER_CONTROL_OPERATION';
+import type { OperationFamily } from '@/api/types';
+export type { OperationFamily } from '@/api/types';
 export type OperationScope = 'realm' | 'authority';
 export type ApprovalCategory = 'NONE' | 'HIGH_RISK' | 'ISSUANCE_SINGLE' | 'ISSUANCE_THRESHOLD';
 

@@ -184,13 +184,45 @@ final class DefaultRevocationServiceTest {
             assertEquals("Revocation operation failed: code=REVOCATION_STATE_UPDATE_FAILED", failure.getMessage());
             assertNull(failure.getCause());
             assertFalse(failure.toString().contains(sentinel));
+            assertThrows(IllegalStateException.class, cursor::currentGlobalRevision);
+        }
+    }
+
+    @Test
+    void filteredSnapshotPreservesSourceAndGlobalRevisionWithoutUsingOrdinalOrLocalRevision() throws Exception {
+        RevocationRecord record = new RevocationRecord(CREDENTIAL_ID,
+                new RevocationTransition(1L, RevocationState.CLEAR, NOW, Optional.empty(), new SimpleAttributeSet()));
+        RevocationSnapshot source = singleRecordSnapshot(record);
+        DefaultRevocationService service = new DefaultRevocationService(store((method, arguments) -> {
+            if ("openRevocationSnapshot".equals(method)) return source;
+            throw new AssertionError("Unexpected store access: " + method);
+        }), Clock.fixed(NOW, ZoneOffset.UTC), event -> { });
+        RevocationQuery query = new RevocationQuery(Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+        try (RevocationSnapshot snapshot = service.search(query)) {
+            assertEquals(source.sourceStoreId(), snapshot.sourceStoreId());
+            assertEquals(80L, snapshot.revision());
+            RevocationSnapshot.Cursor cursor = snapshot.openCursor();
+            try (cursor) {
+                assertThrows(IllegalStateException.class, cursor::currentGlobalRevision);
+                assertTrue(cursor.next());
+                assertEquals(record, cursor.current());
+                assertEquals(0L, cursor.ordinal());
+                assertEquals(1L, cursor.current().transition().revision());
+                assertEquals(77L, cursor.currentGlobalRevision());
+                assertFalse(cursor.next());
+                assertThrows(IllegalStateException.class, cursor::currentGlobalRevision);
+            }
+            assertThrows(IllegalStateException.class, cursor::currentGlobalRevision);
         }
     }
 
     private static RevocationSnapshot singleRecordSnapshot(RevocationRecord record) {
         return new RevocationSnapshot() {
-            @Override public String snapshotId() { return "snapshot:test"; }
-            @Override public long revision() { return 1L; }
+            @Override public zeroecho.pki.spi.store.MetadataStoreId sourceStoreId() {
+                    return new zeroecho.pki.spi.store.MetadataStoreId("102030405060708090a0b0c0d0e0f001");
+                }
+                @Override public String snapshotId() { return "snapshot:test"; }
+            @Override public long revision() { return 80L; }
             @Override public long boundary() { return 1L; }
             @Override public String commitment() { return "00"; }
             @Override public OptionalLong count() { return OptionalLong.of(1L); }
@@ -205,7 +237,8 @@ final class DefaultRevocationServiceTest {
                         return true;
                     }
                     @Override public RevocationRecord current() { return record; }
-                    @Override public long ordinal() { return 0L; }
+                    @Override public long currentGlobalRevision() { return 77L; }
+                @Override public long ordinal() { return 0L; }
                     @Override public void close() { }
                 };
             }

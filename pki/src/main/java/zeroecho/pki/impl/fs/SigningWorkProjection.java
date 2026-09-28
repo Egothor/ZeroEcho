@@ -34,39 +34,49 @@
 package zeroecho.pki.impl.fs;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
+import java.util.Optional;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.SignWorkflowStore;
+import zeroecho.pki.spi.store.StagedContentStore;
 
 /** Atomic signing-work projections sharing one canonical identity per operation. */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidDeeplyNestedIfStmts",
         "PMD.AvoidLiteralsInIfCondition", "PMD.CloseResource", "PMD.CommentRequired",
-        "PMD.CompareObjectsWithEquals", "PMD.ControlStatementBraces" })
+        "PMD.CompareObjectsWithEquals", "PMD.ControlStatementBraces",
+        "PMD.UseTryWithResources" })
 final class SigningWorkProjection implements AutoCloseable {
-    /* default */ static final String RECORD_NAMESPACE = "io.zeroecho.pki.signing-record";
-    /* default */ static final String OWNER_NAMESPACE = SigningOwnerKey.NAMESPACE;
+    /* default */ static final String STATE_NAMESPACE = "io.zeroecho.pki.signing-state";
+    /* default */ static final String ENVELOPE_NAMESPACE = "io.zeroecho.pki.signing-envelope";
+    private static final long COORDINATE_FIXED_BYTES = 128L;
 
     private final SigningDueWorkIndex due;
     private final SigningRetentionIndex retention;
-    private final SigningDueWorkIndex owners;
     private final SigningIndexCapacityBudget capacity;
+    private final StagedContentStore stagedContent;
     private final Map<String, IdentitySlot> identities = new HashMap<>();
     private long reservedIdentityBytes;
 
     /* default */ SigningWorkProjection(SigningDueWorkIndex due,
             SigningRetentionIndex retention, SigningDueWorkIndex owners,
             SigningIndexCapacityBudget capacity) {
+        this(due, retention, owners, capacity, null);
+    }
+
+    /* default */ SigningWorkProjection(SigningDueWorkIndex due,
+            SigningRetentionIndex retention, SigningDueWorkIndex owners,
+            SigningIndexCapacityBudget capacity, StagedContentStore stagedContent) {
         this.due = Objects.requireNonNull(due, "due");
         this.retention = Objects.requireNonNull(retention, "retention");
-        this.owners = Objects.requireNonNull(owners, "owners");
+        Objects.requireNonNull(owners, "owners");
         this.capacity = Objects.requireNonNull(capacity, "capacity");
+        this.stagedContent = stagedContent;
     }
 
     /** Reserves every identity and derived structural change before WAL admission. */
@@ -95,17 +105,16 @@ final class SigningWorkProjection implements AutoCloseable {
         List<SigningRetentionIndex.PreparedChange> retentionChanges = new ArrayList<>();
         List<AdmittedIdentity> admitted = new ArrayList<>();
         List<IdentitySlot> touched = new ArrayList<>();
-        Set<String> ownerChanges = new HashSet<>();
+        Map<String, SignWorkflowStore.SchedulingPlan> scheduling =
+                schedulingCoordinates(payload);
         boolean transferred = false;
         try {
             for (SigningTransactionPayloadCodec.Mutation mutation : payload.mutations()) {
                 MetadataKey key = mutation.key();
-                if (OWNER_NAMESPACE.equals(key.namespace())) {
-                    prepareOwnerMutation(mutation, pointer, orderedChanges, admitted,
-                            touched, ownerChanges, admissionClass);
-                } else if (RECORD_NAMESPACE.equals(key.namespace())) {
+                if (STATE_NAMESPACE.equals(key.namespace())) {
                     prepareRecordMutation(mutation, pointer, orderedChanges, retentionChanges,
-                            admitted, touched, dueAdmission, admissionClass);
+                            admitted, touched, dueAdmission, admissionClass,
+                            scheduling.get(key.key()));
                 }
             }
             Prepared result = new Prepared(List.copyOf(orderedChanges),
@@ -123,7 +132,8 @@ final class SigningWorkProjection implements AutoCloseable {
             List<SigningRetentionIndex.PreparedChange> retentionChanges,
             List<AdmittedIdentity> admitted, List<IdentitySlot> touched,
             SigningDueWorkIndex.Admission dueAdmission,
-            SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
+            SigningTransitionWorkspaceSizing.AdmissionClass admissionClass,
+            SignWorkflowStore.SchedulingPlan scheduling) {
         String operationId = mutation.key().key();
         IdentitySlot slot = identities.get(operationId);
         if (mutation.kind() == SigningTransactionPayloadCodec.MutationKind.DELETE) {
@@ -138,11 +148,11 @@ final class SigningWorkProjection implements AutoCloseable {
             }
             return;
         }
-        slot = admit(operationId, admitted, admissionClass);
+        slot = admit(operationId, scheduling, admitted, admissionClass);
         touch(touched, slot);
-        SignWorkflowStore.Record record;
+        SignWorkflowStore.MutableState state;
         try {
-            record = FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD,
+            state = FsCodec.decode(FsCodec.SIGN_MUTABLE_STATE,
                     Objects.requireNonNull(mutation.contentInternal(), "content"));
         } catch (RuntimeException malformed) {
             if (retention.contains(slot.identity)) {
@@ -151,143 +161,152 @@ final class SigningWorkProjection implements AutoCloseable {
             boolean initialDue = !due.contains(slot.identity);
             if (initialDue && dueAdmission != null) {
                 dueAdmission.bind(slot.identity);
-                orderedChanges.add(due.prepareMalformed(dueAdmission, slot.identity, pointer));
+                orderedChanges.add(due.prepareMalformed(dueAdmission, slot.identity, pointer,
+                        slot.scheduling.certificate()));
             } else {
-                orderedChanges.add(due.prepareMalformed(slot.identity, pointer));
+                orderedChanges.add(due.prepareMalformed(slot.identity, pointer, slot.scheduling.certificate()));
             }
             return;
         }
-        if (!operationId.equals(record.submissionId().value())) return;
-        if (isRetained(record.state())) {
+        if (!operationId.equals(state.operationId().value())) return;
+        if (RecoveryBuilder.isRetained(state.state())) {
             if (due.contains(slot.identity)) orderedChanges.add(due.prepareRemove(slot.identity));
-            retentionChanges.add(retention.prepareRetained(
-                    slot.identity, record.createdAt(), admissionClass));
         } else {
             if (retention.contains(slot.identity)) {
                 retentionChanges.add(retention.prepareRemove(slot.identity));
             }
-            Instant nextEligibleAt = record.nextEligibleAt().orElse(Instant.EPOCH);
+            Instant nextEligibleAt = effectiveEligibility(state);
             boolean initialDue = !due.contains(slot.identity);
             if (initialDue && dueAdmission != null) {
                 dueAdmission.bind(slot.identity);
                 orderedChanges.add(due.prepareUpdate(dueAdmission, slot.identity,
-                        nextEligibleAt, record.state(), pointer));
+                        nextEligibleAt, state.state(), pointer, slot.scheduling.forStage(state.stage())));
             } else {
                 orderedChanges.add(due.prepareUpdate(slot.identity,
-                        nextEligibleAt, record.state(), pointer, admissionClass));
+                        nextEligibleAt, state.state(), pointer, admissionClass,
+                        slot.scheduling.forStage(state.stage())));
             }
         }
     }
 
-    private void prepareOwnerMutation(SigningTransactionPayloadCodec.Mutation mutation,
-            SigningMvccIndex.RecordPointer pointer,
-            List<SigningDueWorkIndex.PreparedChange> orderedChanges,
-            List<AdmittedIdentity> admitted, List<IdentitySlot> touched,
-            Set<String> ownerChanges,
-            SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) throws IOException {
-        String operationId = ownerOperationId(mutation.key());
-        if (!ownerChanges.add(operationId)) {
-            throw new IOException("Signing owner operation is duplicated");
-        }
-        IdentitySlot slot = identities.get(operationId);
-        if (mutation.kind() == SigningTransactionPayloadCodec.MutationKind.DELETE) {
-            if (slot != null && owners.contains(slot.identity)) {
-                orderedChanges.add(owners.prepareRemove(slot.identity));
-                touch(touched, slot);
+    private Map<String, SignWorkflowStore.SchedulingPlan> schedulingCoordinates(
+            SigningTransactionPayloadCodec.Payload payload) {
+        Map<String, SignWorkflowStore.SchedulingPlan> result = new HashMap<>();
+        for (SigningTransactionPayloadCodec.Mutation mutation : payload.mutations()) {
+            if (!ENVELOPE_NAMESPACE.equals(mutation.key().namespace())
+                    || mutation.kind() == SigningTransactionPayloadCodec.MutationKind.DELETE) {
+                continue;
             }
-            return;
+            SignWorkflowStore.AcceptanceEnvelope envelope = decodeEnvelope(
+                    Objects.requireNonNull(mutation.contentInternal(), "content"));
+            requireEnvelopeIdentity(mutation.key(), envelope);
+            if (result.put(mutation.key().key(), schedulingCoordinates(envelope)) != null) {
+                throw new IllegalArgumentException(
+                        "Signing acceptance-envelope identity is duplicated");
+            }
         }
-        slot = admit(operationId, admitted, admissionClass);
-        touch(touched, slot);
-        if (owners.contains(slot.identity)) {
-            throw new IOException("Signing owner operation is duplicated");
-        }
-        orderedChanges.add(owners.prepareUpdate(slot.identity, Instant.EPOCH,
-                SignWorkflowStore.State.INTENT, pointer, admissionClass));
+        return result;
     }
 
-    /* default */ void recover(MetadataKey key, byte[] content,
-            SigningMvccIndex.RecordPointer pointer) throws IOException {
-        if (!OWNER_NAMESPACE.equals(key.namespace()) && !RECORD_NAMESPACE.equals(key.namespace())) {
-            return;
+    private SignWorkflowStore.AcceptanceEnvelope decodeEnvelope(byte[] content) {
+        if (stagedContent == null) {
+            throw new IllegalStateException(
+                    "Signing acceptance envelope requires a staged-content resolver");
         }
-        String operationId = OWNER_NAMESPACE.equals(key.namespace())
-                ? ownerOperationId(key) : key.key();
-        List<AdmittedIdentity> admitted = new ArrayList<>(1);
-        IdentitySlot slot = admit(operationId, admitted,
-                SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY);
-        boolean published = false;
+        return FsCodec.decode(FsCodec.SIGN_ACCEPTANCE_ENVELOPE, content, stagedContent);
+    }
+
+    private static void requireEnvelopeIdentity(MetadataKey key,
+            SignWorkflowStore.AcceptanceEnvelope envelope) {
+        if (!key.key().equals(envelope.operationId().value())) {
+            throw new IllegalArgumentException(
+                    "Signing acceptance-envelope identity is inconsistent");
+        }
+    }
+
+    private static SignWorkflowStore.SchedulingPlan schedulingCoordinates(
+            SignWorkflowStore.AcceptanceEnvelope envelope) {
+        return SignWorkflowStore.SchedulingPlan.from(envelope);
+    }
+
+    /** Bulk-rebuilds active state pointers from canonical metadata-key order. */
+    /* default */ RecoveryStatistics recoverAll(List<RecoveredState> recoveredStates,
+            Map<String, SignWorkflowStore.SchedulingPlan> schedulingByOperation) {
+        Objects.requireNonNull(recoveredStates, "recoveredStates");
+        if (!identities.isEmpty() || reservedIdentityBytes != 0L) {
+            throw new IllegalStateException("Signing work projection recovery target is invalid");
+        }
+        RecoveredProjection recovered = new RecoveryBuilder(due)
+                .build(recoveredStates, schedulingByOperation);
+        SigningIndexCapacityBudget.Reservation reservation = capacity.reserve(recovered.identityBytes);
         try {
-            if (OWNER_NAMESPACE.equals(key.namespace())) {
-                if (owners.contains(slot.identity)) {
-                    throw new IOException("Signing owner operation is duplicated");
-                }
-                owners.update(slot.identity, Instant.EPOCH, SignWorkflowStore.State.INTENT, pointer);
-            } else {
-                recoverRecord(key, content, pointer, slot);
-            }
-            commitAdmissions(admitted);
-            discardUnreferenced(List.of(slot));
-            published = true;
+            due.recoverAll(recovered.dueEntries);
+            identities.putAll(recovered.identities);
+            reservedIdentityBytes = recovered.identityBytes;
+            reservation.transfer();
         } finally {
-            if (!published) rollbackAdmissions(admitted);
+            reservation.close();
         }
+        return new RecoveryStatistics(recoveredStates.size(), recovered.dueEntries.size(),
+                recovered.dueEntries.size());
     }
 
-    private void recoverRecord(MetadataKey key, byte[] content,
-            SigningMvccIndex.RecordPointer pointer, IdentitySlot slot) throws IOException {
-        SignWorkflowStore.Record record;
-        try {
-            record = FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD, content);
-        } catch (RuntimeException malformed) {
-            try (SigningDueWorkIndex.PreparedChange prepared =
-                    due.prepareMalformed(slot.identity, pointer)) {
-                prepared.publish();
+    /**
+     * Returns the first instant at which a live state may be claimed again.
+     * Active leases are authoritative even when their records sort before ready
+     * work, so a leased prefix cannot consume a bounded ready page.
+     */
+    private static Instant effectiveEligibility(SignWorkflowStore.MutableState state) {
+        Instant eligible = state.nextEligibleAt().orElse(Instant.EPOCH);
+        if (state.state() == SignWorkflowStore.State.INTENT
+                || state.state() == SignWorkflowStore.State.DISPATCHED
+                || state.state() == SignWorkflowStore.State.CANCELLING) {
+            Optional<Instant> leaseUntil = state.leaseUntil();
+            if (leaseUntil.isPresent() && leaseUntil.orElseThrow().isAfter(eligible)) {
+                eligible = leaseUntil.orElseThrow();
             }
-            return;
         }
-        if (!key.key().equals(record.submissionId().value())) return;
-        if (isRetained(record.state())) {
-            try (SigningRetentionIndex.PreparedChange prepared =
-                    retention.prepareRetained(slot.identity, record.createdAt())) {
-                prepared.publish();
-            }
-        } else {
-            due.update(slot.identity, record.nextEligibleAt().orElse(Instant.EPOCH),
-                    record.state(), pointer);
-        }
+        return eligible;
     }
 
-    private static boolean isRetained(SignWorkflowStore.State state) {
-        return state == SignWorkflowStore.State.RETIRED
-                || state == SignWorkflowStore.State.EXPIRED;
-    }
 
-    /* default */ boolean containsOwner(String operationId) {
-        IdentitySlot slot = identities.get(Objects.requireNonNull(operationId, "operationId"));
-        return slot != null && owners.contains(slot.identity);
-    }
-
-    private static String ownerOperationId(MetadataKey key) throws IOException {
-        try {
-            return SigningOwnerKey.parse(key).submissionId().value();
-        } catch (IllegalArgumentException malformed) {
-            throw new IOException("Signing owner key is invalid", malformed);
-        }
-    }
-
-    private IdentitySlot admit(String operationId, List<AdmittedIdentity> admitted,
+    private IdentitySlot admit(String operationId,
+            SignWorkflowStore.SchedulingPlan scheduling,
+            List<AdmittedIdentity> admitted,
             SigningTransitionWorkspaceSizing.AdmissionClass admissionClass) {
         IdentitySlot existing = identities.get(operationId);
-        if (existing != null) return existing;
+        if (existing != null) {
+            if (scheduling != null && !existing.scheduling.equals(scheduling)) {
+                throw new IllegalArgumentException(
+                        "Signing scheduling coordinates are inconsistent");
+            }
+            return existing;
+        }
+        if (scheduling == null) {
+            throw new IllegalArgumentException(
+                    "Accepted signing state has no scheduling coordinates");
+        }
         SigningDueWorkIndex.CanonicalOperationId identity = due.admit(operationId);
-        long bytes = identity.sharedResidentBytes();
+        long bytes = identityResidentBytes(identity, scheduling);
         SigningIndexCapacityBudget.Reservation reservation =
                 capacity.reserve(bytes, admissionClass);
-        IdentitySlot slot = new IdentitySlot(identity, bytes);
+        IdentitySlot slot = new IdentitySlot(identity, scheduling, bytes);
         identities.put(identity.value(), slot);
         admitted.add(new AdmittedIdentity(slot, reservation));
         return slot;
+    }
+
+    private static long identityResidentBytes(SigningDueWorkIndex.CanonicalOperationId identity,
+            SignWorkflowStore.SchedulingPlan scheduling) {
+        long bytes = Math.addExact(identity.sharedResidentBytes(), 64L);
+        bytes = Math.addExact(bytes, coordinateBytes(scheduling.certificate()));
+        if (scheduling.proof().isPresent()) { bytes = Math.addExact(bytes, coordinateBytes(scheduling.proof().orElseThrow())); }
+        return bytes;
+    }
+
+    private static long coordinateBytes(SignWorkflowStore.SchedulingCoordinates coordinate) {
+        return Math.addExact(COORDINATE_FIXED_BYTES, Math.addExact(coordinate.keyRef().utf8Length(),
+                coordinate.fairnessAuthorityId().value().getBytes(StandardCharsets.UTF_8).length));
     }
 
     private static void touch(List<IdentitySlot> touched, IdentitySlot slot) {
@@ -324,8 +343,7 @@ final class SigningWorkProjection implements AutoCloseable {
 
     private void discardUnreferenced(List<IdentitySlot> touched) {
         for (IdentitySlot slot : touched) {
-            if (!due.contains(slot.identity) && !retention.contains(slot.identity)
-                    && !owners.contains(slot.identity)
+            if (!due.contains(slot.identity)
                     && identities.remove(slot.identity.value(), slot)) {
                 reservedIdentityBytes -= slot.bytes;
                 capacity.releaseCommitted(slot.bytes);
@@ -337,6 +355,10 @@ final class SigningWorkProjection implements AutoCloseable {
         return new Statistics(identities.size(), reservedIdentityBytes);
     }
 
+    /* default */ boolean containsOperation(String operationId) {
+        return identities.containsKey(Objects.requireNonNull(operationId, "operationId"));
+    }
+
     @Override public void close() {
         if (reservedIdentityBytes > 0L) capacity.releaseCommitted(reservedIdentityBytes);
         reservedIdentityBytes = 0L;
@@ -345,15 +367,108 @@ final class SigningWorkProjection implements AutoCloseable {
 
     private static final class IdentitySlot {
         private final SigningDueWorkIndex.CanonicalOperationId identity;
+        private final SignWorkflowStore.SchedulingPlan scheduling;
         private final long bytes;
-        private IdentitySlot(SigningDueWorkIndex.CanonicalOperationId identity, long bytes) {
+        private IdentitySlot(SigningDueWorkIndex.CanonicalOperationId identity,
+                SignWorkflowStore.SchedulingPlan scheduling, long bytes) {
             this.identity = identity;
+            this.scheduling = scheduling;
             this.bytes = bytes;
         }
     }
 
     private record AdmittedIdentity(IdentitySlot slot,
             SigningIndexCapacityBudget.Reservation reservation) { }
+
+    private static final class RecoveryBuilder {
+        private final SigningDueWorkIndex due;
+        private final List<SigningDueWorkIndex.RecoveryEntry> dueEntries;
+        private final Map<String, IdentitySlot> identities;
+        private Map<String, SignWorkflowStore.SchedulingPlan> scheduling;
+        private String previousOperationId;
+        private long identityBytes;
+
+        private RecoveryBuilder(SigningDueWorkIndex due) {
+            this.due = due;
+            this.dueEntries = new ArrayList<>();
+            this.identities = new HashMap<>();
+        }
+
+        private RecoveredProjection build(List<RecoveredState> recoveredStates,
+                Map<String, SignWorkflowStore.SchedulingPlan> schedulingByOperation) {
+            scheduling = Objects.requireNonNull(schedulingByOperation,
+                    "schedulingByOperation");
+            for (RecoveredState recovered : recoveredStates) {
+                add(recovered);
+            }
+            return new RecoveredProjection(dueEntries, identities, identityBytes);
+        }
+
+        private void add(RecoveredState recovered) {
+            MetadataKey key = recovered.key();
+            requireStateNamespace(key);
+            String operationId = key.key();
+            requireStateOrder(operationId);
+            SigningDueWorkIndex.CanonicalOperationId identity = due.admit(operationId);
+            SignWorkflowStore.MutableState state = decodeState(recovered.content());
+            boolean malformed = state == null;
+            requireStateIdentity(operationId, state);
+            SignWorkflowStore.SchedulingPlan coordinates = scheduling.get(operationId);
+            if (coordinates == null) {
+                throw new IllegalArgumentException(
+                        "Signing recovered state has no acceptance envelope");
+            }
+            if (!malformed && isRetained(state.state())) {
+                return;
+            }
+            long bytes = identityResidentBytes(identity, coordinates);
+            identities.put(operationId, new IdentitySlot(identity, coordinates, bytes));
+            identityBytes = Math.addExact(identityBytes, bytes);
+            dueEntries.add(new SigningDueWorkIndex.RecoveryEntry(identity,
+                    malformed ? Instant.MIN : effectiveEligibility(state),
+                    malformed ? SignWorkflowStore.State.INTENT : state.state(),
+                    recovered.pointer(), malformed ? coordinates.certificate() : coordinates.forStage(state.stage()), malformed));
+        }
+
+        private void requireStateNamespace(MetadataKey key) {
+            if (!STATE_NAMESPACE.equals(key.namespace())) {
+                throw new IllegalArgumentException("Signing recovery state namespace is invalid");
+            }
+        }
+
+        private void requireStateOrder(String operationId) {
+            if (previousOperationId != null
+                    && previousOperationId.compareTo(operationId) >= 0) {
+                throw new IllegalArgumentException("Signing recovery state order is invalid");
+            }
+            previousOperationId = operationId;
+        }
+
+        private static SignWorkflowStore.MutableState decodeState(byte[] content) {
+            try {
+                return FsCodec.decode(FsCodec.SIGN_MUTABLE_STATE, content);
+            } catch (RuntimeException malformed) {
+                return null;
+            }
+        }
+
+        private static void requireStateIdentity(String operationId,
+                SignWorkflowStore.MutableState state) {
+            if (state != null && !operationId.equals(state.operationId().value())) {
+                throw new IllegalArgumentException(
+                        "Signing recovered mutable-state identity is inconsistent");
+            }
+        }
+
+        private static boolean isRetained(SignWorkflowStore.State state) {
+            return state == SignWorkflowStore.State.RETIRED
+                    || state == SignWorkflowStore.State.EXPIRED;
+        }
+    }
+
+    private record RecoveredProjection(List<SigningDueWorkIndex.RecoveryEntry> dueEntries,
+            Map<String, IdentitySlot> identities, long identityBytes) {
+    }
 
     /** Prepared derived changes with idempotent rollback. */
     /* default */ final class Prepared implements AutoCloseable {
@@ -393,5 +508,20 @@ final class SigningWorkProjection implements AutoCloseable {
     }
 
     /* default */ record Statistics(int identities, long reservedBytes) {
+    }
+
+    /** One state record read through the recovered MVCC pointer. */
+    /* default */ record RecoveredState(MetadataKey key, byte[] content,
+            SigningMvccIndex.RecordPointer pointer) {
+        RecoveredState {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(content, "content");
+            Objects.requireNonNull(pointer, "pointer");
+        }
+    }
+
+    /** Scalar evidence emitted by the production bulk reconstruction path. */
+    /* default */ record RecoveryStatistics(long statesVisited, long activeEntriesBuilt,
+            long statePointersRetained) {
     }
 }

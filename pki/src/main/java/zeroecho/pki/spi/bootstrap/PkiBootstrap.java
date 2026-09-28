@@ -34,21 +34,24 @@
 package zeroecho.pki.spi.bootstrap;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import zeroecho.pki.api.PkiId;
+import zeroecho.core.spi.AlgorithmExecutionCapability;
+import zeroecho.core.spi.AlgorithmExecutionCapabilityProvider;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.spi.ConfigurableProvider;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.async.AsyncBusProvider;
 import zeroecho.pki.spi.audit.AuditSink;
 import zeroecho.pki.spi.audit.AuditSinkProvider;
-import zeroecho.pki.spi.crypto.SignatureWorkflow;
-import zeroecho.pki.spi.crypto.SignatureWorkflowProvider;
-import zeroecho.pki.spi.crypto.SignatureWorkflowRuntimeDependencies;
+import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.pki.spi.crypto.SigningProviderFactory;
+import zeroecho.pki.spi.crypto.SigningProviderRuntimeDependencies;
 import zeroecho.pki.spi.framework.CredentialFramework;
 import zeroecho.pki.spi.framework.CredentialFrameworkProvider;
 import zeroecho.pki.spi.publish.Publisher;
@@ -65,7 +68,7 @@ import zeroecho.pki.util.async.AsyncBus;
  * This class provides deterministic selection and instantiation rules for
  * components discovered via {@link java.util.ServiceLoader}. It is designed to
  * scale as more SPIs are introduced (audit, publish, credential frameworks,
- * crypto/workflows, async orchestration, etc.).
+ * signing providers, async orchestration, etc.).
  * </p>
  *
  * <h2>System property conventions</h2>
@@ -76,10 +79,10 @@ import zeroecho.pki.util.async.AsyncBus;
  * <li>Select audit provider: {@code -Dzeroecho.pki.audit=&lt;id&gt;}</li>
  * <li>Configure audit provider:
  * {@code -Dzeroecho.pki.audit.&lt;key&gt;=&lt;value&gt;}</li>
- * <li>Select crypto workflow provider:
- * {@code -Dzeroecho.pki.crypto.workflow=&lt;id&gt;}</li>
- * <li>Configure crypto workflow provider:
- * {@code -Dzeroecho.pki.crypto.workflow.&lt;key&gt;=&lt;value&gt;}</li>
+ * <li>Select signing provider:
+ * {@code -Dzeroecho.pki.signing.provider=&lt;id&gt;}</li>
+ * <li>Configure signing provider:
+ * {@code -Dzeroecho.pki.signing.provider.&lt;key&gt;=&lt;value&gt;}</li>
  * <li>Select async bus provider: {@code -Dzeroecho.pki.async=&lt;id&gt;}</li>
  * <li>Configure async bus provider:
  * {@code -Dzeroecho.pki.async.&lt;key&gt;=&lt;value&gt;}</li>
@@ -95,6 +98,8 @@ import zeroecho.pki.util.async.AsyncBus;
  * </p>
  */
 public final class PkiBootstrap {
+    private static final String CONFIG_ARGUMENT = "config";
+
 
     private static final Logger LOG = Logger.getLogger(PkiBootstrap.class.getName());
 
@@ -104,8 +109,8 @@ public final class PkiBootstrap {
     private static final String PROP_AUDIT_BACKEND = "zeroecho.pki.audit";
     private static final String PROP_AUDIT_PREFIX = "zeroecho.pki.audit.";
 
-    private static final String PROP_CRYPTO_WORKFLOW_BACKEND = "zeroecho.pki.crypto.workflow";
-    private static final String PROP_CRYPTO_WORKFLOW_PREFIX = "zeroecho.pki.crypto.workflow.";
+    private static final String PROP_SIGNING_BACKEND = "zeroecho.pki.signing.provider";
+    private static final String PROP_SIGNING_PROVIDER_PREFIX = "zeroecho.pki.signing.provider.";
 
     private static final String PROP_ASYNC_BACKEND = "zeroecho.pki.async";
     private static final String PROP_ASYNC_PREFIX = "zeroecho.pki.async.";
@@ -179,7 +184,7 @@ public final class PkiBootstrap {
      * @throws IllegalArgumentException if the provider or configuration is invalid
      */
     public static void validateStoreConfiguration(ProviderConfig config) {
-        PkiStoreProvider provider = selectStoreProvider(Objects.requireNonNull(config, "config").backendId());
+        PkiStoreProvider provider = selectStoreProvider(Objects.requireNonNull(config, CONFIG_ARGUMENT).backendId());
         requireKnownKeys(provider, config);
         provider.validateConfig(config);
     }
@@ -253,7 +258,7 @@ public final class PkiBootstrap {
      * @throws IllegalArgumentException if the provider or configuration is invalid
      */
     public static void validateAuditConfiguration(ProviderConfig config) {
-        AuditSinkProvider provider = selectAuditProvider(Objects.requireNonNull(config, "config").backendId());
+        AuditSinkProvider provider = selectAuditProvider(Objects.requireNonNull(config, CONFIG_ARGUMENT).backendId());
         requireKnownKeys(provider, config);
         provider.validateConfig(config);
     }
@@ -272,75 +277,111 @@ public final class PkiBootstrap {
     }
 
     /**
-     * Opens a {@link SignatureWorkflow} using {@link SignatureWorkflowProvider}
+     * Opens a {@link SigningProvider} using {@link SigningProviderFactory}
      * discovered via ServiceLoader.
      *
      * <p>
      * Runtime capabilities are supplied explicitly and are not represented in
      * system properties or {@link ProviderConfig}. Providers that do not use a
      * software keyring ignore an absent keyring dependency; a keyring-backed
-     * provider rejects it before allocating a workflow.
+     * provider rejects it before allocating provider resources.
      * </p>
      *
      * @param dependencies explicit process-local runtime dependencies
-     * @return signature workflow (never {@code null})
+     * @return signing provider (never {@code null})
      * @throws NullPointerException if {@code dependencies} is {@code null}
-     * @throws RuntimeException     if provider selection or workflow allocation
+     * @throws RuntimeException     if provider selection or provider allocation
      *                              fails
      */
-    public static SignatureWorkflow openSignatureWorkflow(SignatureWorkflowRuntimeDependencies dependencies) {
+    public static SigningProvider openSigningProvider(SigningProviderRuntimeDependencies dependencies) {
         Objects.requireNonNull(dependencies, "dependencies must not be null");
-        String requestedId = System.getProperty(PROP_CRYPTO_WORKFLOW_BACKEND);
+        String requestedId = System.getProperty(PROP_SIGNING_BACKEND);
 
-        SignatureWorkflowProvider provider = SpiSelector.select(SignatureWorkflowProvider.class, requestedId,
+        SigningProviderFactory provider = SpiSelector.select(SigningProviderFactory.class, requestedId,
                 new SpiSelector.ProviderId<>() {
                     @Override
-                    public String id(SignatureWorkflowProvider p) {
+                    public String id(SigningProviderFactory p) {
                         return p.id();
                     }
                 });
 
-        Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_CRYPTO_WORKFLOW_PREFIX);
+        Map<String, String> props = SpiSystemProperties.readPrefixed(PROP_SIGNING_PROVIDER_PREFIX);
 
         ProviderConfig config = new ProviderConfig(provider.id(), props);
 
         if (LOG.isLoggable(Level.INFO)) {
-            LOG.info("Selected crypto workflow provider: " + provider.id() + " (keys: " + props.keySet() + ")");
+            LOG.info("Selected signing provider: " + provider.id() + " (keys: " + props.keySet() + ")");
         }
 
         return provider.allocate(config, dependencies);
     }
 
     /**
-     * Validates one explicit signature-workflow provider configuration without
-     * allocating key access or workflow resources.
+     * Validates one explicit signing-provider configuration without allocating
+     * key access or provider resources.
      *
-     * @param config immutable workflow-provider configuration
+     * @param config immutable signing-provider configuration
      * @throws RuntimeException if the provider identity, property set, or
      *         provider-specific values are invalid
      */
-    public static void validateSignatureWorkflowConfiguration(ProviderConfig config) {
-        SignatureWorkflowProvider provider = selectSignatureWorkflowProvider(
-                Objects.requireNonNull(config, "config").backendId());
+    public static void validateSigningProviderConfiguration(ProviderConfig config) {
+        SigningProviderFactory provider = selectSigningProviderFactory(
+                Objects.requireNonNull(config, CONFIG_ARGUMENT).backendId());
         requireKnownKeys(provider, config);
         provider.validateConfig(config);
     }
 
     /**
-     * Opens one explicitly configured signature workflow with process-local key
+     * Opens one explicitly configured signing provider with process-local key
      * access supplied outside persistent configuration.
      *
-     * @param config immutable workflow-provider configuration
+     * @param config immutable signing-provider configuration
      * @param dependencies process-local security capabilities
-     * @return opened workflow owned by the caller
+     * @return opened signing provider owned by the caller
      * @throws IllegalArgumentException if configuration or capabilities are invalid
-     * @throws RuntimeException if secure workflow allocation fails
+     * @throws RuntimeException if secure provider allocation fails
      */
-    public static SignatureWorkflow openConfiguredSignatureWorkflow(ProviderConfig config,
-            SignatureWorkflowRuntimeDependencies dependencies) {
-        validateSignatureWorkflowConfiguration(config);
-        return selectSignatureWorkflowProvider(config.backendId()).allocate(config,
-                Objects.requireNonNull(dependencies, "dependencies"));
+    public static SigningProvider openConfiguredSigningProvider(ProviderConfig config,
+            SigningProviderRuntimeDependencies dependencies) {
+        return openConfiguredSigningComposition(config, dependencies).provider();
+    }
+
+    /**
+     * Opens a provider and captures only the selected allocating factory's
+     * execution contribution. Other installed factories supply no authority.
+     *
+     * @param config immutable signing-provider configuration
+     * @param dependencies process-local security capabilities
+     * @return exact allocated provider and its factory's immutable contribution
+     * @throws RuntimeException if validation, contribution capture or allocation fails
+     */
+    public static SigningComposition openConfiguredSigningComposition(ProviderConfig config,
+            SigningProviderRuntimeDependencies dependencies) {
+        Objects.requireNonNull(dependencies, "dependencies");
+        SigningProviderFactory factory = selectSigningProviderFactory(Objects.requireNonNull(config, CONFIG_ARGUMENT).backendId());
+        requireKnownKeys(factory, config);
+        factory.validateConfig(config);
+        List<AlgorithmExecutionCapability> capabilities = factory instanceof AlgorithmExecutionCapabilityProvider contributor
+                ? List.copyOf(contributor.capabilities()) : List.of();
+        return new SigningComposition(factory.allocate(config, dependencies), capabilities);
+    }
+
+    /**
+     * Exact process-local provider allocation and selected factory contribution.
+     * The caller owns and closes the provider; the immutable carrier owns no lifecycle.
+     * @param provider allocated provider
+     * @param capabilities capabilities declared by the allocating factory, possibly empty
+     */
+    public record SigningComposition(SigningProvider provider, List<AlgorithmExecutionCapability> capabilities) {
+        /**
+         * Captures an allocation and a defensive snapshot of its contribution.
+         * @param provider non-null allocated provider
+         * @param capabilities non-null contribution without null entries
+         */
+        public SigningComposition {
+            Objects.requireNonNull(provider, "provider");
+            capabilities = List.copyOf(capabilities);
+        }
     }
 
     /**
@@ -446,7 +487,7 @@ public final class PkiBootstrap {
      */
     public static void validateCredentialFrameworkConfiguration(ProviderConfig config) {
         CredentialFrameworkProvider provider = selectCredentialFrameworkProvider(
-                Objects.requireNonNull(config, "config").backendId());
+                Objects.requireNonNull(config, CONFIG_ARGUMENT).backendId());
         requireKnownKeys(provider, config);
         provider.validateConfig(config);
     }
@@ -458,7 +499,7 @@ public final class PkiBootstrap {
      * @throws RuntimeException if provider selection or configuration is invalid
      */
     public static void validatePublisherConfiguration(ProviderConfig config) {
-        PublisherProvider provider = selectPublisherProvider(Objects.requireNonNull(config, "config").backendId());
+        PublisherProvider provider = selectPublisherProvider(Objects.requireNonNull(config, CONFIG_ARGUMENT).backendId());
         requireKnownKeys(provider, config);
         provider.validateConfig(config);
     }
@@ -510,10 +551,10 @@ public final class PkiBootstrap {
         });
     }
 
-    private static SignatureWorkflowProvider selectSignatureWorkflowProvider(String requestedId) {
-        return SpiSelector.select(SignatureWorkflowProvider.class, requestedId, new SpiSelector.ProviderId<>() {
+    private static SigningProviderFactory selectSigningProviderFactory(String requestedId) {
+        return SpiSelector.select(SigningProviderFactory.class, requestedId, new SpiSelector.ProviderId<>() {
             @Override
-            public String id(SignatureWorkflowProvider provider) {
+            public String id(SigningProviderFactory provider) {
                 return provider.id();
             }
         });

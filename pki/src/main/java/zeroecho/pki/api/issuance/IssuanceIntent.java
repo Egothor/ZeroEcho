@@ -63,9 +63,7 @@ public record IssuanceIntent(String issuanceId, String commandCommitment,
             new AttributeId("urn:zeroecho:pki:issuance-command-commitment:v1");
     /** Validates the transport-neutral frozen issuance authority. */
     public IssuanceIntent {
-        if (issuanceId == null || !issuanceId.matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
-            throw new IllegalArgumentException("Issuance identity is invalid");
-        }
+        requireIssuanceId(issuanceId);
         requireDigest(commandCommitment);
         Objects.requireNonNull(expectedProfile, "expectedProfile");
         Objects.requireNonNull(expectedIssuerId, "expectedIssuerId");
@@ -73,7 +71,13 @@ public record IssuanceIntent(String issuanceId, String commandCommitment,
         requireDigest(expectedChainPathCommitment);
     }
 
-    private static void requireDigest(String value) {
+    /* default */ static void requireIssuanceId(String issuanceId) {
+        if (issuanceId == null || !issuanceId.matches("[a-z0-9][a-z0-9._:-]{0,127}")) {
+            throw new IllegalArgumentException("Issuance identity is invalid");
+        }
+    }
+
+    /* default */ static void requireDigest(String value) {
         if (value == null || !value.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("Issuance commitment is invalid");
         }

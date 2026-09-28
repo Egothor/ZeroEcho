@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.api.ca;
 
-import java.util.Optional;
-
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.SubjectRef;
@@ -44,42 +42,35 @@ import zeroecho.pki.api.attr.AttributeSet;
  * Command to create a new root CA entity and issue its initial CA credential.
  *
  * <p>
- * If {@code keyRef} is absent, the runtime may generate a new key pair
- * depending on policy and runtime wiring. This command carries universal
- * {@code attributes} used by policy and mapping.
+ * The managed key is mandatory; construction neither generates keys nor proves
+ * possession or authorizes creation. Execution must authorize the operation
+ * separately and verify a fresh self-signature against the same frozen canonical
+ * SubjectPublicKeyInfo used for the new credential. No retained proof substitutes
+ * for this fresh root self-signature.
  * </p>
  *
  * @param formatId   target credential format
  * @param subjectRef normalized CA subject reference
- * @param profileId  profile id governing issuance and mapping
- * @param keyRef     optional existing key reference; empty requests key
- *                   generation
+ * @param profileId  nonblank strict UTF-8 profile id, at most 256 bytes
+ * @param keyRef     existing managed key, nonblank strict UTF-8, at most 1,048,576 bytes
  * @param attributes universal attributes (may be empty but not null)
  */
-public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String profileId, Optional<KeyRef> keyRef,
+public record CaCreateCommand(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef,
         AttributeSet attributes) {
 
     /**
      * Creates a CA create command.
      *
-     * @throws IllegalArgumentException if inputs are invalid or optional container
-     *                                  is null
+     * @throws IllegalArgumentException if any component is null or bounded text is invalid
      */
     public CaCreateCommand {
-        if (formatId == null) {
-            throw new IllegalArgumentException("formatId must not be null");
-        }
-        if (subjectRef == null) {
-            throw new IllegalArgumentException("subjectRef must not be null");
-        }
-        if (profileId == null || profileId.isBlank()) {
-            throw new IllegalArgumentException("profileId must not be null/blank");
-        }
-        if (keyRef == null) {
-            throw new IllegalArgumentException("keyRef must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
+        CaCommandInputs.required(formatId);
+        CaCommandInputs.required(subjectRef);
+        CaCommandInputs.profile(profileId);
+        CaCommandInputs.key(keyRef);
+        CaCommandInputs.required(attributes);
     }
+
+    /** Returns a diagnostic representation without command coordinates or attributes. */
+    @Override public String toString() { return "CaCreateCommand[redacted]"; }
 }

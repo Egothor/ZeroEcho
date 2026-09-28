@@ -1,3 +1,35 @@
+# Copyright (C) 2025, Leo Galambos
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification,
+# are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. All advertising materials mentioning features or use of this software must
+#    display the following acknowledgement:
+#    This product includes software developed by the Egothor project.
+#
+# 4. Neither the name of the copyright holder nor the names of its contributors
+#    may be used to endorse or promote products derived from this software without
+#    specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+# ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 ###############################################################################
 # ZeroEcho PKI on Kubernetes — namespace, configuration, and secrets.
 #
@@ -37,15 +69,20 @@ data:
         "controlStoreId": "0123456789abcdef0123456789abcdef",
         "approvalPolicy": {"policyId": "high-risk", "threshold": 1, "eligibleApprovers": ["bootstrap-approver"], "requiredRoleTemplateIds": [], "requesterSeparation": true, "lifetimeMillis": 3600000, "justificationRequired": true},
         "pkiSession": {
-          "version": 1,
+          "version": 6,
           "store": {"id": "fs", "properties": {"root": "/var/lib/zeroecho/store"}},
           "audit": {"id": "file", "properties": {"root": "/var/lib/zeroecho/audit"}},
           "signing": {
-            "workflow": {"id": "zeroecho-lib", "properties": {"keyringPath": "/var/lib/zeroecho/keyring/ca-keyring.zek"}},
-            "framework": {"id": "x509-bc", "properties": {}},
-            "signatureAlgorithm": "SHA256withRSA",
+            "provider": {"id": "zeroecho-lib", "properties": {"keyringPath": "/var/lib/zeroecho/keyring/ca-keyring.zek"}},
+            "signatureAlgorithm": "zealg:2:9:signature8:zeroecho14:rsa-pkcs1-v1_516:zeroecho.builtin39:ZGlnZXN0PXplcm9lY2hvLnNoYTItMjU2Lm5vbmU",
             "signingTtlMillis": 30000,
-            "unlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"
+            "pureEdDsaMaximumTbsBytes": 1048576,
+            "topology": {
+              "coordinator": {"pageSize": 1, "claimLeaseMillis": 30000,
+                "providerCallTimeoutMillis": 20000, "idlePollIntervalMillis": 100, "closeTimeoutMillis": 5000},
+              "exactGroups": [],
+              "catchAll": {"laneCount": 1, "prefetchSize": 1}
+            }
           },
           "publishers": [{"id": "filesystem", "properties": {"root": "/var/lib/zeroecho/artifacts", "targetId": "local"}}],
           "bindingProviders": []
@@ -72,10 +109,20 @@ data:
         "maximumForwardedChainBytes": 524288
       },
       "execution": {"transportWorkers": 8, "transportQueueCapacity": 64, "operationWorkers": 4, "operationQueueCapacity": 32, "maximumAdmittedRequests": 96, "defaultDeadlineMillis": 30000, "maximumDeadlineMillis": 120000, "gracefulShutdownMillis": 30000, "forcedShutdownMillis": 10000},
-      "signingReconciliation": {"enabled": true, "maxRecords": 256, "maxCalls": 64, "passTimeoutMillis": 30000, "providerCallTimeoutMillis": 10000, "idleIntervalMillis": 2000},
+      "auditProjection": {"maxRecords": 256, "maxSinkCalls": 64, "idleIntervalMillis": 2000},
       "publicListener": {"enabled": false},
       "acmeListener": {"enabled": false},
       "runtime": {"keyUnlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"}
+    }
+  profile-bootstrap.json: |
+    {
+      "version": 1,
+      "mode": "local",
+      "operatorId": "deployment-profile-bootstrap",
+      "store": {"provider": "fs", "properties": {"root": "/var/lib/zeroecho/store"}},
+      "audit": {"provider": "file", "properties": {"root": "/var/lib/zeroecho/audit"}},
+      "publishers": [],
+      "bindingProviders": []
     }
 ---
 # Certificate profiles reconciled at start-up (one key per profile file).
@@ -85,12 +132,17 @@ metadata:
   name: pki-server-profiles
   namespace: zeroecho-pki
 data:
-  # Replace with your real profile documents (schemaVersion 5). Keys become file
-  # names under /etc/zeroecho/profiles.
+  # Runnable schema-v5 examples; review policy before production issuance.
   root-ca.json: |
-    { "schemaVersion": 5, "profileId": "root-ca", "certificateType": "CA" }
+    {"schemaVersion":5,"certificateType":"ROOT_CA","profileId":"root-ca","profileVersion":1,"formatId":"x509","displayName":"Root CA","maxValidity":"PT87600H","approvalRequirement":"NONE","algorithmBindings":{"mode":"STANDARD_ONLY"},"subject":{"allowEmpty":false,"rules":[{"oid":"2.5.4.3","source":"REQUESTER","minimumOccurrences":1,"maximumOccurrences":1,"maximumUtf8Bytes":253}]},"caCertificate":{"basicConstraintsCritical":true,"pathLengthConstraint":1,"keyUsageCritical":true,"keyUsages":["CRL_SIGN","KEY_CERT_SIGN"],"allowedSubjectKeyAlgorithms":["ECDSA","Ed25519","RSA"]}}
+  intermediate-ca.json: |
+    {"schemaVersion":5,"certificateType":"INTERMEDIATE_CA","profileId":"intermediate-ca","profileVersion":1,"formatId":"x509","displayName":"Intermediate CA","maxValidity":"PT43800H","approvalRequirement":"NONE","algorithmBindings":{"mode":"STANDARD_ONLY"},"subject":{"allowEmpty":false,"rules":[{"oid":"2.5.4.3","source":"REQUESTER","minimumOccurrences":1,"maximumOccurrences":1,"maximumUtf8Bytes":253}]},"caCertificate":{"basicConstraintsCritical":true,"pathLengthConstraint":0,"keyUsageCritical":true,"keyUsages":["CRL_SIGN","KEY_CERT_SIGN"],"allowedSubjectKeyAlgorithms":["ECDSA","Ed25519","RSA"]}}
   server-tls.json: |
-    { "schemaVersion": 5, "profileId": "server-tls", "certificateType": "END_ENTITY" }
+    {"schemaVersion":5,"certificateType":"END_ENTITY","profileId":"server-tls","profileVersion":1,"formatId":"x509","displayName":"Server TLS","maxValidity":"PT8760H","approvalRequirement":"NONE","algorithmBindings":{"mode":"STANDARD_ONLY"},"confirmationPolicy":{"disclosurePolicy":"OWNER_ONLY","confirmationWindow":"PT24H","proofSuiteId":"zeroecho.signature-pop.v1","proofSuiteCommitment":"5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11","policyCommitment":"4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30"},"subject":{"allowEmpty":true,"rules":[{"oid":"2.5.4.3","source":"REQUESTER","minimumOccurrences":0,"maximumOccurrences":1,"maximumUtf8Bytes":253}]},"subjectAlternativeNames":{"minimumTotal":1,"maximumTotal":64,"serviceIdentityRequired":true,"emailIdentityRequired":false,"criticalWhenSubjectNonEmpty":false,"rules":[{"type":"DNS_NAME","minimumOccurrences":0,"maximumOccurrences":64,"wildcardAllowed":false},{"type":"IP_ADDRESS","minimumOccurrences":0,"maximumOccurrences":16,"ipv4Allowed":true,"ipv6Allowed":true}]},"leafCertificate":{"basicConstraintsCritical":true,"keyUsageCritical":true,"keyUsage":["DIGITAL_SIGNATURE"],"extendedKeyUsageCritical":false,"extendedKeyUsage":["1.3.6.1.5.5.7.3.1"],"allowedKeyAlgorithms":["ECDSA","Ed25519","RSA"]}}
+  vpn-server.json: |
+    {"schemaVersion":5,"certificateType":"END_ENTITY","profileId":"vpn-server","profileVersion":1,"formatId":"x509","displayName":"VPN Server","maxValidity":"PT8760H","approvalRequirement":"NONE","algorithmBindings":{"mode":"STANDARD_ONLY"},"confirmationPolicy":{"disclosurePolicy":"OWNER_ONLY","confirmationWindow":"PT24H","proofSuiteId":"zeroecho.signature-pop.v1","proofSuiteCommitment":"5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11","policyCommitment":"4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30"},"subject":{"allowEmpty":true,"rules":[{"oid":"2.5.4.3","source":"REQUESTER","minimumOccurrences":0,"maximumOccurrences":1,"maximumUtf8Bytes":253}]},"subjectAlternativeNames":{"minimumTotal":1,"maximumTotal":64,"serviceIdentityRequired":true,"emailIdentityRequired":false,"criticalWhenSubjectNonEmpty":false,"rules":[{"type":"DNS_NAME","minimumOccurrences":0,"maximumOccurrences":64,"wildcardAllowed":false},{"type":"IP_ADDRESS","minimumOccurrences":0,"maximumOccurrences":16,"ipv4Allowed":true,"ipv6Allowed":true}]},"leafCertificate":{"basicConstraintsCritical":true,"keyUsageCritical":true,"keyUsage":["DIGITAL_SIGNATURE"],"extendedKeyUsageCritical":false,"extendedKeyUsage":["1.3.6.1.5.5.7.3.1"],"allowedKeyAlgorithms":["ECDSA","Ed25519","RSA"]}}
+  vpn-client.json: |
+    {"schemaVersion":5,"certificateType":"END_ENTITY","profileId":"vpn-client","profileVersion":1,"formatId":"x509","displayName":"VPN Client","maxValidity":"PT8760H","approvalRequirement":"NONE","algorithmBindings":{"mode":"STANDARD_ONLY"},"confirmationPolicy":{"disclosurePolicy":"OWNER_ONLY","confirmationWindow":"PT24H","proofSuiteId":"zeroecho.signature-pop.v1","proofSuiteCommitment":"5ab6ec453561975d8978076cb31227cd68bc1f66da417bfb500002704be5ef11","policyCommitment":"4933b3d9a9dd31b972d5835884ed8ef9218f8d331928e6ac0feb802d28ab9a30"},"subject":{"allowEmpty":true,"rules":[{"oid":"2.5.4.3","source":"REQUESTER","minimumOccurrences":0,"maximumOccurrences":1,"maximumUtf8Bytes":253}]},"subjectAlternativeNames":{"minimumTotal":1,"maximumTotal":16,"serviceIdentityRequired":false,"emailIdentityRequired":false,"criticalWhenSubjectNonEmpty":false,"rules":[{"type":"RFC822_NAME","minimumOccurrences":0,"maximumOccurrences":16},{"type":"URI","minimumOccurrences":0,"maximumOccurrences":16,"allowedSchemes":["spiffe"]}]},"leafCertificate":{"basicConstraintsCritical":true,"keyUsageCritical":true,"keyUsage":["DIGITAL_SIGNATURE"],"extendedKeyUsageCritical":false,"extendedKeyUsage":["1.3.6.1.5.5.7.3.2"],"allowedKeyAlgorithms":["ECDSA","Ed25519","RSA"]}}
 ---
 # Secrets (passwords-by-env). Create from literals; DO NOT commit real values.
 #   kubectl -n zeroecho-pki create secret generic pki-server-secrets \

@@ -70,6 +70,7 @@ import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.confirmation.CredentialConfirmationService;
 import zeroecho.pki.application.PkiOperation;
 import zeroecho.pki.application.PkiRepository;
+import zeroecho.pki.application.PkiSigningOperation;
 
 /** Durable closed control-operation, approval and one-time-result coverage. */
 class ServerControlOperationExecutorTest {
@@ -79,15 +80,19 @@ class ServerControlOperationExecutorTest {
     void catalogContainsAllExplicitOperationFamilies() {
         System.out.println("catalogContainsAllExplicitOperationFamilies");
         OperationSecurityDescriptors catalog = new OperationSecurityDescriptors();
-        assertEquals(101, catalog.descriptors().size());
-        assertEquals(47, catalog.descriptors().values().stream()
+        assertEquals(107, catalog.descriptors().size());
+        assertEquals(41, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.PKI_OPERATION).count());
-        assertEquals(54, catalog.descriptors().values().stream()
+        assertEquals(10, catalog.descriptors().values().stream()
+                .filter(value -> value.family() == OperationSecurityDescriptors.Family.SIGNING_OPERATION).count());
+        assertEquals(56, catalog.descriptors().values().stream()
                 .filter(value -> value.family() == OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION)
                 .count());
+        assertEquals(catalog.descriptors().size(), catalog.descriptors().values().stream()
+                .map(OperationSecurityDescriptors.Descriptor::operationId).distinct().count());
         assertEquals(OperationSecurityDescriptors.Family.SERVER_CONTROL_OPERATION,
                 catalog.require(ServerControlOperation.IssueCapability.NAME).family());
-        System.out.println("...control-operations=52");
+        System.out.println("...control-operations=56");
         System.out.println("...ok");
     }
 
@@ -126,11 +131,11 @@ class ServerControlOperationExecutorTest {
             opened.store().createPrincipal(ServerTestSupport.principal("requester-a"));
             opened.store().createPrincipal(ServerTestSupport.principal("approver-a"));
             ServerControlOperationExecutor executor = executor(opened);
-            PkiOperation target = new PkiOperation.CreateAuthority(new FormatId("x509"),
+            PkiSigningOperation target = new PkiSigningOperation.CreateAuthority(new FormatId("x509"),
                     new SubjectRef("subject-a"), "profile-a", new KeyRef("key-a"));
             Permission.Resource targetResource = resource(Permission.ResourceType.AUTHORITY, realmScope());
             ServerControlOperation.RequestApproval request = new ServerControlOperation.RequestApproval(
-                    "approval-a", new AdministrativeOperation.Pki(target), targetResource);
+                    "approval-a", new AdministrativeOperation.Signing(target), targetResource);
             ordinary(executor.executeAuthorized(request, "requester-a", resource(Permission.ResourceType.APPROVAL,
                     realmScope()), Optional.empty(),
                     Optional.of(OperationSecurityDescriptors.ApprovalCategory.HIGH_RISK),
@@ -308,7 +313,7 @@ class ServerControlOperationExecutorTest {
         CredentialPublicationGate publication = new CredentialPublicationGate(mock(PkiRepository.class),
                 mock(ProfileService.class), mock(CredentialConfirmationService.class), disclosure,
                 ServerTestSupport.CLOCK, () -> { });
-        return new ServerControlOperationExecutor(ServerTestSupport.REALM,
+        return new ServerControlOperationExecutor(mock(zeroecho.pki.application.PkiOperationExecutor.class), ServerTestSupport.REALM,
                 new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true),
                 opened.store(), RoleTemplateCatalog.load(getClass().getClassLoader()),
                 new AuthorizationEngine(ServerTestSupport.CLOCK),

@@ -1,0 +1,44 @@
+# Version-control, local agent support and developer state.
+.git
+.gradle
+**/.gradle
+.agents
+.codex
+AGENTS.md
+**/AGENTS.md
+**/AGENTS.override.md
+docs/codex
+templates/project-skill
+tools/validate_agent_infrastructure.py
+.idea
+**/*.iml
+**/.DS_Store
+
+# Generated output and dependency caches; prebuilt inputs belong under context/.
+**/build
+**/node_modules
+**/__pycache__
+**/dist
+site
+reference-evidence*
+
+# Local deployment material must be mounted at runtime, never copied into images.
+**/.env
+**/.env.*
+!**/.env.example
+deploy/**/tls
+deploy/**/keyring
+deploy/**/store
+deploy/**/state
+deploy/**/secrets
+tls
+keyring
+store
+state
+pki-store
+
+# Only the three documented prebuilt input directories are accepted here.
+context/*
+!context/app
+!context/pki-server
+!context/frontend

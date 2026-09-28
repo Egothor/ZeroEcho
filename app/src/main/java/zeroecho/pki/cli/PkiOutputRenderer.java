@@ -95,6 +95,7 @@ final class PkiOutputRenderer {
         }
         for (PkiPlanExecution.StepResult step : execution.steps()) {
             writer.println(step.id() + " " + step.operation() + " " + step.status());
+            step.operationId().ifPresent(identity -> writer.println("  operationId: " + identity.value()));
             if (step.output().isPresent()) {
                 for (Map.Entry<String, PkiOperationValue> field : step.output().orElseThrow().fields().entrySet()) {
                     writer.println("  " + field.getKey() + ": " + human(field.getValue()));
@@ -136,6 +137,9 @@ final class PkiOutputRenderer {
         generator.writeStringProperty("id", step.id());
         generator.writeStringProperty("operation", step.operation());
         generator.writeStringProperty("status", step.status().name());
+        if (step.operationId().isPresent()) {
+            generator.writeStringProperty("operationId", step.operationId().orElseThrow().value());
+        }
         if (step.output().isPresent()) {
             generator.writeObjectPropertyStart("output");
             PkiOperationResult result = step.output().orElseThrow();

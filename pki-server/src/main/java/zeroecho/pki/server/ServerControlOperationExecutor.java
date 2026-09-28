@@ -57,6 +57,9 @@ import zeroecho.pki.server.acme.AcmeState;
 @SuppressWarnings({ "PMD.CouplingBetweenObjects", "PMD.ExcessiveParameterList",
         "PMD.ControlStatementBraces", "PMD.CyclomaticComplexity", "PMD.TooManyMethods" })
 public final class ServerControlOperationExecutor {
+    private static final String DISPLAY_NAME = "displayName";
+
+    private final zeroecho.pki.application.PkiOperationExecutor pkiExecutor;
     private final RealmId realmId;
     private final AuthorityExposurePolicy exposure;
     private final ServerControlStore store;
@@ -81,6 +84,7 @@ public final class ServerControlOperationExecutor {
      * <p>The credential-publication gate must use the same disclosure service
      * supplied to this constructor.</p>
      *
+     * @param pkiExecutor realm-owned executor supplying typed safe runtime choices
      * @param realmId exact realm identity
      * @param exposure authority exposure policy for the realm
      * @param store durable server-control store
@@ -95,13 +99,14 @@ public final class ServerControlOperationExecutor {
      * @param descriptors closed operation-security descriptor catalog
      * @param approvalPolicies approval policy by operation category
      */
-    public ServerControlOperationExecutor(RealmId realmId, AuthorityExposurePolicy exposure,
+    public ServerControlOperationExecutor(zeroecho.pki.application.PkiOperationExecutor pkiExecutor, RealmId realmId, AuthorityExposurePolicy exposure,
             ServerControlStore store, RoleTemplateCatalog roles, AuthorizationEngine authorization,
             ApprovalService approvals, BreakGlassService breakGlass, DisclosureService disclosure,
             CredentialPublicationGate credentialPublication, AuditorViews auditorViews,
             Optional<RepositoryAliasService> repositoryAliases,
             OperationSecurityDescriptors descriptors,
             Map<OperationSecurityDescriptors.ApprovalCategory, ApprovalService.Policy> approvalPolicies) {
+        this.pkiExecutor = Objects.requireNonNull(pkiExecutor, "pkiExecutor");
         this.realmId = Objects.requireNonNull(realmId, "realmId");
         this.exposure = Objects.requireNonNull(exposure, "exposure");
         this.store = Objects.requireNonNull(store, "store");
@@ -149,7 +154,9 @@ public final class ServerControlOperationExecutor {
         }
         try {
             return dispatch(operation, actorPrincipalId, authorizedResource,
-                    Objects.requireNonNull(approvalId, "approvalId"), exactTargetCategory);
+                    Objects.requireNonNull(approvalId, "approvalId"), exactTargetCategory, cancellation);
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            return failure(operation, PkiOperationFailure.CANCELLED, "CONTROL_OPERATION_CANCELLED");
         } catch (IllegalArgumentException unavailable) {
             return failure(operation, PkiOperationFailure.NOT_FOUND, "CONTROL_OBJECT_UNAVAILABLE");
         } catch (SecurityException denied) {
@@ -238,8 +245,10 @@ public final class ServerControlOperationExecutor {
 
     private ServerControlOperationOutcome dispatch(ServerControlOperation operation, String actor,
             Permission.Resource authorizedResource, Optional<String> approvalId,
-            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory) {
+            Optional<OperationSecurityDescriptors.ApprovalCategory> approvedTargetCategory, CancellationSignal cancellation) {
         return switch (operation) {
+            case ServerControlOperation.ConfigurationChoices value -> ordinary(operation, configurationChoices(value, cancellation));
+            case ServerControlOperation.ListCapabilities value -> ordinary(operation, capabilities(value, cancellation));
             case ServerControlOperation.RegisterPrincipal value -> ordinary(operation, register(value));
             case ServerControlOperation.InspectPrincipal value -> ordinary(operation,
                     principal(store.requirePrincipal(value.principalId())));
@@ -339,6 +348,59 @@ public final class ServerControlOperationExecutor {
             case ServerControlOperation.SetOcspResponderActive value -> ordinary(operation,
                     responder(ocsp().setActive(value.responderId(), value.active())));
         };
+    }
+
+    private PkiOperationValue configurationChoices(ServerControlOperation.ConfigurationChoices query,
+            CancellationSignal cancellation) {
+        if (!(pkiExecutor instanceof zeroecho.pki.application.PkiConfigurationChoicesSource source)) {
+            throw new IllegalStateException("Configuration choice metadata is unavailable");
+        }
+        zeroecho.pki.application.PkiConfigurationChoicesSource.Choices choices =
+                source.configurationChoices(query.limit(), query.after(), cancellation);
+        Map<String, PkiOperationValue> keys = new LinkedHashMap<>();
+        keys.put("items", new PkiOperationValue.ListValue(choices.keys().stream()
+                .<PkiOperationValue>map(key -> object("keyRef", text(key.value()), DISPLAY_NAME, text(key.value()))).toList()));
+        keys.put("count", integer(choices.keys().size()));
+        keys.put("truncated", bool(choices.nextCursor().isPresent()));
+        choices.nextCursor().ifPresent(value -> keys.put("nextCursor", text(value)));
+        AcmeService service = acme.get();
+        List<PkiOperationValue> challengeProviders = service == null ? List.of()
+                : service.configuredChallengeProviders().entrySet().stream().sorted(Map.Entry.comparingByKey())
+                        .<PkiOperationValue>map(entry -> object("providerId", text(entry.getKey()), DISPLAY_NAME, text(entry.getKey()),
+                                "challengeTypes", new PkiOperationValue.ListValue(entry.getValue().stream()
+                                        .map(Enum::name).sorted(). <PkiOperationValue>map(ServerControlOperationExecutor::text).toList())))
+                        .toList();
+        List<PkiOperationValue> eabProviders = service == null ? List.of()
+                : service.configuredEabProviders().stream().sorted()
+                        .<PkiOperationValue>map(id -> object("providerId", text(id), DISPLAY_NAME, text(id))).toList();
+        return object("formats", new PkiOperationValue.ListValue(choices.formats().stream()
+                        .<PkiOperationValue>map(format -> object("formatId", text(format.value()), DISPLAY_NAME,
+                                text("x509".equals(format.value()) ? "X.509" : format.value()))).toList()),
+                "signingProviders", new PkiOperationValue.ListValue(choices.signingProviders().stream()
+                        .<PkiOperationValue>map(id -> object("providerId", text(id), DISPLAY_NAME, text(id))).toList()),
+                "publicationTargets", new PkiOperationValue.ListValue(choices.publicationTargets().stream()
+                        .sorted(Comparator.comparing(target -> target.type().name() + ":" + target.targetId()))
+                        .<PkiOperationValue>map(target -> object("targetType", text(target.type().name()), "targetId", text(target.targetId()),
+                                DISPLAY_NAME, text(target.targetId()))).toList()),
+                "keys", new PkiOperationValue.ObjectValue(keys),
+                "algorithms", new PkiOperationValue.ListValue(choices.algorithms().stream()
+                        .<PkiOperationValue>map(id -> object("algorithmId", text(id), DISPLAY_NAME, text(id))).toList()),
+                "acmeChallengeProviders", new PkiOperationValue.ListValue(challengeProviders),
+                "acmeEabProviders", new PkiOperationValue.ListValue(eabProviders));
+    }
+
+    private PkiOperationValue capabilities(ServerControlOperation.ListCapabilities query, CancellationSignal cancellation) {
+        // Every row concerns the exact same authoritative object resource already authorized by the gateway.
+        List<DisclosureService.Capability> selected = store.selectCapabilities(query.objectId(), query.after(),
+                query.limit() + 1, cancellation);
+        boolean more = selected.size() > query.limit();
+        List<DisclosureService.Capability> rows = selected.subList(0, Math.min(selected.size(), query.limit()));
+        Map<String, PkiOperationValue> fields = new LinkedHashMap<>();
+        fields.put("items", new PkiOperationValue.ListValue(rows.stream().map(ServerControlOperationExecutor::capability).toList()));
+        fields.put("count", integer(rows.size()));
+        fields.put("truncated", bool(more));
+        if (more) { fields.put("nextCursor", text(rows.getLast().capabilityId())); }
+        return new PkiOperationValue.ObjectValue(fields);
     }
 
     private AcmeService acme() {
@@ -536,7 +598,7 @@ public final class ServerControlOperationExecutor {
 
     private static PkiOperationValue principal(SecurityPrincipal value) {
         return object("principalId", text(value.principalId()), "type", text(value.type().name()),
-                "displayName", text(value.displayName()), "enabled", bool(value.enabled()));
+                DISPLAY_NAME, text(value.displayName()), "enabled", bool(value.enabled()));
     }
 
     private static PkiOperationValue alias(RepositoryAliasService.Record value) {

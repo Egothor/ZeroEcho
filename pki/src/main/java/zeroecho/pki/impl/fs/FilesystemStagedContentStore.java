@@ -35,15 +35,16 @@ package zeroecho.pki.impl.fs;
 
 import java.io.FilterOutputStream;
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UTFDataFormatException;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
@@ -62,6 +63,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
@@ -85,7 +87,11 @@ import zeroecho.pki.spi.store.TemporaryUniqueIndex;
  * permissions are available.
  * </p>
  */
+@SuppressWarnings({ "PMD.CyclomaticComplexity", "PMD.ConfusingTernary",
+        "PMD.AvoidCatchingGenericException", "PMD.UnusedPrivateMethod" })
 public final class FilesystemStagedContentStore implements StagedContentStore {
+    private static final String OWNERS_SUFFIX = ".owners";
+
 
     private static final Set<PosixFilePermission> OWNER_ONLY = EnumSet.of(PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE);
@@ -97,6 +103,11 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     private static final int MAX_OWNER_COUNT = 2048;
     private static final int OWNER_LOCK_COUNT = 64;
     private static final long MINIMUM_CONTENT_LENGTH = 0L;
+    private static final ThreadLocal<SealFaultInjector> SEAL_FAULTS = new ThreadLocal<>();
+    private static final ThreadLocal<MetadataReadFaultInjector> METADATA_READ_FAULTS =
+            new ThreadLocal<>();
+    private static final ThreadLocal<MetadataAttributeReadFaultInjector>
+            METADATA_ATTRIBUTE_READ_FAULTS = new ThreadLocal<>(); // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
 
     private final Path root;
     private final String storeId;
@@ -104,6 +115,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     private final ConcurrentMap<String, Integer> transactionalReservations;
     private final AtomicReference<TransactionalOwnership> transactionalOwnership;
     private final ContentReadObserver contentReadObserver;
+    private final Semaphore openSinks;
 
     /**
      * Creates a staged-content store.
@@ -114,24 +126,54 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
      * @throws IllegalArgumentException if {@code storeId} is blank
      */
     public FilesystemStagedContentStore(Path root, String storeId) throws IOException {
-        this(root, storeId, null);
+        this(root, storeId, Integer.MAX_VALUE, null);
     }
 
     /* default */ FilesystemStagedContentStore(Path root, String storeId, ContentReadObserver observer)
             throws IOException {
+        this(root, storeId, Integer.MAX_VALUE, observer);
+    }
+
+    /* default */ FilesystemStagedContentStore(Path root, String storeId, int maximumOpenSinks,
+            ContentReadObserver observer) throws IOException {
+        this(root, storeId, maximumOpenSinks, observer, true);
+    }
+
+    /* default */ FilesystemStagedContentStore(Path root, String storeId, int maximumOpenSinks,
+            ContentReadObserver observer, boolean cleanupTemporaryState) throws IOException {
+        if (maximumOpenSinks <= 0) {
+            throw new IllegalArgumentException("maximumOpenSinks must be positive");
+        }
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         this.storeId = requireStoreIdentifier(storeId);
         this.contentReadObserver = observer;
         this.ownerLocks = new ReentrantLock[OWNER_LOCK_COUNT];
         this.transactionalReservations = new ConcurrentHashMap<>();
         this.transactionalOwnership = new AtomicReference<>(reference -> Set.of());
+        this.openSinks = new Semaphore(maximumOpenSinks);
         for (int index = 0; index < ownerLocks.length; index++) {
             ownerLocks[index] = new ReentrantLock();
         }
-        Files.createDirectories(this.root);
+        if (cleanupTemporaryState) {
+            Files.createDirectories(this.root);
+        }
         if (Files.isSymbolicLink(this.root) || !Files.isDirectory(this.root, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Staged-content root must be a real directory");
         }
+        if (cleanupTemporaryState) {
+            cleanupAbandonedTemporaryState();
+        }
+    }
+
+    /** Opens a resolver whose construction and supported operation are read-only. */
+    /* default */ static StagedContentStore readOnlyResolver(Path root, String storeId)
+            throws IOException {
+        return new ReadOnlyResolver(new FilesystemStagedContentStore(
+                root, storeId, Integer.MAX_VALUE, null, false));
+    }
+
+    /** Runs restart cleanup only after signing metadata passes semantic validation. */
+    /* default */ void cleanupValidatedTemporaryState() throws IOException {
         cleanupAbandonedTemporaryState();
     }
 
@@ -140,16 +182,168 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         return storeId;
     }
 
+    /* package */ static void validateExistingLayout(Path root) throws IOException {
+        Objects.requireNonNull(root, "root");
+        long entries = 0L;
+        try (java.util.stream.Stream<Path> paths = Files.list(root)) {
+            java.util.Iterator<Path> iterator = paths.iterator();
+            while (iterator.hasNext()) {
+                Path path = iterator.next();
+                if (++entries > 1_000_000L || Files.isSymbolicLink(path)) {
+                    throw new MalformedLayoutException();
+                }
+                String name = path.getFileName().toString();
+                boolean uniqueIndex = name.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.unique-index");
+                boolean contentFile = name.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(content|meta|owners|incomplete)");
+                boolean metadataTemporary = name.matches("\\.metadata-[0-9a-f-]{36}\\.tmp");
+                if (uniqueIndex) {
+                    if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                        throw new MalformedLayoutException();
+                    }
+                    try (java.util.stream.Stream<Path> nested = Files.walk(path)) {
+                        if (nested.anyMatch(Files::isSymbolicLink)) {
+                            throw new MalformedLayoutException();
+                        }
+                    }
+                } else if (!contentFile && !metadataTemporary
+                        || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new MalformedLayoutException();
+                } else if ((name.endsWith(".meta") && Files.size(path) > 4096L)
+                        || (name.endsWith(OWNERS_SUFFIX) && Files.size(path) > MAX_OWNER_RECORD_BYTES)) {
+                    throw new MalformedLayoutException();
+                }
+                if (name.endsWith(OWNERS_SUFFIX)) {
+                    String contentId = name.substring(0, name.length() - OWNERS_SUFFIX.length());
+                    DurableMetadataFiles.read(path, MAX_OWNER_RECORD_BYTES, input -> StoreIo.decodeOwners(input, contentId));
+                }
+            }
+        }
+    }
+
+    /** Cause-free marker distinguishing invalid layout from operational I/O. */
+    /* default */ static final class MalformedLayoutException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private MalformedLayoutException() {
+            super("Staged-content format unsupported");
+        }
+    }
+
+    /** Cause-free marker for malformed staged-content metadata or reference binding. */
+    /* default */ static final class MalformedStagedContentException extends IOException {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /* default */ static void installSealFault(SealFaultInjector injector) {
+        SEAL_FAULTS.set(Objects.requireNonNull(injector, "injector"));
+    }
+
+    /* default */ static void clearSealFault() {
+        SEAL_FAULTS.remove();
+    }
+
+    /* default */ static void installMetadataReadFault(MetadataReadFaultInjector fault) {
+        METADATA_READ_FAULTS.set(Objects.requireNonNull(fault, "fault"));
+    }
+
+    /* default */ static void clearMetadataReadFault() {
+        METADATA_READ_FAULTS.remove();
+    }
+
+    /* default */ static void installMetadataAttributeReadFault(
+            MetadataAttributeReadFaultInjector fault) {
+        METADATA_ATTRIBUTE_READ_FAULTS.set(Objects.requireNonNull(fault, "fault"));
+    }
+
+    /* default */ static void clearMetadataAttributeReadFault() {
+        METADATA_ATTRIBUTE_READ_FAULTS.remove();
+    }
+
+    private static void tripSealFault(SealFaultPoint point) throws IOException {
+        SealFaultInjector injector = SEAL_FAULTS.get();
+        if (injector != null) {
+            injector.fail(point);
+        }
+    }
+
+    /** Resolves staged content without exposing mutation of the backing store. */
+    private static final class ReadOnlyResolver implements StagedContentStore {
+        private final FilesystemStagedContentStore delegate;
+
+        private ReadOnlyResolver(FilesystemStagedContentStore delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override public String contentStoreId() { return delegate.contentStoreId(); }
+
+        @Override
+        public DurableContentReference restoreReference(String storeId, String contentId,
+                Encoding encoding, long length, String sha256,
+                DurableContentReference.Lifecycle lifecycle) throws IOException {
+            return delegate.restoreReference(storeId, contentId, encoding, length, sha256,
+                    lifecycle);
+        }
+
+        @Override public ContentSink beginContent(Encoding encoding,
+                DurableContentReference.Lifecycle lifecycle) {
+            throw readOnly();
+        }
+
+        @Override public RepeatableContent openContent(DurableContentReference reference) throws IOException {
+            // Recovery validates live proof bytes before activating metadata or reclaiming content.
+            return delegate.openContent(reference);
+        }
+
+        @Override public boolean retainContent(DurableContentReference reference,
+                DurableContentOwner owner) {
+            throw readOnly();
+        }
+
+        @Override public boolean releaseContent(DurableContentReference reference,
+                DurableContentOwner owner) {
+            throw readOnly();
+        }
+
+        @Override public Set<DurableContentOwner> contentOwners(
+                DurableContentReference reference) {
+            throw readOnly();
+        }
+
+        @Override public void retireUnownedContent(DurableContentReference reference) {
+            throw readOnly();
+        }
+
+        @Override public void recoverContent(TemporaryUniqueIndex retained,
+                TemporaryUniqueIndex retainedOwners) {
+            throw readOnly();
+        }
+
+        @Override public TemporaryUniqueIndex beginUniqueIndex() {
+            throw readOnly();
+        }
+
+        private static UnsupportedOperationException readOnly() {
+            return new UnsupportedOperationException("staged-content resolver is read-only");
+        }
+    }
+
     @Override
     public ContentSink beginContent(Encoding encoding, DurableContentReference.Lifecycle lifecycle) throws IOException {
         Objects.requireNonNull(encoding, "encoding");
         Objects.requireNonNull(lifecycle, "lifecycle");
+        if (!openSinks.tryAcquire()) {
+            throw new IOException("Staged-content preparation is busy: code=STAGED_CONTENT_PREPARATION_BUSY");
+        }
         String contentId = UUID.randomUUID().toString();
         Path incomplete = root.resolve(contentId + ".incomplete");
         Path complete = root.resolve(contentId + ".content");
-        Files.createFile(incomplete);
-        restrict(incomplete);
-        return new FileSink(contentId, incomplete, complete, encoding, lifecycle);
+        try {
+            createOwnerOnlyFile(incomplete);
+            return new FileSink(contentId, incomplete, complete, encoding, lifecycle);
+        } catch (IOException | RuntimeException failure) {
+            openSinks.release();
+            throw failure;
+        }
     }
 
     @Override
@@ -180,7 +374,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         StoreReference supplied = new StoreReference(storeId, contentId, encoding, length, sha256, lifecycle);
         DurableContentReference persisted = readMetadata(contentId);
         if (!persisted.equals(supplied)) {
-            throw new IOException("Staged content metadata mismatch: code=CONTENT_INTEGRITY_FAILED");
+            throw new MalformedStagedContentException();
         }
         return persisted;
     }
@@ -334,7 +528,28 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     }
 
     /* package */ void retireSigningContent(DurableContentReference reference) throws IOException {
-        TransactionalOwnershipIo.retireTransactionalContent(this, reference);
+        DurableContentReference exact = requireOwned(reference);
+        ReentrantLock lock = ownerLock(exact.contentId());
+        lock.lock();
+        try {
+            requireExactMetadata(exact);
+            Files.deleteIfExists(completePath(exact));
+            SigningFormatSupport.forceDirectory(root);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /* package */ void purgeSigningContent(DurableContentReference reference) throws IOException {
+        DurableContentReference exact = requireOwned(reference);
+        ReentrantLock lock = ownerLock(exact.contentId());
+        lock.lock();
+        try {
+            retireFiles(exact);
+            SigningFormatSupport.forceDirectory(root);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /* package */ void bindTransactionalOwnership(TransactionalOwnership ownership) {
@@ -396,7 +611,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
     private Path ownerPath(String contentId) {
         requireContentIdentifier(contentId);
-        return resolveOwned(contentId + ".owners");
+        return resolveOwned(contentId + OWNERS_SUFFIX);
     }
 
     private ReentrantLock ownerLock(String contentId) {
@@ -425,6 +640,15 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
     private static void restrictDirectory(Path path) throws IOException {
         if (Files.getFileStore(path).supportsFileAttributeView("posix")) {
             Files.setPosixFilePermissions(path, OWNER_DIRECTORY);
+        }
+    }
+
+    private static void createOwnerOnlyFile(Path path) throws IOException {
+        if (Files.getFileStore(path.getParent()).supportsFileAttributeView("posix")) {
+            Files.createFile(path, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(OWNER_ONLY));
+        } else {
+            Files.createFile(path);
+            restrict(path);
         }
     }
 
@@ -483,22 +707,23 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                     output = openCountingOutput(incomplete);
                 }
                 output.close();
-                try (FileChannel channel = FileChannel.open(incomplete, StandardOpenOption.READ)) {
+                try (FileChannel channel = FileChannel.open(incomplete, StandardOpenOption.READ,
+                        LinkOption.NOFOLLOW_LINKS)) {
+                    tripSealFault(SealFaultPoint.PAYLOAD_FORCE);
                     channel.force(true);
                 }
-                try {
-                    Files.move(incomplete, complete, StandardCopyOption.ATOMIC_MOVE);
-                } catch (AtomicMoveNotSupportedException ex) {
-                    Files.move(incomplete, complete);
-                }
+                tripSealFault(SealFaultPoint.PAYLOAD_ATOMIC_MOVE);
+                Files.move(incomplete, complete, StandardCopyOption.ATOMIC_MOVE);
+                tripSealFault(SealFaultPoint.PAYLOAD_DIRECTORY_FORCE);
+                SigningFormatSupport.forceDirectory(root);
                 DurableContentReference reference = new StoreReference(storeId, contentId, encoding,
                         output.length(), output.digestHex(), lifecycle);
                 try {
                     writeMetadata(reference);
-                    terminal.set(true);
+                    markTerminal();
                     return reference;
                 } catch (IOException failure) {
-                    terminal.set(true);
+                    markTerminal();
                     Files.deleteIfExists(complete);
                     Files.deleteIfExists(resolveOwned(contentId + ".meta.incomplete"));
                     Files.deleteIfExists(metadataPath(contentId));
@@ -514,6 +739,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             lock.lock();
             try {
                 if (terminal.compareAndSet(false, true)) {
+                    openSinks.release();
                     if (output != null) {
                         output.close();
                     }
@@ -529,7 +755,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             lock.lock();
             try {
                 if (!terminal.get()) {
-                    terminal.set(true);
+                    markTerminal();
                     if (output != null) {
                         output.close();
                     }
@@ -545,10 +771,45 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                 throw new IllegalStateException("Content sink is no longer open");
             }
         }
+
+        private void markTerminal() {
+            if (terminal.compareAndSet(false, true)) {
+                openSinks.release();
+            }
+        }
     }
 
     private static CountingOutputStream openCountingOutput(Path path) throws IOException {
-        return new CountingOutputStream(Files.newOutputStream(path, StandardOpenOption.WRITE), sha256());
+        return new CountingOutputStream(Files.newOutputStream(path, StandardOpenOption.WRITE,
+                LinkOption.NOFOLLOW_LINKS), sha256());
+    }
+
+    /** Durable payload publication boundaries used by deterministic fault tests. */
+    /* default */ enum SealFaultPoint {
+        PAYLOAD_FORCE,
+        PAYLOAD_ATOMIC_MOVE,
+        PAYLOAD_DIRECTORY_FORCE
+    }
+
+    /** Test seam for failing one durable payload publication boundary. */
+    /* default */ @FunctionalInterface
+    interface SealFaultInjector {
+        /** Fails the selected publication boundary. */
+        void fail(SealFaultPoint point) throws IOException;
+    }
+
+    /** Test seam for operational staged-metadata reads during recovery validation. */
+    /* default */ @FunctionalInterface
+    interface MetadataReadFaultInjector {
+        /** Runs before the selected metadata access and may inject an I/O failure. */
+        void beforeRead(Path metadata) throws IOException;
+    }
+
+    /** Test seam for operational staged-metadata attribute reads during recovery. */
+    /* default */ @FunctionalInterface
+    interface MetadataAttributeReadFaultInjector {
+        /** Runs before the selected metadata access and may inject an I/O failure. */
+        void beforeRead(Path metadata) throws IOException;
     }
 
     /** Overflow-checked streaming digest and length adapter. */
@@ -801,8 +1062,11 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                         contentId.getBytes(StandardCharsets.US_ASCII));
                 boolean keep = reference.lifecycle() != DurableContentReference.Lifecycle.TEMPORARY
                         && (referenced || transactionallyOwned || !owners.isEmpty());
-                if (!keep || !isRegularFile(store.completePath(reference))) {
+                boolean payloadPresent = isRegularFile(store.completePath(reference));
+                if (!keep) {
                     store.retireFiles(reference);
+                } else if (transactionallyOwned && !payloadPresent) {
+                    throw new IOException("Accepted staged content is missing");
                 }
             } finally {
                 lock.unlock();
@@ -816,6 +1080,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                     Path path = iterator.next();
                     String name = path.getFileName().toString();
                     if (name.endsWith(".incomplete")) {
+                        Files.deleteIfExists(path);
+                    } else if (name.matches("\\.metadata-[0-9a-f-]{36}\\.tmp")) {
                         Files.deleteIfExists(path);
                     } else if (name.endsWith(".unique-index")
                             && Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
@@ -843,11 +1109,11 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
         private static void cleanupOrphanedOwnerFiles(FilesystemStagedContentStore store) throws IOException {
             try (java.util.stream.Stream<Path> paths = Files.list(store.root)) {
                 java.util.Iterator<Path> iterator = paths
-                        .filter(path -> path.getFileName().toString().endsWith(".owners")).iterator();
+                        .filter(path -> path.getFileName().toString().endsWith(OWNERS_SUFFIX)).iterator();
                 while (iterator.hasNext()) {
                     Path owners = iterator.next();
                     String name = owners.getFileName().toString();
-                    String contentId = name.substring(0, name.length() - ".owners".length());
+                    String contentId = name.substring(0, name.length() - OWNERS_SUFFIX.length());
                     if (!isRegularFile(store.metadataPath(contentId))) {
                         DurableMetadataFiles.delete(owners);
                     }
@@ -877,17 +1143,36 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             return exact;
         }
 
+        // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+        @SuppressWarnings({ "PMD.PreserveStackTrace" })
         private static DurableContentReference readMetadata(FilesystemStagedContentStore store, String contentId)
                 throws IOException {
             Path metadata = store.metadataPath(contentId);
-            if (!isRegularFile(metadata)) {
-                throw new IOException("Staged content metadata missing: code=STAGED_CONTENT_INCOMPLETE");
+            MetadataAttributeReadFaultInjector attributeFault =
+                    METADATA_ATTRIBUTE_READ_FAULTS.get();
+            if (attributeFault != null) {
+                attributeFault.beforeRead(metadata);
             }
-            try (DataInputStream input = new DataInputStream(Channels.newInputStream(
-                    FileChannel.open(metadata, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)))) {
+            BasicFileAttributes attributes;
+            try {
+                attributes = Files.readAttributes(metadata, BasicFileAttributes.class,
+                        LinkOption.NOFOLLOW_LINKS);
+            } catch (NoSuchFileException missing) {
+                throw new MalformedStagedContentException();
+            }
+            if (!attributes.isRegularFile()) {
+                throw new MalformedStagedContentException();
+            }
+            try (FileChannel channel = FileChannel.open(metadata, StandardOpenOption.READ,
+                    LinkOption.NOFOLLOW_LINKS);
+                    DataInputStream input = new DataInputStream(Channels.newInputStream(channel))) {
+                MetadataReadFaultInjector fault = METADATA_READ_FAULTS.get();
+                if (fault != null) {
+                    fault.beforeRead(metadata);
+                }
                 int version = input.readUnsignedByte();
                 if (version != METADATA_VERSION) {
-                    throw new IOException("Unsupported staged content metadata");
+                    throw new MalformedStagedContentException();
                 }
                 Encoding encoding = Encoding.valueOf(input.readUTF());
                 DurableContentReference.Lifecycle lifecycle = DurableContentReference.Lifecycle.valueOf(
@@ -895,11 +1180,11 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
                 long length = input.readLong();
                 String digest = input.readUTF();
                 if (input.read() >= 0) {
-                    throw new IOException("Trailing staged content metadata");
+                    throw new MalformedStagedContentException();
                 }
                 return new StoreReference(store.storeId, contentId, encoding, length, digest, lifecycle);
-            } catch (IllegalArgumentException exception) {
-                throw new IOException("Malformed staged content metadata", exception);
+            } catch (EOFException | UTFDataFormatException | IllegalArgumentException malformed) {
+                throw new MalformedStagedContentException();
             }
         }
 
@@ -921,7 +1206,7 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             try {
                 return DurableMetadataFiles.read(ownersPath, MAX_OWNER_RECORD_BYTES,
                         input -> decodeOwners(input, contentId));
-            } catch (java.nio.file.NoSuchFileException missing) {
+            } catch (NoSuchFileException missing) {
                 return new LinkedHashSet<>();
             } catch (IllegalArgumentException exception) {
                 throw new IOException("Malformed staged content owner metadata", exception);
@@ -943,6 +1228,9 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
             }
             for (int index = 0; index < count; index++) {
                 DurableContentOwner owner = parseOwner(input.readUTF());
+                if (owner.category() == DurableContentOwner.Category.CREDENTIAL_RECORD) {
+                    throw new MalformedLayoutException();
+                }
                 if (TransactionalOwnershipIo.isTransactionalOwner(owner)) {
                     continue;
                 }
@@ -991,25 +1279,14 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
         private static void writeMetadata(FilesystemStagedContentStore store, DurableContentReference reference)
                 throws IOException {
-            Path incomplete = store.resolveOwned(reference.contentId() + ".meta.incomplete");
             Path complete = store.metadataPath(reference.contentId());
-            Files.createFile(incomplete);
-            restrict(incomplete);
-            try (DataOutputStream output = new DataOutputStream(Files.newOutputStream(incomplete))) {
+            DurableMetadataFiles.create(complete, 4096L, output -> {
                 output.writeByte(METADATA_VERSION);
                 output.writeUTF(reference.encoding().name());
                 output.writeUTF(reference.lifecycle().name());
                 output.writeLong(reference.length());
                 output.writeUTF(reference.sha256());
-            }
-            try (FileChannel channel = FileChannel.open(incomplete, StandardOpenOption.READ)) {
-                channel.force(true);
-            }
-            try {
-                Files.move(incomplete, complete, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException exception) {
-                Files.move(incomplete, complete);
-            }
+            });
         }
     }
 
@@ -1030,7 +1307,8 @@ public final class FilesystemStagedContentStore implements StagedContentStore {
 
         private static boolean isTransactionalOwner(DurableContentOwner owner) {
             return owner.category() == DurableContentOwner.Category.SIGNING_OPERATION
-                    || owner.category() == DurableContentOwner.Category.STATUS_OBJECT_RECORD;
+                    || owner.category() == DurableContentOwner.Category.STATUS_OBJECT_RECORD
+                    || owner.category() == DurableContentOwner.Category.CREDENTIAL_RECORD;
         }
 
         private static TransactionalReservation reserveTransactionalPublication(FilesystemStagedContentStore store,

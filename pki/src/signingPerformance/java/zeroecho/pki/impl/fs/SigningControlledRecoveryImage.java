@@ -76,7 +76,7 @@ final class SigningControlledRecoveryImage {
         long genericRecords;
         try {
             genericRecords = Math.subtractExact(retainedPopulation,
-                    Math.addExact(Math.multiplyExact(2L, activePopulation), 1L));
+                    Math.addExact(Math.multiplyExact(3L, activePopulation), 1L));
         } catch (ArithmeticException failure) {
             throw new ImageException("CONFIGURATION_INVALID", failure);
         }

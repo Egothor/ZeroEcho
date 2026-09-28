@@ -155,24 +155,23 @@ final class SegmentedTransactionalMetadataStoreTest {
     }
 
     @Test
-    void internalTransactionCarriesAdmissionIntoInitialSigningProjection(@TempDir Path temporary)
+    void signingProjectionFailsClosedWithoutEnvelope(@TempDir Path temporary)
             throws Exception {
         Path root = Files.createDirectory(temporary.resolve("admitted-transaction"));
-        MetadataKey key = new MetadataKey(SigningWorkProjection.RECORD_NAMESPACE, "operation");
+        MetadataKey key = new MetadataKey(SigningWorkProjection.STATE_NAMESPACE, "operation");
         try (SegmentedTransactionalMetadataStore store =
                     SegmentedTransactionalMetadataStore.create(root, STORE_ID);
                 SigningLedgerStoreEngine.SigningAdmission admission =
-                        store.reserveSigningAdmission();
+                        store.reserveAcceptanceCapacity();
                 MetadataTransaction transaction = store.beginTransaction(admission)) {
             transaction.create(key, content(1), CancellationSignal.NONE);
-            assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
-            try (SegmentedTransactionalMetadataStore.SigningDuePage due = store.pageSigningDue(
-                    Instant.EPOCH, Optional.empty(), Optional.empty(), 1)) {
-                assertEquals(List.of(new SegmentedTransactionalMetadataStore.SigningDueCandidate(
-                        "operation", true)), due.candidates());
-            }
+            assertThrows(MetadataStoreException.class, transaction::commit);
+            SegmentedTransactionalMetadataStore.SigningDuePage due = store.pageSigningDue(
+                    Instant.EPOCH, Optional.empty(), Optional.empty(), 1);
+            assertEquals(List.of(), due.candidates());
         }
     }
+
 
     @Test
     void ephemeralDirectContextDoesNotAlterDurableTransactionPayload(@TempDir Path temporary)
@@ -181,12 +180,12 @@ final class SegmentedTransactionalMetadataStoreTest {
         Path unreservedRoot = Files.createDirectory(temporary.resolve("unreserved-direct"));
         SigningTransactionPayloadCodec.Mutation record = new SigningTransactionPayloadCodec.Mutation(
                 SigningTransactionPayloadCodec.MutationKind.CREATE,
-                new MetadataKey(SigningWorkProjection.RECORD_NAMESPACE, "operation"),
+                new MetadataKey("io.zeroecho.test", "operation"),
                 -1L, new byte[] { 1 });
         try (SegmentedTransactionalMetadataStore admitted =
                     SegmentedTransactionalMetadataStore.create(admittedRoot, STORE_ID);
                 SigningLedgerStoreEngine.SigningAdmission admission =
-                        admitted.reserveSigningAdmission()) {
+                        admitted.reserveAcceptanceCapacity()) {
             assertEquals(MetadataCommitResult.Outcome.COMMITTED,
                     admitted.directCommit(List.of(record), admission).outcome());
         }
@@ -734,6 +733,8 @@ final class SegmentedTransactionalMetadataStoreTest {
                 () -> SegmentedTransactionalMetadataStore.open(unknownRoot, STORE_ID));
         assertEquals("Metadata ledger format unsupported: code=METADATA_FORMAT_UNSUPPORTED",
                 failure.getMessage());
+        assertEquals(null, failure.getCause());
+        assertEquals(0, failure.getSuppressed().length);
         assertArrayEquals(new byte[] { 3, 4 }, Files.readAllBytes(unknown));
 
         Path linkRoot = Files.createDirectory(temporary.resolve("link"));

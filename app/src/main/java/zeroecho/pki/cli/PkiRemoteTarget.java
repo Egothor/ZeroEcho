@@ -73,6 +73,10 @@ record PkiRemoteTarget(URI baseUri, Optional<Path> clientKeystore, Optional<Stri
         if (!"https".equalsIgnoreCase(baseUri.getScheme()) || baseUri.getHost() == null) {
             throw new IllegalArgumentException("Remote base URL must be an absolute https URL");
         }
+        if (clientKeystorePasswordEnv.isPresent() && clientKeystore.isEmpty()
+                || trustStorePasswordEnv.isPresent() && trustStore.isEmpty()) {
+            throw new IllegalArgumentException("Password environment option requires its corresponding store");
+        }
         boolean keystore = clientKeystore.isPresent();
         boolean pem = clientCertificate.isPresent() && clientKey.isPresent();
         if (keystore == pem) {

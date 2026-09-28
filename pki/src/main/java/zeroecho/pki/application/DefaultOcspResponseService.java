@@ -35,12 +35,17 @@ package zeroecho.pki.application;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
-import java.time.Duration;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -56,13 +61,38 @@ import zeroecho.pki.api.PkiException;
 import zeroecho.pki.api.credential.Credential;
 import zeroecho.pki.api.revocation.RevocationReason;
 import zeroecho.pki.api.revocation.RevocationState;
-import zeroecho.pki.impl.core.async.PkiSigningBus;
-import zeroecho.pki.impl.core.async.ImmediateSigningPending;
-import zeroecho.pki.impl.framework.x509.bc.PkiBusContentSigner;
+import zeroecho.core.io.OneShotContent;
+import zeroecho.core.spi.AlgorithmExecutionCapability.Direction;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.KeyRef;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.SigningService;
+import zeroecho.pki.api.SigningExecutionException;
+import zeroecho.pki.api.audit.AccessContext;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
+import zeroecho.pki.api.signing.PreparedSigningRequest;
+import zeroecho.pki.api.signing.SigningAcceptanceDisposition;
+import zeroecho.pki.api.signing.SigningOperation;
+import zeroecho.pki.api.signing.SigningOperationState;
+import zeroecho.pki.api.signing.SigningRequest;
+import zeroecho.pki.impl.framework.x509.X509AlgorithmRole;
+import zeroecho.pki.impl.framework.x509.X509AuthoritySnapshot;
+import zeroecho.pki.impl.framework.x509.X509ExecutionPlan;
+import zeroecho.pki.impl.framework.x509.X509SecurityFloor;
+import zeroecho.pki.impl.framework.x509.X509SuiteCompatibility;
+import zeroecho.pki.impl.framework.x509.bc.BcX509AlgorithmAdapter;
+import zeroecho.pki.spi.crypto.SigningProvider;
+import zeroecho.pkix.AlgorithmIdentifier;
 import zeroecho.pki.spi.store.PkiStore;
 import zeroecho.pki.spi.store.RevocationView;
 
-/** Store-backed, signing-bus-confined OCSP response application service. */
+/**
+ * Store-backed OCSP response service borrowing the session's bounded raw signer.
+ * Invocation-local snapshots close before staging or waiting; no persistent OCSP
+ * workflow or resource owner is introduced. Transient work is linear in requests
+ * and encoded bytes, plus indexed issuer/serial and revocation lookups.
+ */
 @SuppressWarnings({ "PMD.CyclomaticComplexity",
         "PMD.PreserveStackTrace", "PMD.ExceptionAsFlowControl", "PMD.SignatureDeclareThrowsException",
         "PMD.ControlStatementBraces" })
@@ -71,15 +101,19 @@ final class DefaultOcspResponseService implements OcspResponseService {
     private static final String SHA256_OID = "2.16.840.1.101.3.4.2.1";
 
     private final PkiStore store;
-    private final PkiSigningBus bus;
-    private final Duration signingTtl;
+    private static final AccessContext ACCESS = new AccessContext(new Principal("SYSTEM", "pki"),
+            new Purpose("X509_SIGN"), Optional.empty(), Optional.empty());
+    private final SigningService signing;
+    private final SigningProvider provider;
+    private final X509AuthoritySnapshot authority;
     private final Runnable requireOpen;
 
-    /* default */ DefaultOcspResponseService(PkiStore store, PkiSigningBus bus, Duration signingTtl,
-            Runnable requireOpen) {
+    /* default */ DefaultOcspResponseService(PkiStore store, SigningService signing, SigningProvider provider,
+            X509AuthoritySnapshot authority, Runnable requireOpen) {
         this.store = Objects.requireNonNull(store, "store");
-        this.bus = Objects.requireNonNull(bus, "bus");
-        this.signingTtl = Objects.requireNonNull(signingTtl, "signingTtl");
+        this.signing = Objects.requireNonNull(signing, "signing");
+        this.provider = Objects.requireNonNull(provider, "provider");
+        this.authority = Objects.requireNonNull(authority, "authority");
         this.requireOpen = Objects.requireNonNull(requireOpen, "requireOpen");
     }
 
@@ -92,25 +126,33 @@ final class DefaultOcspResponseService implements OcspResponseService {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(cancellation, "cancellation");
         try {
-            X509Certificate issuer = certificate(command.issuerCredentialId());
-            X509Certificate responder = certificate(command.responderCredentialId());
+            cancellation.throwIfCancelled();
+            Map<PkiId, X509Certificate> certificates = new HashMap<>();
+            X509Certificate issuer = certificate(command.issuerCredentialId(), certificates);
+            X509Certificate responder = certificate(command.responderCredentialId(), certificates);
             validateAuthority(command, issuer, responder);
+            List<X509Certificate> chain = new ArrayList<>(command.responseChain().size());
+            for (PkiId credentialId : command.responseChain()) {
+                cancellation.throwIfCancelled();
+                chain.add(certificate(credentialId, certificates));
+            }
+            SigningAlgorithm algorithm = algorithm(responder, command.signatureAlgorithm(), command.signatureBindingId());
             List<Resolved> resolved;
             long revision;
             String commitment;
             try (RevocationView view = store.openRevocationView()) {
                 revision = view.revision();
                 commitment = view.commitment();
-                resolved = resolve(command, issuer, view);
+                resolved = resolve(command, issuer, view, cancellation);
             }
             int good = Math.toIntExact(resolved.stream().filter(value -> value.status() instanceof CertStatus.Good)
                     .count());
             int revoked = Math.toIntExact(resolved.stream()
                     .filter(value -> value.status() instanceof CertStatus.Revoked).count());
             int unknown = Math.subtractExact(resolved.size(), Math.addExact(good, revoked));
-            return new Response(sign(command, responder, resolved, cancellation), revision, commitment,
+            return new Response(sign(command, responder, chain, algorithm, resolved, cancellation), revision, commitment,
                     good, revoked, unknown);
-        } catch (zeroecho.pki.api.SigningExecutionException | ImmediateSigningPending signingFailure) {
+        } catch (SigningExecutionException | SigningPendingException signingFailure) {
             throw signingFailure;
         } catch (Exception failure) {
             rethrowSigningBoundaryFailure(failure);
@@ -118,41 +160,29 @@ final class DefaultOcspResponseService implements OcspResponseService {
         }
     }
 
-    @Override public void validateSigningBinding(zeroecho.pki.api.PkiId responderCredentialId,
-            zeroecho.pki.api.KeyRef signingKeyRef, String signatureAlgorithm,
-            Optional<String> signatureBindingId) {
-        validateSigningBinding(responderCredentialId, signingKeyRef, signatureAlgorithm, signatureBindingId,
-                CancellationSignal.NONE);
-    }
-
-    @Override public void validateSigningBinding(zeroecho.pki.api.PkiId responderCredentialId,
-            zeroecho.pki.api.KeyRef signingKeyRef, String signatureAlgorithm,
-            Optional<String> signatureBindingId, CancellationSignal cancellation) {
+    @Override public void validateSigningBinding(PkiId authorityId, PkiId responderCredentialId,
+            KeyRef signingKeyRef, String signatureAlgorithm, Optional<String> signatureBindingId,
+            CancellationSignal cancellation) {
         requireOpen.run();
+        Objects.requireNonNull(authorityId, "authorityId");
         Objects.requireNonNull(responderCredentialId, "responderCredentialId");
         Objects.requireNonNull(signingKeyRef, "signingKeyRef");
         Objects.requireNonNull(signatureBindingId, "signatureBindingId");
         Objects.requireNonNull(cancellation, "cancellation");
-        byte[] challenge = "ZeroEcho OCSP signing binding v1".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        byte[] challenge = "ZeroEcho OCSP signing binding v1".getBytes(StandardCharsets.US_ASCII);
         try {
+            cancellation.throwIfCancelled();
             X509Certificate responder = certificate(responderCredentialId);
-            AlgorithmIdentity identity = bus.authority().resolveIdentity(signatureAlgorithm);
-            try (PkiBusContentSigner signer = signatureBindingId.isPresent()
-                    ? new PkiBusContentSigner(bus, signingKeyRef, identity, signatureBindingId.orElseThrow(),
-                            signingTtl, cancellation)
-                    : new PkiBusContentSigner(bus, signingKeyRef, identity, signingTtl, cancellation)) {
-                try (java.io.OutputStream output = signer.contentStream()) {
-                    output.write(challenge);
-                }
-                ContentVerifier verifier = Pkix.verifier(Pkix.subjectPublicKeyInfo(responder), signer.algorithm());
-                try (java.io.OutputStream output = verifier.contentStream()) {
-                    output.write(challenge);
-                }
-                if (!verifier.verify(signer.signature())) {
-                    throw new IOException("OCSP signing binding differs");
-                }
+            SigningAlgorithm algorithm = algorithm(responder, signatureAlgorithm, signatureBindingId);
+            byte[] signature = rawSign(authorityId, signingKeyRef, algorithm.identity(), challenge, Encoding.BINARY, cancellation);
+            ContentVerifier verifier = Pkix.verifier(Pkix.subjectPublicKeyInfo(responder), algorithm.identifier());
+            try (java.io.OutputStream output = verifier.contentStream()) {
+                output.write(challenge);
             }
-        } catch (zeroecho.pki.api.SigningExecutionException | ImmediateSigningPending signingFailure) {
+            if (!verifier.verify(signature)) {
+                throw new IOException("OCSP signing binding differs");
+            }
+        } catch (SigningExecutionException | SigningPendingException signingFailure) {
             throw signingFailure;
         } catch (Exception failure) {
             rethrowSigningBoundaryFailure(failure);
@@ -160,13 +190,101 @@ final class DefaultOcspResponseService implements OcspResponseService {
         }
     }
 
+    private SigningAlgorithm algorithm(X509Certificate responder, String requested, Optional<String> binding) {
+        AlgorithmIdentity identity = authority.resolveIdentity(requested);
+        X509SecurityFloor.requirePermitted(identity);
+        BcX509AlgorithmAdapter adapter = new BcX509AlgorithmAdapter(authority.bindings());
+        AlgorithmIdentity publicKey = adapter.decode(Pkix.subjectPublicKeyAlgorithm(Pkix.subjectPublicKeyInfo(responder)),
+                X509AlgorithmRole.SUBJECT_PUBLIC_KEY_ALGORITHM);
+        X509SuiteCompatibility.requireCompatible(identity, publicKey);
+        X509ExecutionPlan<SigningProvider> plan = binding.isPresent()
+                ? authority.plan(identity, publicKey, Direction.SIGN, Optional.empty(), "explicit",
+                        binding.orElseThrow(), SigningProvider.class)
+                : authority.plan(identity, publicKey, Direction.SIGN, Optional.empty(), "default", SigningProvider.class);
+        authority.authorize(plan, provider, Direction.SIGN);
+        return new SigningAlgorithm(identity, BcX509AlgorithmAdapter.toLib(plan.selection().binding()));
+    }
+
+    // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+    // Before accept, the caller attempts discard but preserves the original cancellation if cleanup fails.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.EmptyCatchBlock" })
+    private byte[] rawSign(PkiId authorityId, KeyRef keyRef, AlgorithmIdentity algorithm,
+            byte[] content, Encoding contentEncoding, CancellationSignal cancellation) throws IOException {
+        provider.inputCapabilities().select(algorithm.canonicalForm(), content.length);
+        SigningRequest request = new SigningRequest(signing.newSubmissionId(), ACCESS, keyRef, authorityId,
+                algorithm, contentEncoding, Encoding.BINARY);
+        PreparedSigningRequest prepared = signing.prepareBoundedObservation(request, oneShot(content), cancellation);
+        try {
+            cancellation.throwIfCancelled();
+        } catch (IOException cancelled) {
+            try { signing.discard(prepared); } catch (RuntimeException cleanupFailure) { /* Preserve cancellation. */ }
+            throw cancelled;
+        }
+        // Invocation is the conservative public custody boundary: a thrown accept
+        // cannot prove whether transfer happened. Never discard or resubmit afterward.
+        SigningAcceptanceDisposition disposition;
+        try {
+            disposition = signing.accept(prepared).disposition();
+        } catch (RuntimeException failure) {
+            cancelAfterFailure(request.submissionId().id());
+            throw failure;
+        }
+        if (disposition == SigningAcceptanceDisposition.CAPACITY_REJECTED) {
+            throw new SigningExecutionException(SigningExecutionException.Classification.OVERLOADED,
+                    "OCSP signing capacity is exhausted");
+        }
+        if (disposition != SigningAcceptanceDisposition.ACCEPTED
+                && disposition != SigningAcceptanceDisposition.ATTACHED_EXISTING) {
+            throw new IOException("OCSP signing acceptance failed");
+        }
+        try {
+            SigningOperation operation = signing.awaitBoundedObservation(request.submissionId().id(), cancellation)
+                    .orElseThrow(() -> new PkiException("OCSP signing operation is unavailable"));
+            if (operation.state() == SigningOperationState.PENDING || operation.state() == SigningOperationState.CANCELLING) {
+                throw new SigningPendingException();
+            }
+            if (operation.state() != SigningOperationState.SUCCEEDED) {
+                throw new IOException("OCSP signing did not succeed");
+            }
+            return operation.signature().orElseThrow(() -> new IOException("OCSP signature is unavailable")).bytes();
+        } catch (IOException | RuntimeException failure) {
+            cancelAfterFailure(request.submissionId().id());
+            throw failure;
+        }
+    }
+
+    // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+    // Preserve the post-accept disposition; a failed cancellation attempt does not establish durable cancellation.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.EmptyCatchBlock" })
+    private void cancelAfterFailure(PkiId operationId) {
+        try {
+            signing.cancel(operationId);
+        } catch (RuntimeException cleanupFailure) {
+            // Keep the original disposition. This failed attempt provides no
+            // evidence that cancellation was durably recorded.
+        }
+    }
+
+    private static OneShotContent oneShot(byte[] content) {
+        return new OneShotContent() {
+            private boolean opened;
+            @Override public InputStream openStream() {
+                if (opened) { throw new IllegalStateException("OCSP candidate already opened"); }
+                opened = true;
+                return new ByteArrayInputStream(content);
+            }
+            @Override public OptionalLong length() { return OptionalLong.of(content.length); }
+            @Override public void close() { /* Byte-array content owns no external resources. */ }
+        };
+    }
+
     private static void rethrowSigningBoundaryFailure(Exception failure) {
         Throwable current = failure;
         for (int depth = 0; current != null && depth < 16; depth++) {
-            if (current instanceof zeroecho.pki.api.SigningExecutionException executionFailure) {
+            if (current instanceof SigningExecutionException executionFailure) {
                 throw executionFailure;
             }
-            if (current instanceof ImmediateSigningPending pending) {
+            if (current instanceof SigningPendingException pending) {
                 throw pending;
             }
             Throwable cause = current.getCause();
@@ -175,9 +293,11 @@ final class DefaultOcspResponseService implements OcspResponseService {
         }
     }
 
-    private List<Resolved> resolve(Command command, X509Certificate issuer, RevocationView view) throws IOException {
+    private List<Resolved> resolve(Command command, X509Certificate issuer, RevocationView view,
+            CancellationSignal cancellation) throws IOException {
         List<Resolved> result = new ArrayList<>(command.requests().size());
         for (CertId request : command.requests()) {
+            cancellation.throwIfCancelled();
             String digestOid = request.hash() == CertIdHash.SHA256 ? SHA256_OID : SHA1_OID;
             zeroecho.pkix.ocsp.CertId id = Pkix.computeCertId(issuer, request.serial(), digestOid);
             if (!MessageDigest.isEqual(id.issuerNameHash(), request.issuerNameHash())
@@ -200,8 +320,8 @@ final class DefaultOcspResponseService implements OcspResponseService {
         return List.copyOf(result);
     }
 
-    private byte[] sign(Command command, X509Certificate responder, List<Resolved> resolved,
-            CancellationSignal cancellation) throws Exception {
+    private byte[] sign(Command command, X509Certificate responder, List<X509Certificate> chain,
+            SigningAlgorithm algorithm, List<Resolved> resolved, CancellationSignal cancellation) throws Exception {
         zeroecho.pkix.ocsp.ResponderId responderId = command.responderId() == ResponderId.BY_NAME
                 ? zeroecho.pkix.ocsp.ResponderId.byName(responder.getSubjectX500Principal())
                 : zeroecho.pkix.ocsp.ResponderId.byKey(Pkix.subjectKeyIdentifier(responder.getPublicKey()));
@@ -211,29 +331,21 @@ final class DefaultOcspResponseService implements OcspResponseService {
             builder.addResponse(item.id(), item.status(), command.thisUpdate(), command.nextUpdate());
         }
         command.nonce().ifPresent(builder::nonce);
-        AlgorithmIdentity identity = bus.authority().resolveIdentity(command.signatureAlgorithm());
-        try (PkiBusContentSigner signer = command.signatureBindingId().isPresent()
-                ? new PkiBusContentSigner(bus, command.signingKeyRef(), identity,
-                        command.signatureBindingId().orElseThrow(), signingTtl, cancellation)
-                : new PkiBusContentSigner(bus, command.signingKeyRef(), identity, signingTtl, cancellation)) {
-            List<X509Certificate> chain = new ArrayList<>(command.responseChain().size());
-            for (zeroecho.pki.api.PkiId credentialId : command.responseChain()) {
-                chain.add(certificate(credentialId));
-            }
-            byte[] encoded = builder.build(signer, chain);
-            OcspResponse decoded = Pkix.parseOcspResponse(encoded);
-            if (!decoded.isSuccessful()
-                    || !decoded.producedAt().equals(command.producedAt())
-                    || !decoded.responderId().equals(responderId)
-                    || !decoded.signatureAlgorithm().equals(signer.algorithm())
-                    || !decoded.verifySignature(responder.getPublicKey())
-                    || !matchesResponses(decoded.responses(), resolved, command)
-                    || !matchesCertificates(decoded.certificates(), chain)
-                    || !matchesNonce(decoded, command.nonce())) {
-                throw new IOException("Generated OCSP response validation failed");
-            }
-            return encoded;
+        byte[] tbs = builder.buildTbs();
+        byte[] signature = rawSign(command.authorityId(), command.signingKeyRef(), algorithm.identity(), tbs, Encoding.DER, cancellation);
+        byte[] encoded = Pkix.assembleOcspResponse(tbs, Pkix.encodeAlgorithmIdentifier(algorithm.identifier()), signature, chain);
+        OcspResponse decoded = Pkix.parseOcspResponse(encoded);
+        if (!decoded.isSuccessful()
+                || !decoded.producedAt().equals(command.producedAt())
+                || !decoded.responderId().equals(responderId)
+                || !decoded.signatureAlgorithm().equals(algorithm.identifier())
+                || !decoded.verifySignature(responder.getPublicKey())
+                || !matchesResponses(decoded.responses(), resolved, command)
+                || !matchesCertificates(decoded.certificates(), chain)
+                || !matchesNonce(decoded, command.nonce())) {
+            throw new IOException("Generated OCSP response validation failed");
         }
+        return encoded;
     }
 
     private static boolean matchesResponses(List<OcspResponse.SingleResponse> decoded, List<Resolved> expected,
@@ -310,7 +422,16 @@ final class DefaultOcspResponseService implements OcspResponseService {
         }
     }
 
-    private X509Certificate certificate(zeroecho.pki.api.PkiId credentialId) throws IOException {
+    private X509Certificate certificate(PkiId credentialId, Map<PkiId, X509Certificate> certificates) throws IOException {
+        X509Certificate resolved = certificates.get(credentialId);
+        if (resolved == null) {
+            resolved = certificate(credentialId);
+            certificates.put(credentialId, resolved);
+        }
+        return resolved;
+    }
+
+    private X509Certificate certificate(PkiId credentialId) throws IOException {
         try (PkiRepositoryContent content = new DefaultPkiRepository(store, requireOpen)
                 .openCredential(credentialId); InputStream input = content.openStream()) {
             byte[] encoded = input.readNBytes(1_048_577);
@@ -343,6 +464,8 @@ final class DefaultOcspResponseService implements OcspResponseService {
             case UNSPECIFIED -> CrlReason.UNSPECIFIED;
         };
     }
+
+    private record SigningAlgorithm(AlgorithmIdentity identity, AlgorithmIdentifier identifier) { }
 
     private record Resolved(zeroecho.pkix.ocsp.CertId id, CertStatus status) { }
 }

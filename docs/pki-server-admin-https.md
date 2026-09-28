@@ -320,21 +320,22 @@ minutes and 8192 bits. Rotating proof policy applies only to confirmation
 lifecycles without a persisted challenge. Any existing challenge, including an
 expired challenge replacement, retains its frozen audience and settings.
 
-The `signingReconciliation` production values are enabled, 256 examined
-records, 64 provider calls, a 30-second pass timeout, a 10-second provider-call
-timeout, and a fixed 2-second idle interval.
-`maxRecords` is 1 through 4096, `maxCalls` is 1 through the record
-bound, all durations are positive, and the provider timeout cannot exceed the
-pass timeout. Set `enabled` to `false` only when an external owner deliberately
-invokes the transport-neutral session reconciliation API.
+The mandatory `auditProjection` object configures the audit worker with production
+values of 256 examined records, 64 sink calls, and a 2-second idle interval.
+`maxRecords` is 1 through 4096, `maxSinkCalls` is 1 through the record bound,
+and `idleIntervalMillis` is positive and at most five minutes. Revocation and
+each evidence-family projector receive independent budgets. The former
+`signingReconciliation` object, enable flag, and signing timeouts are rejected;
+there is no compatibility adapter in this prerelease schema replacement.
+Signing dispatch belongs to the PKI reactor, not this worker.
 
 Shutdown first removes readiness and admission, stops listener acceptance, drains for the configured graceful period, cooperatively cancels remaining work, waits only for the forced period, then closes the one realm context. Already committed PKI changes remain committed.
 
-Signing-provider deadlines and cancellation are cooperative for trusted
-in-process implementations. A provider call that remains live after forced
-shutdown causes `SIGNING_RECONCILIATION_SHUTDOWN_TIMEOUT`; the session, provider,
-and store stay open and `close` may be retried after the call returns. Hard
-isolation for non-cooperative providers requires an out-of-process boundary.
+An audit projection or synchronous sink call that remains live after forced
+shutdown causes `AUDIT_PROJECTION_SHUTDOWN_TIMEOUT`; realm dependencies stay open
+and `close` may be retried after the call returns. The same dependency-preserving
+rule applies during partial startup cleanup. Projection cancellation is
+cooperative and does not forcibly terminate a blocking sink call.
 
 ## Request correlation
 
@@ -353,6 +354,14 @@ High-risk changes use a separately created approval request committed to the
 exact typed target operation and scope. An approval decision never executes the
 target. The later ordinary operation request supplies the approval ID and the
 gateway claims and completes it exactly once.
+
+Approval inspection, decisions and cancellation resolve the complete authorization
+scope from the persisted approval ID, including any profile or issuer coordinates.
+Clients need not reconstruct that scope. Any supplied authority must match the
+stored record; typed callers' other supplied scope coordinates must also match.
+Authorization still evaluates the complete stored scope, and requester separation,
+cancellation ownership and exact target binding remain enforced. No additional
+HTTP fields are required for profile-scoped approvals.
 
 `security.disclosure.capability.issue` is the only one-time-sensitive response.
 The durable store receives the token commitment before the raw 256-bit token is

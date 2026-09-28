@@ -36,6 +36,7 @@ package zeroecho.pki.api.ca;
 import java.util.Optional;
 
 import zeroecho.pki.api.FormatId;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeSet;
@@ -45,45 +46,40 @@ import zeroecho.pki.api.attr.AttributeSet;
  *
  * <p>
  * This command supports cross-signing (issuing with a different issuer CA) and
- * renewal scenarios.
+ * renewal scenarios. The key is an expected current subject key, not a rotation
+ * request. Execution must match it against authoritative subject state, authorize
+ * issuance separately, and complete a fresh internal subject-key proof under the
+ * same durable admission before certificate signing.
+ * Construction does not resolve evidence, prove possession or grant authorization.
  * </p>
  *
  * @param formatId          credential format id
- * @param issuerCaId        issuer CA entity id
- * @param subjectCaId       subject CA entity id (the intermediate being
- *                          certified)
- * @param profileId         profile id governing issuance
+ * @param issuerCaId        issuer CA entity id, strict UTF-8 at most 4,096 bytes
+ * @param subjectCaId       subject CA entity id, strict UTF-8 at most 4,096 bytes
+ * @param profileId         nonblank strict UTF-8 profile id, at most 256 bytes
+ * @param keyRef            expected current subject key, strict UTF-8 at most 1,048,576 bytes
  * @param requestedValidity optional requested validity (policy may
  *                          override/deny)
  * @param attributes        universal attributes (may be empty but not null)
  */
 public record IntermediateCertIssueCommand(FormatId formatId, PkiId issuerCaId, PkiId subjectCaId, String profileId,
-        Optional<Validity> requestedValidity, AttributeSet attributes) {
+        KeyRef keyRef, Optional<Validity> requestedValidity, AttributeSet attributes) {
 
     /**
      * Creates an intermediate CA credential issuance command.
      *
-     * @throws IllegalArgumentException if inputs are invalid or optional container
-     *                                  is null
+     * @throws IllegalArgumentException if any component is null, bounded text is invalid
      */
     public IntermediateCertIssueCommand {
-        if (formatId == null) {
-            throw new IllegalArgumentException("formatId must not be null");
-        }
-        if (issuerCaId == null) {
-            throw new IllegalArgumentException("issuerCaId must not be null");
-        }
-        if (subjectCaId == null) {
-            throw new IllegalArgumentException("subjectCaId must not be null");
-        }
-        if (profileId == null || profileId.isBlank()) {
-            throw new IllegalArgumentException("profileId must not be null/blank");
-        }
-        if (requestedValidity == null) {
-            throw new IllegalArgumentException("requestedValidity must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
+        CaCommandInputs.required(formatId);
+        CaCommandInputs.identifier(issuerCaId);
+        CaCommandInputs.identifier(subjectCaId);
+        CaCommandInputs.profile(profileId);
+        CaCommandInputs.key(keyRef);
+        CaCommandInputs.required(requestedValidity);
+        CaCommandInputs.required(attributes);
     }
+
+    /** Returns a diagnostic representation without command coordinates or attributes. */
+    @Override public String toString() { return "IntermediateCertIssueCommand[redacted]"; }
 }

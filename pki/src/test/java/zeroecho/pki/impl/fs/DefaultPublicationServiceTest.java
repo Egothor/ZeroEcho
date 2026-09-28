@@ -543,7 +543,7 @@ final class DefaultPublicationServiceTest {
     private static Credential credential(FilesystemPkiStore store, String suffix, byte[] bytes) throws IOException {
         DurableContentReference content = zeroecho.pki.testkit.PkiTestRuntime.fixtureReference(
                 store.stagedContent(), Encoding.DER, bytes);
-        return new Credential(new PkiId("credential:" + suffix), new FormatId("x509"),
+        return new Credential(new PkiId("credential:" + suffix), new FormatId("publication-test-binary"),
                 new IssuerRef(new PkiId("ca:publication")), new SubjectRef("CN=" + suffix),
                 new Validity(NOW.minusSeconds(60L), NOW.plusSeconds(3600L)), suffix,
                 new PkiId("key:" + suffix),

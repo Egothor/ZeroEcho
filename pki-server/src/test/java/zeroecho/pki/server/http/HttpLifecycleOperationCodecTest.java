@@ -44,21 +44,22 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.application.PkiOperation;
+import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.pki.server.AdministrativeOperation;
 import zeroecho.pki.server.OperationSecurityDescriptors;
 import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.RealmId;
 
-/** Strict HTTP decoding coverage for the credential and CA lifecycle operations (Task 12). */
+/** Strict HTTP decoding coverage for the credential and CA lifecycle operations. */
 class HttpLifecycleOperationCodecTest {
     private static final RealmId REALM = new RealmId("production");
     private static final OperationSecurityDescriptors DESCRIPTORS = new OperationSecurityDescriptors();
 
     @Test
     void decodesRenewAsAuthorityScopedCredentialOperation() {
-        HttpOperationCodec.Decoded decoded = decode(PkiOperation.RenewCredential.NAME,
+        HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.RenewCredential.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"credentialId\":\"credential-a\"}}");
-        PkiOperation.RenewCredential operation = assertInstanceOf(PkiOperation.RenewCredential.class, pki(decoded));
+        PkiSigningOperation.RenewCredential operation = assertInstanceOf(PkiSigningOperation.RenewCredential.class, pki(decoded));
         assertEquals(new PkiId("credential-a"), operation.credentialId());
         assertEquals(Optional.of(new PkiId("credential-a")), decoded.resource().objectId());
         assertEquals(Optional.of(new PkiId("ca-a")), decoded.resource().scope().authorityId());
@@ -67,11 +68,11 @@ class HttpLifecycleOperationCodecTest {
 
     @Test
     void decodesReplaceWithProfileScope() {
-        HttpOperationCodec.Decoded decoded = decode(PkiOperation.ReplaceCredential.NAME,
+        HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.ReplaceCredential.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"existingCredentialId\":\"credential-a\","
                         + "\"requestId\":\"request-a\",\"profileId\":\"leaf\"}}");
-        PkiOperation.ReplaceCredential operation =
-                assertInstanceOf(PkiOperation.ReplaceCredential.class, pki(decoded));
+        PkiSigningOperation.ReplaceCredential operation =
+                assertInstanceOf(PkiSigningOperation.ReplaceCredential.class, pki(decoded));
         assertEquals(new PkiId("credential-a"), operation.existingCredentialId());
         assertEquals(new PkiId("request-a"), operation.requestId());
         assertEquals("leaf", operation.profileId());
@@ -81,20 +82,20 @@ class HttpLifecycleOperationCodecTest {
 
     @Test
     void decodesReissue() {
-        HttpOperationCodec.Decoded decoded = decode(PkiOperation.ReissueCredential.NAME,
+        HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.ReissueCredential.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"credentialId\":\"credential-a\"}}");
-        PkiOperation.ReissueCredential operation =
-                assertInstanceOf(PkiOperation.ReissueCredential.class, pki(decoded));
+        PkiSigningOperation.ReissueCredential operation =
+                assertInstanceOf(PkiSigningOperation.ReissueCredential.class, pki(decoded));
         assertEquals(new PkiId("credential-a"), operation.credentialId());
         assertEquals(Optional.of(new PkiId("credential-a")), decoded.resource().objectId());
     }
 
     @Test
     void decodesRolloverAsSelfScopedAuthorityAndObject() {
-        HttpOperationCodec.Decoded decoded = decode(PkiOperation.RolloverCaCertificate.NAME,
+        HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.RolloverCaCertificate.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"caId\":\"ca-a\"}}");
-        PkiOperation.RolloverCaCertificate operation =
-                assertInstanceOf(PkiOperation.RolloverCaCertificate.class, pki(decoded));
+        PkiSigningOperation.RolloverCaCertificate operation =
+                assertInstanceOf(PkiSigningOperation.RolloverCaCertificate.class, pki(decoded));
         assertEquals(new PkiId("ca-a"), operation.caId());
         assertEquals(Optional.empty(), operation.issuerCaId());
         assertEquals(Optional.of(new PkiId("ca-a")), decoded.resource().objectId());
@@ -104,10 +105,10 @@ class HttpLifecycleOperationCodecTest {
 
     @Test
     void decodesRotateWithNewKey() {
-        HttpOperationCodec.Decoded decoded = decode(PkiOperation.RotateCaKey.NAME,
+        HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.RotateCaKey.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"caId\":\"ca-a\","
                         + "\"newKeyRef\":\"kref:v1:keyring:test:rotated\"}}");
-        PkiOperation.RotateCaKey operation = assertInstanceOf(PkiOperation.RotateCaKey.class, pki(decoded));
+        PkiSigningOperation.RotateCaKey operation = assertInstanceOf(PkiSigningOperation.RotateCaKey.class, pki(decoded));
         assertEquals(new PkiId("ca-a"), operation.caId());
         assertEquals(Optional.of(new zeroecho.pki.api.KeyRef("kref:v1:keyring:test:rotated")), operation.newKeyRef());
         assertEquals(Optional.empty(), operation.issuerCaId());
@@ -115,7 +116,7 @@ class HttpLifecycleOperationCodecTest {
 
     @Test
     void rejectsRolloverWhenEnvelopeAuthorityDiffersFromCaId() {
-        assertThrows(IllegalArgumentException.class, () -> decode(PkiOperation.RolloverCaCertificate.NAME,
+        assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.RolloverCaCertificate.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-b\",\"arguments\":{\"caId\":\"ca-a\"}}"));
     }
 
@@ -269,12 +270,12 @@ class HttpLifecycleOperationCodecTest {
 
     @Test
     void decodesCreateIntermediateAsAuthorityAndProfileScoped() {
-        HttpOperationCodec.Decoded decoded = decode(PkiOperation.CreateIntermediate.NAME,
+        HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.CreateIntermediate.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"formatId\":\"x509\","
                         + "\"issuerCaId\":\"ca-a\",\"subjectRef\":\"CN=Intermediate\",\"profileId\":\"intermediate\","
                         + "\"keyRef\":\"kref:v1:keyring:test:im\"}}");
-        PkiOperation.CreateIntermediate operation =
-                assertInstanceOf(PkiOperation.CreateIntermediate.class, pki(decoded));
+        PkiSigningOperation.CreateIntermediate operation =
+                assertInstanceOf(PkiSigningOperation.CreateIntermediate.class, pki(decoded));
         assertEquals(new PkiId("ca-a"), operation.issuerCaId());
         assertEquals("intermediate", operation.profileId());
         assertEquals(Optional.of(new zeroecho.pki.api.KeyRef("kref:v1:keyring:test:im")), operation.keyRef());
@@ -285,23 +286,20 @@ class HttpLifecycleOperationCodecTest {
     }
 
     @Test
-    void decodesCreateIntermediateWithoutKeyRefRequestsGeneration() {
-        HttpOperationCodec.Decoded decoded = decode(PkiOperation.CreateIntermediate.NAME,
+    void rejectsCreateIntermediateWithoutManagedKey() {
+        assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.CreateIntermediate.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"formatId\":\"x509\","
-                        + "\"issuerCaId\":\"ca-a\",\"subjectRef\":\"CN=Intermediate\",\"profileId\":\"intermediate\"}}");
-        PkiOperation.CreateIntermediate operation =
-                assertInstanceOf(PkiOperation.CreateIntermediate.class, pki(decoded));
-        assertEquals(Optional.empty(), operation.keyRef());
+                        + "\"issuerCaId\":\"ca-a\",\"subjectRef\":\"CN=Intermediate\",\"profileId\":\"intermediate\"}}"));
     }
 
     @Test
     void decodesIssueIntermediateCertificateWithRequestedValidity() {
-        HttpOperationCodec.Decoded decoded = decode(PkiOperation.IssueIntermediateCertificate.NAME,
+        HttpOperationCodec.Decoded decoded = decode(PkiSigningOperation.IssueIntermediateCertificate.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"formatId\":\"x509\","
                         + "\"issuerCaId\":\"ca-a\",\"subjectCaId\":\"ca-b\",\"profileId\":\"intermediate\","
                         + "\"notBefore\":\"2026-01-01T00:00:00Z\",\"notAfter\":\"2031-01-01T00:00:00Z\"}}");
-        PkiOperation.IssueIntermediateCertificate operation =
-                assertInstanceOf(PkiOperation.IssueIntermediateCertificate.class, pki(decoded));
+        PkiSigningOperation.IssueIntermediateCertificate operation =
+                assertInstanceOf(PkiSigningOperation.IssueIntermediateCertificate.class, pki(decoded));
         assertEquals(new PkiId("ca-a"), operation.issuerCaId());
         assertEquals(new PkiId("ca-b"), operation.subjectCaId());
         assertEquals(Optional.of(new zeroecho.pki.api.Validity(
@@ -313,7 +311,7 @@ class HttpLifecycleOperationCodecTest {
 
     @Test
     void rejectsIssueIntermediateCertificateWithPartialValidity() {
-        assertThrows(IllegalArgumentException.class, () -> decode(PkiOperation.IssueIntermediateCertificate.NAME,
+        assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.IssueIntermediateCertificate.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"formatId\":\"x509\","
                         + "\"issuerCaId\":\"ca-a\",\"subjectCaId\":\"ca-b\",\"profileId\":\"intermediate\","
                         + "\"notBefore\":\"2026-01-01T00:00:00Z\"}}"));
@@ -367,20 +365,24 @@ class HttpLifecycleOperationCodecTest {
 
     @Test
     void rejectsCreateIntermediateWhenEnvelopeAuthorityDiffersFromIssuer() {
-        assertThrows(IllegalArgumentException.class, () -> decode(PkiOperation.CreateIntermediate.NAME,
+        assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.CreateIntermediate.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-b\",\"arguments\":{\"formatId\":\"x509\","
                         + "\"issuerCaId\":\"ca-a\",\"subjectRef\":\"CN=Intermediate\",\"profileId\":\"intermediate\"}}"));
     }
 
     @Test
     void rejectsUnknownArgumentForRenew() {
-        assertThrows(IllegalArgumentException.class, () -> decode(PkiOperation.RenewCredential.NAME,
+        assertThrows(IllegalArgumentException.class, () -> decode(PkiSigningOperation.RenewCredential.NAME,
                 "{\"version\":1,\"authorityId\":\"ca-a\",\"arguments\":{\"credentialId\":\"credential-a\","
                         + "\"unexpected\":true}}"));
     }
 
-    private static PkiOperation pki(HttpOperationCodec.Decoded decoded) {
-        return assertInstanceOf(AdministrativeOperation.Pki.class, decoded.operation()).operation();
+    private static Object pki(HttpOperationCodec.Decoded decoded) {
+        return switch (decoded.operation()) {
+            case AdministrativeOperation.Pki pki -> pki.operation();
+            case AdministrativeOperation.Signing signing -> signing.operation();
+            case AdministrativeOperation.Control ignored -> throw new AssertionError("Unexpected control operation");
+        };
     }
 
     private static HttpOperationCodec.Decoded decode(String name, String json) {

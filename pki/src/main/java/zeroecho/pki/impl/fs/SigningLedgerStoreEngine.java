@@ -60,6 +60,7 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransactionId;
+import zeroecho.pki.spi.store.StagedContentStore;
 
 /** Lifecycle owner for the v6 segmented transactional signing ledger. */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.AvoidInstantiatingObjectsInLoops",
@@ -70,10 +71,16 @@ import zeroecho.pki.spi.store.MetadataTransactionId;
         "PMD.LooseCoupling", "PMD.NcssCount", "PMD.PreserveStackTrace", "PMD.TooManyMethods",
         "PMD.UnusedPrivateField", "PMD.UseTryWithResources" })
 final class SigningLedgerStoreEngine implements AutoCloseable {
+    private static final StartFaultInjector NO_START_FAULT = (stage, wal, registry) -> { };
     private static final String WAL_ADMISSION_FULL_MESSAGE = "Metadata WAL admission is full";
     private static final String OUTCOME_NAMESPACE = SigningLedgerRecoveredState.OUTCOME_NAMESPACE;
     private static final String LEDGER_STATE_NAMESPACE =
             SigningLedgerRecoveredState.LEDGER_STATE_NAMESPACE;
+    private static final String SIGN_ENVELOPE_NAMESPACE = "io.zeroecho.pki.signing-envelope";
+    private static final String SIGN_BINDING_NAMESPACE =
+            "io.zeroecho.pki.signing-candidate-binding";
+    private static final String OUTER_CONTINUATION_NAMESPACE =
+            "io.zeroecho.pki.domain-continuation";
     private static final MetadataKey WATERMARK_KEY = SigningLedgerRecoveredState.WATERMARK_KEY;
     private static final int MAXIMUM_COMMIT_QUEUE = 256;
     private static final int MAXIMUM_COMMIT_BATCH = 32;
@@ -83,7 +90,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     private static final long MAINTENANCE_ROTATION_BYTES = 64L * 1024L * 1024L;
     private static final int COMPACTION_SEGMENTS = 8;
     private static final int MAXIMUM_RECLAIMS_PER_PASS = 8;
+    private static final long DEFAULT_SOFT_LOW_SPACE_BYTES = 1024L * 1024L * 1024L;
+    private static final long SPACE_WARNING_INTERVAL_NANOS = java.time.Duration.ofMinutes(1L).toNanos();
+    private static final java.util.logging.Logger LOG = java.util.logging.Logger.getLogger(
+            SigningLedgerStoreEngine.class.getName());
     private static final AtomicBoolean IDENTITY_SEED = new AtomicBoolean();
+    private static final AtomicReference<UsableSpaceObserver> USABLE_SPACE_OBSERVER =
+            new AtomicReference<>();
 
     private final Path root;
     private final MetadataStoreId storeId;
@@ -96,7 +109,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     private final SigningDueWorkIndex owners;
     private final SigningWorkProjection workProjection;
     private final SigningArtifactCatalog artifacts;
-    private final SigningLedgerRecovery.Handle recoveryHandle;
+    private SigningLedgerRecovery.Handle recoveryHandle;
+    private final SigningLedgerRecovery.ActivatedOpen pendingRecovery;
     private final SigningLedgerMaintenance maintenance;
     private final Object stateLock = new Object();
     private final Object coordinatorLock = new Object();
@@ -108,8 +122,8 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             protectedProgressPressure = new AtomicReference<>();
     private final AtomicReference<Throwable> firstRecoveryFailure = new AtomicReference<>();
     private final AdmissionMaintenanceGate admissionGate;
-    private final SigningReservationCaptureGate captureGate =
-            new SigningReservationCaptureGate();
+    private final SigningProjectionCutoverGate projectionCutover =
+            new SigningProjectionCutoverGate();
     private final ArrayDeque<CommitRequest> commitQueue = new ArrayDeque<>(MAXIMUM_COMMIT_QUEUE);
     private final Map<UUID, OutcomeSlot> outcomes = new HashMap<>();
     private final Thread coordinator;
@@ -129,10 +143,12 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     private boolean maintenanceDeferred;
     private long maintenancePasses;
     private SigningLedgerMaintenance.DeferralReason maintenanceDeferralReason;
-    private AtomicLocalSigningLedgerParticipant.HeadroomListener headroomListener;
-    private long headroomRestorationEpoch;
     private int coordinatorReservedRequests;
     private long coordinatorReservedBytes;
+    private RecoveryProjectionStatistics recoveryProjectionStatistics =
+            RecoveryProjectionStatistics.empty();
+    private final SoftUsableSpaceObservation usableSpaceObservation =
+            new SoftUsableSpaceObservation(SPACE_WARNING_INTERVAL_NANOS);
 
     private SigningLedgerStoreEngine(Path root, MetadataStoreId storeId,
             SigningGenerationRegistry generations, SigningIndexCapacityBudget capacity,
@@ -142,10 +158,26 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             SigningArtifactCatalog artifacts,
             SigningLedgerRecovery.Handle recoveryHandle, SigningActiveWal activeWal,
             SigningManifestCodec.Manifest manifest, long nextGenerationIdentity,
-            SigningActiveWal.Configuration activeWalConfiguration) {
+            SigningActiveWal.Configuration activeWalConfiguration,
+            StagedContentStore stagedContent) {
         this(root, storeId, generations, capacity, transientCapacity, index, due, retention,
                 owners, artifacts, recoveryHandle, activeWal, manifest, nextGenerationIdentity,
-                activeWalConfiguration, null);
+                activeWalConfiguration, null, stagedContent, null);
+    }
+
+    private SigningLedgerStoreEngine(Path root, MetadataStoreId storeId,
+            SigningGenerationRegistry generations, SigningIndexCapacityBudget capacity,
+            SigningIndexCapacityBudget transientCapacity,
+            SigningMvccIndex index, SigningDueWorkIndex due, SigningRetentionIndex retention,
+            SigningDueWorkIndex owners, SigningArtifactCatalog artifacts,
+            SigningLedgerRecovery.ActivatedOpen pendingRecovery,
+            SigningManifestCodec.Manifest manifest, long nextGenerationIdentity,
+            SigningActiveWal.Configuration activeWalConfiguration,
+            StagedContentStore stagedContent) {
+        this(root, storeId, generations, capacity, transientCapacity, index, due, retention,
+                owners, artifacts, null, pendingRecovery.activeWal(), manifest,
+                nextGenerationIdentity, activeWalConfiguration, null, stagedContent,
+                pendingRecovery);
     }
 
     private SigningLedgerStoreEngine(Path root, MetadataStoreId storeId,
@@ -157,7 +189,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             SigningLedgerRecovery.Handle recoveryHandle, SigningActiveWal activeWal,
             SigningManifestCodec.Manifest manifest, long nextGenerationIdentity,
             SigningActiveWal.Configuration activeWalConfiguration,
-            SigningLedgerMaintenance.FaultInjector maintenanceFaults) {
+            SigningLedgerMaintenance.FaultInjector maintenanceFaults,
+            StagedContentStore stagedContent,
+            SigningLedgerRecovery.ActivatedOpen pendingRecovery) {
         this.root = root;
         this.storeId = storeId;
         this.generations = generations;
@@ -167,9 +201,11 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         this.due = due;
         this.retention = retention;
         this.owners = owners;
-        workProjection = new SigningWorkProjection(due, retention, owners, capacity);
+        workProjection = new SigningWorkProjection(due, retention, owners, capacity,
+                stagedContent);
         this.artifacts = artifacts;
         this.recoveryHandle = recoveryHandle;
+        this.pendingRecovery = pendingRecovery;
         this.activeWal = activeWal;
         this.writerMetricsEpoch = new WriterMetricsEpoch(
                 SigningActiveWal.Snapshot.writerBaseline(), activeWal);
@@ -184,11 +220,50 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                         maintenanceFaults);
         coordinator = new Thread(this::runCoordinator, "zeroecho-metadata-commit-coordinator");
         coordinator.setDaemon(true);
-        coordinator.start();
         maintenanceCoordinator = new Thread(this::runMaintenance,
                 "zeroecho-metadata-maintenance-coordinator");
         maintenanceCoordinator.setDaemon(true);
-        maintenanceCoordinator.start();
+    }
+
+    /** Starts WAL and engine coordinators only after deterministic reconstruction completes. */
+    private void start() throws IOException {
+        start(NO_START_FAULT);
+    }
+
+    private void start(StartFaultInjector faults) throws IOException {
+        boolean coordinatorStarted = false;
+        boolean maintenanceStarted = false;
+        try {
+            if (activeWal.snapshot().state() == SigningActiveWal.State.PASSIVE) {
+                activeWal.startWriter();
+            }
+            faults.after(StartStage.WAL_WRITER, activeWal, generations);
+            coordinator.start();
+            coordinatorStarted = true;
+            faults.after(StartStage.COMMIT_COORDINATOR, activeWal, generations);
+            maintenanceCoordinator.start();
+            maintenanceStarted = true;
+            faults.after(StartStage.MAINTENANCE_COORDINATOR, activeWal, generations);
+            if (pendingRecovery != null) {
+                pendingRecovery.markThreadsStarted();
+                recoveryHandle = pendingRecovery.transferToStartedEngine();
+            }
+        } catch (IOException | RuntimeException failure) {
+            if (coordinatorStarted || maintenanceStarted) {
+                try {
+                    close();
+                } catch (IOException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+            } else {
+                try {
+                    activeWal.close();
+                } catch (IOException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+            }
+            throw failure;
+        }
     }
 
     /* default */ static SigningLedgerStoreEngine create(Path root,
@@ -222,7 +297,17 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             long residentIndexBudgetBytes, long compactionBudgetBytes)
             throws IOException {
         return create(root, storeId, walOperations, maximumSigningWork, activeWalConfiguration,
-                residentIndexBudgetBytes, compactionBudgetBytes, null);
+                residentIndexBudgetBytes, compactionBudgetBytes, null, null);
+    }
+
+    /* default */ static SigningLedgerStoreEngine create(Path root,
+            MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
+            int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration,
+            long residentIndexBudgetBytes, long compactionBudgetBytes,
+            StagedContentStore stagedContent) throws IOException {
+        return create(root, storeId, walOperations, maximumSigningWork, activeWalConfiguration,
+                residentIndexBudgetBytes, compactionBudgetBytes, null,
+                Objects.requireNonNull(stagedContent, "stagedContent"));
     }
 
     /* default */ static SigningLedgerStoreEngine create(Path root,
@@ -231,6 +316,16 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             long residentIndexBudgetBytes, long compactionBudgetBytes,
             SigningLedgerMaintenance.FaultInjector maintenanceFaults)
             throws IOException {
+        return create(root, storeId, walOperations, maximumSigningWork, activeWalConfiguration,
+                residentIndexBudgetBytes, compactionBudgetBytes, maintenanceFaults, null);
+    }
+
+    private static SigningLedgerStoreEngine create(Path root,
+            MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
+            int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration,
+            long residentIndexBudgetBytes, long compactionBudgetBytes,
+            SigningLedgerMaintenance.FaultInjector maintenanceFaults,
+            StagedContentStore stagedContent) throws IOException {
         Objects.requireNonNull(activeWalConfiguration, "activeWalConfiguration");
         SigningIndexCapacityBudget capacity = steadyCapacity(
                 residentIndexBudgetBytes, activeWalConfiguration);
@@ -275,7 +370,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                     SigningArtifactCatalog.Kind.ACTIVE_WAL));
             SigningLedgerStoreEngine engine = new SigningLedgerStoreEngine(root, storeId,
                     generations, capacity, transientCapacity, index, due, retention, owners, artifacts,
-                    null, wal, manifest, 2L, activeWalConfiguration, maintenanceFaults);
+                    null, wal, manifest, 2L, activeWalConfiguration, maintenanceFaults,
+                    stagedContent, null);
+            engine.start();
             wal = null;
             return engine;
         } finally {
@@ -311,43 +408,82 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             MetadataStoreId storeId, int maximumSigningWork,
             SigningActiveWal.Configuration activeWalConfiguration,
             long residentIndexBudgetBytes, long compactionBudgetBytes) throws IOException {
+        return open(root, storeId, maximumSigningWork, activeWalConfiguration,
+                residentIndexBudgetBytes, compactionBudgetBytes, null);
+    }
+
+    /* default */ static SigningLedgerStoreEngine open(Path root,
+            MetadataStoreId storeId, int maximumSigningWork,
+            SigningActiveWal.Configuration activeWalConfiguration,
+            long residentIndexBudgetBytes, long compactionBudgetBytes,
+            StagedContentStore stagedContent) throws IOException {
+        return open(root, storeId, maximumSigningWork, activeWalConfiguration,
+                residentIndexBudgetBytes, compactionBudgetBytes, stagedContent,
+                NO_START_FAULT);
+    }
+
+    /* default */ static SigningLedgerStoreEngine open(Path root,
+            MetadataStoreId storeId, int maximumSigningWork,
+            SigningActiveWal.Configuration activeWalConfiguration,
+            long residentIndexBudgetBytes, long compactionBudgetBytes,
+            StagedContentStore stagedContent, StartFaultInjector startFaults) throws IOException {
         Objects.requireNonNull(activeWalConfiguration, "activeWalConfiguration");
+        Objects.requireNonNull(startFaults, "startFaults");
         requireRoot(root);
         SigningLedgerRecoveredState.RecoveryFold candidate =
                 new SigningLedgerRecoveredState.RecoveryFold(root, storeId);
-        SigningLedgerRecovery.Handle handle;
+        SigningLedgerRecovery.PreparedOpen prepared = null;
+        SigningLedgerRecovery.ActivatedOpen activated = null;
+        final SigningRecoveryIntegrityValidator.ValidatedSigningRecovery validatedRecovery;
         try {
-            handle = SigningLedgerRecovery.recover(root,
+            prepared = SigningLedgerRecovery.prepare(root,
                     recoveryConfiguration(activeWalConfiguration), candidate);
-        } catch (SigningLedgerRecovery.RecoveryException failure) {
+            SigningLedgerRecovery.PreparedView preparedView = prepared.view();
+            validatedRecovery = SigningRecoveryIntegrityValidator.validate(root,
+                    preparedView.manifest(), candidate.preparedState(), stagedContent);
+            activated = prepared.activate();
+            activated.publishRecoveredState();
+        } catch (SigningLedgerRecovery.RecoveryException
+                | SigningRecoveryIntegrityValidator.IntegrityException failure) {
+            closeRecoveryOpen(activated);
+            closeRecoveryOpen(prepared);
             throw formatUnsupported();
+        } finally {
+            closeRecoveryOpen(prepared);
         }
-        SigningGenerationRegistry generations = handle.registry();
-        SigningIndexCapacityBudget capacity = steadyCapacity(
-                residentIndexBudgetBytes, activeWalConfiguration);
-        SigningIndexCapacityBudget transientCapacity =
-                new SigningIndexCapacityBudget(compactionBudgetBytes);
-        SigningMvccIndex index = new SigningMvccIndex(
-                indexConfiguration(), generations, capacity, transientCapacity);
-        SigningDueWorkIndex due = new SigningDueWorkIndex(
-                maximumSigningWork, capacity, generations,
-                SigningGenerationRegistry.Owner.DUE);
-        SigningRetentionIndex retention = new SigningRetentionIndex(
-                SigningDueWorkIndex.FOUR_GIB_ORDERED_LIMIT, capacity);
-        SigningDueWorkIndex owners = new SigningDueWorkIndex(
-                SigningDueWorkIndex.FOUR_GIB_ORDERED_LIMIT, capacity, generations,
-                SigningGenerationRegistry.Owner.OWNER);
-        SigningArtifactCatalog artifacts = SigningLedgerRecoveredState.catalog(handle.manifest());
         boolean transferred = false;
+        SigningIndexCapacityBudget capacity = null;
+        SigningIndexCapacityBudget transientCapacity = null;
+        SigningMvccIndex index = null;
+        SigningDueWorkIndex due = null;
+        SigningRetentionIndex retention = null;
+        SigningDueWorkIndex owners = null;
+        SigningLedgerStoreEngine engine = null;
         try {
+            SigningGenerationRegistry generations = activated.registry();
+            startFaults.after(StartStage.RECOVERY_ACTIVATED,
+                    activated.activeWal(), generations);
+            capacity = steadyCapacity(residentIndexBudgetBytes, activeWalConfiguration);
+            transientCapacity = new SigningIndexCapacityBudget(compactionBudgetBytes);
+            index = new SigningMvccIndex(
+                    indexConfiguration(), generations, capacity, transientCapacity);
+            due = new SigningDueWorkIndex(maximumSigningWork, capacity, generations,
+                    SigningGenerationRegistry.Owner.DUE);
+            retention = new SigningRetentionIndex(
+                    SigningDueWorkIndex.FOUR_GIB_ORDERED_LIMIT, capacity);
+            owners = new SigningDueWorkIndex(
+                    SigningDueWorkIndex.FOUR_GIB_ORDERED_LIMIT, capacity, generations,
+                    SigningGenerationRegistry.Owner.OWNER);
+            SigningArtifactCatalog artifacts =
+                    SigningLedgerRecoveredState.catalog(activated.manifest());
             SigningLedgerRecoveredState.State recovered = candidate.state();
             index.recover(recovered.revision(), recovered.sequence(), recovered.records());
-            handle.releaseTemporaryOwnership();
-            long nextIdentity = nextIdentity(handle.manifest());
-            SigningLedgerStoreEngine engine = new SigningLedgerStoreEngine(root, storeId,
+            activated.releaseTemporaryOwnership();
+            long nextIdentity = nextIdentity(activated.manifest());
+            engine = new SigningLedgerStoreEngine(root, storeId,
                     generations, capacity, transientCapacity, index, due, retention, owners, artifacts,
-                    handle, handle.activeWal(),
-                    handle.manifest(), nextIdentity, activeWalConfiguration);
+                    activated, activated.manifest(), nextIdentity, activeWalConfiguration,
+                    stagedContent);
             synchronized (engine.stateLock) {
                 for (Map.Entry<UUID, MetadataCommitResult> entry :
                         recovered.outcomes().entrySet()) {
@@ -355,20 +491,60 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                             SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY));
                 }
                 engine.watermark = recovered.watermark();
-                engine.recoverWorkProjection(recovered.records());
+                engine.recoverWorkProjection(recovered.records(), validatedRecovery);
             }
-            engine.closeAbandonedIssuances();
+            activated.markEngineReconstructed();
+            engine.closeAbandonedIssuancesDuringRecovery();
+            activated.markRecoveryWritesForced();
+            engine.start(startFaults);
             transferred = true;
             return engine;
         } finally {
             if (!transferred) {
-                due.close();
-                retention.close();
-                owners.close();
-                index.close();
-                handle.close();
+                if (engine != null) {
+                    closeRecoveryOpen(engine);
+                } else {
+                    closeIndex(owners);
+                    closeIndex(retention);
+                    closeIndex(due);
+                    closeIndex(index);
+                    if (capacity != null) capacity.clearReleaseSignal();
+                    if (transientCapacity != null) transientCapacity.clearReleaseSignal();
+                    closeRecoveryOpen(activated);
+                }
             }
         }
+    }
+
+    private static void closeIndex(AutoCloseable closeable) {
+        closeRecoveryOpen(closeable);
+    }
+
+    @SuppressWarnings("PMD.EmptyCatchBlock")
+    private static void closeRecoveryOpen(AutoCloseable closeable) {
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (Exception failure) {
+                // The primary open failure remains authoritative and redacted.
+            }
+        }
+    }
+
+    /** Deterministic recovery construction and thread-start boundaries. */
+    /* default */ enum StartStage {
+        RECOVERY_ACTIVATED,
+        WAL_WRITER,
+        COMMIT_COORDINATOR,
+        MAINTENANCE_COORDINATOR
+    }
+
+    /** Package-local fault seam for startup cleanup verification. */
+    /* default */
+    @FunctionalInterface
+    interface StartFaultInjector {
+        void after(StartStage stage, SigningActiveWal wal,
+                SigningGenerationRegistry registry) throws IOException;
     }
 
     /* default */ MetadataStoreId storeId() { return storeId; }
@@ -838,8 +1014,14 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         return recoveryHandle.statistics();
     }
 
-    /* default */ SigningAdmission reserveSigningAdmission() {
-        SigningReservationCaptureGate.Capture capture = captureGate.tryEnter();
+    /** Returns counters emitted by the actual production projection rebuild. */
+    /* default */ RecoveryProjectionStatistics recoveryProjectionStatistics() {
+        requireOpen();
+        return recoveryProjectionStatistics;
+    }
+
+    /* default */ SigningAdmission reserveAcceptanceCapacity() {
+        SigningProjectionCutoverGate.Capture capture = projectionCutover.tryEnter();
         if (capture == null) {
             throw new SigningActiveWal.OverloadedException();
         }
@@ -930,7 +1112,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     }
 
     /* default */ SigningMvccIndex.Snapshot snapshot() throws MetadataStoreException {
-        try (SigningReservationCaptureGate.Capture ignored = enterReservationCapture()) {
+        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
             requireOpen();
             return index.snapshot();
         }
@@ -938,7 +1120,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     /* default */ SigningCurrentSelection selectCurrentFirst(
             MetadataSnapshot.KeyRange range) throws MetadataStoreException {
-        try (SigningReservationCaptureGate.Capture ignored = enterReservationCapture()) {
+        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
             requireOpen();
             MetadataSnapshot.KeyRange checked = Objects.requireNonNull(range, "range");
             return index.selectCurrentFirst(checked.namespace(),
@@ -948,7 +1130,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     /* default */ SigningCurrentSelection selectCurrentRange(
             MetadataSnapshot.KeyRange range) throws MetadataStoreException {
-        try (SigningReservationCaptureGate.Capture ignored = enterReservationCapture()) {
+        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
             requireOpen();
             MetadataSnapshot.KeyRange checked = Objects.requireNonNull(range, "range");
             return index.selectCurrentRange(checked.namespace(),
@@ -1066,20 +1248,41 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         publishFrame(type, token, terminal, terminalPayload);
     }
 
-    private void recoverWorkProjection(List<SigningMvccIndex.RecoveredRecord> records)
+    private void recoverWorkProjection(List<SigningMvccIndex.RecoveredRecord> records,
+            SigningRecoveryIntegrityValidator.ValidatedSigningRecovery validatedRecovery)
             throws IOException {
+        List<SigningWorkProjection.RecoveredState> recoveredStates = new ArrayList<>();
+        long envelopesVisited = 0L;
+        long bindingsVisited = 0L;
+        long outerRecordsVisited = 0L;
         for (SigningMvccIndex.RecoveredRecord recovered : records) {
             String namespace = recovered.key().namespace();
-            if (!SigningWorkProjection.RECORD_NAMESPACE.equals(namespace)
-                    && !SigningWorkProjection.OWNER_NAMESPACE.equals(namespace)) continue;
-            workProjection.recover(recovered.key(), readValue(new SigningMvccIndex.SnapshotRecord(
-                    recovered.key(), recovered.pointer(), recovered.revision())), recovered.pointer());
+            if (SIGN_ENVELOPE_NAMESPACE.equals(namespace)) {
+                envelopesVisited++;
+            } else if (SIGN_BINDING_NAMESPACE.equals(namespace)) {
+                bindingsVisited++;
+            } else if (OUTER_CONTINUATION_NAMESPACE.equals(namespace)) {
+                outerRecordsVisited++;
+            } else if (SigningWorkProjection.STATE_NAMESPACE.equals(namespace)) {
+                recoveredStates.add(new SigningWorkProjection.RecoveredState(recovered.key(),
+                        readValue(new SigningMvccIndex.SnapshotRecord(recovered.key(),
+                                recovered.pointer(), recovered.revision())),
+                        recovered.pointer()));
+            }
         }
+        SigningWorkProjection.RecoveryStatistics projection =
+                workProjection.recoverAll(recoveredStates,
+                        validatedRecovery.schedulingByOperation());
+        recoveryProjectionStatistics = new RecoveryProjectionStatistics(envelopesVisited,
+                validatedRecovery.peakTrackedEnvelopeWorkspaceBytes(),
+                validatedRecovery.currentTrackedEnvelopeWorkspaceBytes(),
+                projection.statesVisited(), bindingsVisited, outerRecordsVisited,
+                projection.activeEntriesBuilt(), projection.statePointersRetained());
     }
 
     /* default */ List<String> selectDue(Instant cutoff, int maximumResults)
             throws MetadataStoreException {
-        try (SigningReservationCaptureGate.Capture ignored = enterReservationCapture()) {
+        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
             requireOpen();
             try (SigningDueWorkIndex.Selection selection =
                     due.selectThrough(cutoff, maximumResults)) {
@@ -1089,21 +1292,22 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /* default */ DueSnapshot pageDue(Instant cutoff, Optional<String> exclusiveCursor,
+    /* default */ DuePage pageDue(Instant cutoff, Optional<String> exclusiveCursor,
             Optional<String> inclusiveHighWatermark, int maximumResults)
             throws MetadataStoreException {
-        try (SigningReservationCaptureGate.Capture ignored = enterReservationCapture()) {
+        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
             synchronized (stateLock) {
                 requireOpen();
-                SigningDueWorkIndex.IdentitySelection selection = due.pageThrough(cutoff,
-                        exclusiveCursor, inclusiveHighWatermark, maximumResults);
-                boolean transferred = false;
-                try {
-                    DueSnapshot snapshot = new DueSnapshot(selection, index.snapshot());
-                    transferred = true;
-                    return snapshot;
-                } finally {
-                    if (!transferred) selection.close();
+                try (SigningDueWorkIndex.IdentitySelection selection = due.pageThrough(cutoff,
+                        exclusiveCursor, inclusiveHighWatermark, maximumResults)) {
+                    List<DueCandidate> candidates = selection.records().stream()
+                            .map(record -> new DueCandidate(record.operationId(),
+                                    Objects.requireNonNull(record.scheduling(), "scheduling"),
+                                    record.malformed()))
+                            .toList();
+                    Optional<String> highWatermark = inclusiveHighWatermark.isPresent()
+                            ? inclusiveHighWatermark : selection.highWatermark();
+                    return new DuePage(candidates, highWatermark, selection.endReached());
                 }
             }
         }
@@ -1111,7 +1315,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
 
     /* default */ DueSnapshot pageOwners(Optional<String> exclusiveCursor, int maximumResults)
             throws MetadataStoreException {
-        try (SigningReservationCaptureGate.Capture ignored = enterReservationCapture()) {
+        try (SigningProjectionCutoverGate.Capture ignored = enterProjectionCapture()) {
             synchronized (stateLock) {
                 requireOpen();
                 SigningDueWorkIndex.IdentitySelection selection = owners.pageThrough(Instant.MAX,
@@ -1128,10 +1332,10 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    private SigningReservationCaptureGate.Capture enterReservationCapture()
+    private SigningProjectionCutoverGate.Capture enterProjectionCapture()
             throws MetadataStoreException {
         try {
-            return captureGate.enter();
+            return projectionCutover.enter();
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
             throw new MetadataStoreException(MetadataCommitResult.FailureCategory.CANCELLED,
@@ -1142,7 +1346,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     /* default */ boolean containsOwner(String operationId) {
         synchronized (stateLock) {
             requireOpen();
-            return workProjection.containsOwner(operationId);
+            return workProjection.containsOperation(operationId);
         }
     }
 
@@ -1671,40 +1875,13 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         if (protectedProgressPressure.getAndSet(null) == null) {
             return;
         }
-        AtomicLocalSigningLedgerParticipant.HeadroomListener listener;
-        long epoch;
         synchronized (maintenanceSignal) {
-            epoch = Math.incrementExact(headroomRestorationEpoch);
-            listener = headroomListener;
-        }
-        notifyHeadroomRestored(listener, epoch);
-    }
-
-    /* default */ long headroomRestorationEpoch() {
-        synchronized (maintenanceSignal) {
-            return headroomRestorationEpoch;
-        }
-    }
-
-    @SuppressWarnings("PMD.CompareObjectsWithEquals") // Registration closure requires exact listener identity.
-    /* default */ AutoCloseable registerHeadroomRestored(
-            AtomicLocalSigningLedgerParticipant.HeadroomListener listener) {
-        AtomicLocalSigningLedgerParticipant.HeadroomListener exact =
-                Objects.requireNonNull(listener, "listener");
-        synchronized (maintenanceSignal) {
-            requireOpen();
-            if (headroomListener != null) {
-                throw new IllegalStateException("Metadata headroom listener is already registered");
+            maintenancePressure.signalProtectedProgress();
+            if (!maintenanceDeferred) {
+                maintenanceRequested = true;
+                maintenanceSignal.notifyAll();
             }
-            headroomListener = exact;
         }
-        return () -> {
-            synchronized (maintenanceSignal) {
-                if (headroomListener == exact) {
-                    headroomListener = null;
-                }
-            }
-        };
     }
 
     private void runMaintenance() {
@@ -1747,8 +1924,6 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                     maintenancePasses = Math.incrementExact(maintenancePasses);
                 }
                 MaintenanceResult result = maintainLedger(protectedBaseline);
-                AtomicLocalSigningLedgerParticipant.HeadroomListener listener = null;
-                long epoch = 0L;
                 synchronized (maintenanceSignal) {
                     if (result.outcome() == MaintenanceOutcome.DEFERRED) {
                         maintenancePressure.deferPass(pressurePass);
@@ -1757,10 +1932,9 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                             armDeferredMaintenance(result.deferralReason(),
                                     result.capacityReleaseEpoch());
                         }
-                    } else if (maintenancePressure.completePass(
-                            pressurePass, result.outcome() == MaintenanceOutcome.RESTORED)) {
-                        epoch = Math.incrementExact(headroomRestorationEpoch);
-                        listener = headroomListener;
+                    } else {
+                        maintenancePressure.completePass(
+                                pressurePass, result.outcome() == MaintenanceOutcome.RESTORED);
                     }
                     if (result.outcome() != MaintenanceOutcome.DEFERRED) {
                         protectedProgressPressure.compareAndSet(protectedBaseline, null);
@@ -1770,23 +1944,10 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                         maintenanceSignal.notifyAll();
                     }
                 }
-                notifyHeadroomRestored(listener, epoch);
             } catch (IOException | RuntimeException failure) {
                 transitionRecoveryRequired(failure);
                 return;
             }
-        }
-    }
-
-    private static void notifyHeadroomRestored(
-            AtomicLocalSigningLedgerParticipant.HeadroomListener listener, long epoch) {
-        if (listener == null) {
-            return;
-        }
-        try {
-            listener.restored(epoch);
-        } catch (RuntimeException ignored) {
-            // Headroom notification is advisory; persisted metadata remains authoritative.
         }
     }
 
@@ -1801,6 +1962,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
     private MaintenanceResult maintainLedger(
             SigningIndexCapacityBudget.CapacityExceededException protectedBaseline)
             throws IOException {
+        observeUsableSpace();
         try {
             if (!admissionGate.beginMaintenanceAndDrain()) {
                 return new MaintenanceResult(MaintenanceOutcome.UNCHANGED, null, -1L);
@@ -1856,12 +2018,53 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    private void observeUsableSpace() {
+        try {
+            UsableSpaceObserver observer = USABLE_SPACE_OBSERVER.get();
+            long now = observer == null ? System.nanoTime() : observer.nanoTime();
+            if (!usableSpaceObservation.beginProbe(now)) {
+                return;
+            }
+            if (observer != null) {
+                observer.observe(Thread.currentThread());
+            }
+            long configured = Long.getLong("zeroecho.pki.filesystem.softLowSpaceBytes",
+                    DEFAULT_SOFT_LOW_SPACE_BYTES);
+            long threshold = configured > 0L ? configured : DEFAULT_SOFT_LOW_SPACE_BYTES;
+            long usable = Files.getFileStore(root).getUsableSpace();
+            if (usableSpaceObservation.observe(usable, threshold, now)
+                    && LOG.isLoggable(java.util.logging.Level.WARNING)) {
+                LOG.log(java.util.logging.Level.WARNING,
+                        usableSpaceWarning(usable, threshold));
+            }
+        } catch (IOException | RuntimeException observationFailure) { // NOPMD - observational only
+            // Soft observation must never affect maintenance, readiness, or durable state.
+        }
+    }
+
+    /* default */ static String usableSpaceWarning(long usable, long threshold) {
+        return "Filesystem usable space is low: code=FILESYSTEM_USABLE_SPACE_LOW usable="
+                + usable + " threshold=" + threshold
+                + "; recovery may require operator action";
+    }
+
+    /* default */ static void installUsableSpaceObserver(UsableSpaceObserver observer) {
+        if (!USABLE_SPACE_OBSERVER.compareAndSet(null,
+                Objects.requireNonNull(observer, "observer"))) {
+            throw new IllegalStateException("Usable-space observer is already installed");
+        }
+    }
+
+    /* default */ static void clearUsableSpaceObserver() {
+        USABLE_SPACE_OBSERVER.set(null);
+    }
+
     private void closeFinalCutoverAndDrain() throws IOException {
         try {
             if (!admissionGate.closeBoundaryAndDrain()) {
                 throw new IOException("Metadata compaction drain requires an open ledger");
             }
-            captureGate.closeCutoverAndDrain();
+            projectionCutover.closeCutoverAndDrain();
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
             throw new IOException("Metadata compaction drain was interrupted", failure);
@@ -1894,7 +2097,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             }
             admissionGate.reopenBoundary();
         }
-        captureGate.reopenCutover();
+        projectionCutover.reopenCutover();
     }
 
     private MetadataCommitResult rejectedBeforeAdmission(MetadataTransactionId id,
@@ -1911,19 +2114,57 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
                 SigningTransactionPayloadCodec.rejectPayload(category), admissionClass);
     }
 
-    private void closeAbandonedIssuances() throws IOException {
+    private void closeAbandonedIssuancesDuringRecovery() throws IOException {
         List<MetadataTransactionId> abandoned = new ArrayList<>();
         synchronized (stateLock) {
             for (OutcomeSlot slot : outcomes.values()) {
                 MetadataCommitResult value = slot.value;
-                if (value == null) continue;
-                if (value.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
+                if (value != null
+                        && value.outcome() == MetadataCommitResult.Outcome.UNKNOWN) {
                     abandoned.add(value.transactionId());
                 }
             }
         }
+        abandoned.sort(java.util.Comparator.comparing(
+                MetadataTransactionId::token));
         for (MetadataTransactionId id : abandoned) {
-            rejectedBeforeAdmission(id, MetadataCommitResult.FailureCategory.ABANDONED_BY_RECOVERY);
+            closeAbandonedIssuanceDuringRecovery(id);
+        }
+    }
+
+    private void closeAbandonedIssuanceDuringRecovery(MetadataTransactionId id)
+            throws IOException {
+        MetadataCommitResult.FailureCategory category =
+                MetadataCommitResult.FailureCategory.ABANDONED_BY_RECOVERY;
+        byte[] encoded = SigningTransactionPayloadCodec.reject(category);
+        SigningTransactionPayloadCodec.Payload payload =
+                SigningTransactionPayloadCodec.rejectPayload(category);
+        SigningActiveWal.CommitResult committed = activeWal.appendRecovery(
+                SigningWalFrameCodec.RecordType.REJECT, uuid(id), encoded);
+        SigningMvccIndex.RecordPointer pointer = new SigningMvccIndex.RecordPointer(
+                committed.generationIdentity(), committed.offset(), committed.frameLength(),
+                committed.sequence(), committed.revision(),
+                SigningWalFrameCodec.RecordType.REJECT);
+        try {
+            try (SigningMvccIndex.PreparedApply prepared = index.prepare(
+                    committed.revision(), committed.sequence(),
+                    semanticMutations(uuid(id), payload, pointer),
+                    SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY)) {
+                prepared.publish();
+            }
+        } catch (SigningIndexCapacityBudget.CapacityExceededException exhausted) {
+            throw new MetadataStoreException(
+                    MetadataCommitResult.FailureCategory.LIMIT_EXCEEDED,
+                    "Metadata signing index capacity is full", exhausted);
+        }
+        synchronized (stateLock) {
+            OutcomeSlot outcome = outcomes.get(uuid(id));
+            if (outcome == null
+                    || outcome.value.outcome() != MetadataCommitResult.Outcome.UNKNOWN) {
+                throw new IllegalStateException(
+                        "Metadata recovery outcome identity is inconsistent");
+            }
+            outcome.value = notCommitted(id, category);
         }
     }
 
@@ -1969,30 +2210,15 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         synchronized (walAdmissionLock) {
             admissionGate.closeAdmissions();
         }
-        captureGate.close();
+        projectionCutover.close();
         synchronized (maintenanceSignal) {
             maintenanceSignal.notifyAll();
         }
-        notifyRecoveryRequired();
     }
 
     private void recordRecoveryFailure(Throwable failure) {
         if (failure != null) {
             firstRecoveryFailure.compareAndSet(null, failure);
-        }
-    }
-
-    private void notifyRecoveryRequired() {
-        AtomicLocalSigningLedgerParticipant.HeadroomListener listener;
-        synchronized (maintenanceSignal) {
-            listener = headroomListener;
-        }
-        if (listener != null) {
-            try {
-                listener.recoveryRequired();
-            } catch (RuntimeException ignored) {
-                // Recovery remains authoritative; notification is advisory.
-            }
         }
     }
 
@@ -2006,7 +2232,7 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         synchronized (walAdmissionLock) {
             admissionGate.closeAdmissions();
         }
-        captureGate.close();
+        projectionCutover.close();
         boolean interrupted = false;
         while (coordinator.isAlive()) {
             try { coordinator.join(); }
@@ -2016,7 +2242,6 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             maintenanceStopping = true;
             maintenanceDeferred = false;
             maintenanceDeferralReason = null;
-            headroomListener = null;
             maintenanceSignal.notifyAll();
         }
         while (maintenanceCoordinator.isAlive()) {
@@ -2038,6 +2263,12 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         index.close();
         if (recoveryHandle != null) {
             try { recoveryHandle.close(); }
+            catch (IOException closeFailure) {
+                recordRecoveryFailure(closeFailure);
+                failure = mergeFailure(failure, closeFailure);
+            }
+        } else if (pendingRecovery != null) {
+            try { pendingRecovery.close(); }
             catch (IOException closeFailure) {
                 recordRecoveryFailure(closeFailure);
                 failure = mergeFailure(failure, closeFailure);
@@ -2099,8 +2330,17 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             throw new IllegalArgumentException("Metadata ledger root is invalid");
     }
 
-    private static IOException formatUnsupported() {
-        return new IOException("Metadata ledger format unsupported: code=METADATA_FORMAT_UNSUPPORTED");
+    private static FormatUnsupportedException formatUnsupported() {
+        return new FormatUnsupportedException();
+    }
+
+    /** Cause-free marker for malformed persistent metadata. */
+    /* default */ static final class FormatUnsupportedException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private FormatUnsupportedException() {
+            super("Metadata ledger format unsupported: code=METADATA_FORMAT_UNSUPPORTED");
+        }
     }
 
     private static MetadataKey outcomeKey(UUID token) {
@@ -2288,6 +2528,64 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
             if (nonCapacityDeferral && capacityReleaseEpoch != -1L) {
                 throw new IllegalArgumentException("Metadata maintenance deferral epoch is inconsistent");
             }
+        }
+    }
+
+    /** Test-only observation of the thread that performs a filesystem-space probe. */
+    /* default */ @FunctionalInterface
+    interface UsableSpaceObserver {
+        /** Records one probe immediately before the filesystem query. */
+        void observe(Thread thread);
+
+        /** Supplies the monotonic probe clock; overridden only by deterministic tests. */
+        default long nanoTime() {
+            return System.nanoTime();
+        }
+    }
+
+    /** Hysteretic, rate-limited scalar state for the maintenance-thread probe. */
+    /* default */ static final class SoftUsableSpaceObservation {
+        private final long warningIntervalNanos;
+        private long lastProbeNanos = Long.MIN_VALUE;
+        private long lastWarningNanos = Long.MIN_VALUE;
+        private boolean low;
+
+        /* default */ SoftUsableSpaceObservation(long warningIntervalNanos) {
+            if (warningIntervalNanos <= 0L) {
+                throw new IllegalArgumentException("warningIntervalNanos must be positive");
+            }
+            this.warningIntervalNanos = warningIntervalNanos;
+        }
+
+        /* default */ boolean beginProbe(long nowNanos) {
+            if (!elapsedAtLeast(nowNanos, lastProbeNanos, warningIntervalNanos)) {
+                return false;
+            }
+            lastProbeNanos = nowNanos;
+            return true;
+        }
+
+        /* default */ boolean observe(long usable, long threshold, long nowNanos) {
+            if (usable < 0L || threshold <= 0L) {
+                throw new IllegalArgumentException("usable and threshold must be non-negative");
+            }
+            if (usable < threshold) {
+                boolean warn = !low || elapsedAtLeast(nowNanos, lastWarningNanos,
+                        warningIntervalNanos);
+                low = true;
+                if (warn) {
+                    lastWarningNanos = nowNanos;
+                }
+                return warn;
+            }
+            if (usable - threshold >= threshold) {
+                low = false;
+            }
+            return false;
+        }
+
+        private static boolean elapsedAtLeast(long now, long before, long interval) {
+            return before == Long.MIN_VALUE || now - before >= interval;
         }
     }
 
@@ -2769,6 +3067,17 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
+    /** Visit, tracked envelope-workspace, and retained-state counts from recovery. */
+    /* default */ record RecoveryProjectionStatistics(long envelopesVisited,
+            long peakTrackedEnvelopeWorkspaceBytes, // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
+            long currentTrackedEnvelopeWorkspaceBytes, long statesVisited, // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
+            long bindingsVisited, long outerRecordsVisited, long activeEntriesBuilt,
+            long statePointersRetained) {
+        private static RecoveryProjectionStatistics empty() {
+            return new RecoveryProjectionStatistics(0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L);
+        }
+    }
+
     /** Preallocated outcome hash slot mutated without allocation after durability. */
     private static final class OutcomeSlot {
         private MetadataCommitResult value;
@@ -2786,7 +3095,24 @@ final class SigningLedgerStoreEngine implements AutoCloseable {
         }
     }
 
-    /** One atomic due selection and MVCC revision used for bulk candidate decoding. */
+    /* default */ record DueCandidate(String operationId,
+            zeroecho.pki.spi.store.SignWorkflowStore.SchedulingCoordinates scheduling,
+            boolean malformed) {
+        DueCandidate {
+            Objects.requireNonNull(operationId, "operationId");
+            Objects.requireNonNull(scheduling, "scheduling");
+        }
+    }
+
+    /* default */ record DuePage(List<DueCandidate> candidates,
+            Optional<String> highWatermark, boolean endReached) {
+        DuePage {
+            candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
+            highWatermark = Objects.requireNonNull(highWatermark, "highWatermark");
+        }
+    }
+
+    /** One atomic owner selection and MVCC revision used for bulk candidate decoding. */
     /* default */ static final class DueSnapshot implements AutoCloseable {
         private final SigningDueWorkIndex.IdentitySelection selection;
         private final SigningMvccIndex.Snapshot snapshot;

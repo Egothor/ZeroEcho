@@ -38,7 +38,7 @@ import zeroecho.pki.api.KeyRef;
 
 /**
  * Resolves exportable public-key information from the same managed-key authority
- * used by a signature workflow.
+ * used by a signing provider.
  *
  * <p>This capability exposes only canonical DER SubjectPublicKeyInfo. It must
  * never return private, secret, seed, unlock, or provider credential material.</p>

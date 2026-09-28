@@ -162,7 +162,8 @@ public final class ServerRealmContext implements AutoCloseable {
                 control, roles, authorization, approvals, breakGlass, disclosure, credentialPublication,
                 auditorViews, Optional.of(repositoryAliases),
                 new OperationSecurityDescriptors(),
-                session.operations(), session.resourceScopes(), configuration.approvalPolicies(),
+                session.operations(), new ServerSigningExecutor(session), session.resourceScopes(),
+                configuration.approvalPolicies(),
                 profileId -> session.profiles().requireActiveProfile(profileId).definition().approvalRequirement(),
                 clock, auditSink, reconciliationWake::signal, this::requireOpen);
         this.gateway.installOcsp(ocspResponders);
@@ -342,7 +343,7 @@ public final class ServerRealmContext implements AutoCloseable {
 
     /** Runs one bounded pass of every per-family success-evidence projector and folds their scheduling hints. */
     @SuppressWarnings("PMD.AvoidCatchingGenericException") // A projector failure must not stop scheduling.
-    /* default */ SigningReconciliationWorker.EvidenceHint runEvidenceProjections(int maximumRecords,
+    /* default */ AuditProjectionWorker.EvidenceHint runEvidenceProjections(int maximumRecords,
             int maximumSinkCalls, zeroecho.core.io.CancellationSignal cancellation) {
         boolean immediate = false;
         Optional<java.time.Instant> earliest = Optional.empty();
@@ -358,7 +359,7 @@ public final class ServerRealmContext implements AutoCloseable {
                 // A projector failure is retried on the next cycle; it must not abort scheduling.
             }
         }
-        return new SigningReconciliationWorker.EvidenceHint(immediate, earliest);
+        return new AuditProjectionWorker.EvidenceHint(immediate, earliest);
     }
 
     private static Optional<java.time.Instant> earliestInstant(Optional<java.time.Instant> first,

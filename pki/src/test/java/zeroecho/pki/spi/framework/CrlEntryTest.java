@@ -71,8 +71,8 @@ final class CrlEntryTest {
         assertThrows(NullPointerException.class,
                 () -> new CrlEntry(BigInteger.ONE, null, RevocationReason.UNSPECIFIED));
         assertThrows(NullPointerException.class, () -> new CrlEntry(BigInteger.ONE, TIME, null));
-        assertThrows(IllegalArgumentException.class,
-                () -> new CrlEntry(BigInteger.ONE, TIME, RevocationReason.REMOVE_FROM_CRL));
+        assertEquals(RevocationReason.REMOVE_FROM_CRL,
+                new CrlEntry(BigInteger.ONE, TIME, RevocationReason.REMOVE_FROM_CRL).reason());
     }
 
     private static RevocationReason[] activeReasons() {

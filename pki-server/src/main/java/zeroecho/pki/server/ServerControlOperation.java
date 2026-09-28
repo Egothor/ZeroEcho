@@ -68,7 +68,46 @@ public sealed interface ServerControlOperation permits ServerControlOperation.Re
         ServerControlOperation.DeactivateAcmeAccount, ServerControlOperation.RegisterOcspResponder,
         ServerControlOperation.InspectOcspResponder, ServerControlOperation.ListOcspResponders,
         ServerControlOperation.SetOcspResponderActive, ServerControlOperation.SearchAudit,
-        ServerControlOperation.VerifyAuditIntegrity {
+        ServerControlOperation.VerifyAuditIntegrity, ServerControlOperation.ConfigurationChoices,
+        ServerControlOperation.ListCapabilities {
+
+    /**
+     * Lists safe configured metadata and one page of known key references.
+     *
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
+     */
+    record ConfigurationChoices(int limit, Optional<String> after) implements ServerControlOperation {
+        /** Stable semantic name. */ public static final String NAME = "configuration.choices";
+        /** Validates the bounded key page. */
+        public ConfigurationChoices {
+            requireSelectionLimit(limit);
+            Objects.requireNonNull(after, "after").ifPresent(zeroecho.pki.api.KeyRef::new);
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Lists non-bearer capabilities for one authoritative disclosure object.
+     *
+     * @param objectId exact stored object identifier
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
+     */
+    record ListCapabilities(PkiId objectId, int limit, Optional<String> after) implements ServerControlOperation {
+        /** Stable semantic name. */ public static final String NAME = "security.disclosure.capability.list";
+        /** Validates the object and bounded lexical page. */
+        public ListCapabilities {
+            Objects.requireNonNull(objectId, "objectId");
+            requireSelectionLimit(limit);
+            Objects.requireNonNull(after, "after").ifPresent(value -> Permission.requireId(value, "capability cursor"));
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    private static void requireSelectionLimit(int limit) {
+        if (limit < 1 || limit > 1000) { throw new IllegalArgumentException("Selection limit must be 1 through 1000"); }
+    }
 
     /**
      * Returns the stable operation identity used for authorization and dispatch.

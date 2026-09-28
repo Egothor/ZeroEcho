@@ -51,6 +51,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.LongSupplier;
 
+import zeroecho.pki.spi.store.MetadataStoreId;
+
 /** Opt-in prepare/recover characterization over one controlled production ledger image. */
 @SuppressWarnings({ "PMD.AvoidCatchingGenericException", "PMD.CommentRequired",
         "PMD.SystemPrintln", "PMD.UseObjectForClearerAPI" })
@@ -85,18 +87,28 @@ public final class SigningRecoveryBenchmark {
                 SigningControlledRecoveryImage.validate(configuration.workRoot(),
                         configuration.retainedPopulation(), configuration.activePopulation(),
                         configuration.sealedSegments(), configuration.suffixFrames());
-        Path metadataRoot = SigningControlledRecoveryImage.metadataRoot(configuration.workRoot());
+        FsPaths paths = new FsPaths(configuration.workRoot().resolve("store"));
+        Path metadataRoot = paths.transactionalMetadataRoot();
+        String signingNamespace = Files.readString(paths.signingNamespaceFile()).trim();
         JvmSample before = JvmSample.capture();
         long started = nanoClock.getAsLong();
-        SegmentedTransactionalMetadataStore store =
-                SegmentedTransactionalMetadataStore.open(metadataRoot);
+        SegmentedTransactionalMetadataStore store = SegmentedTransactionalMetadataStore.open(
+                metadataRoot, new MetadataStoreId(signingNamespace),
+                SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
+                SigningActiveWal.Configuration.defaults(),
+                FsPkiStoreOptions.DEFAULT_RESIDENT_INDEX_BUDGET_BYTES,
+                FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES,
+                FilesystemStagedContentStore.readOnlyResolver(
+                        paths.stagedContentRoot(), signingNamespace));
         long returned = nanoClock.getAsLong();
         JvmSample after = JvmSample.capture();
         SigningLedgerStoreEngine.CapacityObservation capacity;
+        SigningLedgerStoreEngine.RecoveryProjectionStatistics projectionRecovery;
         SigningActiveWal.Snapshot writer;
         SigningLedgerRecovery.Statistics recovery;
         try (store) {
             capacity = store.capacityObservation();
+            projectionRecovery = store.recoveryProjectionStatistics();
             writer = store.writerSnapshot();
             recovery = store.recoveryStatistics();
         }
@@ -111,8 +123,8 @@ public final class SigningRecoveryBenchmark {
         }
         ArtifactEvidence artifacts = ArtifactEvidence.capture(metadataRoot,
                 SigningControlledRecoveryImage.readManifest(metadataRoot));
-        Result result = new Result(elapsed, descriptor, capacity, recovery, artifacts,
-                JvmDelta.between(before, after));
+        Result result = new Result(elapsed, descriptor, capacity, projectionRecovery,
+                recovery, artifacts, JvmDelta.between(before, after));
         verify(configuration, result, writer);
         return result;
     }
@@ -120,6 +132,8 @@ public final class SigningRecoveryBenchmark {
     private static void verify(Configuration configuration, Result result,
             SigningActiveWal.Snapshot writer) throws IOException {
         SigningLedgerStoreEngine.CapacityObservation capacity = result.capacity();
+        SigningLedgerStoreEngine.RecoveryProjectionStatistics projection =
+                result.projectionRecovery();
         SigningLedgerRecovery.Statistics recovery = result.recovery();
         ArtifactEvidence artifacts = result.artifacts();
         int expectedGenerations = Math.addExact(configuration.sealedSegments(), 2);
@@ -127,19 +141,28 @@ public final class SigningRecoveryBenchmark {
         long expectedReferences;
         try {
             expectedReferences = Math.addExact(configuration.retainedPopulation(),
-                    Math.multiplyExact(2L, configuration.activePopulation()));
+                    configuration.activePopulation());
         } catch (ArithmeticException failure) {
             throw new BenchmarkException("EVIDENCE_MISMATCH", failure);
         }
         if (capacity.currentKeys() != configuration.retainedPopulation()
                 || capacity.dueWork() != configuration.activePopulation()
-                || capacity.ownerWork() != configuration.activePopulation()
+                || capacity.ownerWork() != 0
                 || capacity.projectedIdentities() != configuration.activePopulation()
                 || capacity.retentionRecords() != 0
                 || capacity.generationCurrentReferences() != expectedReferences
                 || capacity.generationSnapshotPins() != 0L
                 || capacity.registeredGenerations() != expectedGenerations
                 || capacity.publishedGenerations() != expectedGenerations
+                || projection.envelopesVisited() != configuration.activePopulation()
+                || projection.statesVisited() != configuration.activePopulation()
+                || projection.bindingsVisited() != configuration.activePopulation()
+                || projection.outerRecordsVisited() != 0L
+                || projection.activeEntriesBuilt() != configuration.activePopulation()
+                || projection.statePointersRetained() != configuration.activePopulation()
+                || (configuration.activePopulation() > 0L
+                        && projection.peakTrackedEnvelopeWorkspaceBytes() <= 0L)
+                || projection.currentTrackedEnvelopeWorkspaceBytes() != 0L
                 || recovery.rootEntries() != expectedRootEntries
                 || recovery.checkpointEntries() != configuration.retainedPopulation()
                 || recovery.sealedSegments() != configuration.sealedSegments()
@@ -305,6 +328,7 @@ public final class SigningRecoveryBenchmark {
 
     record Result(long openNanos, SigningControlledRecoveryImage.Descriptor descriptor,
             SigningLedgerStoreEngine.CapacityObservation capacity,
+            SigningLedgerStoreEngine.RecoveryProjectionStatistics projectionRecovery,
             SigningLedgerRecovery.Statistics recovery, ArtifactEvidence artifacts, JvmDelta jvm) {
         String toJson(Configuration configuration) {
             StringBuilder json = new StringBuilder(2048).append('{');
@@ -335,16 +359,29 @@ public final class SigningRecoveryBenchmark {
             number(json, "steadyMaximumBytes", capacity.steadyMaximumBytes()).append(',');
             number(json, "transientReservedBytes", capacity.transientReservedBytes()).append(',');
             number(json, "transientHighWaterReservedBytes",
-                    capacity.transientHighWaterReservedBytes()).append(',');
+                    capacity.transientHighWaterBytes()).append(',');
             number(json, "transientMaximumBytes", capacity.transientMaximumBytes()).append(',');
             number(json, "combinedReservedBytes", capacity.combinedReservedBytes()).append(',');
             number(json, "combinedHighWaterReservedBytes",
-                    capacity.combinedHighWaterReservedBytes()).append(',');
+                    capacity.combinedHighWaterBytes()).append(',');
             number(json, "combinedMaximumBytes", capacity.combinedMaximumBytes()).append("},");
+            json.append("\"projectionRecovery\":{");
+            number(json, "envelopesVisited", projectionRecovery.envelopesVisited()).append(',');
+            number(json, "statesVisited", projectionRecovery.statesVisited()).append(',');
+            number(json, "bindingsVisited", projectionRecovery.bindingsVisited()).append(',');
+            number(json, "outerRecordsVisited", projectionRecovery.outerRecordsVisited()).append(',');
+            number(json, "activeEntriesBuilt", projectionRecovery.activeEntriesBuilt()).append(',');
+            number(json, "statePointersRetained", projectionRecovery.statePointersRetained())
+                    .append(',');
+            number(json, "peakTrackedEnvelopeWorkspaceBytes",
+                    projectionRecovery.peakTrackedEnvelopeWorkspaceBytes()).append(',');
+            number(json, "currentTrackedEnvelopeWorkspaceBytes",
+                    projectionRecovery.currentTrackedEnvelopeWorkspaceBytes())
+                    .append("},");
             json.append("\"expectedReferenceAccounting\":{");
             number(json, "primaryMvccReferences", configuration.retainedPopulation()).append(',');
             number(json, "dueReferences", configuration.activePopulation()).append(',');
-            number(json, "ownerReferences", configuration.activePopulation()).append(',');
+            number(json, "ownerReferences", 0L).append(',');
             number(json, "expectedRegistryTotal", expectedRegistryReferences(configuration))
                     .append("},");
             json.append("\"recovery\":{");
@@ -370,7 +407,7 @@ public final class SigningRecoveryBenchmark {
             field(json, "gcScope", "PROCESS_GLOBAL").append("},");
             json.append("\"contract\":{");
             field(json, "timedOperation", "SegmentedTransactionalMetadataStore.open").append(',');
-            field(json, "timeComplexity", "O(M log M + W log W + F + S)").append(',');
+            field(json, "timeComplexity", "O(W + H + Z + F + S)").append(',');
             field(json, "installedState", "O(M + W)").append(',');
             field(json, "auxiliaryMemory", "O(M + W + S + B)").append(',');
             json.append("\"fullFilesystemPkiStoreReopenMeasured\":false,")
@@ -381,7 +418,7 @@ public final class SigningRecoveryBenchmark {
         private static long expectedRegistryReferences(Configuration configuration) {
             try {
                 return Math.addExact(configuration.retainedPopulation(),
-                        Math.multiplyExact(2L, configuration.activePopulation()));
+                        configuration.activePopulation());
             } catch (ArithmeticException failure) {
                 throw new ContractException("CONFIGURATION_INVALID", failure);
             }

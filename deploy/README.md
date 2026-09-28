@@ -1,14 +1,14 @@
 # ZeroEcho PKI — deployment artifacts
 
-Container and orchestration artifacts for the ZeroEcho PKI platform (Task 15).
-This directory is self-contained: it only adds files under `deploy/` and does not
-modify `pki-frontend/`, `app/`, `pki-server/`, `pki/`, or `lib/`.
+Packaging and deployment examples for the permanent backend and asynchronous web
+frontend (mode a), remote mTLS CLI (mode b), and synchronous standalone CLI
+(mode c). The application, server and web artifacts use the existing Gradle/npm
+toolchain. See [CLI configuration and recovery](../docs/pki-cli.md) and
+[local worked examples](../docs/examples/pki-cli/README.md).
 
-> **Authoring caveat.** These artifacts were authored and **statically
-> validated** without a container engine (no Docker/Podman was available). They
-> have **not** been built or run. `nginx -t` was not executed. YAML was
-> parse-checked and the shell scripts were `sh -n` syntax-checked. Do not treat
-> "images build/run" as verified — build and run them on a POSIX/Docker host.
+The [packaged deployment gate](../pki-frontend/e2e/packaged/README.md) verifies
+container execution, nginx/mTLS forwarding and the deployed web/remote CLI flow.
+Static configuration checks and local CLI tests cover separate boundaries.
 
 ## Topology
 
@@ -25,8 +25,10 @@ administrator browser  --mTLS-->  nginx (edge)  --mTLS-->  pki-server (admin lis
   header while authenticating to pki-server with its **own** transport client
   certificate. pki-server runs in `TRUSTED_REVERSE_PROXY` mode and independently
   validates both identities.
-* pki-server serves the static SPA? No — **nginx** serves the SPA bundle; the
-  server exposes only the JSON admin/public/health API.
+* **nginx** serves the SPA bundle; pki-server exposes the JSON admin/public/health API.
+* The remote CLI authenticates to the same edge using its administrator mTLS
+  certificate. The permanent backend owns asynchronous signing operations; the
+  CLI submits once and observes the retained operation ID with GET requests.
 
 ## File tree
 
@@ -34,10 +36,13 @@ administrator browser  --mTLS-->  nginx (edge)  --mTLS-->  pki-server (admin lis
 deploy/
   README.md                      # this file — the data/config contract
   .env.example                   # every env var / secret a deployer sets
-  smoke-test.sh                  # container smoke test (curl over mTLS)
+  smoke-test.sh                  # host wrapper for packaged remote CLI smoke
+  smoke_test.py                  # bounded readiness + once-only issuance
   pki-server/
     Dockerfile                   # multi-stage; non-root; installDist of server + CLI
-    entrypoint.sh                # validate-config preflight + profile reconcile + exec
+    entrypoint.sh                # validate-config + profile bootstrap + exec
+    profile-bootstrap.json       # explicit local operator/configuration
+    profiles/                    # runnable schema-v5 example policies
   nginx/
     Dockerfile                   # nginx + njs; bakes SPA bundle + config
     nginx.conf                   # main config (loads njs, RFC 9440 forwarding)
@@ -87,6 +92,7 @@ user.
 | Mount | Source | Notes |
 |---|---|---|
 | `/etc/zeroecho/server-config.json` | operator file / ConfigMap | Strict versioned JSON, **schema version 7**. Start from [`docs/pki-server-trusted-proxy-rfc9440-example.json`](../docs/pki-server-trusted-proxy-rfc9440-example.json) for this topology. Validated by `--validate-config` at start-up (fail-fast). |
+| `/etc/zeroecho/profile-bootstrap.json` | operator file / ConfigMap | Local schema v1, explicit `operatorId`, matching filesystem store and audit sink; no signer or publishers. |
 | `/etc/zeroecho/profiles/` | operator dir / ConfigMap | One `*.json` certificate-profile document (**schemaVersion 5**) per file. Reconciled at start-up (see below). |
 | `/var/lib/zeroecho/tls/` (compose) or `/etc/zeroecho/tls/` (k8s) | operator dir / Secret | pki-server's own PKCS#12 stores referenced by `server-config.json`. In Compose the server working dir is `/var/lib/zeroecho`, so config paths like `tls/server-identity.p12` resolve there; the k8s ConfigMap uses absolute `/etc/zeroecho/tls/...` paths. |
 | `/etc/zeroecho/health/` | operator dir / Secret | Health-probe client identity (`health-client.pem`, `health-client-key.pem`, `health-ca.pem`) for the container/probe HEALTHCHECK. |
@@ -99,7 +105,7 @@ set. Core ones:
 
 | Variable | Consumed by | Purpose |
 |---|---|---|
-| `ZEROECHO_KEYRING_PASSWORD` | `runtime.keyUnlockEnvironmentVariable` and/or `signing.unlockEnvironmentVariable` | Unlocks the CA signing keyring. |
+| `ZEROECHO_KEYRING_PASSWORD` | `runtime.keyUnlockEnvironmentVariable` | Unlocks the CA signing keyring. |
 | `ZEROECHO_TLS_KEYSTORE_PASSWORD` | listener `tlsProvider.keyStorePasswordEnvironment` | pki-server server-identity PKCS#12 password. |
 | `ZEROECHO_PROXY_TRUSTSTORE_PASSWORD` | listener `tlsProvider.trustStorePasswordEnvironment` | Trust for the reverse proxy's transport certificate. |
 | `ZEROECHO_ADMIN_TRUSTSTORE_PASSWORD` | `administrativeClientTrust.trustStorePasswordEnvironment` | Trust used to validate the forwarded admin client leaf. |
@@ -168,24 +174,80 @@ To enrol an administrator:
    required grants. Restart pki-server (config is validated on start).
 4. Import the client cert (as PKCS#12) into the administrator's browser.
 
-## Changing a certificate profile
+## Startup profile bootstrap and profile changes
 
-Profiles live in the read-only profiles mount and are **reconciled at start-up**
-(see below). To change one:
+The entrypoint first validates server schema v7 (backend session schema v6), then
+runs the distribution's deployment-only `bin/zeroecho-pki-profile-bootstrap`
+launcher, then executes the server as PID 1. The helper uses the existing local
+schema-v1 parser and core PKI operations. It opens no signer, HTTP listener or
+reactor and closes its session before the server opens the store.
 
-1. Edit or add the profile JSON in the profiles source (host dir, or the
-   `pki-server-profiles` ConfigMap on k8s).
-2. Restart pki-server. The entrypoint registers+activates any profile whose
-   `profileId` is **not already present** in the store.
+Mount `pki-server/profile-bootstrap.json` as `/etc/zeroecho/profile-bootstrap.json`.
+Review its explicit `operatorId: "deployment-profile-bootstrap"`; it is a trusted
+local audit identity, not a server-authenticated principal. Align its filesystem
+store root with the server configuration and `ZEROECHO_STORE_DIR`; the helper
+rejects a mismatch with the latter. The shipped configuration uses the durable
+file audit sink shared sequentially with the server. Configuration and profile
+files must be trusted, read-only operator inputs. Kubernetes projected file links
+are resolved before bounded regular-file reads.
 
-**Important idempotency limitation:** the entrypoint reconcile is idempotent at
-*profile-identity* granularity — it will **not** re-register a `profileId` that
-already exists, so **editing an existing profile's content and restarting does
-NOT update it**. To change an existing profile today, register a new version via
-the admin API / operator tooling (`profile.register` then `profile.activate`),
-or use the CLI against a stopped server's store. This gap is by design pending a
-backend reconcile primitive — see **Backend gaps** below. Set
-`ZEROECHO_PROFILE_RECONCILE=off` to disable the start-up reconcile entirely.
+For each `*.json` in filename order, the helper decodes the actual profile ID and
+version with the existing codec. It skips an identity with any known version,
+otherwise registers and activates the exact imported version, including versions
+other than 1. Profile IDs are JSON strings and may contain Unicode, spaces or
+punctuation; no shell text extraction is used. Documents retain the existing
+256 KiB codec limit. The helper retains O(N) paths for deterministic sorting and
+one bounded document at a time; sorting costs O(N log N), plus decoding and the
+existing core profile lookup/registration costs.
+
+Malformed input, failed core operations, store contention, missing helper or
+missing configuration stop startup. An empty profile directory succeeds without
+changes. Earlier successful mutations remain committed after a later failure.
+An existing inactive identity is also skipped, including one left registered by
+an interrupted previous run: inspect it and activate it explicitly if intended.
+There is no automatic content reconciliation or implicit recovery.
+
+To change an existing profile, register its explicit new version and activate it
+through the remote CLI/API, or through the local CLI while the server is stopped.
+Editing a known identity in the mounted directory and restarting leaves stored
+versions and activation unchanged. The five shipped profiles are runnable examples;
+review algorithms, subject rules, approval/confirmation policy and validity before
+production use. Set `ZEROECHO_PROFILE_RECONCILE=off` to explicitly disable startup
+seeding; values other than `on` and `off` are rejected.
+
+## CLI operation and recovery
+
+Use the remote CLI while the permanent backend is running. For example, with
+trusted administrator credentials and a PEM server trust bundle:
+
+```sh
+app/build/install/app/bin/app pki profile.list-all --url https://pki.example.com:8443 \
+  --client-cert /secure/admin.pem --client-key /secure/admin-key.pem \
+  --trust /secure/edge-ca.pem --arg-int limit=25 --output json
+```
+
+For signing, `--pending-wait` bounds remote observation; exit 7 with `PENDING`
+retains the accepted operation ID. Save JSON output even on nonzero exits. Use
+`signing.operation.inspect --operation-id ID` with the same remote credentials
+to observe it later. A timeout, interruption or failed GET never authorizes a
+second submission. Remote explicit completion is unsupported.
+
+Stop the server before opening its store through local mode. Local signing is
+synchronous and a trusted local invocation constitutes root-operator approval;
+all remaining policy/proof/validity checks apply. Local inspection is read-only.
+After interruption, only `signing.operation.complete --operation-id ID --config
+local.json` explicitly drives the selected persisted operation. Signing or
+publication failures retain their recovery/reconciliation distinctions; durable
+signature storage alone does not establish domain completion. Do not start a new
+signing operation to recover an earlier one or rerun mutations blindly.
+
+Explicit publication commands execute synchronously. Inspect `output.status` as
+well as the command's exit: a completed publication attempt can report a definitive
+failure. Use `publication.retry` for a reported retryable failure and
+`publication.reconcile` for an unknown external outcome as applicable, after
+resolving the underlying problem. Export or downstream use requires confirmed
+publication success. The [CLI guide](../docs/pki-cli.md) describes receipt and
+exit semantics.
 
 ## Pointing the store at a persistent volume without rebuilding
 
@@ -207,20 +269,108 @@ The same pattern applies to `keyring`, `artifacts`, and `audit`. Because the
 config uses **in-container paths**, you can repoint the underlying storage freely
 without touching the image or the config.
 
-## Building & running
+## Building and running
+
+From the repository root, build the packaged launchers and static web artifacts:
 
 ```sh
-# On a POSIX host with Docker + a JDK 25 toolchain in the build image:
-cp deploy/.env.example deploy/.env      # then edit deploy/.env and provision TLS
-docker compose -f deploy/compose/docker-compose.yml up -d --build
-deploy/smoke-test.sh                    # end-to-end issuance smoke test
+./gradlew :app:installDist :pki-server:installDist :pki-frontend:npmBuild --offline
 ```
 
-The pki-server image build stage runs `./gradlew :pki-server:installDist
-:app:installDist` (JDK 25, no Node needed). The nginx image build stage runs the
-pinned Node/Vite build of `pki-frontend`. If your CI already produced the
-`installDist` trees or the SPA `dist/`, use the documented `prebuilt` build
-targets / build-args to skip the source build.
+Outputs are `app/build/install/app`,
+`pki-server/build/install/zeroecho-pki-server`, and `pki-frontend/dist`.
+The app distribution includes both `bin/app` and the deployment-only profile
+bootstrap launcher. `installDist` and the standard distribution archives carry
+the same runtime dependencies; no additional bootstrap dependency is required.
+
+For source-built containers, provision TLS, server mappings/grants, the keyring
+and secrets, then:
+
+```sh
+cp deploy/.env.example deploy/.env
+# Edit deploy/.env and the mounted configurations before starting.
+docker compose --env-file deploy/.env -f deploy/compose/docker-compose.yml up -d --build
+```
+
+The explicit `--env-file` is required because Compose otherwise looks for `.env`
+in its default project environment. Relative bind-source values in this file
+resolve from `deploy/compose/`, not from the `.env` file. The shipped values use
+`../config`, `../tls` and `../pki-server` to address directories under `deploy/`;
+absolute host paths are also accepted. Keep a filled-in `.env` private and outside
+version control. Containers receive only the required secrets via environment
+references; private TLS/keyring material is mounted or provisioned in its volumes.
+
+Both Dockerfiles also have actual `prebuilt` targets. Populate a fresh staging
+directory at repository-root `context/` with the *contents* of the built artifacts:
+
+```sh
+mkdir -p context/app context/pki-server context/frontend
+cp -a app/build/install/app/. context/app/
+cp -a pki-server/build/install/zeroecho-pki-server/. context/pki-server/
+cp -a pki-frontend/dist/. context/frontend/
+docker build --target prebuilt -f deploy/pki-server/Dockerfile -t zeroecho/pki-server:latest .
+docker build --target prebuilt -f deploy/nginx/Dockerfile -t zeroecho/pki-nginx:latest .
+docker compose --env-file deploy/.env -f deploy/compose/docker-compose.yml up -d --no-build
+```
+
+`prebuilt` depends only on the shared runtime base, not on the source build stage.
+The default final `runtime` target builds from source. There is no `PREBUILT`
+build argument. `.dockerignore` excludes local build caches, generated output,
+agent support and conventional private deployment directories while retaining the
+three explicit prebuilt inputs. Do not put secrets in those input distributions.
+Base images and distribution contents still require your normal supply-chain review.
+
+## Remote CLI smoke check
+
+Build the app distribution and provision an issuing CA, active end-entity profile,
+valid CSR and administrator identity with the necessary server grants/approval.
+Profile seeding alone creates no CA or signing key. The PEM client private key
+must be unencrypted PKCS#8, as required by the CLI; keep it on a private filesystem.
+
+Configure the `SMOKE_*` variables in `deploy/.env` or the process environment:
+`SMOKE_BASE_URL`, `SMOKE_ADMIN_CERT`, `SMOKE_ADMIN_KEY`, `SMOKE_CA_BUNDLE`,
+`SMOKE_CA_ID`, `SMOKE_PROFILE_ID`, and exactly one of `SMOKE_REQUEST_ID` or
+`SMOKE_IMPORT_ARGS_FILE`. `SMOKE_CLI` optionally selects another packaged `bin/app`.
+Smoke file paths are resolved from `deploy/`; Compose bind paths still resolve
+from `deploy/compose/` as described above. Environment values override `.env`.
+The smoke helper reads literal `SMOKE_*` assignments only, supporting quoted
+whitespace and comments. It performs no shell evaluation or variable expansion.
+
+The optional import file is the existing full realm-scoped API envelope:
+
+```json
+{"version":1,"arguments":{"formatId":"x509","encoded":"BASE64_DER_CSR"}}
+```
+
+It is bounded to 1 MiB with bounded string fields. Duplicate properties, unknown
+fields, wrong types and an authority scope are rejected before submission.
+Optional root `approvalId` and ISO-8601 `deadline` are forwarded as CLI flags.
+The helper reads the resulting `requestId` from the remote CLI's nested `result`.
+
+```sh
+# Check an already-running stack; leave it running.
+deploy/smoke-test.sh --no-up --no-down
+# Or start the source-built Compose stack and tear it down afterwards.
+deploy/smoke-test.sh
+# Offline tests of orchestration and exactly-once submission:
+python3 -m unittest discover -s deploy -p test_smoke_test.py
+```
+
+The host requires Python 3, curl, the installed app and Docker Compose when startup
+is enabled. Readiness has a 120-second deadline and bounded curl calls; a realm
+read checks the administrator authentication path. Issuance then uses exactly one
+packaged `credential.issue` invocation with `--pending-wait 120`. The CLI owns GET
+observation of the accepted signing ID; the script never repeats issuance to
+recover a receipt. Server policy/approval failures remain failures.
+
+Each run prints a private temporary directory containing JSON receipts and
+command diagnostics, retained on success, failure and interruption. A pending
+CLI outcome preserves exit 7; cancellation preserves exit 130. Inspect the saved
+`credential-issue.json` and its operation ID before continuing. A successful run
+requires a remote `SUCCEEDED` envelope with both operation ID and credential ID.
+`--no-up` also prevents teardown of an existing stack; `--no-down` preserves a
+stack started by this run. JSON receipts may identify certificates and operations;
+protect and dispose of them according to your operational policy.
 
 ## The exact CSP decision (and why)
 
@@ -260,47 +410,27 @@ object-src 'none';
   (the SPA calls only same-origin `/admin`, `/public`, `/health`, `/account`,
   which nginx proxies).
 
-## Backend gaps found (precise)
+## Deployment validation
 
-1. **No clean profile-reconcile primitive.** Profiles are immutable versions plus
-   an active pointer; `profile.register` always creates a *new* version and
-   `profile.activate` flips the pointer. There is no content-addressed,
-   idempotent "make the store match this directory" operation. The container
-   entrypoint therefore reconciles best-effort at *profile-identity* granularity
-   (skip ids already present) and cannot detect/apply content drift on restart.
+The [packaged deployment gate](../pki-frontend/e2e/packaged/README.md) runs the
+actual server and nginx images, built SPA and CLI with temporary mTLS identities.
+It verifies RFC 9440 forwarding, approval, scoped authorization, retained signing
+receipts and observation without duplicate submission. The gate uses a private
+container network and a loopback-only edge port; it does not publish a deployment.
 
-   **Proposed fix — a first-class server flag:**
-   ```
-   zeroecho-pki-server --reconcile-profiles <dir> --config <server-config.json>
-   ```
-   Semantics: for each `*.json` in `<dir>`, canonicalise and hash the profile
-   document; if the store has no active version for that `profileId`, register +
-   activate it; if the active version's canonical hash differs, register a new
-   version and activate it; if it matches, do nothing. Runs against the same
-   store the server owns (before opening the listener), reuses the existing
-   `profile.register`/`profile.activate` execution path, is fully idempotent, and
-   emits one audit record per change and none per no-op. This removes the CLI
-   dependency and the "edit-doesn't-update" limitation above.
+## Distribution licenses
 
-2. **The `zeroecho pki` CLI is not a network client.** It is single-process and
-   local-store only (documented in `docs/examples/pki-cli/README.md`). There is
-   no `--url` remote mode. The smoke test consequently uses **curl over mTLS**
-   against the admin HTTPS API — which is the only network client contract — not
-   the CLI. (If a remote CLI is desired later, it would wrap the same admin API
-   this smoke test exercises.)
+Existing binary distribution routes include the canonical `LICENSE-binary.txt`:
 
-3. **Directory permission ownership for bind mounts.** The non-root runtime user
-   cannot `chown` a bind-mounted host directory it does not already own; the host
-   must pre-own store/keyring paths as uid 10001 (mode 0700). Named volumes and
-   k8s `fsGroup` handle this automatically. (Operational note, not a code bug.)
+| Artifact | License location |
+| --- | --- |
+| First-party JAR | `META-INF/LICENSE-binary.txt` |
+| CLI/server install tree, ZIP or TAR | Distribution root |
+| SPA directory or ZIP | Bundle root |
+| Server container | `/opt/zeroecho/LICENSE-binary.txt` |
+| nginx container | `/usr/share/licenses/zeroecho/LICENSE-binary.txt` and `/usr/share/nginx/html/LICENSE-binary.txt` |
 
-## What was validated vs. not
-
-* **Validated here:** YAML parses (compose + all k8s manifests); shell scripts
-  pass `sh -n`; config field/route/provider names and the admin request
-  envelope were cross-checked against the server/CLI source and the shipped
-  example configs.
-* **Not validated here (no container engine):** image builds, `nginx -t`, actual
-  container start-up, live mTLS handshakes, the RFC 9440 njs conversion against a
-  real handshake, and the end-to-end smoke run. Build and run these on a
-  POSIX/Docker host to confirm.
+Source headers retain the complete `LICENSE-source.txt` terms and existing
+copyright notices. Third-party components retain their own licenses. The shared
+JAR configuration selects `LICENSE-source.txt` for an existing `sources` classifier;
+it does not introduce additional publication variants.

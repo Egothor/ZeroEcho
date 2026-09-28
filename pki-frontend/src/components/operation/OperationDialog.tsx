@@ -34,7 +34,6 @@
 
 import { Dialog, DialogContent, DialogTitle, IconButton } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
-import { useNavigate } from 'react-router-dom';
 import { operationSpec } from '@/api/operationCatalog';
 import type { ExecuteOutcome, FieldValue } from '@/api/operations';
 import { OperationRunner } from '@/components/operation/OperationRunner';
@@ -49,7 +48,6 @@ interface Props {
 
 /** Runs a single operation inside a modal — used for row actions and Create flows. */
 export function OperationDialog({ operationId, open, onClose, initialValues, onCompleted }: Props) {
-  const navigate = useNavigate();
   const spec = operationId ? operationSpec(operationId) : undefined;
 
   return (
@@ -63,13 +61,10 @@ export function OperationDialog({ operationId, open, onClose, initialValues, onC
       <DialogContent dividers>
         {operationId && (
           <OperationRunner
+            key={operationId}
             operationId={operationId}
             initialValues={initialValues}
             onCompleted={onCompleted}
-            onRequestApproval={(_, opId) => {
-              onClose();
-              navigate(`/approvals?target=${encodeURIComponent(opId)}`);
-            }}
           />
         )}
       </DialogContent>

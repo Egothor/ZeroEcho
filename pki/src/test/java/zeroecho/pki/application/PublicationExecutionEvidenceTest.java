@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
-/** Closed round-trip of the terminal publication evidence vocabulary (Task 8a publication slice). */
+/** Closed round-trip of the terminal publication evidence vocabulary. */
 class PublicationExecutionEvidenceTest {
 
     @Test

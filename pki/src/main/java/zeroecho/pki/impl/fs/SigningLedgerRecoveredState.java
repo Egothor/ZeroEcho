@@ -35,8 +35,9 @@ package zeroecho.pki.impl.fs;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,6 +106,7 @@ final class SigningLedgerRecoveredState {
     /** Transactional recovery sink that publishes one immutable folded candidate. */
     /* default */ static final class RecoveryFold implements SigningLedgerRecovery.RecoverySink {
         private final MetadataStoreId storeId;
+        private State preparedState;
         private State state;
 
         /* default */ RecoveryFold(Path root, MetadataStoreId storeId) {
@@ -121,6 +123,13 @@ final class SigningLedgerRecoveredState {
                 throw new IllegalStateException("metadata recovery was not published");
             }
             return state;
+        }
+
+        /* default */ State preparedState() {
+            if (preparedState == null) {
+                throw new IllegalStateException("metadata recovery was not prepared");
+            }
+            return preparedState;
         }
     }
 
@@ -395,10 +404,10 @@ final class SigningLedgerRecoveredState {
                 throw new IOException("Metadata checkpoint boundary is missing");
             }
             prepared = true;
-            List<SigningMvccIndex.RecoveredRecord> ordered = new ArrayList<>(records.values());
-            ordered.sort(Comparator.comparing(SigningMvccIndex.RecoveredRecord::key));
-            State candidate = new State(revision, sequence, List.copyOf(ordered),
+            List<SigningMvccIndex.RecoveredRecord> ordered = orderRecords(records);
+            State candidate = new State(revision, sequence, ordered,
                     Map.copyOf(outcomes), watermark);
+            owner.preparedState = candidate;
             return new SigningLedgerRecovery.RecoverySink.Prepared() {
                 @Override public void publish() {
                     owner.state = candidate;
@@ -416,6 +425,70 @@ final class SigningLedgerRecoveredState {
                 outcomes.clear();
             }
         }
+    }
+
+    /**
+     * Orders canonical ASCII metadata identities in linear radix time without a
+     * comparison sort. Namespace termination sorts before every namespace byte;
+     * the exact key follows only after that separator, matching
+     * {@link MetadataKey#compareTo(MetadataKey)}.
+     */
+    private static List<SigningMvccIndex.RecoveredRecord> orderRecords(
+            Map<MetadataKey, SigningMvccIndex.RecoveredRecord> records) {
+        SigningMvccIndex.RecoveredRecord[] ordered = records.values().toArray(
+                SigningMvccIndex.RecoveredRecord[]::new);
+        if (ordered.length < 2) {
+            return List.of(ordered);
+        }
+        SigningMvccIndex.RecoveredRecord[] scratch = new SigningMvccIndex.RecoveredRecord[ordered.length];
+        Deque<RadixRange> pending = new ArrayDeque<>();
+        pending.addLast(new RadixRange(0, ordered.length, 0));
+        int[] counts = new int[129];
+        int[] positions = new int[counts.length];
+        while (!pending.isEmpty()) {
+            RadixRange range = pending.removeLast();
+            Arrays.fill(counts, 0);
+            for (int index = range.from; index < range.to; index++) {
+                counts[orderingSymbol(ordered[index].key(), range.depth)]++;
+            }
+            int position = range.from;
+            for (int symbol = 0; symbol < counts.length; symbol++) {
+                positions[symbol] = position;
+                position += counts[symbol];
+            }
+            for (int index = range.from; index < range.to; index++) {
+                int symbol = orderingSymbol(ordered[index].key(), range.depth);
+                scratch[positions[symbol]++] = ordered[index];
+            }
+            System.arraycopy(scratch, range.from, ordered, range.from,
+                    range.to - range.from);
+            position = range.from;
+            for (int symbol = 0; symbol < counts.length; symbol++) {
+                int count = counts[symbol];
+                if (symbol != 0 && count > 1) {
+                    pending.addLast(new RadixRange(position, position + count,
+                            range.depth + 1));
+                }
+                position += count;
+            }
+        }
+        return List.copyOf(Arrays.asList(ordered));
+    }
+
+    private static int orderingSymbol(MetadataKey key, int depth) {
+        String namespace = key.namespace();
+        if (depth < namespace.length()) {
+            return namespace.charAt(depth) + 2;
+        }
+        if (depth == namespace.length()) {
+            return 1;
+        }
+        String value = key.key();
+        int keyOffset = depth - namespace.length() - 1;
+        return keyOffset < value.length() ? value.charAt(keyOffset) + 2 : 0;
+    }
+
+    private record RadixRange(int from, int to, int depth) {
     }
 
     /* default */ record State(long revision, long sequence,

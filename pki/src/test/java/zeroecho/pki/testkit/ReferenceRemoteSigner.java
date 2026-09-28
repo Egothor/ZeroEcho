@@ -35,6 +35,31 @@ package zeroecho.pki.testkit;
 
 import java.security.KeyPair;
 import java.security.Signature;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.math.BigInteger;
+import java.util.LinkedHashMap;
+
+import org.bouncycastle.asn1.DERNull;
+import org.bouncycastle.asn1.nist.NISTObjectIdentifiers;
+import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
+import org.bouncycastle.asn1.x509.DigestInfo;
+import org.bouncycastle.crypto.Digest;
+import org.bouncycastle.crypto.digests.SHA256Digest;
+import org.bouncycastle.crypto.digests.SHA384Digest;
+import org.bouncycastle.crypto.digests.SHA512Digest;
+import org.bouncycastle.crypto.engines.RSABlindedEngine;
+import org.bouncycastle.crypto.encodings.PKCS1Encoding;
+import org.bouncycastle.crypto.params.ParametersWithRandom;
+import org.bouncycastle.crypto.signers.PSSSigner;
+import org.bouncycastle.crypto.signers.ECDSASigner;
+import org.bouncycastle.crypto.signers.StandardDSAEncoding;
+import org.bouncycastle.crypto.params.ECPrivateKeyParameters;
+import org.bouncycastle.crypto.util.PrivateKeyFactory;
+
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.pki.spi.crypto.SigningInputCapabilities;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -62,7 +87,7 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
 
     private final Map<String, KeyPair> keys;
     private final boolean requireApproval;
-    private final byte[] configurationCommitment;
+    private final RemoteCapabilities capabilities;
     private final Map<String, RemoteSigningStatus> statuses = new HashMap<>();
     private final Map<String, String> fingerprints = new HashMap<>();
     private final Map<String, Long> fences = new HashMap<>();
@@ -77,22 +102,50 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
      *                        {@link RemoteSigningState#QUEUED} until {@link #approve}
      */
     public ReferenceRemoteSigner(Map<String, KeyPair> keys, boolean requireApproval) {
+        this(keys, requireApproval, defaultCapabilities());
+    }
+
+    /** Creates a signer with exact server-captured capabilities. */
+    public ReferenceRemoteSigner(Map<String, KeyPair> keys, boolean requireApproval, RemoteCapabilities capabilities) {
         this.keys = new HashMap<>(Objects.requireNonNull(keys, "keys"));
         this.requireApproval = requireApproval;
-        this.configurationCommitment = new byte[32];
+        this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
+    }
+
+    /** Returns the standard reference protocol capability fixture. */
+    public static RemoteCapabilities defaultCapabilities() {
+        byte[] configurationCommitment = new byte[32];
         for (int index = 0; index < configurationCommitment.length; index++) {
             configurationCommitment[index] = (byte) (0x40 + index);
         }
+        Map<String, AlgorithmIdentity> prehash = new LinkedHashMap<>();
+        for (AlgorithmIdentity identity : List.of(BootstrapAlgorithmIdentities.RSA_PKCS1_SHA256,
+                BootstrapAlgorithmIdentities.RSA_PKCS1_SHA384, BootstrapAlgorithmIdentities.RSA_PKCS1_SHA512,
+                BootstrapAlgorithmIdentities.RSA_PSS_SHA256, BootstrapAlgorithmIdentities.ECDSA_SHA256,
+                BootstrapAlgorithmIdentities.ECDSA_SHA384, BootstrapAlgorithmIdentities.ECDSA_SHA512)) {
+            prehash.put(identity.canonicalForm(), SigningInputCapabilities.requiredDigest(identity));
+        }
+        java.util.Set<String> algorithms = new java.util.HashSet<>(prehash.keySet());
+        algorithms.add(BootstrapAlgorithmIdentities.ED25519_SIGNATURE.canonicalForm());
+        algorithms.add(BootstrapAlgorithmIdentities.ED448_SIGNATURE.canonicalForm());
+        return new RemoteCapabilities(algorithms, configurationCommitment, SigningInputCapabilities.PROTOCOL_VERSION,
+                new SigningInputCapabilities(SigningInputCapabilities.REMOTE_RAW_LIMIT, prehash));
     }
 
     @Override
     public synchronized RemoteSigningStatus submit(RemoteSignRequest request, RemoteCallControl control) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(control, "control");
+        if (control.cancellation().isCancelled() || !Instant.now().isBefore(control.deadline())
+                || request.deadline().filter(value -> !Instant.now().isBefore(value)).isPresent()) {
+            throw new IllegalStateException("Remote signing deadline or cancellation reached");
+        }
+        request.validate(capabilities);
+        String fingerprint = request.wireFingerprint();
         String operationId = request.submissionId();
         String existing = fingerprints.get(operationId);
         if (existing != null) {
-            if (!existing.equals(request.semanticFingerprint())) {
+            if (!existing.equals(fingerprint)) {
                 throw new IllegalStateException("Remote signing request conflicts with a prior submission");
             }
             if (request.fencingToken() < fences.get(operationId)) {
@@ -100,11 +153,11 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
             }
             return statuses.get(operationId);
         }
-        fingerprints.put(operationId, request.semanticFingerprint());
+        fingerprints.put(operationId, fingerprint);
         fences.put(operationId, request.fencingToken());
         if (requireApproval) {
             RemoteSigningStatus queued = new RemoteSigningStatus(operationId, RemoteSigningState.QUEUED,
-                    Instant.now(), Optional.of("awaiting-operator-approval"), Optional.empty(), "");
+                    Instant.now(), Optional.empty(), "");
             pendingApproval.put(operationId, request);
             return store(operationId, queued);
         }
@@ -117,31 +170,31 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
         RemoteSigningStatus current = statuses.get(operationId);
         if (current == null) {
             return new RemoteSigningStatus(operationId, RemoteSigningState.DENIED, Instant.now(),
-                    Optional.of("unknown-operation"), Optional.empty(), "");
+                    Optional.empty(), "");
         }
         return current;
     }
 
     @Override
-    public synchronized boolean cancel(String operationId, long fencingToken, String reason,
+    public synchronized RemoteSigningStatus cancel(String operationId, long fencingToken, String reason,
             RemoteCallControl control) {
         Objects.requireNonNull(operationId, "operationId");
         RemoteSigningStatus current = statuses.get(operationId);
         if (current == null) {
-            return false;
+            return new RemoteSigningStatus(operationId, RemoteSigningState.UNKNOWN, Instant.now(),
+                    Optional.empty(), "");
         }
         long currentFence = fences.getOrDefault(operationId, 0L);
         if (current.state().isTerminal()) {
-            return current.state() == RemoteSigningState.CANCELLED && fencingToken == currentFence;
+            return current;
         }
         if (fencingToken < currentFence) {
-            return false;
+            return current;
         }
         fences.put(operationId, fencingToken);
         pendingApproval.remove(operationId);
-        store(operationId, new RemoteSigningStatus(operationId, RemoteSigningState.CANCELLED, Instant.now(),
-                Optional.of("cancelled-by-caller"), Optional.empty(), ""));
-        return true;
+        return store(operationId, new RemoteSigningStatus(operationId, RemoteSigningState.CANCELLED, Instant.now(),
+                Optional.empty(), ""));
     }
 
     @Override
@@ -155,8 +208,7 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
 
     @Override
     public synchronized RemoteCapabilities capabilities() {
-        return new RemoteCapabilities(Set.of("SHA256withRSA", "SHA384withRSA", "SHA512withRSA"),
-                configurationCommitment.clone());
+        return capabilities;
     }
 
     @Override
@@ -184,7 +236,7 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
     public synchronized RemoteSigningStatus deny(String operationId, String reason) {
         pendingApproval.remove(operationId);
         return store(operationId, new RemoteSigningStatus(operationId, RemoteSigningState.DENIED, Instant.now(),
-                Optional.of(reason), Optional.empty(), ""));
+                Optional.empty(), ""));
     }
 
     @Override
@@ -196,18 +248,24 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
         KeyPair keyPair = keys.get(request.keyHandle());
         if (keyPair == null) {
             return store(operationId, new RemoteSigningStatus(operationId, RemoteSigningState.DENIED, Instant.now(),
-                    Optional.of("unknown-key"), Optional.empty(), ""));
+                    Optional.empty(), ""));
         }
         try {
-            Signature signature = Signature.getInstance(InMemorySignatureWorkflow.jcaName(request.algorithmId()));
-            signature.initSign(keyPair.getPrivate());
-            signature.update(request.content());
-            byte[] produced = signature.sign();
+            byte[] produced;
+            if (request.inputMode() == SigningInputCapabilities.Mode.PREHASHED_DIGEST) {
+                produced = signDigest(keyPair, AlgorithmIdentity.parse(request.algorithmId(), List.of()),
+                        request.content());
+            } else {
+                Signature signature = Signature.getInstance(jcaName(request.algorithmId()));
+                signature.initSign(keyPair.getPrivate());
+                signature.update(request.content());
+                produced = signature.sign();
+            }
             return store(operationId, new RemoteSigningStatus(operationId, RemoteSigningState.SIGNED, Instant.now(),
-                    Optional.of("signed"), Optional.of(produced), "BINARY"));
+                    Optional.of(produced), "BINARY"));
         } catch (Exception failure) {
             return store(operationId, new RemoteSigningStatus(operationId, RemoteSigningState.DENIED, Instant.now(),
-                    Optional.of("signing-failed"), Optional.empty(), ""));
+                    Optional.empty(), ""));
         }
     }
 
@@ -221,5 +279,50 @@ public final class ReferenceRemoteSigner implements RemoteSigningTransport {
             }
         }
         return status;
+    }
+
+    private static String jcaName(String algorithmId) {
+        return BootstrapAlgorithmIdentities.compatibilityAliases().entrySet().stream()
+                .filter(entry -> entry.getValue().canonicalForm().equals(algorithmId))
+                .map(Map.Entry::getKey).findFirst().orElseThrow();
+    }
+
+    private static byte[] signDigest(KeyPair key, AlgorithmIdentity identity, byte[] digest) throws Exception {
+        if (identity.parameters() instanceof AlgorithmIdentity.RsaPssParameters parameters) {
+            PSSSigner signer = PSSSigner.createRawSigner(new RSABlindedEngine(), digest(parameters.hash()),
+                    digest(parameters.maskHash()), parameters.saltLength(), PSSSigner.TRAILER_IMPLICIT);
+            signer.init(true, new ParametersWithRandom(PrivateKeyFactory.createKey(key.getPrivate().getEncoded()),
+                    new SecureRandom()));
+            signer.update(digest, 0, digest.length);
+            return signer.generateSignature();
+        }
+        if (identity.family().equals(BootstrapAlgorithmIdentities.ECDSA_SHA256.family())) {
+            ECPrivateKeyParameters parameters = (ECPrivateKeyParameters) PrivateKeyFactory.createKey(
+                    key.getPrivate().getEncoded());
+            ECDSASigner signer = new ECDSASigner();
+            signer.init(true, new ParametersWithRandom(parameters, new SecureRandom()));
+            BigInteger[] signature = signer.generateSignature(digest);
+            return StandardDSAEncoding.INSTANCE.encode(parameters.getParameters().getN(), signature[0], signature[1]);
+        }
+        AlgorithmIdentifier digestAlgorithm = new AlgorithmIdentifier(switch (digest.length) {
+            case 32 -> NISTObjectIdentifiers.id_sha256;
+            case 48 -> NISTObjectIdentifiers.id_sha384;
+            case 64 -> NISTObjectIdentifiers.id_sha512;
+            default -> throw new IllegalArgumentException("Unsupported digest");
+        }, DERNull.INSTANCE);
+        byte[] digestInfo = new DigestInfo(digestAlgorithm, digest).getEncoded("DER");
+        PKCS1Encoding signer = new PKCS1Encoding(new RSABlindedEngine());
+        signer.init(true, new ParametersWithRandom(PrivateKeyFactory.createKey(key.getPrivate().getEncoded()),
+                new SecureRandom()));
+        return signer.processBlock(digestInfo, 0, digestInfo.length);
+    }
+
+    private static Digest digest(AlgorithmIdentity identity) {
+        return switch (SigningInputCapabilities.digestLength(identity)) {
+            case 32 -> new SHA256Digest();
+            case 48 -> new SHA384Digest();
+            case 64 -> new SHA512Digest();
+            default -> throw new IllegalArgumentException("Unsupported digest");
+        };
     }
 }

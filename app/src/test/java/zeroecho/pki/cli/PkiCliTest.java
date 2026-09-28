@@ -36,6 +36,7 @@ package zeroecho.pki.cli;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -60,7 +61,7 @@ import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiSession;
-import zeroecho.pki.application.PkiSessionConfiguration;
+import zeroecho.pki.application.LocalPkiSessionConfiguration;
 
 class PkiCliTest {
 
@@ -89,13 +90,14 @@ class PkiCliTest {
     }
 
     @Test
-    void signingAndPublicationFamiliesUseOneTypedBatchSession() throws IOException {
-        System.out.println("signingAndPublicationFamiliesUseOneTypedBatchSession");
+    void unconfiguredSigningFailsAtItsStepAndStopsDependents() throws IOException {
+        System.out.println("unconfiguredSigningFailsAtItsStepAndStopsDependents");
         Path configuration = configuration("capability-workflow");
         Path request = temporaryDirectory.resolve("request.der");
         Files.write(request, new byte[] { 0x30, 0x00 });
         Path workflow = plan("capability-workflow.json", """
                 {"version":1,"failurePolicy":"FAIL_FAST","operations":[
+                  {"id":"first","operation":"configuration.validate","arguments":{}},
                   {"id":"ca","operation":"ca.create","arguments":{"formatId":"x509","subjectRef":"CN=Root","profileId":"root-ca","keyRef":"managed:root.prv"}},
                   {"id":"request","operation":"request.import","arguments":{"formatId":"x509","encoding":"DER","requestFile":"request.der"}},
                   {"id":"issue","operation":"credential.issue","arguments":{"issuerCaId":"${ca.caId}","requestId":"${request.requestId}","profileId":"server"}},
@@ -108,12 +110,11 @@ class PkiCliTest {
         int code = PkiCli.execute(new String[] { "run", workflow.toString(), "--config", configuration.toString(),
                 "--output", "json" }, output, opener, () -> false);
         System.out.println("...operations=" + opener.operationTypes.size());
-        assertEquals(PkiExitCodes.SUCCESS, code);
+        assertEquals(PkiExitCodes.VALIDATION_OR_POLICY, code);
         assertEquals(1, opener.sessions.get());
-        assertEquals(List.of(PkiOperation.CreateAuthority.class, PkiOperation.ImportRequest.class,
-                PkiOperation.IssueCredential.class, PkiOperation.RegisterPublication.class,
-                PkiOperation.ProcessPublication.class), opener.operationTypes);
-        assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operation\":\"publication.process\""));
+        assertEquals(1, opener.closes.get());
+        assertEquals(List.of(PkiOperation.ValidateConfiguration.class), opener.operationTypes);
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("CAPABILITY_NOT_CONFIGURED"));
         System.out.println("...ok");
     }
 
@@ -197,70 +198,15 @@ class PkiCliTest {
     }
 
     @Test
-    void versionTwoConfigurationKeepsCapabilitiesExplicit() throws IOException {
-        System.out.println("versionTwoConfigurationKeepsCapabilitiesExplicit");
-        Path configuration = temporaryDirectory.resolve("capabilities.json");
-        Files.writeString(configuration, """
-                {"version":2,
-                 "store":{"provider":"fs","properties":{"root":"store"}},
-                 "audit":{"provider":"memory","properties":{"size":"16"}},
-                 "signing":{"workflow":{"provider":"zeroecho-lib","properties":{"keyringPath":"keys.zek"}},
-                            "framework":{"provider":"x509-bc","properties":{}},
-                            "signatureAlgorithm":"SHA256withRSA","signingTtlSeconds":30},
-                 "publishers":[{"provider":"filesystem","properties":{"root":"published","targetId":"local"}}]}
-                """);
-        PkiSessionConfiguration parsed = PkiCliConfiguration.read(configuration);
-        System.out.println("...publishers=" + parsed.publishers().size());
-        assertTrue(parsed.signing().isPresent());
-        assertTrue(parsed.signing().orElseThrow().unlockEnvironmentVariable().isEmpty());
-        assertEquals(1, parsed.publishers().size());
-        System.out.println("...ok");
-    }
-
-    @Test
-    void versionFourConfigurationReadsBoundedSigningRuntime() throws IOException {
-        Path configuration = temporaryDirectory.resolve("bounded-signing.json");
-        Files.writeString(configuration, """
-                {"version":4,
-                 "store":{"provider":"fs","properties":{"root":"store"}},
-                 "audit":{"provider":"memory","properties":{"size":"16"}},
-                 "signing":{"workflow":{"provider":"zeroecho-lib","properties":{"keyringPath":"keys.zek"}},
-                            "framework":{"provider":"x509-bc","properties":{}},
-                            "signatureAlgorithm":"SHA256withRSA","signingTtlSeconds":30,
-                            "laneCount":2,"queueCapacity":3,
-                            "gracefulDrainSeconds":4,"forcedCancellationSeconds":5},
-                 "publishers":[],"bindingProviders":[]}
-                """);
-        PkiSessionConfiguration.SigningConfiguration signing = PkiCliConfiguration.read(configuration)
-                .signing().orElseThrow();
-        assertEquals(2, signing.laneCount());
-        assertEquals(3, signing.queueCapacity());
-        assertEquals(Duration.ofSeconds(4), signing.gracefulDrain());
-        assertEquals(Duration.ofSeconds(5), signing.forcedCancellation());
-    }
-
-    @Test
-    void configurationReadsPerCaSigningServicesAndRouting() throws IOException {
-        System.out.println("configurationReadsPerCaSigningServicesAndRouting");
-        Path configuration = temporaryDirectory.resolve("routed-signing.json");
-        Files.writeString(configuration, """
-                {"version":4,
-                 "store":{"provider":"fs","properties":{"root":"store"}},
-                 "audit":{"provider":"memory","properties":{"size":"16"}},
-                 "signing":{"workflow":{"provider":"zeroecho-lib","properties":{"keyringPath":"keys.zek"}},
-                            "framework":{"provider":"x509-bc","properties":{}},
-                            "signatureAlgorithm":"SHA256withRSA","signingTtlSeconds":30,
-                            "signingServices":[{"serviceId":"hsm-a","workflow":{"provider":"zeroecho-remote",\
-                            "properties":{"endpoint":"https://hsm-a.example:8443/v1/sign"}}}],
-                            "caRouting":{"kref:issuer:ca-a":"hsm-a"}},
-                 "publishers":[],"bindingProviders":[]}
-                """);
-        PkiSessionConfiguration.SigningConfiguration signing = PkiCliConfiguration.read(configuration)
-                .signing().orElseThrow();
-        assertEquals(1, signing.signingServices().size());
-        assertEquals("hsm-a", signing.signingServices().get(0).serviceId());
-        assertEquals("zeroecho-remote", signing.signingServices().get(0).workflow().backendId());
-        assertEquals(java.util.Map.of("kref:issuer:ca-a", "hsm-a"), signing.caRouting());
+    void legacyConfigurationsAreRejectedWithoutAdapters() throws IOException {
+        for (int version = 1; version <= 6; version++) {
+            Path configuration = plan("legacy-" + version + ".json", """
+                    {"version":%d,"store":{"provider":"fs","properties":{"root":"store"}},
+                    "audit":{"provider":"memory","properties":{"size":"16"}},
+                    "publishers":[],"bindingProviders":[]}
+                    """.formatted(version));
+            assertThrows(IllegalArgumentException.class, () -> PkiCliConfiguration.read(configuration));
+        }
     }
 
     @Test
@@ -311,8 +257,8 @@ class PkiCliTest {
     }
 
     @Test
-    void directSigningDependentCommandUsesTheSharedTypedExecutor() throws IOException {
-        System.out.println("directSigningDependentCommandUsesTheSharedTypedExecutor");
+    void directSigningRequiresConfiguredCapability() throws IOException {
+        System.out.println("directSigningRequiresConfiguredCapability");
         Path configuration = configuration("direct-ca");
         RecordingOpener opener = new RecordingOpener();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -320,9 +266,10 @@ class PkiCliTest {
                 "CN=Root", "--profile-id", "root-ca", "--key-ref", "managed:root.prv", "--config",
                 configuration.toString(), "--output", "json" }, output, opener, () -> false);
         System.out.println("...exit=" + code);
-        assertEquals(PkiExitCodes.SUCCESS, code);
-        assertEquals(List.of(PkiOperation.CreateAuthority.class), opener.operationTypes);
-        assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"caId\":\"ca-1\""));
+        assertEquals(PkiExitCodes.VALIDATION_OR_POLICY, code);
+        assertEquals(1, opener.sessions.get());
+        assertEquals(1, opener.closes.get());
+        assertTrue(opener.operationTypes.isEmpty());
         System.out.println("...ok");
     }
 
@@ -438,9 +385,150 @@ class PkiCliTest {
         System.out.println("...ok");
     }
 
+    @Test
+    void localAuthorityScopeAndOptionLookingValuesAreOperationArguments() throws IOException {
+        Path configuration = configuration("scope");
+        RecordingOpener opener = new RecordingOpener();
+        assertEquals(0, PkiCli.execute(new String[] { "credential.search", "--authority-id", "root", "--limit", "10",
+                "--config", configuration.toString() }, new ByteArrayOutputStream(), opener, () -> false));
+        assertEquals(new zeroecho.pki.api.PkiId("root"),
+                ((PkiOperation.SearchCredentials) opener.operations.get(0)).authorityId());
+        assertEquals(0, PkiCli.execute(new String[] { "credential.inspect", "--credential-id", "--url",
+                "--config", configuration.toString() }, new ByteArrayOutputStream(), opener, () -> false));
+        assertEquals("--url", ((PkiOperation.InspectCredential) opener.operations.get(1)).credentialId().value());
+    }
+
+    @Test
+    void publicationBatchPreservesCompletedReferencesAndSingleSession() throws IOException {
+        Path configuration = configuration("publication");
+        Path workflow = plan("publication.json", """
+                {"version":1,"failurePolicy":"FAIL_FAST","operations":[
+                {"id":"inspect","operation":"credential.inspect","arguments":{"credentialId":"certificate"}},
+                {"id":"register","operation":"publication.register","arguments":{"publicationId":"publication",
+                "sourceType":"CREDENTIAL","sourceId":"${inspect.credentialId}","targetType":"FILESYSTEM","targetId":"local"}},
+                {"id":"process","operation":"publication.process","arguments":{"publicationId":"${register.publicationId}"}}]}
+                """);
+        RecordingOpener opener = new RecordingOpener();
+        assertEquals(0, PkiCli.execute(new String[] { "run", workflow.toString(), "--config", configuration.toString() },
+                new ByteArrayOutputStream(), opener, () -> false));
+        assertEquals(1, opener.sessions.get());
+        assertEquals(1, opener.closes.get());
+        assertEquals("certificate", ((PkiOperation.RegisterPublication) opener.operations.get(1)).sourceId().value());
+        assertEquals("publication", ((PkiOperation.ProcessPublication) opener.operations.get(2)).publicationId().value());
+    }
+
+    @Test
+    void signingReceiptsSurviveFailuresCancellationAndSessionClose() throws IOException {
+        Path configuration = configuration("signing-receipt");
+        RecordingOpener opener = new RecordingOpener();
+        SigningExecutor executor = new SigningExecutor();
+        opener.signing = executor;
+        for (PkiOperationFailure failure : List.of(PkiOperationFailure.RECOVERY_REQUIRED, PkiOperationFailure.CANCELLED,
+                PkiOperationFailure.RESOURCE_FAILURE)) {
+            executor.failure = failure;
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            int exit = PkiCli.execute(new String[] { "ca.create", "--format-id", "x509", "--subject-ref", "CN=Root",
+                    "--profile-id", "root-ca", "--key-ref", "key", "--config", configuration.toString(),
+                    "--output", "json" }, output, opener, () -> false);
+            assertEquals(failure == PkiOperationFailure.RECOVERY_REQUIRED ? 6
+                    : failure == PkiOperationFailure.CANCELLED ? 130 : 8, exit);
+            assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operationId\":\"accepted-id\""));
+        }
+        executor.failure = null;
+        opener.failClose = true;
+        ByteArrayOutputStream completed = new ByteArrayOutputStream();
+        assertEquals(8, PkiCli.execute(new String[] { "signing.operation.complete", "--operation-id", "accepted-id",
+                "--config", configuration.toString(), "--output", "json" }, completed, opener, () -> false));
+        String json = completed.toString(StandardCharsets.UTF_8);
+        assertTrue(json.contains("SESSION_CLOSE_FAILED"));
+        assertTrue(json.contains("\"operationId\":\"accepted-id\""));
+        assertTrue(json.contains("\"status\":\"SUCCEEDED\""));
+        assertFalse(json.contains("sensitive-close-detail"));
+    }
+
+    @Test
+    void controlFailuresAndPreStepCancellationRetainRequestedIdentity() throws IOException {
+        Path configuration = configuration("control-receipt");
+        RecordingOpener opener = new RecordingOpener();
+        SigningExecutor executor = new SigningExecutor();
+        opener.signing = executor;
+        for (String command : List.of(PkiLocalCommand.INSPECT, PkiLocalCommand.COMPLETE)) {
+            for (boolean cancelled : List.of(false, true)) {
+                executor.throwFailure = true;
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                assertEquals(cancelled ? 130 : 9, PkiCli.execute(new String[] { command, "--operation-id", "requested-id",
+                        "--config", configuration.toString(), "--output", "json" }, output, opener, () -> cancelled));
+                assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operationId\":\"requested-id\""));
+                assertFalse(output.toString(StandardCharsets.UTF_8).contains("sensitive-runtime-detail"));
+            }
+        }
+    }
+
+    @Test
+    void signingPlansExposeOnlyCompletedReferencesAndRetainCancelledReferenceIdentity() throws IOException {
+        PkiOperationRegistry registry = new PkiOperationRegistry();
+        Path workflow = plan("signing-reference.json", """
+                {"version":1,"failurePolicy":"CONTINUE_INDEPENDENT","operations":[
+                  {"id":"created","operation":"ca.create","arguments":{"formatId":"x509","subjectRef":"CN=Root","profileId":"root-ca","keyRef":"key"}},
+                  {"id":"inspect","operation":"signing.operation.inspect","arguments":{"operationId":"${created.operationId}"}},
+                  {"id":"read","operation":"configuration.validate","arguments":{}}
+                ]}
+                """);
+        PkiPlan plan = PkiPlanParser.read(workflow, registry.names());
+        java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        AtomicInteger calls = new AtomicInteger();
+        PkiPlanExecution execution = new PkiPlanExecutor(registry).execute(plan, (command, cancellation) -> {
+            calls.incrementAndGet();
+            cancel.set(true);
+            return new PkiLocalResult(new PkiOperationOutcome.Completed(new PkiOperationResult("signing.operation",
+                    java.util.Map.of("operationId", new PkiOperationValue.Text("accepted-id")))),
+                    java.util.Optional.of(new zeroecho.pki.api.PkiId("accepted-id")));
+        }, cancel::get);
+        assertEquals(1, calls.get());
+        assertEquals("accepted-id", execution.steps().get(1).operationId().orElseThrow().value());
+        assertEquals(java.util.Optional.of(PkiOperationFailure.CANCELLED), execution.steps().get(1).failure());
+        assertEquals(PkiPlanExecution.StepStatus.SKIPPED, execution.steps().get(2).status());
+        execution = new PkiPlanExecutor(registry).execute(plan, (command, cancellation) -> {
+            if (command instanceof PkiLocalCommand.Signing) {
+                return new PkiLocalResult(new PkiOperationOutcome.Failed("ca.create", PkiOperationFailure.RECOVERY_REQUIRED,
+                        "RECOVERY_REQUIRED"), java.util.Optional.of(new zeroecho.pki.api.PkiId("accepted-id")));
+            }
+            return new PkiLocalResult(new PkiOperationOutcome.Completed(new PkiOperationResult("configuration.validate",
+                    java.util.Map.of())), java.util.Optional.empty());
+        }, () -> false);
+        assertEquals(PkiPlanExecution.StepStatus.SKIPPED, execution.steps().get(1).status());
+        assertEquals(PkiPlanExecution.StepStatus.SUCCEEDED, execution.steps().get(2).status());
+        assertEquals(6, PkiExitCodes.from(execution));
+    }
+
+    private static final class SigningExecutor implements zeroecho.pki.application.LocalSigningExecutor {
+        private PkiOperationFailure failure;
+        private boolean throwFailure;
+        private final zeroecho.pki.api.signing.SigningAcceptanceReceipt receipt =
+                zeroecho.pki.api.signing.SigningAcceptanceReceipt.parse(new zeroecho.pki.api.PkiId("accepted-id"),
+                        "accept-sign:v3:" + "a".repeat(64));
+        @Override public zeroecho.pki.application.LocalSigningResult execute(
+                zeroecho.pki.application.PkiSigningOperation operation, zeroecho.core.io.CancellationSignal cancellation) {
+            return result();
+        }
+        @Override public zeroecho.pki.application.LocalSigningResult complete(zeroecho.pki.api.PkiId operationId,
+                zeroecho.core.io.CancellationSignal cancellation) { return result(); }
+        @Override public PkiOperationOutcome inspect(zeroecho.pki.api.PkiId operationId,
+                zeroecho.core.io.CancellationSignal cancellation) {
+            throw new IllegalStateException("sensitive-runtime-detail");
+        }
+        private zeroecho.pki.application.LocalSigningResult result() {
+            if (throwFailure) throw new IllegalStateException("sensitive-runtime-detail");
+            if (failure != null) return new zeroecho.pki.application.LocalSigningResult.Failed(
+                    new PkiOperationOutcome.Failed("signing.operation", failure, failure.name()), java.util.Optional.of(receipt));
+            return new zeroecho.pki.application.LocalSigningResult.Completed(new PkiOperationResult("signing.operation",
+                    java.util.Map.of("credentialId", new PkiOperationValue.Text("credential"))), receipt);
+        }
+    }
+
     private Path configuration(String name) throws IOException {
         Path store = temporaryDirectory.resolve(name + "-store");
-        return plan(name + "-config.json", "{\"version\":1,\"store\":{\"provider\":\"fs\",\"properties\":{\"root\":\""
+        return plan(name + "-config.json", "{\"version\":1,\"mode\":\"local\",\"operatorId\":\"test-operator\",\"publishers\":[],\"bindingProviders\":[],\"store\":{\"provider\":\"fs\",\"properties\":{\"root\":\""
                 + store + "\"}},\"audit\":{\"provider\":\"memory\",\"properties\":{\"size\":\"32\"}}}");
     }
 
@@ -451,29 +539,30 @@ class PkiCliTest {
     }
 
     @Test
-    void pendingOperationResolvesWithinBoundedWait() throws IOException {
-        System.out.println("pendingOperationResolvesWithinBoundedWait");
+    void localPendingWaitIsRejectedBeforeOpening() throws IOException {
+        System.out.println("localPendingWaitIsRejectedBeforeOpening");
         Path configuration = configuration("pending-resolve");
         PendingOpener opener = new PendingOpener(2);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         int code = PkiCli.execute(new String[] { "configuration.validate", "--config", configuration.toString(),
                 "--pending-wait", "5", "--output", "json" }, output, opener, () -> false);
         System.out.println("...executions=" + opener.executions.get() + " code=" + code);
-        assertEquals(PkiExitCodes.SUCCESS, code);
-        assertTrue(opener.executions.get() >= 3);
+        assertEquals(PkiExitCodes.INVALID_INVOCATION, code);
+        assertEquals(0, opener.executions.get());
         System.out.println("...ok");
     }
 
     @Test
-    void pendingOperationExitsCleanlyForResumeWhenWaitElapses() throws IOException {
-        System.out.println("pendingOperationExitsCleanlyForResumeWhenWaitElapses");
+    void unexpectedPendingOutcomeNeverResubmits() throws IOException {
+        System.out.println("unexpectedPendingOutcomeNeverResubmits");
         Path configuration = configuration("pending-exit");
         PendingOpener opener = new PendingOpener(Integer.MAX_VALUE);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         int code = PkiCli.execute(new String[] { "configuration.validate", "--config", configuration.toString(),
-                "--pending-wait", "0", "--output", "json" }, output, opener, () -> false);
+                "--output", "json" }, output, opener, () -> false);
         System.out.println("...executions=" + opener.executions.get() + " code=" + code);
-        // Clean, distinct exit for operator resume; no bounded re-execution when the wait is zero.
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("\"operationId\":\"signing:pending-1\""));
+        // An unexpected pending core result must not cause mutation resubmission.
         assertEquals(PkiExitCodes.EXTERNAL_OUTCOME_UNKNOWN, code);
         assertEquals(1, opener.executions.get());
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("OPERATION_PENDING"));
@@ -490,7 +579,7 @@ class PkiCliTest {
         }
 
         @Override
-        public PkiSession open(PkiSessionConfiguration configuration) {
+        public PkiSession open(LocalPkiSessionConfiguration configuration) {
             return new PkiSession() {
                 @Override public ProfileService profiles() { throw new UnsupportedOperationException(); }
                 @Override public RevocationService revocations() { throw new UnsupportedOperationException(); }
@@ -513,10 +602,6 @@ class PkiCliTest {
                 @Override public zeroecho.pki.application.PkiRepository repository() {
                     throw new UnsupportedOperationException();
                 }
-                @Override public zeroecho.pki.application.SigningReconciliationResult reconcileSigning(
-                        zeroecho.pki.application.SigningReconciliationRequest request) {
-                    throw new UnsupportedOperationException();
-                }
                 @Override public void close() { }
             };
         }
@@ -528,11 +613,17 @@ class PkiCliTest {
         private final List<Class<?>> operationTypes = new java.util.ArrayList<>();
         private final List<PkiOperation> operations = new java.util.ArrayList<>();
         private boolean failClose;
+        private zeroecho.pki.application.LocalSigningExecutor signing;
 
         @Override
-        public PkiSession open(PkiSessionConfiguration configuration) {
+        public PkiSession open(LocalPkiSessionConfiguration configuration) {
             sessions.incrementAndGet();
             return new PkiSession() {
+                @Override
+                public java.util.Optional<zeroecho.pki.application.LocalSigningExecutor> localSigning() {
+                    return java.util.Optional.ofNullable(signing);
+                }
+
                 @Override
                 public ProfileService profiles() {
                     throw new UnsupportedOperationException();
@@ -593,12 +684,6 @@ class PkiCliTest {
                 }
 
                 @Override
-                public zeroecho.pki.application.SigningReconciliationResult reconcileSigning(
-                        zeroecho.pki.application.SigningReconciliationRequest request) {
-                    throw new UnsupportedOperationException();
-                }
-
-                @Override
                 public void close() throws Exception {
                     closes.incrementAndGet();
                     if (failClose) {
@@ -624,12 +709,10 @@ class PkiCliTest {
             } else if (operation instanceof PkiOperation.RevokeCredential revoke) {
                 fields.put("credentialId", new PkiOperationValue.Text(revoke.credentialId().value()));
                 fields.put("state", new PkiOperationValue.Text("PERMANENTLY_REVOKED"));
-            } else if (operation instanceof PkiOperation.CreateAuthority) {
-                fields.put("caId", new PkiOperationValue.Text("ca-1"));
+
             } else if (operation instanceof PkiOperation.ImportRequest) {
                 fields.put("requestId", new PkiOperationValue.Text("request-1"));
-            } else if (operation instanceof PkiOperation.IssueCredential) {
-                fields.put("credentialId", new PkiOperationValue.Text("credential-1"));
+
             } else if (operation instanceof PkiOperation.RegisterPublication register) {
                 fields.put("publicationId", new PkiOperationValue.Text(register.publicationId().value()));
             } else if (operation instanceof PkiOperation.ProcessPublication process) {

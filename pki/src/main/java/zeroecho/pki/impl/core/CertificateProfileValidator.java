@@ -95,7 +95,7 @@ final class CertificateProfileValidator {
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
             Instant evaluationTime, X509AuthoritySnapshot authority) {
         requireCanonicalRequestAttributes(candidate.request());
-        return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority);
+        return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority, false);
     }
 
     /**
@@ -107,15 +107,15 @@ final class CertificateProfileValidator {
     /* package */ static ValidatedCertificateRequest validateReconstructed(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
             Instant evaluationTime, X509AuthoritySnapshot authority) {
-        return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority);
+        return validatePolicy(candidate, profile, profileReference, issuerCredential, evaluationTime, authority, true);
     }
 
     private static ValidatedCertificateRequest validatePolicy(VerifiedIssuanceCandidate candidate,
             CertificateProfile profile, CertificateProfileRef profileReference, Credential issuerCredential,
-            Instant evaluationTime, X509AuthoritySnapshot authority) {
+            Instant evaluationTime, X509AuthoritySnapshot authority, boolean reconstructed) {
         ParsedCertificationRequest request = candidate.request();
         LeafCertificatePolicy policy = profile.leafPolicy();
-        List<SubjectRdn> approvedSubject = validateSubject(request, profile);
+        List<SubjectRdn> approvedSubject = validateSubject(request, profile, reconstructed);
         List<SubjectAlternativeName> approvedSans = validateSans(request, policy, approvedSubject.isEmpty());
         requireSubjectKeyAllowed(candidate.exactPublicKey(), policy.allowedSubjectKeyAlgorithmIds(), authority);
         Validity validity = approvedValidity(candidate, request, profile, issuerCredential, evaluationTime);
@@ -137,10 +137,8 @@ final class CertificateProfileValidator {
         }
     }
 
-    // The branches preserve the deny-by-default RDN ownership and cardinality
-    // rules.
-    @SuppressWarnings("PMD.CyclomaticComplexity")
-    private static List<SubjectRdn> validateSubject(ParsedCertificationRequest request, CertificateProfile profile) {
+    private static List<SubjectRdn> validateSubject(ParsedCertificationRequest request, CertificateProfile profile,
+            boolean reconstructed) {
         Map<SubjectRdnType, SubjectRdnRule> rules = new EnumMap<>(SubjectRdnType.class);
         for (SubjectRdnRule rule : profile.subjectPolicy().rules()) {
             rules.put(rule.type(), rule);
@@ -149,13 +147,7 @@ final class CertificateProfileValidator {
         List<SubjectRdn> approved = new ArrayList<>(request.subjectRdns().size() + rules.size());
         for (SubjectRdn rdn : request.subjectRdns()) {
             SubjectRdnRule rule = rules.get(rdn.type());
-            if (rule == null || !rule.requesterSupplied()) {
-                throw reject("SUBJECT_RDN_FORBIDDEN");
-            }
-            String canonical = SubjectRdnRule.canonicalValue(rdn.type(), rdn.value());
-            if (canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > rule.maximumUtf8Bytes()) {
-                throw reject("SUBJECT_RDN_TOO_LARGE");
-            }
+            String canonical = canonicalSubjectValue(rdn, rule, reconstructed);
             int count = Math.addExact(counts.getOrDefault(rdn.type(), 0), 1);
             if (count > rule.maximumOccurrences()) {
                 throw reject("SUBJECT_RDN_CARDINALITY");
@@ -164,7 +156,7 @@ final class CertificateProfileValidator {
             approved.add(new SubjectRdn(rdn.type(), canonical));
         }
         for (SubjectRdnRule rule : profile.subjectPolicy().rules()) {
-            if (rule.fixedValue().isPresent()) {
+            if (rule.fixedValue().isPresent() && !reconstructed) {
                 approved.add(new SubjectRdn(rule.type(), rule.fixedValue().orElseThrow()));
                 counts.put(rule.type(), 1);
             }
@@ -180,6 +172,20 @@ final class CertificateProfileValidator {
             throw reject("SUBJECT_TOO_MANY_RDNS");
         }
         return List.copyOf(approved);
+    }
+
+    private static String canonicalSubjectValue(SubjectRdn rdn, SubjectRdnRule rule, boolean reconstructed) {
+        if (rule == null || !rule.requesterSupplied() && !(reconstructed && rule.fixedValue().isPresent())) {
+            throw reject("SUBJECT_RDN_FORBIDDEN");
+        }
+        String canonical = SubjectRdnRule.canonicalValue(rdn.type(), rdn.value());
+        if (reconstructed && rule.fixedValue().isPresent() && !rule.fixedValue().orElseThrow().equals(canonical)) {
+            throw reject("SUBJECT_FIXED_RDN_MISMATCH");
+        }
+        if (canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > rule.maximumUtf8Bytes()) {
+            throw reject("SUBJECT_RDN_TOO_LARGE");
+        }
+        return canonical;
     }
 
     // The branches preserve the closed SAN type-specific profile grammar.
@@ -333,7 +339,21 @@ final class CertificateProfileValidator {
         if (notAfter.isAfter(issuerCredential.validity().notAfter())) {
             throw reject("VALIDITY_EXCEEDS_ISSUER");
         }
-        return new Validity(evaluationTime, notAfter);
+        try {
+            // X.509 Time represents whole seconds. Preserve the largest interval
+            // inside the already-approved bounds, without extending either end.
+            Instant notBefore = evaluationTime.truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+            if (!notBefore.equals(evaluationTime)) {
+                notBefore = notBefore.plusSeconds(1);
+            }
+            Instant encodedNotAfter = notAfter.truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+            if (!encodedNotAfter.isAfter(notBefore)) {
+                throw reject("VALIDITY_INVALID");
+            }
+            return new Validity(notBefore, encodedNotAfter);
+        } catch (DateTimeException | ArithmeticException exception) {
+            throw reject("VALIDITY_INVALID");
+        }
     }
 
     private static PkiException reject(String code) {

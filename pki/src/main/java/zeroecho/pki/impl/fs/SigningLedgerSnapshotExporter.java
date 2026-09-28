@@ -59,24 +59,30 @@ final class SigningLedgerSnapshotExporter {
 
     /* default */ static void export(SigningLedgerStoreEngine engine, Path targetRoot,
             Set<String> excludedNamespaces) throws IOException {
+        try (SigningMvccIndex.Snapshot snapshot = engine.snapshot()) {
+            export(engine, snapshot, targetRoot, excludedNamespaces);
+        }
+    }
+
+    /** Borrows the caller's exact pinned revision without closing it. */
+    /* default */ static void export(SigningLedgerStoreEngine engine, SigningMvccIndex.Snapshot snapshot, Path targetRoot,
+            Set<String> excludedNamespaces) throws IOException {
         Set<String> excluded = Set.copyOf(excludedNamespaces);
         SigningLedgerRecovery.initializeFormat(targetRoot);
-        try (SigningMvccIndex.Snapshot snapshot = engine.snapshot()) {
-            SnapshotShape shape = shape(snapshot, excluded);
-            Optional<SigningManifestCodec.Checkpoint> checkpoint = shape.count == 0
-                    ? Optional.empty() : Optional.of(writeCheckpoint(
-                            engine, snapshot, targetRoot, excluded, shape));
-            long revision = shape.count;
-            long sequence = shape.count == 0 ? 0L : shape.count - 1L;
-            SigningManifestCodec.ActiveWal active = writeEmptyActive(targetRoot,
-                    shape.count == 0 ? 0L : shape.count, revision);
-            SigningManifestCodec.Manifest manifest = new SigningManifestCodec.Manifest(
-                    revision, sequence, checkpoint, List.of(), active);
-            byte[] encoded = SigningManifestCodec.encode(manifest);
-            SigningFilePublisher.publishManifest(
-                    targetRoot.resolve(SigningLedgerRecovery.MANIFEST_FILE),
-                    channel -> SigningFormatSupport.writeFully(channel, ByteBuffer.wrap(encoded)));
-        }
+        SnapshotShape shape = shape(snapshot, excluded);
+        Optional<SigningManifestCodec.Checkpoint> checkpoint = shape.count == 0
+                ? Optional.empty() : Optional.of(writeCheckpoint(
+                        engine, snapshot, targetRoot, excluded, shape));
+        long revision = shape.count;
+        long sequence = shape.count == 0 ? 0L : shape.count - 1L;
+        SigningManifestCodec.ActiveWal active = writeEmptyActive(targetRoot,
+                shape.count == 0 ? 0L : shape.count, revision);
+        SigningManifestCodec.Manifest manifest = new SigningManifestCodec.Manifest(
+                revision, sequence, checkpoint, List.of(), active);
+        byte[] encoded = SigningManifestCodec.encode(manifest);
+        SigningFilePublisher.publishManifest(
+                targetRoot.resolve(SigningLedgerRecovery.MANIFEST_FILE),
+                channel -> SigningFormatSupport.writeFully(channel, ByteBuffer.wrap(encoded)));
     }
 
     private static SnapshotShape shape(SigningMvccIndex.Snapshot snapshot,

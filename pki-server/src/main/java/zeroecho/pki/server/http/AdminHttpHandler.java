@@ -62,7 +62,6 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpsExchange;
 
 import zeroecho.pki.application.PkiOperationValue;
-import zeroecho.pki.application.SigningOperationAuthorization;
 import zeroecho.pki.server.AuthorizationEngine;
 import zeroecho.pki.server.OperationSecurityDescriptors;
 import zeroecho.pki.server.Permission;
@@ -186,7 +185,7 @@ final class AdminHttpHandler implements HttpHandler {
         String prefix = "/admin/v1/operations/";
         if (!path.startsWith(prefix) || path.length() == prefix.length()) return notFound(requestId);
         String operationId = path.substring(prefix.length());
-        if (!operationId.matches("[a-z][a-z0-9.]{2,127}")) return notFound(requestId);
+        if (!operationId.matches("[a-z][a-z0-9.-]{2,127}")) return notFound(requestId);
         Optional<OperationSecurityDescriptors.Descriptor> descriptor = realm.gateway()
                 .discoverableOperations(principalId).stream()
                 .filter(item -> item.operationId().equals(operationId)).findFirst();
@@ -198,43 +197,65 @@ final class AdminHttpHandler implements HttpHandler {
 
     /* default */ HttpResponses.Response signingOperation(String requestId, String principalId, String signingId) {
         try {
-            zeroecho.pki.api.PkiId operationId = new zeroecho.pki.api.PkiId(signingId);
-            Optional<SigningOperationAuthorization> authorization = realm.session()
-                    .signingOperationAuthorization(operationId);
-            if (authorization.isEmpty()) {
-                return HttpResponses.signingNotFound(requestId);
-            }
-            SigningOperationAuthorization exact = authorization.orElseThrow();
-            Permission.Resource resource = new Permission.Resource(resourceType(exact.resourceType()),
-                    new Permission.Scope(configuration.realm().realmId(), exact.authorityId(), Optional.empty(),
-                            exact.profileId()), exact.objectId(), Optional.empty());
+            zeroecho.pki.api.SemanticSigningService service = realm.session().semanticSigning().orElseThrow();
+            zeroecho.pki.api.signing.SemanticSigningOperation snapshot =
+                    service.find(new zeroecho.pki.api.PkiId(signingId)).orElseThrow();
+            zeroecho.pki.api.signing.SemanticSigningScope scope = snapshot.scope();
+            PollScope poll = pollScope(scope);
+            Permission.Resource resource = new Permission.Resource(poll.type(),
+                    new Permission.Scope(configuration.realm().realmId(), poll.authority(), Optional.empty(),
+                            poll.profile()), poll.object(), Optional.empty());
             AuthorizationEngine.Decision decision = realm.gateway().authorizeControl(principalId,
-                    action(exact.action()), resource, Permission.Context.empty(), requestId);
-            if (!decision.allowed()) {
-                return HttpResponses.signingNotFound(requestId);
-            }
-            return HttpResponses.signingOperation(requestId, realm.session().signingOperation(operationId));
-        } catch (IllegalArgumentException unavailable) {
+                    poll.action(), resource, Permission.Context.empty(), requestId);
+            if (!decision.allowed()) return HttpResponses.signingNotFound(requestId);
+            return HttpResponses.signingOperation(requestId, signingOutcome(snapshot));
+        } catch (IllegalArgumentException | java.util.NoSuchElementException unavailable) {
             return HttpResponses.signingNotFound(requestId);
         }
     }
 
-    private static Permission.Action action(SigningOperationAuthorization.Action action) {
-        return switch (action) {
-            case AUTHORITY_CREATE -> Permission.Action.AUTHORITY_CREATE;
-            case ISSUER_CREATE -> Permission.Action.ISSUER_CREATE;
-            case CERTIFICATE_ISSUE -> Permission.Action.CERTIFICATE_ISSUE;
-            case STATUS_GENERATE -> Permission.Action.CRL_GENERATE;
+    private record PollScope(Permission.Action action, Permission.ResourceType type,
+            Optional<zeroecho.pki.api.PkiId> authority, Optional<String> profile,
+            Optional<zeroecho.pki.api.PkiId> object) { }
+
+    private static PollScope pollScope(zeroecho.pki.api.signing.SemanticSigningScope scope) {
+        return switch (scope.kind()) {
+            case ISSUANCE -> new PollScope(Permission.Action.CERTIFICATE_ISSUE,
+                    Permission.ResourceType.CERTIFICATE, scope.authorityId(), scope.profileId(), Optional.empty());
+            case STATUS -> new PollScope(Permission.Action.CRL_GENERATE,
+                    Permission.ResourceType.STATUS_OBJECT, scope.authorityId(), Optional.empty(), Optional.empty());
+            case KEY_PROOF -> throw new IllegalArgumentException("Signing operation is not exposed");
+            case CA -> switch (scope.operation()) {
+                case "CREATE_ROOT" -> new PollScope(Permission.Action.AUTHORITY_CREATE,
+                        Permission.ResourceType.AUTHORITY, Optional.empty(), Optional.empty(), Optional.empty());
+                case "CREATE_INTERMEDIATE" -> new PollScope(Permission.Action.AUTHORITY_CREATE,
+                        Permission.ResourceType.AUTHORITY, scope.authorityId(), scope.profileId(),
+                        scope.subjectAuthorityId());
+                case "ISSUE_INTERMEDIATE" -> new PollScope(Permission.Action.ISSUER_CREATE,
+                        Permission.ResourceType.ISSUER, scope.subjectAuthorityId(), scope.profileId(), Optional.empty());
+                case "ROLLOVER_ROOT" -> new PollScope(Permission.Action.AUTHORITY_READ,
+                        Permission.ResourceType.AUTHORITY, scope.authorityId(), scope.profileId(), scope.authorityId());
+                case "ROLLOVER_INTERMEDIATE" -> new PollScope(Permission.Action.AUTHORITY_READ,
+                        Permission.ResourceType.AUTHORITY, scope.subjectAuthorityId(), scope.profileId(),
+                        scope.subjectAuthorityId());
+                default -> throw new IllegalArgumentException("Signing operation is not exposed");
+            };
         };
     }
 
-    private static Permission.ResourceType resourceType(
-            SigningOperationAuthorization.ResourceType resourceType) {
-        return switch (resourceType) {
-            case AUTHORITY -> Permission.ResourceType.AUTHORITY;
-            case ISSUER -> Permission.ResourceType.ISSUER;
-            case CERTIFICATE -> Permission.ResourceType.CERTIFICATE;
-            case STATUS_OBJECT -> Permission.ResourceType.STATUS_OBJECT;
+    private zeroecho.pki.application.PkiOperationOutcome signingOutcome(
+            zeroecho.pki.api.signing.SemanticSigningOperation snapshot) {
+        String name = "signing.operation";
+        return switch (snapshot.state()) {
+            case SIGNING, PUBLISHING -> new zeroecho.pki.application.PkiOperationOutcome.Pending(
+                    name, snapshot.submissionId().id());
+            case FAILED -> new zeroecho.pki.application.PkiOperationOutcome.Failed(name,
+                    zeroecho.pki.application.PkiOperationFailure.POLICY_REJECTION,
+                    snapshot.detailCode().orElse("SIGNING_FAILED"));
+            case EXPIRED -> new zeroecho.pki.application.PkiOperationOutcome.Failed(name,
+                    zeroecho.pki.application.PkiOperationFailure.CANCELLED, "SIGNING_EXPIRED");
+            case COMPLETED -> new zeroecho.pki.application.PkiOperationOutcome.Completed(
+                    realm.session().signingCommands().orElseThrow().completedResult(snapshot));
         };
     }
 

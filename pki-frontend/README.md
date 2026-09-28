@@ -12,7 +12,7 @@ the `verifyBouncyCastleConfinement` gate. It compiles against nothing in
 ## What it does
 
 - Renders typed, validated forms for the **entire** server operation catalog
-  (101 operations — 47 PKI, 54 control), grouped into administration areas
+  (107 operations — 41 PKI, 10 signing, 56 control), grouped into administration areas
   (authorities, issuer generations, profiles, requests, issuance, lifecycle,
   revocation, status/CRLs, publication, principals, roles & grants, approvals,
   break-glass, disclosure, audit, ACME, OCSP, repository aliases, configuration),
@@ -28,9 +28,9 @@ the `verifyBouncyCastleConfinement` gate. It compiles against nothing in
 ## Technology
 
 React 19 + TypeScript + Vite + MUI (Material UI, with MUI X DataGrid for result
-tables) + TanStack Query + React Router. Rationale and comparison to EJBCA's
-JSF/PrimeFaces-on-WildFly stack are recorded in `docs/project-work-plan.md`
-(Task 15) and `docs/backend-gap-analysis.md`.
+tables) + TanStack Query + React Router. The
+[capability reference](docs/backend-gap-analysis.md) describes the implemented
+administration surface and its current boundaries.
 
 ## Prerequisites
 
@@ -75,11 +75,12 @@ npm run test:e2e     # Playwright browser tests (demo mode by default)
 ```
 
 Unit tests cover the API client, the operation catalog integrity (asserts the
-full 101-operation contract), request-envelope construction (realm vs authority
+full 107-operation contract), request-envelope construction (realm vs authority
 scoping), and the demo backend (persona discoverability, denial, approval flow).
-The Playwright suite drives a real browser against the built demo bundle. To run
-e2e against a real deployment, set `E2E_BASE_URL` (the preview web server is then
-not started).
+The default Playwright suite drives a real browser against the built demo bundle.
+`E2E_BASE_URL` changes where that bundle is served and disables the preview server;
+the demo tests still use the mock backend. The separate live fixture below
+exercises the actual PKI backend without demo mode.
 
 ## Gradle integration
 
@@ -91,10 +92,26 @@ self-contained and reproducible on a build host with no system Node):
 ./gradlew :pki-frontend:build        # npm ci -> typecheck -> lint -> unit test -> vite build -> zip
 ./gradlew :pki-frontend:npmBuild     # just the SPA bundle (dist/)
 ./gradlew :pki-frontend:npmE2e -PrunFrontendE2e   # opt-in browser e2e
+./gradlew :pki-server:frontendIntegrationTest   # opt-in real backend fixture
 ```
 
 `check` runs typecheck + lint + unit tests; `assemble` builds the bundle and a
 `zeroecho-pki-frontend-*.zip` distributable consumed by the container image.
+
+The live gate builds the SPA with the pinned Node toolchain, starts a temporary
+PKI HTTPS server and keyring, and runs a separate Playwright scenario. Install
+the Playwright Chromium browser beforehand, or pass
+`-PfrontendBrowser=/absolute/path/to/chromium`. An explicit Node executable can
+be supplied with `-PfrontendNode=/absolute/path/to/node`.
+
+The fixture verifies known-value selections, two-principal approval binding,
+root/intermediate CA signing and receipt recovery after a network failure or
+local timeout, with one accepted signing POST per operation. A component test
+also checks exact confirmation-proof CAS handoff. The test-only loopback HTTP
+bridge forwards fixed API routes over verified mTLS using separate requester
+and approver identities. Browser certificates, nginx forwarding and packaged
+deployment are verified by the [packaged deployment gate](e2e/packaged/README.md);
+this fixture does not verify those boundaries.
 
 ## Deployment
 
@@ -113,10 +130,29 @@ image, data/config contract, compose/k8s manifests, and smoke test live under
 - Self-hosted assets (no CDN), strict CSP/HSTS at the UI origin (see `deploy/`),
   pinned npm lockfile.
 
-## Backend gaps
+## Capability boundaries
 
-Where a workflow expected of an enterprise PKI console is not yet fully supported
-by the backend, the required backend method is specified in
-`docs/backend-gap-analysis.md` (benchmarked against EJBCA). The two highest-value
-items are a **certificate search** operation and a **server-published operation
-parameter schema**.
+The [capability reference](docs/backend-gap-analysis.md) describes current backend
+support. Known identities are available through selection APIs; advanced search
+filters and other unapproved extensions belong to the single
+[outstanding-work plan](../docs/project-work-plan.md).
+
+### Selections and signing receipts
+
+Existing PKI identities use searchable, paged selections with readable names and
+exact identifiers. Authority/profile/issuer changes clear dependent choices.
+Read failures remain visible; an unavailable list does not enable arbitrary IDs.
+New subjects, imported documents and external key references remain authorable.
+See [selection API contract](docs/selection-api.md) for permissions and paging.
+
+The ten signing operations submit once and receive HTTP 202 with an operation ID.
+The client polls the fixed same-origin signing-operation route sequentially for
+up to 30 seconds. Local timeout/network failure retains the accepted receipt;
+**Check status** resumes polling without resubmitting. Completed receipts show
+kind, encoding, SHA-256 and optional credential/status identifiers. HTTP 409 alone
+does not mean approval is required.
+
+Approval preparation carries typed arguments and authority from the original
+request. Confirmation completion carries the exact server-issued CAS values.
+ACME policy sets come from the active profile; validity defaults to its maximum
+within the existing 398-day limit and permits an explicit shorter policy.

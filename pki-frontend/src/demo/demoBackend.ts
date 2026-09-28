@@ -33,6 +33,7 @@
  ******************************************************************************/
 
 import type { Transport, TransportRequest, TransportResponse } from '@/api/transport';
+import type { SigningCompletedResult } from '@/api/types';
 import type { OperationSpec } from '@/api/operationSchema';
 import { operationSpec } from '@/api/operationCatalog';
 import { createDemoState, demoId, type DemoState } from '@/demo/demoData';
@@ -48,6 +49,11 @@ const REALM = {
 /** Operation id -> demo collection whose contents a list operation returns. */
 const LIST_MAP: Record<string, string> = {
   'ca.list': 'authorities',
+  'profile.list-all': 'profiles',
+  'request.list': 'requests',
+  'credential.search': 'credentials',
+  'issuer.generation.list': 'generations',
+  'security.disclosure.capability.list': 'capabilities',
   'issuer.path.list': 'chainPaths',
   'profile.list': 'profiles',
   'publication.list': 'publications',
@@ -91,7 +97,7 @@ function descriptorOf(spec: OperationSpec) {
     operation: spec.id,
     family: spec.family,
     mutating: !spec.read,
-    resourceType: spec.family === 'PKI_OPERATION' ? 'AUTHORITY' : 'REALM',
+    resourceType: spec.family === 'SERVER_CONTROL_OPERATION' ? 'REALM' : 'AUTHORITY',
     approval: spec.approval,
     dataView: 'METADATA_REDACTED',
   };
@@ -124,10 +130,54 @@ function idField(args: Record<string, unknown>): string {
   return demoId('obj');
 }
 
+function cursorPage(items: Record<string, unknown>[], key: string, args: Record<string, unknown>) {
+  const sorted = items.filter((item) => !args.after || String(item[key]) > String(args.after))
+    .sort((a, b) => String(a[key]) < String(b[key]) ? -1 : String(a[key]) > String(b[key]) ? 1 : 0);
+  const limit = Number(args.limit ?? 100), page = sorted.slice(0, limit), truncated = sorted.length > limit;
+  return { items: page, count: page.length, truncated, ...(truncated ? { nextCursor: String(page.at(-1)?.[key]) } : {}) };
+}
+
 function dispatch(spec: OperationSpec, args: Record<string, unknown>, state: DemoState): unknown {
+  if (spec.id === 'configuration.choices') return { value: {
+    formats: [{ formatId: 'x509', displayName: 'X.509 certificate' }],
+    signingProviders: [{ providerId: 'local', displayName: 'Local signing provider' }],
+    publicationTargets: [{ targetType: 'FILESYSTEM', targetId: 'public-repository', displayName: 'Public repository' }],
+    keys: cursorPage([{ keyRef: 'local:root.prv', displayName: 'Root authority key' }, { keyRef: 'local:issuing.prv', displayName: 'Issuing authority key' }], 'keyRef', args),
+    algorithms: [{ algorithmId: 'SHA256withECDSA', displayName: 'ECDSA with SHA-256' }],
+    acmeChallengeProviders: [{ providerId: 'dns', displayName: 'DNS challenge service', challengeTypes: ['DNS_01'] }],
+    acmeEabProviders: [{ providerId: 'accounts', displayName: 'External account service' }],
+  } };
+  if (spec.id === 'credential.confirmation.challenge.issue') return {
+    credentialId: args.credentialId, expectedLifecycleRevision: 1,
+    expectedLifecycleRecordCommitment: 'a'.repeat(64), expectedChallengeRecordCommitment: hexCommitment(),
+    proofSuiteId: 'demo', expiresAt: new Date(Date.now() + 300000).toISOString(), maximumResponseBytes: 4096,
+    presentation: { message: 'Demonstration challenge' },
+  };
   const listKey = LIST_MAP[spec.id];
   if (listKey) {
-    const items = state[listKey] ?? [];
+    let items = state[listKey] ?? [];
+    for (const name of ['profileId', 'issuerId', 'objectId', 'state', 'requesterPrincipalId', 'targetOperationId']) {
+      const key = name === 'requesterPrincipalId' ? 'requesterId' : name === 'targetOperationId' ? 'operation' : name;
+      if (args[name]) items = items.filter((item) => item[key] === args[name]);
+    }
+    if (spec.id === 'credential.search' || spec.id === 'issuer.generation.list') items = items.filter((item) => item.authorityId === args.__authorityId);
+    if (spec.id === 'inventory.status') items = items.filter((item) => item.issuerCaId === args.issuerCaId);
+    if (spec.id === 'profile.list') return { profileId: args.profileId, versions: items, count: items.length, activeVersion: items.find((item) => item.active)?.profileVersion };
+    if (spec.id === 'security.role-template.list') return { value: items };
+    if (spec.id === 'security.audit.search') return { value: { events: items, count: items.length } };
+    if (spec.id === 'issuer.path.list') return { paths: items, count: items.length };
+    const idKeys: Record<string, string> = { authorities: 'caId', profiles: 'profileId', requests: 'requestId', credentials: 'credentialId', generations: 'issuerId', publications: 'publicationId', statusObjects: 'statusObjectId', algorithmBindings: 'bindingId', capabilities: 'capabilityId' };
+    if (idKeys[listKey]) {
+      const page = cursorPage(items, idKeys[listKey]!, args);
+      if (listKey === 'capabilities') return { value: page };
+      const key = listKey === 'algorithmBindings' ? 'bindings' : listKey;
+      return { [key]: page.items, count: page.count, truncated: page.truncated, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), ...(listKey === 'algorithmBindings' ? { registryCommitment: 'b'.repeat(64) } : {}) };
+    }
+    if (spec.family === 'SERVER_CONTROL_OPERATION') {
+      const offset = Number(args.offset ?? 0), limit = Number(args.limit ?? 100);
+      const page = items.slice(offset, offset + limit);
+      return { value: { items: page, count: page.length, hasMore: offset + limit < items.length, nextOffset: offset + page.length } };
+    }
     return { [listKey]: items, count: items.length };
   }
 
@@ -141,9 +191,10 @@ function dispatch(spec: OperationSpec, args: Record<string, unknown>, state: Dem
 
   if (spec.id.includes('.inspect') || spec.id === 'ca.inspect' || spec.id === 'credential.inspect') {
     const wantedId = idField(args);
-    for (const key of Object.keys(state)) {
-      const found = state[key]?.find((r) => Object.values(r).includes(wantedId));
-      if (found) return found;
+    const collection = spec.id === 'repository.alias.inspect' ? 'repositoryAliases' : spec.id === 'profile.inspect' ? 'profiles' : spec.id === 'algorithm.binding.inspect' ? 'algorithmBindings' : undefined;
+    for (const key of collection ? [collection] : Object.keys(state)) {
+      const found = state[key]?.find((r) => Object.values(r).includes(wantedId) && (args.type === undefined || r.type === args.type) && (args.profileVersion === undefined || r.profileVersion === args.profileVersion));
+      if (found) return spec.family === 'SERVER_CONTROL_OPERATION' ? { value: found } : found;
     }
     return { ...args, note: 'Synthetic demo record' };
   }
@@ -162,6 +213,8 @@ function dispatch(spec: OperationSpec, args: Record<string, unknown>, state: Dem
  */
 export function createDemoTransport(getRole: () => DemoRole): Transport {
   const state = createDemoState();
+  // Demo-only receipt state; the production client keeps no workflow registry.
+  const signing = new Map<string, { spec: OperationSpec; result: SigningCompletedResult }>();
 
   return async (req: TransportRequest): Promise<TransportResponse> => {
     const role = getRole();
@@ -188,7 +241,14 @@ export function createDemoTransport(getRole: () => DemoRole): Transport {
 
     if (req.method === 'GET' && path.startsWith('/admin/v1/signing-operations/')) {
       const id = decodeURIComponent(path.substring('/admin/v1/signing-operations/'.length));
-      return json(200, envelope('signing', 'SUCCEEDED', { signingOperationId: id, completed: true }));
+      const receipt = signing.get(id);
+      if (!receipt || !roleCanInvoke(role, receipt.spec)) {
+        return json(404, envelope('operation', 'FAILED', null, {
+          classification: 'NOT_FOUND', code: 'OPERATION_NOT_FOUND', messageKey: 'OPERATION_NOT_FOUND',
+          recoveryRequired: false, reconciliationRequired: false,
+        }));
+      }
+      return json(200, envelope('signing.operation', 'SUCCEEDED', receipt.result));
     }
 
     if (req.method === 'POST' && path.startsWith('/admin/v1/operations/')) {
@@ -200,14 +260,31 @@ export function createDemoTransport(getRole: () => DemoRole): Transport {
         return json(403, envelope(id, 'FAILED', null, { classification: 'DENIED', code: 'AUTHORIZATION_DENIED', messageKey: 'NO_MATCHING_GRANT', recoveryRequired: false, reconciliationRequired: false }));
       }
 
-      const body = req.body ? (JSON.parse(req.body) as { approvalId?: string; arguments?: Record<string, unknown> }) : {};
+      const body = req.body ? (JSON.parse(req.body) as { approvalId?: string; authorityId?: string; arguments?: Record<string, unknown> }) : {};
       const args = body.arguments ?? {};
 
       if (spec.approval === 'HIGH_RISK' && !body.approvalId) {
-        return json(409, envelope(id, 'APPROVAL_REQUIRED', { operationCommitment: hexCommitment() }));
+        return json(409, envelope(id, 'APPROVAL_REQUIRED', { operationCommitment: hexCommitment() }, {
+          classification: 'APPROVAL_REQUIRED', code: 'APPROVAL_REQUIRED', messageKey: 'APPROVAL_REQUIRED',
+          recoveryRequired: false, reconciliationRequired: false,
+        }));
       }
 
-      const result = dispatch(spec, args, state);
+      const result = dispatch(spec, { ...args, __authorityId: body.authorityId }, state);
+      if (spec.family === 'SIGNING_OPERATION') {
+        const operationId = demoId('sign');
+        const kind = id.startsWith('ca.') ? 'CA' : id === 'status.generate' ? 'STATUS' : 'ISSUANCE';
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(result)));
+        const completed: SigningCompletedResult = {
+          operationId, kind, encoding: kind === 'STATUS' ? 'UTF8' : 'DER',
+          resultSha256: Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join(''),
+          ...(kind === 'STATUS' ? { statusObjectId: demoId('status') } : { credentialId: demoId('cred') }),
+        };
+        signing.set(operationId, { spec, result: completed });
+        return json(202, envelope(id, 'PENDING', { operationId }), {
+          location: `/admin/v1/signing-operations/${encodeURIComponent(operationId)}`,
+        });
+      }
       return json(200, envelope(id, 'SUCCEEDED', result));
     }
 

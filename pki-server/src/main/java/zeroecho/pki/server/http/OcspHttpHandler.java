@@ -158,7 +158,7 @@ final class OcspHttpHandler implements HttpHandler {
         } catch (IllegalArgumentException malformed) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "MALFORMED"); protocolFailure(exchange, OCSP_MALFORMED_REQUEST);
         } catch (RejectedExecutionException overload) { audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, "OVERLOAD"); transportFailure(exchange, 429);
         } catch (zeroecho.pki.api.SigningExecutionException signingFailure) { int status = signingFailureStatus(signingFailure); audit(requestId, Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal, status == 429 ? "OVERLOAD" : "UNAVAILABLE"); transportFailure(exchange, status);
-        } catch (zeroecho.pki.impl.core.async.ImmediateSigningPending pending) { audit(requestId,
+        } catch (OcspResponseService.SigningPendingException pending) { audit(requestId,
                 Optional.ofNullable(auditedResponder), transportPrincipal, requesterPrincipal,
                 "SIGNING_PENDING"); protocolFailure(exchange,
                         OCSP_TRY_LATER);

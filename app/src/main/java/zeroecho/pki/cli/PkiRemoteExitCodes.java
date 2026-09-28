@@ -74,7 +74,8 @@ final class PkiRemoteExitCodes {
     /* default */ static int from(PkiRemoteResult result) {
         return switch (result) {
             case PkiRemoteResult.Succeeded ignored -> PkiExitCodes.SUCCESS;
-            case PkiRemoteResult.Pending ignored -> PkiExitCodes.EXTERNAL_OUTCOME_UNKNOWN;
+            case PkiRemoteResult.Pending pending -> pending.observationFailure()
+                    .map(PkiRemoteResult.ObservationFailure::exitCode).orElse(PkiExitCodes.EXTERNAL_OUTCOME_UNKNOWN);
             case PkiRemoteResult.ApprovalRequired ignored -> PkiExitCodes.VALIDATION_OR_POLICY;
             case PkiRemoteResult.Failed failure -> fromClassification(failure.classification());
         };
@@ -88,7 +89,7 @@ final class PkiRemoteExitCodes {
      */
     /* default */ static int fromClassification(String classification) {
         return switch (classification) {
-            case "VALIDATION_FAILURE", "POLICY_REJECTION", "AUTHORIZATION_DENIED" ->
+            case "VALIDATION_FAILURE", "POLICY_REJECTION", "AUTHORIZATION_DENIED", "DENIED" ->
                 PkiExitCodes.VALIDATION_OR_POLICY;
             case "NOT_FOUND", "CONFLICT" -> PkiExitCodes.NOT_FOUND_OR_CONFLICT;
             case "RECOVERY_REQUIRED" -> PkiExitCodes.RECOVERY_REQUIRED;

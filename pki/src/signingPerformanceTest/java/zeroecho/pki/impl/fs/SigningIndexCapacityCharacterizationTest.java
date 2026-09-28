@@ -36,17 +36,15 @@ package zeroecho.pki.impl.fs;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
-import zeroecho.pki.api.EncodedObject;
-import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.audit.Principal;
-import zeroecho.pki.spi.crypto.SignatureWorkflow;
 import zeroecho.pki.spi.store.MetadataKey;
 import zeroecho.pki.spi.store.SignWorkflowStore;
 
@@ -55,12 +53,8 @@ import zeroecho.pki.spi.store.SignWorkflowStore;
 final class SigningIndexCapacityCharacterizationTest {
     private static final int RETAINED_RECORDS = 100_000;
     private static final int DUE_RECORDS = 50_000;
-    private static final int OWNER_RECORDS = 50_000;
     private static final int GENERIC_RECORDS = SigningMvccIndex.FOUR_GIB_MAXIMUM_KEYS
-            - RETAINED_RECORDS - DUE_RECORDS - OWNER_RECORDS;
-    private static final Instant CREATED_AT = Instant.parse("2026-01-01T00:00:00Z");
-    private static final Principal OWNER = new Principal("capacity", "owner");
-    private static final String OWNER_CONTENT_ID = "123e4567-e89b-42d3-a456-426614174000";
+            - RETAINED_RECORDS - DUE_RECORDS;
 
     @Test
     void characterizesApprovedTierWithProductionWorkProjection() throws Exception {
@@ -88,16 +82,24 @@ final class SigningIndexCapacityCharacterizationTest {
                         due, retention, owners, capacity)) {
             List<SigningMvccIndex.RecoveredRecord> records = new ArrayList<>(
                     SigningMvccIndex.FOUR_GIB_MAXIMUM_KEYS);
+            List<SigningWorkProjection.RecoveredState> recoveredStates =
+                    new ArrayList<>(RETAINED_RECORDS + DUE_RECORDS);
+            Map<String, SignWorkflowStore.SchedulingPlan> scheduling = new HashMap<>();
             long sequence = addGenericRecords(records);
-            sequence = addSigningRecords(records, projection, sequence,
+            sequence = addSigningRecords(records, recoveredStates, scheduling, sequence,
                     RETAINED_RECORDS, "retained", SignWorkflowStore.State.RETIRED);
-            sequence = addSigningRecords(records, projection, sequence,
+            sequence = addSigningRecords(records, recoveredStates, scheduling, sequence,
                     DUE_RECORDS, "due", SignWorkflowStore.State.INTENT);
-            sequence = addOwners(records, projection, sequence);
             assertEquals(SigningMvccIndex.FOUR_GIB_MAXIMUM_KEYS, sequence);
 
             index.recover(sequence, sequence, records);
+            SigningWorkProjection.RecoveryStatistics recovery =
+                    projection.recoverAll(recoveredStates, scheduling);
+            assertEquals(RETAINED_RECORDS + DUE_RECORDS, recovery.statesVisited());
+            assertEquals(DUE_RECORDS, recovery.activeEntriesBuilt());
+            assertEquals(DUE_RECORDS, recovery.statePointersRetained());
             records.clear();
+            recoveredStates.clear();
             long actualUsedBytes = usedHeapAfterControlledGc();
             long actualRetainedBytes = Math.max(0L, actualUsedBytes - baselineUsedBytes);
             long estimatedBytes = capacity.snapshot().reservedBytes();
@@ -109,7 +111,7 @@ final class SigningIndexCapacityCharacterizationTest {
                     index.statistics().currentKeys());
             assertEquals(RETAINED_RECORDS, retention.size());
             assertEquals(DUE_RECORDS, due.statistics().workCount());
-            assertEquals(OWNER_RECORDS, owners.statistics().workCount());
+            assertEquals(0, owners.statistics().workCount());
             assertTrue(estimatedBytes <= FsPkiStoreOptions.DEFAULT_RESIDENT_INDEX_BUDGET_BYTES);
             assertTrue(actualRetainedBytes > 0L);
         }
@@ -128,45 +130,34 @@ final class SigningIndexCapacityCharacterizationTest {
     }
 
     private static long addSigningRecords(List<SigningMvccIndex.RecoveredRecord> records,
-            SigningWorkProjection projection, long initialSequence, int count, String prefix,
+            List<SigningWorkProjection.RecoveredState> recoveredStates,
+            Map<String, SignWorkflowStore.SchedulingPlan> scheduling,
+            long initialSequence, int count, String prefix,
             SignWorkflowStore.State state) throws Exception {
         long sequence = initialSequence;
         for (int value = 0; value < count; value++) {
             sequence++;
             String operationId = String.format("%s-%06d", prefix, value);
-            MetadataKey key = new MetadataKey(SigningWorkProjection.RECORD_NAMESPACE, operationId);
+            MetadataKey key = new MetadataKey(SigningWorkProjection.STATE_NAMESPACE, operationId);
             SigningMvccIndex.RecordPointer pointer = pointer(sequence);
             records.add(new SigningMvccIndex.RecoveredRecord(key, pointer, sequence));
-            projection.recover(key, workflow(operationId, state), pointer);
-        }
-        return sequence;
-    }
-
-    private static long addOwners(List<SigningMvccIndex.RecoveredRecord> records,
-            SigningWorkProjection projection, long initialSequence) throws Exception {
-        long sequence = initialSequence;
-        for (int value = 0; value < OWNER_RECORDS; value++) {
-            sequence++;
-            String operationId = String.format(java.util.Locale.ROOT,
-                    "zsign:v1:capacity:1767225600000:%032x", value);
-            MetadataKey key = new MetadataKey(SigningWorkProjection.OWNER_NAMESPACE,
-                    OWNER_CONTENT_ID + ':' + operationId);
-            SigningMvccIndex.RecordPointer pointer = pointer(sequence);
-            records.add(new SigningMvccIndex.RecoveredRecord(key, pointer, sequence));
-            projection.recover(key, new byte[0], pointer);
+            recoveredStates.add(new SigningWorkProjection.RecoveredState(
+                    key, workflow(operationId, state), pointer));
+            scheduling.put(operationId, new SignWorkflowStore.SchedulingPlan(
+                    new SignWorkflowStore.SchedulingCoordinates(new KeyRef("capacity-key"), new PkiId("capacity-authority")),
+                    Optional.empty()));
         }
         return sequence;
     }
 
     private static byte[] workflow(String operationId, SignWorkflowStore.State state) {
-        SignWorkflowStore.Record record = new SignWorkflowStore.Record(new PkiId(operationId),
-                "capacity", "fingerprint", new SignatureWorkflow.ConfigurationCommitment(
-                        new byte[SignatureWorkflow.ConfigurationCommitment.BYTE_LENGTH]),
-                OWNER, CREATED_AT, CREATED_AT.plusSeconds(60L),
-                new EncodedObject(Encoding.BINARY, new byte[] { 1 }), state, 0L, 0L,
-                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), 0,
-                Optional.empty(), Optional.empty());
-        return FsCodec.encode(FsCodec.SIGN_WORKFLOW_RECORD, record);
+        boolean retained = state == SignWorkflowStore.State.RETIRED;
+        SignWorkflowStore.MutableState mutable = new SignWorkflowStore.MutableState(
+                new PkiId(operationId), state, retained ? 3L : 0L, retained ? 1L : 0L,
+                Optional.empty(), retained ? Optional.of(new PkiId(operationId)) : Optional.empty(),
+                Optional.of(retained ? "RETIRED" : "INTENT"), Optional.empty(), Optional.empty(),
+                0, Optional.empty(), Optional.empty(), SignWorkflowStore.InitialAttemptPhase.NOT_APPLICABLE, zeroecho.pki.spi.store.SignWorkflowStore.Stage.SINGLE, java.util.Optional.empty());
+        return FsCodec.encode(FsCodec.SIGN_MUTABLE_STATE, mutable);
     }
 
     private static SigningMvccIndex.RecordPointer pointer(long sequence) {

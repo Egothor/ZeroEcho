@@ -36,9 +36,42 @@ package zeroecho.pki.impl.fs;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.math.BigInteger;
+
 import org.junit.jupiter.api.Test;
 
 final class FsPkiStoreOptionsTest {
+
+    @Test
+    void initialCrlNumberDefaultsAndIssuedRangeAreExact() {
+        FsPkiStoreOptions defaults = FsPkiStoreOptions.defaults();
+        assertEquals(BigInteger.ONE, defaults.initialCrlNumber());
+        for (BigInteger value : new BigInteger[] {BigInteger.ZERO, BigInteger.ONE,
+                BigInteger.ONE.shiftLeft(159).subtract(BigInteger.ONE)}) {
+            assertEquals(value, defaults.withInitialCrlNumber(value).initialCrlNumber());
+        }
+        assertThrows(NullPointerException.class, () -> defaults.withInitialCrlNumber(null));
+        assertThrows(IllegalArgumentException.class, () -> defaults.withInitialCrlNumber(BigInteger.ONE.negate()));
+        assertThrows(IllegalArgumentException.class, () -> defaults.withInitialCrlNumber(BigInteger.ONE.shiftLeft(159)));
+        assertEquals(BigInteger.ONE, defaults.initialCrlNumber());
+    }
+
+    @Test
+    void everyCopyPreservesInitialCrlNumberAndUnchangedOptions() {
+        BigInteger initial = BigInteger.valueOf(12345);
+        FsPkiStoreOptions original = FsPkiStoreOptions.defaults().withSigningMaximumGroupSize(5)
+                .withSigningResidentIndexBudgetBytes(1000).withSigningCompactionTransientBudgetBytes(2000);
+        FsPkiStoreOptions configured = original.withInitialCrlNumber(initial);
+        assertEquals(original, configured.withInitialCrlNumber(BigInteger.ONE));
+        assertEquals(initial, configured.withSigningMaximumGroupSize(7).initialCrlNumber());
+        assertEquals(initial, configured.withSigningResidentIndexBudgetBytes(3000).initialCrlNumber());
+        assertEquals(initial, configured.withSigningCompactionTransientBudgetBytes(4000).initialCrlNumber());
+        assertEquals(configured, configured.withSigningMaximumGroupSize(7).withSigningMaximumGroupSize(5));
+        assertEquals(configured, configured.withSigningResidentIndexBudgetBytes(3000)
+                .withSigningResidentIndexBudgetBytes(1000));
+        assertEquals(configured, configured.withSigningCompactionTransientBudgetBytes(4000)
+                .withSigningCompactionTransientBudgetBytes(2000));
+    }
 
     @Test
     void residentIndexBudgetAcceptsValuesAboveDefault() {

@@ -201,7 +201,7 @@ public final class ValidatedCertificateRequest {
     }
 
     /**
-     * Returns the selected active profile reference.
+     * Returns the selected exact profile reference, active or frozen by issuance intent.
      *
      * @return exact immutable profile reference
      */

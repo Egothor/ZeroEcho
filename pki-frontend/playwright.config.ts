@@ -35,14 +35,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Browser end-to-end tests.
- *
- * Two modes:
- *  - Default (no E2E_BASE_URL): runs against the built SPA served by `vite
- *    preview` in DEMO mode (in-browser mock backend, no server/cert). This makes
- *    the browser-to-UI suite runnable in CI without a live pki-server.
- *  - Real deployment (E2E_BASE_URL set): runs against a running nginx+pki-server
- *    with provisioned mTLS material; the web server is not started here.
+ * Demo browser tests using the in-browser mock backend.
+ * Default: start Vite preview for the built SPA. E2E_BASE_URL selects an existing
+ * server hosting that SPA; the tests still explicitly select demo mode.
+ * Actual backend and packaged nginx/mTLS gates use playwright.live.config.ts
+ * and playwright.packaged.config.ts through their dedicated Gradle tasks.
  */
 const externalBase = process.env.E2E_BASE_URL;
 const previewPort = Number(process.env.E2E_PREVIEW_PORT ?? 4173);
@@ -50,6 +47,7 @@ const baseURL = externalBase ?? `http://localhost:${previewPort}`;
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: ['**/live/**', '**/packaged/**'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

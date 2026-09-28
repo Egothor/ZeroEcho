@@ -35,26 +35,44 @@ package zeroecho.pki.server.http;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.security.SecureRandom;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Optional;
-
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-
+import org.mockito.InOrder;
+import zeroecho.pki.api.EncodedObject;
+import zeroecho.pki.api.Encoding;
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.application.PkiOperationOutcome;
+import zeroecho.pki.api.SemanticSigningService;
+import zeroecho.pki.api.audit.AccessContext;
+import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
+import zeroecho.pki.api.orch.SigningSubmissionId;
+import zeroecho.pki.api.signing.SemanticSigningKind;
+import zeroecho.pki.api.signing.SemanticSigningOperation;
+import zeroecho.pki.api.signing.SemanticSigningScope;
+import zeroecho.pki.api.signing.SemanticSigningState;
+import zeroecho.pki.api.signing.SigningOperationState;
 import zeroecho.pki.application.PkiSession;
-import zeroecho.pki.application.SigningOperationAuthorization;
+import zeroecho.pki.application.PkiSigningCommands;
+import zeroecho.pki.application.PkiOperationResult;
+import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.server.AuthorizationEngine;
 import zeroecho.pki.server.Permission;
 import zeroecho.pki.server.PkiServerConfiguration;
@@ -64,10 +82,12 @@ import zeroecho.pki.server.ServerRealmConfiguration;
 import zeroecho.pki.server.ServerRealmContext;
 import zeroecho.pki.server.spi.PkiServerAuthenticator;
 
-/** Current-principal authorization coverage for private signing status. */
+/** Private polling authorizes the same immutable semantic observation it projects. */
 class AdminSigningOperationAuthorizationTest {
     private static final RealmId REALM = new RealmId("current");
     private static final PkiId OPERATION = new PkiId("signing:private");
+    private static final PkiId PARENT = new PkiId("ca:issuer");
+    private static final PkiId SUBJECT = new PkiId("ca:subject");
     private static final String REQUEST = "request-authorization";
 
     @Test
@@ -75,82 +95,147 @@ class AdminSigningOperationAuthorizationTest {
         Fixture fixture = fixture(issuance());
         when(fixture.gateway().authorizeControl(anyString(), any(), any(), any(), anyString()))
                 .thenAnswer(invocation -> decision(!"unauthorized".equals(invocation.getArgument(0))));
-
-        HttpResponses.Response requester = fixture.handler().signingOperation(REQUEST, "requester",
-                OPERATION.value());
-        HttpResponses.Response administrator = fixture.handler().signingOperation(REQUEST, "administrator",
-                OPERATION.value());
-
+        HttpResponses.Response requester = fixture.handler().signingOperation(REQUEST, "requester", OPERATION.value());
+        HttpResponses.Response administrator = fixture.handler().signingOperation(REQUEST, "administrator", OPERATION.value());
         assertEquals(202, requester.statusCode());
         assertEquals(202, administrator.statusCode());
         assertTrue(requester.oneTimeSensitive());
         assertEquals(Optional.empty(), requester.capabilityId());
+        assertEquals(Optional.of("/admin/v1/signing-operations/" + OPERATION.value()), requester.statusLocation());
+        verify(fixture.signing(), times(2)).find(OPERATION);
     }
 
     @Test
     void leakedIdentifierUnauthorizedAndCrossRealmAuthorityAreIndistinguishableFromAbsent() {
         Fixture fixture = fixture(issuance());
-        when(fixture.gateway().authorizeControl(anyString(), any(), any(), any(), anyString()))
-                .thenReturn(decision(false));
-
-        HttpResponses.Response leaked = fixture.handler().signingOperation(REQUEST, "unauthorized",
-                OPERATION.value());
-        HttpResponses.Response crossRealm = fixture.handler().signingOperation(REQUEST, "cross-realm-admin",
-                OPERATION.value());
-        when(fixture.session().signingOperationAuthorization(OPERATION)).thenReturn(Optional.empty());
-        HttpResponses.Response absent = fixture.handler().signingOperation(REQUEST, "unauthorized",
-                OPERATION.value());
-
+        when(fixture.gateway().authorizeControl(anyString(), any(), any(), any(), anyString())).thenReturn(decision(false));
+        HttpResponses.Response leaked = fixture.handler().signingOperation(REQUEST, "unauthorized", OPERATION.value());
+        HttpResponses.Response foreign = fixture.handler().signingOperation(REQUEST, "cross-realm-admin", OPERATION.value());
+        when(fixture.signing().find(OPERATION)).thenReturn(Optional.empty());
+        HttpResponses.Response absent = fixture.handler().signingOperation(REQUEST, "unauthorized", OPERATION.value());
         assertEquals(404, leaked.statusCode());
-        assertEquals(404, crossRealm.statusCode());
+        assertEquals(404, foreign.statusCode());
         assertEquals(404, absent.statusCode());
         assertArrayEquals(absent.body(), leaked.body());
-        assertArrayEquals(absent.body(), crossRealm.body());
+        assertArrayEquals(absent.body(), foreign.body());
         assertTrue(leaked.oneTimeSensitive());
-        assertTrue(crossRealm.oneTimeSensitive());
-        assertTrue(absent.oneTimeSensitive());
-        verify(fixture.session(), never()).signingOperation(OPERATION);
+        verify(fixture.signing(), times(3)).find(OPERATION);
     }
 
     @Test
     void everyDomainProjectionMapsToItsExactRbacActionAndResource() {
-        assertMapping(new SigningOperationAuthorization(SigningOperationAuthorization.Action.AUTHORITY_CREATE,
-                        SigningOperationAuthorization.ResourceType.AUTHORITY, Optional.empty(),
-                        Optional.empty(), Optional.empty()),
-                Permission.Action.AUTHORITY_CREATE, Permission.ResourceType.AUTHORITY);
-        assertMapping(new SigningOperationAuthorization(SigningOperationAuthorization.Action.ISSUER_CREATE,
-                        SigningOperationAuthorization.ResourceType.ISSUER, Optional.of(new PkiId("ca:subject")),
-                        Optional.of("intermediate"), Optional.empty()),
-                Permission.Action.ISSUER_CREATE, Permission.ResourceType.ISSUER);
-        assertMapping(issuance(), Permission.Action.CERTIFICATE_ISSUE, Permission.ResourceType.CERTIFICATE);
-        assertMapping(new SigningOperationAuthorization(SigningOperationAuthorization.Action.STATUS_GENERATE,
-                        SigningOperationAuthorization.ResourceType.STATUS_OBJECT,
-                        Optional.of(new PkiId("ca:issuer")), Optional.empty(), Optional.empty()),
-                Permission.Action.CRL_GENERATE, Permission.ResourceType.STATUS_OBJECT);
+        assertMapping(scope(SemanticSigningKind.CA, "CREATE_ROOT", "ca.create"),
+                Permission.Action.AUTHORITY_CREATE, Permission.ResourceType.AUTHORITY, Optional.empty(),
+                Optional.empty(), Optional.empty());
+        assertMapping(scope(SemanticSigningKind.CA, "CREATE_INTERMEDIATE", "ca.intermediate.create"),
+                Permission.Action.AUTHORITY_CREATE, Permission.ResourceType.AUTHORITY, Optional.of(PARENT),
+                Optional.of("profile"), Optional.of(SUBJECT));
+        assertMapping(scope(SemanticSigningKind.CA, "ISSUE_INTERMEDIATE", "ca.intermediate.issue"),
+                Permission.Action.ISSUER_CREATE, Permission.ResourceType.ISSUER, Optional.of(SUBJECT),
+                Optional.of("profile"), Optional.empty());
+        assertMapping(issuance(), Permission.Action.CERTIFICATE_ISSUE, Permission.ResourceType.CERTIFICATE,
+                Optional.of(PARENT), Optional.of("profile"), Optional.empty());
+        assertMapping(scope(SemanticSigningKind.STATUS, "GENERATE_FULL_CRL", "status.generate"),
+                Permission.Action.CRL_GENERATE, Permission.ResourceType.STATUS_OBJECT,
+                Optional.of(PARENT), Optional.empty(), Optional.empty());
     }
 
-    private static void assertMapping(SigningOperationAuthorization authorization,
-            Permission.Action expectedAction, Permission.ResourceType expectedType) {
-        Fixture fixture = fixture(authorization);
+    @Test
+    void rolloverAndRotationUseSubjectAuthorityReadIndependentOfMutationPurpose() {
+        for (String purpose : java.util.List.of("ca.rollover", "ca.rotate")) {
+            assertMapping(scope(SemanticSigningKind.CA, "ROLLOVER_ROOT", purpose),
+                    Permission.Action.AUTHORITY_READ, Permission.ResourceType.AUTHORITY,
+                    Optional.of(PARENT), Optional.of("profile"), Optional.of(PARENT));
+            assertMapping(scope(SemanticSigningKind.CA, "ROLLOVER_INTERMEDIATE", purpose),
+                    Permission.Action.AUTHORITY_READ, Permission.ResourceType.AUTHORITY,
+                    Optional.of(SUBJECT), Optional.of("profile"), Optional.of(SUBJECT));
+        }
+    }
+
+    @Test
+    void readPermissionAllowsPollingAndMutationPermissionAloneDoesNot() {
+        Fixture fixture = fixture(scope(SemanticSigningKind.CA, "ROLLOVER_INTERMEDIATE", "ca.rotate"));
+        when(fixture.gateway().authorizeControl(anyString(), any(), any(), any(), anyString()))
+                .thenAnswer(invocation -> decision("reader".equals(invocation.getArgument(0))
+                        && invocation.getArgument(1) == Permission.Action.AUTHORITY_READ));
+        assertEquals(202, fixture.handler().signingOperation(REQUEST, "reader", OPERATION.value()).statusCode());
+        assertEquals(404, fixture.handler().signingOperation(REQUEST, "rotation-only", OPERATION.value()).statusCode());
+    }
+
+    @Test
+    void completedProjectionUsesOnlyTheAuthorizedSnapshot() {
+        Fixture fixture = fixture(issuance());
+        SemanticSigningOperation completed = completedObservation(issuance());
+        when(fixture.signing().find(OPERATION)).thenReturn(Optional.of(completed));
         when(fixture.gateway().authorizeControl(anyString(), any(), any(), any(), anyString()))
                 .thenReturn(decision(true));
+        when(fixture.commands().completedResult(completed)).thenReturn(new PkiOperationResult("signing.operation",
+                Map.of("operationId", new PkiOperationValue.Text(OPERATION.value()),
+                        "kind", new PkiOperationValue.Text("ISSUANCE"),
+                        "encoding", new PkiOperationValue.Text("DER"),
+                        "resultSha256", new PkiOperationValue.Text("ab".repeat(32)),
+                        "credentialId", new PkiOperationValue.Text("x509:credential"))));
+        HttpResponses.Response response = fixture.handler().signingOperation(REQUEST, "administrator", OPERATION.value());
+        assertEquals(200, response.statusCode());
+        String body = new String(response.body(), StandardCharsets.UTF_8);
+        assertTrue(body.contains("\"credentialId\":\"x509:credential\""));
+        assertTrue(body.contains("\"resultSha256\":\"" + "ab".repeat(32) + "\""));
+        InOrder order = inOrder(fixture.signing(), fixture.gateway(), fixture.commands());
+        order.verify(fixture.signing()).find(OPERATION);
+        order.verify(fixture.gateway()).authorizeControl(anyString(), any(), any(), any(), anyString());
+        order.verify(fixture.commands()).completedResult(same(completed));
+        order.verifyNoMoreInteractions();
+    }
+
+    @Test
+    void deniedCompletedResultIsHiddenWithoutProjection() {
+        Fixture fixture = fixture(issuance());
+        when(fixture.signing().find(OPERATION)).thenReturn(Optional.of(completedObservation(issuance())));
+        when(fixture.gateway().authorizeControl(anyString(), any(), any(), any(), anyString()))
+                .thenReturn(decision(false));
+        HttpResponses.Response response = fixture.handler().signingOperation(REQUEST, "unauthorized", OPERATION.value());
+        assertEquals(404, response.statusCode());
+        assertArrayEquals(HttpResponses.signingNotFound(REQUEST).body(), response.body());
+        verify(fixture.commands(), never()).completedResult(any());
+        verify(fixture.signing()).find(OPERATION);
+    }
+
+    private static SemanticSigningOperation completedObservation(SemanticSigningScope scope) {
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        return new SemanticSigningOperation(new SigningSubmissionId(OPERATION, "test", now), scope,
+                SigningOperationState.SUCCEEDED, SemanticSigningState.COMPLETED, 1, 1,
+                now, now.plusSeconds(60), Optional.empty(), Optional.of(new EncodedObject(Encoding.DER, new byte[]{1, 2, 3})));
+    }
+
+    private static void assertMapping(SemanticSigningScope scope, Permission.Action expectedAction,
+            Permission.ResourceType expectedType, Optional<PkiId> authority, Optional<String> profile,
+            Optional<PkiId> object) {
+        Fixture fixture = fixture(scope);
+        when(fixture.gateway().authorizeControl(anyString(), any(), any(), any(), anyString())).thenReturn(decision(true));
         fixture.handler().signingOperation(REQUEST, "administrator", OPERATION.value());
         ArgumentCaptor<Permission.Action> action = ArgumentCaptor.forClass(Permission.Action.class);
         ArgumentCaptor<Permission.Resource> resource = ArgumentCaptor.forClass(Permission.Resource.class);
-        verify(fixture.gateway()).authorizeControl(anyString(), action.capture(), resource.capture(),
-                any(), anyString());
+        verify(fixture.gateway()).authorizeControl(anyString(), action.capture(), resource.capture(), any(), anyString());
+        verify(fixture.signing()).find(OPERATION);
         assertEquals(expectedAction, action.getValue());
         assertEquals(expectedType, resource.getValue().type());
         assertEquals(REALM, resource.getValue().scope().realmId());
-        assertEquals(authorization.authorityId(), resource.getValue().scope().authorityId());
-        assertEquals(authorization.profileId(), resource.getValue().scope().profileId());
-        assertEquals(authorization.objectId(), resource.getValue().objectId());
+        assertEquals(authority, resource.getValue().scope().authorityId());
+        assertEquals(profile, resource.getValue().scope().profileId());
+        assertEquals(object, resource.getValue().objectId());
     }
 
-    private static SigningOperationAuthorization issuance() {
-        return new SigningOperationAuthorization(SigningOperationAuthorization.Action.CERTIFICATE_ISSUE,
-                SigningOperationAuthorization.ResourceType.CERTIFICATE,
-                Optional.of(new PkiId("ca:issuer")), Optional.of("leaf"), Optional.empty());
+    private static SemanticSigningScope issuance() {
+        return scope(SemanticSigningKind.ISSUANCE, "ISSUE_END_ENTITY", "credential.issue");
+    }
+
+    private static SemanticSigningScope scope(SemanticSigningKind kind, String operation, String purpose) {
+        return new SemanticSigningScope(kind, operation,
+                new AccessContext(new Principal("ADMIN_PRINCIPAL", "requester"), new Purpose(purpose),
+                        Optional.empty(), Optional.empty()), new KeyRef("key:signing"),
+                operation.equals("CREATE_ROOT") ? Optional.empty() : Optional.of(PARENT),
+                operation.contains("INTERMEDIATE") ? Optional.of(SUBJECT) : Optional.empty(),
+                kind == SemanticSigningKind.STATUS ? Optional.empty() : Optional.of("profile"), Optional.empty());
     }
 
     private static AuthorizationEngine.Decision decision(boolean allowed) {
@@ -158,11 +243,16 @@ class AdminSigningOperationAuthorizationTest {
                 ? AuthorizationEngine.Code.ALLOWED : AuthorizationEngine.Code.NO_MATCHING_GRANT, false);
     }
 
-    private static Fixture fixture(SigningOperationAuthorization authorization) {
+    private static Fixture fixture(SemanticSigningScope scope) {
         PkiSession session = mock(PkiSession.class);
-        when(session.signingOperationAuthorization(OPERATION)).thenReturn(Optional.of(authorization));
-        when(session.signingOperation(OPERATION)).thenReturn(new PkiOperationOutcome.Pending(
-                "signing.operation", OPERATION));
+        SemanticSigningService signing = mock(SemanticSigningService.class);
+        PkiSigningCommands commands = mock(PkiSigningCommands.class);
+        when(session.semanticSigning()).thenReturn(Optional.of(signing));
+        when(session.signingCommands()).thenReturn(Optional.of(commands));
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        when(signing.find(OPERATION)).thenReturn(Optional.of(new SemanticSigningOperation(
+                new SigningSubmissionId(OPERATION, "test", now), scope, SigningOperationState.PENDING,
+                SemanticSigningState.SIGNING, 0, 0, now, now.plusSeconds(60), Optional.empty(), Optional.empty())));
         ServerOperationGateway gateway = mock(ServerOperationGateway.class);
         ServerRealmContext realm = mock(ServerRealmContext.class);
         when(realm.session()).thenReturn(session);
@@ -174,8 +264,9 @@ class AdminSigningOperationAuthorizationTest {
         AdminHttpHandler handler = new AdminHttpHandler(configuration, realm,
                 mock(PkiServerAuthenticator.class), mock(ServerRuntime.class), Clock.systemUTC(),
                 new RequestIds(new SecureRandom()), () -> true);
-        return new Fixture(handler, session, gateway);
+        return new Fixture(handler, signing, commands, gateway);
     }
 
-    private record Fixture(AdminHttpHandler handler, PkiSession session, ServerOperationGateway gateway) { }
+    private record Fixture(AdminHttpHandler handler, SemanticSigningService signing,
+            PkiSigningCommands commands, ServerOperationGateway gateway) { }
 }

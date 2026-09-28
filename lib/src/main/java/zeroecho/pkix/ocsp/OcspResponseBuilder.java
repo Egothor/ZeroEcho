@@ -40,8 +40,8 @@ import java.util.List;
 import zeroecho.pkix.sign.ContentSigner;
 
 /**
- * A fluent builder for a successful, signed OCSP response (RFC 6960) carrying a
- * {@code BasicOCSPResponse}.
+ * A fluent builder for unsigned OCSP {@code ResponseData} or a successful,
+ * signed OCSP response (RFC 6960) carrying a {@code BasicOCSPResponse}.
  *
  * <p>
  * The {@code tbsResponseData} is signed by a caller supplied {@link ContentSigner};
@@ -91,12 +91,32 @@ public interface OcspResponseBuilder {
     OcspResponseBuilder nonce(byte[] nonce);
 
     /**
+     * Encodes the exact unsigned {@code ResponseData} that a signer must sign.
+     * Preserves response insertion order, responder identity, status/time fields
+     * and the optional response nonce. The returned DER contains no signature,
+     * signature algorithm, outer response envelope or certificate chain. This
+     * method neither invokes a signer nor mutates the configured fields.
+     *
+     * <p>The returned array is independently owned by the caller. Time and
+     * auxiliary memory are linear in the encoded response-data size. Response
+     * count and total response size retain the builder's existing caller-managed
+     * limits; this method adds no live-response size policy.</p>
+     *
+     * @return freshly encoded unsigned {@code ResponseData} DER
+     * @throws NullPointerException if required responder, production time or response fields are missing
+     * @throws IllegalStateException if response data cannot be encoded
+     */
+    byte[] buildTbs();
+
+    /**
      * Signs the assembled {@code tbsResponseData} and returns the DER of the whole
      * successful {@code OCSPResponse}.
      *
      * @param signer the content signer supplying the signature and algorithm
-     * @param chain the responder certificate chain to embed (possibly empty)
+     * @param chain nonnull responder certificate chain in embedding order; empty omits the optional certificates field
      * @return the DER-encoded OCSP response
+     * @throws NullPointerException if a required field, signer, chain or certificate is null
+     * @throws IllegalStateException if encoding or signing fails
      */
     byte[] build(ContentSigner signer, List<X509Certificate> chain);
 }

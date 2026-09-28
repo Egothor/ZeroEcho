@@ -60,7 +60,7 @@ import zeroecho.pki.server.RealmId;
 @SuppressWarnings("PMD")
 final class AcmeStateCodec {
     private static final int MAGIC = 0x5a454143;
-    private static final int VERSION = 5;
+    private static final int VERSION = 6;
     private static final int MAX_TEXT = 16_384;
     private static final int MAX_COLLECTION = 256;
     private static final String ZERO = "0".repeat(64);

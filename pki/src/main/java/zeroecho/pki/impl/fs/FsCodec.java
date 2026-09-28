@@ -60,7 +60,9 @@ import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeId;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.attr.AttributeValue;
+import zeroecho.pki.api.audit.AccessContext;
 import zeroecho.pki.api.audit.Principal;
+import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.ca.CaKind;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
@@ -98,7 +100,7 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
  *
  * <p>
  * Every payload carries a fixed magic value, one current codec version, and one
- * of ten explicit top-level type identifiers. Nested values are decoded only
+ * of the explicit top-level type identifiers. Nested values are decoded only
  * through the schema selected by trusted store code. Java class names are never
  * persisted or resolved, and this codec performs no runtime class loading,
  * reflective construction, or factory discovery.
@@ -113,10 +115,10 @@ import zeroecho.pki.spi.store.DomainContinuationStore;
  */
 // The closed codec keeps every strict schema in one non-reflective authority.
 @SuppressWarnings("PMD.CouplingBetweenObjects")
-final class FsCodec {
+final class FsCodec { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
 
     /* package */ static final int MAX_COMPONENT_BYTES = 1024 * 1024;
-    /* package */ static final int CURRENT_CODEC_VERSION = 8;
+    /* package */ static final int CURRENT_CODEC_VERSION = 11;
 
     private static final int CODEC_MAGIC = 0x5A454346;
     private static final int MAX_COLLECTION_ELEMENTS = MAX_COMPONENT_BYTES;
@@ -127,13 +129,15 @@ final class FsCodec {
     private static final int TOP_STATUS_OBJECT = 5;
     private static final int TOP_POLICY_TRACE = 8;
     private static final int TOP_WORKFLOW_STATE = 9;
-    private static final int TOP_SIGN_WORKFLOW_RECORD = 10;
+    private static final int TOP_SIGN_ACCEPTANCE_ENVELOPE = 10;
     private static final int DURABLE_CONTENT_VERSION = 1;
     private static final int TOP_PROFILE_VERSION = 11;
     private static final int TOP_ACTIVE_PROFILE_REF = 12;
     private static final int TOP_ISSUER_GENERATION = 13;
     private static final int TOP_ISSUER_CHAIN_PATH = 14;
     private static final int TOP_DOMAIN_CONTINUATION = 15;
+    private static final int TOP_SIGN_MUTABLE_STATE = 16;
+    private static final int TOP_SIGN_CANDIDATE_BINDING = 17;
 
     private static final int TYPE_STRING = 1;
     private static final int TYPE_BOOLEAN = 2;
@@ -173,6 +177,8 @@ final class FsCodec {
     private static final int TYPE_RETRY_FAILURE_ENUM = 76;
     private static final int TYPE_DOMAIN_KIND_ENUM = 77;
     private static final int TYPE_DOMAIN_STATE_ENUM = 78;
+    private static final int TYPE_ACCESS_CONTEXT = 79;
+    private static final int TYPE_OUTER_COMMAND = 80;
 
     private static final int ATTRIBUTE_STRING = 1;
     private static final int ATTRIBUTE_BOOLEAN = 2;
@@ -247,10 +253,12 @@ final class FsCodec {
                 case CA -> 1;
                 case ISSUANCE -> 2;
                 case STATUS -> 3;
+                case KEY_PROOF -> 4;
             }, code -> switch (code) {
                 case 1 -> DomainContinuationStore.Kind.CA;
                 case 2 -> DomainContinuationStore.Kind.ISSUANCE;
                 case 3 -> DomainContinuationStore.Kind.STATUS;
+                case 4 -> DomainContinuationStore.Kind.KEY_PROOF;
                 default -> throw unknownEnum("DomainContinuationKind", code);
             });
     private static final ValueSchema<DomainContinuationStore.State> DOMAIN_STATE = enumSchema(
@@ -418,6 +426,28 @@ final class FsCodec {
     private static final ValueSchema<Optional<String>> OPTIONAL_STRING = optionalOf(STRING);
     private static final ValueSchema<Optional<Instant>> OPTIONAL_INSTANT = optionalOf(INSTANT);
     private static final ValueSchema<Optional<EncodedObject>> OPTIONAL_ENCODED_OBJECT = optionalOf(ENCODED_OBJECT);
+    private static final ValueSchema<Optional<PkiId>> OPTIONAL_PKI_ID = optionalOf(PKI_ID);
+    private static final ValueSchema<Optional<FormatId>> OPTIONAL_FORMAT_ID = optionalOf(FORMAT_ID);
+    private static final ValueSchema<AccessContext> ACCESS_CONTEXT = valueSchema(TYPE_ACCESS_CONTEXT,
+            (writer, value) -> {
+                writer.writeValue(PRINCIPAL, value.principal());
+                writer.writeValue(STRING, value.purpose().value());
+                writer.writeValue(OPTIONAL_PKI_ID, value.objectId());
+                writer.writeValue(OPTIONAL_FORMAT_ID, value.formatId());
+            }, reader -> new AccessContext(reader.readValue(PRINCIPAL),
+                    new Purpose(reader.readValue(STRING)), reader.readValue(OPTIONAL_PKI_ID),
+                    reader.readValue(OPTIONAL_FORMAT_ID)));
+    private static final ValueSchema<SignWorkflowStore.OuterCommand> OUTER_COMMAND = valueSchema(
+            TYPE_OUTER_COMMAND, (writer, value) -> {
+                writer.writeValue(DOMAIN_KIND, value.kind());
+                writer.writeValue(STRING, value.correlationId());
+                writer.writeValue(ENCODED_OBJECT, value.command());
+                writer.writeValue(STRING, value.commandCommitment());
+            }, reader -> new SignWorkflowStore.OuterCommand(reader.readValue(DOMAIN_KIND),
+                    reader.readValue(STRING), reader.readValue(ENCODED_OBJECT),
+                    reader.readValue(STRING)));
+    private static final ValueSchema<Optional<SignWorkflowStore.OuterCommand>> OPTIONAL_OUTER_COMMAND =
+            optionalOf(OUTER_COMMAND);
     private static final ValueSchema<Optional<DurableContentReference>> OPTIONAL_DURABLE_CONTENT =
             optionalOf(DURABLE_CONTENT);
     private static final ValueSchema<Optional<SignWorkflowStore.ReconciliationFailureClass>>
@@ -429,6 +459,28 @@ final class FsCodec {
 
     /* package */ static final Schema<CaRecord> CA_RECORD = topLevel(TOP_CA_RECORD, "CA_RECORD",
             valueSchema(100, FsCodec::writeCaRecord, FsCodec::readCaRecord));
+    /* package */ static final Schema<AuthorityMetadataCodec.Base> CA_BASE = topLevel(18, "CA_BASE",
+            valueSchema(118, (writer, value) -> {
+                writer.writeValue(PKI_ID, value.caId());
+                writer.writeValue(CA_KIND, value.kind());
+                writer.writeValue(SUBJECT_REF, value.subjectRef());
+            }, reader -> new AuthorityMetadataCodec.Base(reader.readValue(PKI_ID), reader.readValue(CA_KIND),
+                    reader.readValue(SUBJECT_REF))));
+    /* package */ static final Schema<AuthorityMetadataCodec.Head> CA_HEAD = topLevel(19, "CA_HEAD",
+            valueSchema(119, (writer, value) -> {
+                writer.writeValue(PKI_ID, value.caId());
+                writer.writeValue(CA_STATE, value.state());
+                writer.writeValue(PKI_ID, value.generationId());
+                writer.writeValue(PKI_ID, value.pathId());
+                writer.writeInt(value.membershipCount());
+            }, reader -> new AuthorityMetadataCodec.Head(reader.readValue(PKI_ID), reader.readValue(CA_STATE),
+                    reader.readValue(PKI_ID), reader.readValue(PKI_ID), reader.readInt())));
+    /* package */ static final Schema<AuthorityMetadataCodec.Membership> CA_MEMBERSHIP = topLevel(20, "CA_MEMBERSHIP",
+            valueSchema(120, (writer, value) -> {
+                writer.writeValue(PKI_ID, value.caId());
+                writer.writeValue(PKI_ID, value.generationId());
+                writer.writeInt(value.ordinal());
+            }, reader -> new AuthorityMetadataCodec.Membership(reader.readValue(PKI_ID), reader.readValue(PKI_ID), reader.readInt())));
     /* package */ static final Schema<Credential> CREDENTIAL = topLevel(TOP_CREDENTIAL, "CREDENTIAL", CREDENTIAL_VALUE);
     /* package */ static final Schema<ParsedCertificationRequest> PARSED_REQUEST = topLevel(TOP_PARSED_REQUEST,
             "PARSED_REQUEST", valueSchema(101, FsCodec::writeParsedRequest, FsCodec::readParsedRequest));
@@ -438,9 +490,9 @@ final class FsCodec {
             valueSchema(106, FsCodec::writePolicyTrace, FsCodec::readPolicyTrace));
     /* package */ static final Schema<WorkflowStateRecord> WORKFLOW_STATE = topLevel(TOP_WORKFLOW_STATE,
             "WORKFLOW_STATE", valueSchema(107, FsCodec::writeWorkflowState, FsCodec::readWorkflowState));
-    /* package */ static final Schema<SignWorkflowStore.Record> SIGN_WORKFLOW_RECORD = topLevel(
-            TOP_SIGN_WORKFLOW_RECORD, "SIGN_WORKFLOW_RECORD",
-            valueSchema(108, FsCodec::writeSignWorkflowRecord, FsCodec::readSignWorkflowRecord));
+    /* package */ static final Schema<SignWorkflowStore.AcceptanceEnvelope> SIGN_ACCEPTANCE_ENVELOPE = topLevel(
+            TOP_SIGN_ACCEPTANCE_ENVELOPE, "SIGN_ACCEPTANCE_ENVELOPE",
+            valueSchema(131, FsCodec::writeSignAcceptanceEnvelope, FsCodec::readSignAcceptanceEnvelope));
     /* package */ static final Schema<ImportedCertificateProfileVersion> PROFILE_VERSION = topLevel(TOP_PROFILE_VERSION,
             "PROFILE_VERSION", valueSchema(109, FsCodec::writeProfileVersion, FsCodec::readProfileVersion));
     /* package */ static final Schema<CertificateProfileRef> ACTIVE_PROFILE_REF = topLevel(TOP_ACTIVE_PROFILE_REF,
@@ -452,16 +504,26 @@ final class FsCodec {
     /* package */ static final Schema<DomainContinuationStore.Record> DOMAIN_CONTINUATION = topLevel(
             TOP_DOMAIN_CONTINUATION, "DOMAIN_CONTINUATION",
             valueSchema(112, FsCodec::writeDomainContinuation, FsCodec::readDomainContinuation));
+    /* package */ static final Schema<SignWorkflowStore.MutableState> SIGN_MUTABLE_STATE = topLevel(
+            TOP_SIGN_MUTABLE_STATE, "SIGN_MUTABLE_STATE",
+            valueSchema(132, FsCodec::writeSignMutableState, FsCodec::readSignMutableState));
+    /* package */ static final Schema<SignWorkflowStore.CandidateBinding> SIGN_CANDIDATE_BINDING = topLevel(
+            TOP_SIGN_CANDIDATE_BINDING, "SIGN_CANDIDATE_BINDING",
+            valueSchema(114, FsCodec::writeSignCandidateBinding, FsCodec::readSignCandidateBinding));
 
     private static final Map<Integer, Schema<?>> TOP_LEVEL_SCHEMAS = Map.ofEntries(Map.entry(TOP_CA_RECORD, CA_RECORD),
             Map.entry(TOP_CREDENTIAL, CREDENTIAL), Map.entry(TOP_PARSED_REQUEST, PARSED_REQUEST),
             Map.entry(TOP_STATUS_OBJECT, STATUS_OBJECT),
             Map.entry(TOP_POLICY_TRACE, POLICY_TRACE),
-            Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE), Map.entry(TOP_SIGN_WORKFLOW_RECORD, SIGN_WORKFLOW_RECORD),
+            Map.entry(TOP_WORKFLOW_STATE, WORKFLOW_STATE),
+            Map.entry(TOP_SIGN_ACCEPTANCE_ENVELOPE, SIGN_ACCEPTANCE_ENVELOPE),
             Map.entry(TOP_PROFILE_VERSION, PROFILE_VERSION), Map.entry(TOP_ACTIVE_PROFILE_REF, ACTIVE_PROFILE_REF),
             Map.entry(TOP_ISSUER_GENERATION, ISSUER_GENERATION),
             Map.entry(TOP_ISSUER_CHAIN_PATH, ISSUER_CHAIN_PATH),
-            Map.entry(TOP_DOMAIN_CONTINUATION, DOMAIN_CONTINUATION));
+            Map.entry(TOP_DOMAIN_CONTINUATION, DOMAIN_CONTINUATION),
+            Map.entry(TOP_SIGN_MUTABLE_STATE, SIGN_MUTABLE_STATE),
+            Map.entry(TOP_SIGN_CANDIDATE_BINDING, SIGN_CANDIDATE_BINDING),
+            Map.entry(18, CA_BASE), Map.entry(19, CA_HEAD), Map.entry(20, CA_MEMBERSHIP));
 
     private FsCodec() {
         // utility
@@ -496,6 +558,26 @@ final class FsCodec {
         } catch (IOException | IllegalArgumentException ex) {
             throw new IllegalStateException("Decoding failed: schema=" + schema.name + " code=INVALID_CURRENT_PAYLOAD",
                     ex);
+        }
+    }
+
+    /* package */ static <T> T decodeRecovery(final Schema<T> schema,
+            final byte[] encoded) throws IOException {
+        return decodeRecovery(schema, encoded, null);
+    }
+
+    /* package */ // Operational I/O identity is unwrapped; malformed durable data is deliberately reclassified without an unsafe cause.
+                  @SuppressWarnings({ "PMD.PreserveStackTrace" })
+                  static <T> T decodeRecovery(final Schema<T> schema,
+            final byte[] encoded, final StagedContentStore stagedContent) throws IOException {
+        Objects.requireNonNull(schema, "schema");
+        Objects.requireNonNull(encoded, "encoded");
+        try {
+            return PayloadDecoder.decode(schema, encoded, stagedContent);
+        } catch (OperationalReferenceException operational) {
+            throw operational.failure();
+        } catch (IOException | IllegalArgumentException malformed) {
+            throw new MalformedPayloadException();
         }
     }
 
@@ -853,60 +935,127 @@ final class FsCodec {
                 reader.readValue(INSTANT), reader.readValue(ENCODING), reader.readValue(OPTIONAL_ENCODED_OBJECT));
     }
 
-    private static void writeSignWorkflowRecord(Writer writer, SignWorkflowStore.Record value) throws IOException {
-        writer.writeValue(PKI_ID, value.submissionId());
-        writer.writeValue(STRING, value.namespace());
-        writer.writeValue(STRING, value.fingerprint());
-        byte[] configurationCommitment = value.configurationCommitment().bytes();
+    private static void writeSignAcceptanceEnvelope(Writer writer,
+            SignWorkflowStore.AcceptanceEnvelope value) throws IOException {
+        writer.writeValue(PKI_ID, value.operationId());
+        writer.writeValue(STRING, value.acceptanceCommitment().encoded());
+        writer.writeValue(STRING, value.providerNamespace());
+        byte[] configurationCommitment = value.providerConfigurationCommitment().bytes();
         try {
             writer.writeValue(BYTES, configurationCommitment);
         } finally {
             Arrays.fill(configurationCommitment, (byte) 0);
         }
-        writer.writeValue(PRINCIPAL, value.owner());
+        writer.writeValue(ACCESS_CONTEXT, value.accessContext());
+        writer.writeValue(KEY_REF, value.keyRef());
+        writer.writeValue(PKI_ID, value.fairnessAuthorityId());
+        writer.writeValue(STRING, value.algorithmId());
+        writer.writeValue(ENCODING, value.signatureEncoding());
         writer.writeValue(INSTANT, value.createdAt());
         writer.writeValue(INSTANT, value.deadline());
-        writer.writeValue(ENCODED_OBJECT, value.request());
+        writer.writeValue(DURABLE_CONTENT, value.candidate());
+        writer.writeValue(OPTIONAL_OUTER_COMMAND, value.outer());
+        writer.writeInt(value.mode().persistentCode());
+        writer.writeBoolean(value.proofStep().isPresent());
+        if (value.proofStep().isPresent()) {
+            SignWorkflowStore.CaSubjectProofStep proof = value.proofStep().orElseThrow();
+            writer.writeValue(PKI_ID, proof.operationId());
+            writer.writeValue(KEY_REF, proof.subjectKeyRef());
+            writer.writeValue(STRING, proof.algorithmId());
+            writer.writeValue(DURABLE_CONTENT, proof.challenge());
+        }
+    }
+
+    private static SignWorkflowStore.AcceptanceEnvelope readSignAcceptanceEnvelope(Reader reader)
+            throws IOException {
+        PkiId operationId = reader.readValue(PKI_ID);
+        SignWorkflowStore.AcceptanceCommitment commitment =
+                SignWorkflowStore.AcceptanceCommitment.parse(reader.readValue(STRING));
+        String namespace = reader.readValue(STRING);
+        byte[] encodedConfigCommitment = reader.readValue(BYTES);
+        zeroecho.pki.spi.crypto.SigningProvider.ConfigurationCommitment configurationCommitment;
+        try {
+            configurationCommitment = new zeroecho.pki.spi.crypto.SigningProvider.ConfigurationCommitment(
+                    encodedConfigCommitment);
+        } finally {
+            Arrays.fill(encodedConfigCommitment, (byte) 0);
+        }
+        return new SignWorkflowStore.AcceptanceEnvelope(operationId, commitment, namespace,
+                configurationCommitment, reader.readValue(ACCESS_CONTEXT), reader.readValue(KEY_REF),
+                reader.readValue(PKI_ID), reader.readValue(STRING), reader.readValue(ENCODING),
+                reader.readValue(INSTANT), reader.readValue(INSTANT), reader.readValue(DURABLE_CONTENT),
+                reader.readValue(OPTIONAL_OUTER_COMMAND),
+                SignWorkflowStore.Mode.fromPersistentCode(reader.readInt()), readCaProofStep(reader));
+    }
+
+    private static Optional<SignWorkflowStore.CaSubjectProofStep> readCaProofStep(Reader reader) throws IOException {
+        return reader.readBoolean() ? Optional.of(new SignWorkflowStore.CaSubjectProofStep(reader.readValue(PKI_ID),
+                reader.readValue(KEY_REF), reader.readValue(STRING), reader.readValue(DURABLE_CONTENT))) : Optional.empty();
+    }
+
+    private static void writeSignMutableState(Writer writer,
+            SignWorkflowStore.MutableState value) throws IOException {
+        writer.writeValue(PKI_ID, value.operationId());
         writer.writeValue(SIGN_STATE, value.state());
         writer.writeValue(LONG, value.revision());
         writer.writeValue(LONG, value.fence());
         writer.writeValue(OPTIONAL_INSTANT, value.leaseUntil());
+        writer.writeValue(OPTIONAL_PKI_ID, value.downstreamOperationId());
         writer.writeValue(OPTIONAL_STRING, value.detailCode());
         writer.writeValue(OPTIONAL_ENCODED_OBJECT, value.result());
         writer.writeValue(OPTIONAL_INSTANT, value.providerUpdatedAt());
         writer.writeValue(LONG, (long) value.failureCount());
         writer.writeValue(OPTIONAL_INSTANT, value.nextEligibleAt());
         writer.writeValue(OPTIONAL_RETRY_FAILURE, value.reconciliationFailureClass());
+        writer.writeInt(value.initialAttemptPhase().persistentCode());
+        writer.writeInt(value.stage().persistentCode());
+        writer.writeBoolean(value.proofOutcome().isPresent());
+        if (value.proofOutcome().isPresent()) {
+            SignWorkflowStore.CaSubjectProofOutcome outcome = value.proofOutcome().orElseThrow();
+            writer.writeValue(STRING, outcome.disposition().name());
+            writer.writeValue(STRING, outcome.detailCode().name());
+            writer.writeValue(OPTIONAL_INSTANT, outcome.providerUpdatedAt());
+        }
     }
 
-    private static SignWorkflowStore.Record readSignWorkflowRecord(Reader reader) throws IOException {
-        PkiId submissionId = reader.readValue(PKI_ID);
-        String namespace = reader.readValue(STRING);
-        String fingerprint = reader.readValue(STRING);
-        byte[] encodedConfigCommitment = reader.readValue(BYTES);
-        zeroecho.pki.spi.crypto.SignatureWorkflow.ConfigurationCommitment configurationCommitment;
-        try {
-            configurationCommitment = new zeroecho.pki.spi.crypto.SignatureWorkflow.ConfigurationCommitment(
-                    encodedConfigCommitment);
-        } finally {
-            Arrays.fill(encodedConfigCommitment, (byte) 0);
-        }
-        Principal owner = reader.readValue(PRINCIPAL);
-        Instant createdAt = reader.readValue(INSTANT);
-        Instant deadline = reader.readValue(INSTANT);
-        EncodedObject request = reader.readValue(ENCODED_OBJECT);
+    private static SignWorkflowStore.MutableState readSignMutableState(Reader reader) throws IOException {
+        PkiId operationId = reader.readValue(PKI_ID);
         SignWorkflowStore.State state = reader.readValue(SIGN_STATE);
         long revision = reader.readValue(LONG);
         long fence = reader.readValue(LONG);
         Optional<Instant> leaseUntil = reader.readValue(OPTIONAL_INSTANT);
+        Optional<PkiId> downstreamOperationId = reader.readValue(OPTIONAL_PKI_ID);
         Optional<String> detailCode = reader.readValue(OPTIONAL_STRING);
         Optional<EncodedObject> result = reader.readValue(OPTIONAL_ENCODED_OBJECT);
         Optional<Instant> providerUpdatedAt = reader.readValue(OPTIONAL_INSTANT);
         int failureCount = Math.toIntExact(reader.readValue(LONG));
-        return new SignWorkflowStore.Record(submissionId, namespace, fingerprint, configurationCommitment, owner,
-                createdAt, deadline, request, state, revision, fence, leaseUntil, detailCode, result,
+        return new SignWorkflowStore.MutableState(operationId, state, revision, fence,
+                leaseUntil, downstreamOperationId, detailCode, result,
                 providerUpdatedAt, failureCount, reader.readValue(OPTIONAL_INSTANT),
-                reader.readValue(OPTIONAL_RETRY_FAILURE));
+                reader.readValue(OPTIONAL_RETRY_FAILURE),
+                SignWorkflowStore.InitialAttemptPhase.fromPersistentCode(reader.readInt()),
+                SignWorkflowStore.Stage.fromPersistentCode(reader.readInt()), readCaProofOutcome(reader));
+    }
+
+    private static Optional<SignWorkflowStore.CaSubjectProofOutcome> readCaProofOutcome(Reader reader) throws IOException {
+        return reader.readBoolean() ? Optional.of(new SignWorkflowStore.CaSubjectProofOutcome(
+                zeroecho.pki.spi.crypto.SigningProvider.ObservationState.valueOf(reader.readValue(STRING)),
+                zeroecho.pki.spi.crypto.SigningProvider.DetailCode.valueOf(reader.readValue(STRING)),
+                reader.readValue(OPTIONAL_INSTANT))) : Optional.empty();
+    }
+
+    private static void writeSignCandidateBinding(Writer writer,
+            SignWorkflowStore.CandidateBinding value) throws IOException {
+        writer.writeValue(STRING, value.candidateId());
+        writer.writeValue(PKI_ID, value.operationId());
+        writer.writeValue(LONG, value.length());
+        writer.writeValue(STRING, value.sha256());
+    }
+
+    private static SignWorkflowStore.CandidateBinding readSignCandidateBinding(Reader reader)
+            throws IOException {
+        return new SignWorkflowStore.CandidateBinding(reader.readValue(STRING),
+                reader.readValue(PKI_ID), reader.readValue(LONG), reader.readValue(STRING));
     }
 
     private static void writeDomainContinuation(Writer writer,
@@ -1163,7 +1312,14 @@ final class FsCodec {
             if (stagedContent == null) {
                 throw new IOException("durable content reference requires owning staged-content store");
             }
-            return stagedContent.restoreReference(storeId, contentId, encoding, length, sha256, lifecycle);
+            try {
+                return stagedContent.restoreReference(storeId, contentId, encoding, length, sha256,
+                        lifecycle);
+            } catch (FilesystemStagedContentStore.MalformedStagedContentException malformed) {
+                throw malformed;
+            } catch (IOException operational) {
+                throw new OperationalReferenceException(operational);
+            }
         }
 
         private <T> T readValue(ValueSchema<T> schema) throws IOException {
@@ -1236,6 +1392,26 @@ final class FsCodec {
             int third = readUnsignedByte();
             int fourth = readUnsignedByte();
             return first << 24 | second << 16 | third << 8 | fourth;
+        }
+    }
+
+    /** Cause-free internal marker for malformed current-schema payload bytes. */
+    /* package */ static final class MalformedPayloadException extends IOException {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /** Carries an operational reference failure across the decoding boundary. */
+    private static final class OperationalReferenceException extends IOException {
+        private static final long serialVersionUID = 1L;
+        private final IOException failure;
+
+        private OperationalReferenceException(IOException failure) {
+            super();
+            this.failure = failure;
+        }
+
+        private IOException failure() {
+            return failure;
         }
     }
 }

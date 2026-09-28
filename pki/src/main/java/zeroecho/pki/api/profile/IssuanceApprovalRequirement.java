@@ -47,6 +47,12 @@ package zeroecho.pki.api.profile;
  * authority, never embedded in the transportable profile document.
  * </p>
  *
+ * <p>Server deployments enforce the declared approval gate. In the standalone
+ * local administrative mode, the explicitly configured local operator has root
+ * authority: invoking the command approves it, including {@link #SINGLE} and
+ * {@link #THRESHOLD}. This local authorization does not fabricate server approval
+ * evidence and does not bypass cryptographic, profile, or consistency checks.</p>
+ *
  * <p>
  * The value is deny-by-default oriented: it is always declared explicitly in the
  * canonical profile document and never inferred. Consumers branch on the
@@ -66,8 +72,8 @@ public enum IssuanceApprovalRequirement {
     THRESHOLD;
 
     /**
-     * Indicates whether issuance under this requirement must be gated by a
-     * durable administrative approval before the credential is signed.
+     * Indicates whether server issuance under this requirement must be gated by
+     * a durable administrative approval before the credential is signed.
      *
      * @return {@code true} unless the requirement is {@link #NONE}
      */

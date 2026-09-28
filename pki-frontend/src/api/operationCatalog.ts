@@ -58,18 +58,48 @@ import {
 import { F, type OperationSpec } from '@/api/operationSchema';
 
 /**
- * The full ZeroEcho operation catalog (101 operations: 47 PKI + 54 control),
+ * The full ZeroEcho operation catalog (101 operations: 37 PKI + 10 signing + 54 control),
  * mirroring the server decoder `HttpOperationCodec`. `scope`/`authorityFrom`
  * encode the request-envelope rules (realm-wide operations must NOT carry an
  * authorityId; authority-scoped operations must; embedded ones derive it from an
  * argument). See operationSchema.ts for the parameter-schema rationale.
  */
 export const OPERATIONS: readonly OperationSpec[] = [
+  {
+    id: 'profile.list-all', title: 'List certificate profiles', summary: 'Browse registered certificate profiles.',
+    family: 'PKI_OPERATION', nav: 'profiles', scope: 'realm', read: true, approval: 'NONE',
+    fields: [F.int('limit'), F.textOpt('after', { hidden: true })],
+  },
+  {
+    id: 'request.list', title: 'List certificate requests', summary: 'Browse stored certificate requests.',
+    family: 'PKI_OPERATION', nav: 'requests', scope: 'realm', read: true, approval: 'NONE',
+    fields: [F.int('limit'), F.textOpt('after', { hidden: true })],
+  },
+  {
+    id: 'credential.search', title: 'Browse certificates', summary: 'Browse certificates issued by an authority.',
+    family: 'PKI_OPERATION', nav: 'issuance', scope: 'authority', read: true, approval: 'NONE',
+    fields: [F.int('limit'), F.textOpt('after', { hidden: true })],
+  },
+  {
+    id: 'issuer.generation.list', title: 'List issuer generations', summary: 'Browse all issuer generations of an authority.',
+    family: 'PKI_OPERATION', nav: 'issuers', scope: 'authority', read: true, approval: 'NONE',
+    fields: [F.int('limit'), F.textOpt('after', { hidden: true })],
+  },
+  {
+    id: 'configuration.choices', title: 'Available configuration choices', summary: 'Inspect available formats, signing keys and providers.',
+    family: 'SERVER_CONTROL_OPERATION', nav: 'configuration', scope: 'realm', read: true, approval: 'NONE',
+    fields: [F.int('limit'), F.textOpt('after', { hidden: true })],
+  },
+  {
+    id: 'security.disclosure.capability.list', title: 'List disclosure capabilities', summary: 'Browse disclosure capabilities for an object.',
+    family: 'SERVER_CONTROL_OPERATION', nav: 'disclosure', scope: 'realm', read: true, approval: 'NONE',
+    fields: [F.id('objectId', { ref: 'object' }), F.int('limit'), F.textOpt('after', { hidden: true })],
+  },
   // ---- Certificate authorities (PKI) ----------------------------------------
   {
     id: 'ca.list', title: 'List authorities', summary: 'List certificate authorities in the realm.',
     family: 'PKI_OPERATION', nav: 'authorities', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.int('limit', { help: 'Maximum number of authorities to return.' })],
+    fields: [F.int('limit', { help: 'Maximum number of authorities to return.' }), F.textOpt('after', { hidden: true })],
   },
   {
     id: 'ca.inspect', title: 'Inspect authority', summary: 'Show one authority in detail.',
@@ -78,8 +108,8 @@ export const OPERATIONS: readonly OperationSpec[] = [
   },
   {
     id: 'ca.create', title: 'Create root authority', summary: 'Create a new root certificate authority.',
-    family: 'PKI_OPERATION', nav: 'authorities', scope: 'realm', read: false, approval: 'HIGH_RISK',
-    fields: [F.text('formatId'), F.text('subjectRef'), F.text('profileId'), F.text('keyRef')],
+    family: 'SIGNING_OPERATION', nav: 'authorities', scope: 'realm', read: false, approval: 'HIGH_RISK',
+    fields: [F.text('formatId', { ref: 'format' }), F.text('subjectRef'), F.text('profileId', { ref: 'profile' }), F.text('keyRef', { ref: 'key', allowNew: true })],
   },
   {
     id: 'ca.transition', title: 'Transition authority state', summary: 'Change the lifecycle state of an authority.',
@@ -88,68 +118,68 @@ export const OPERATIONS: readonly OperationSpec[] = [
   },
   {
     id: 'ca.intermediate.create', title: 'Create intermediate CA', summary: 'Create a subordinate certificate authority.',
-    family: 'PKI_OPERATION', nav: 'authorities', scope: 'authority', authorityFrom: 'issuerCaId', read: false,
+    family: 'SIGNING_OPERATION', nav: 'authorities', scope: 'authority', authorityFrom: 'issuerCaId', read: false,
     approval: 'HIGH_RISK',
-    fields: [F.text('formatId'), F.id('issuerCaId', { ref: 'authority' }), F.text('subjectRef'), F.text('profileId'), F.textOpt('keyRef')],
+    fields: [F.text('formatId', { ref: 'format' }), F.id('issuerCaId', { ref: 'authority' }), F.text('subjectRef'), F.text('profileId', { ref: 'profile' }), F.textOpt('keyRef', { ref: 'key', allowNew: true })],
   },
   {
     id: 'ca.intermediate.issue', title: 'Issue intermediate certificate', summary: 'Issue a CA certificate for a subordinate authority.',
-    family: 'PKI_OPERATION', nav: 'authorities', scope: 'authority', authorityFrom: 'issuerCaId', read: false,
+    family: 'SIGNING_OPERATION', nav: 'authorities', scope: 'authority', authorityFrom: 'issuerCaId', read: false,
     approval: 'HIGH_RISK',
-    fields: [F.text('formatId'), F.id('issuerCaId', { ref: 'authority' }), F.id('subjectCaId', { ref: 'authority' }), F.text('profileId'),
+    fields: [F.text('formatId', { ref: 'format' }), F.id('issuerCaId', { ref: 'authority' }), F.id('subjectCaId', { ref: 'authority' }), F.text('profileId', { ref: 'profile' }),
       F.instantOpt('notBefore', { help: 'Optional; supply with notAfter.' }),
       F.instantOpt('notAfter', { help: 'Optional; supply with notBefore.' })],
   },
   {
     id: 'ca.rollover', title: 'Roll over CA certificate', summary: 'Roll the CA certificate to a new generation.',
-    family: 'PKI_OPERATION', nav: 'authorities', scope: 'authority', authorityFrom: 'caId', read: false,
+    family: 'SIGNING_OPERATION', nav: 'authorities', scope: 'authority', authorityFrom: 'caId', read: false,
     approval: 'HIGH_RISK', fields: [F.id('caId', { ref: 'authority' }), F.idOpt('issuerCaId', { ref: 'authority' })],
   },
   {
     id: 'ca.rotate', title: 'Rotate CA key', summary: 'Rotate the signing key of an authority.',
-    family: 'PKI_OPERATION', nav: 'authorities', scope: 'authority', authorityFrom: 'caId', read: false,
-    approval: 'HIGH_RISK', fields: [F.id('caId', { ref: 'authority' }), F.textOpt('newKeyRef'), F.idOpt('issuerCaId', { ref: 'authority' })],
+    family: 'SIGNING_OPERATION', nav: 'authorities', scope: 'authority', authorityFrom: 'caId', read: false,
+    approval: 'HIGH_RISK', fields: [F.id('caId', { ref: 'authority' }), F.textOpt('newKeyRef', { ref: 'key', allowNew: true }), F.idOpt('issuerCaId', { ref: 'authority' })],
   },
 
   // ---- Issuer generations & chain paths (PKI) -------------------------------
   {
     id: 'issuer.generation.inspect', title: 'Inspect issuer generation', summary: 'Show one issuer generation.',
-    family: 'PKI_OPERATION', nav: 'issuers', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('issuerId')],
+    family: 'PKI_OPERATION', nav: 'issuers', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('issuerId', { ref: 'issuer' })],
   },
   {
     id: 'issuer.path.inspect', title: 'Inspect chain path', summary: 'Show one issuer chain path.',
-    family: 'PKI_OPERATION', nav: 'issuers', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('pathId')],
+    family: 'PKI_OPERATION', nav: 'issuers', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('pathId', { ref: 'path' })],
   },
   {
     id: 'issuer.path.list', title: 'List chain paths', summary: 'List chain paths for an issuer generation.',
-    family: 'PKI_OPERATION', nav: 'issuers', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('issuerId')],
+    family: 'PKI_OPERATION', nav: 'issuers', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('issuerId', { ref: 'issuer' })],
   },
   {
     id: 'issuer.path.select', title: 'Select issuance path', summary: 'Select the active issuance path for an authority.',
     family: 'PKI_OPERATION', nav: 'issuers', scope: 'authority', authorityFrom: 'caId', read: false,
-    approval: 'HIGH_RISK', fields: [F.id('caId', { ref: 'authority' }), F.id('issuerId'), F.id('pathId'), F.text('reason')],
+    approval: 'HIGH_RISK', fields: [F.id('caId', { ref: 'authority' }), F.id('issuerId', { ref: 'issuer' }), F.id('pathId', { ref: 'path' }), F.text('reason')],
   },
   {
     id: 'issuer.path.register', title: 'Register chain path', summary: 'Register a new issuer chain path.',
     family: 'PKI_OPERATION', nav: 'issuers', scope: 'authority', authorityFrom: 'caId', read: false,
-    approval: 'NONE', fields: [F.id('caId', { ref: 'authority' }), F.id('issuerId'), F.id('parentPathId')],
+    approval: 'NONE', fields: [F.id('caId', { ref: 'authority' }), F.id('issuerId', { ref: 'issuer' }), F.id('parentPathId', { ref: 'parentPath' })],
   },
 
   // ---- Certificate profiles (PKI) -------------------------------------------
   {
     id: 'profile.list', title: 'List profile versions', summary: 'List versions of a certificate profile.',
     family: 'PKI_OPERATION', nav: 'profiles', scope: 'authority', read: true, approval: 'NONE',
-    fields: [F.text('profileId')],
+    fields: [F.text('profileId', { ref: 'profile' })],
   },
   {
     id: 'profile.inspect', title: 'Inspect profile', summary: 'Show one certificate profile version.',
     family: 'PKI_OPERATION', nav: 'profiles', scope: 'authority', read: true, approval: 'NONE',
-    fields: [F.text('profileId'), F.long('profileVersion')],
+    fields: [F.text('profileId', { ref: 'profile' }), F.long('profileVersion', { ref: 'profileVersion' })],
   },
   {
     id: 'profile.activate', title: 'Activate profile', summary: 'Activate a certificate profile version.',
     family: 'PKI_OPERATION', nav: 'profiles', scope: 'authority', read: false, approval: 'HIGH_RISK',
-    fields: [F.text('profileId'), F.long('profileVersion')],
+    fields: [F.text('profileId', { ref: 'profile' }), F.long('profileVersion', { ref: 'profileVersion' })],
   },
   {
     id: 'profile.register', title: 'Register profile', summary: 'Register a certificate profile document (DER/JSON, base64).',
@@ -165,45 +195,45 @@ export const OPERATIONS: readonly OperationSpec[] = [
   // ---- Requests / CSRs (PKI) ------------------------------------------------
   {
     id: 'request.inspect', title: 'Inspect request', summary: 'Show one certification request.',
-    family: 'PKI_OPERATION', nav: 'requests', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('requestId')],
+    family: 'PKI_OPERATION', nav: 'requests', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('requestId', { ref: 'request' })],
   },
   {
     id: 'request.import', title: 'Import request (CSR)', summary: 'Import a DER certification request (base64).',
     family: 'PKI_OPERATION', nav: 'requests', scope: 'realm', read: false, approval: 'NONE',
-    fields: [F.text('formatId'), F.base64('encoded', { help: 'Base64-encoded DER CSR.' })],
+    fields: [F.text('formatId', { ref: 'format' }), F.base64('encoded', { help: 'Base64-encoded DER CSR.' })],
   },
   {
     id: 'request.verify', title: 'Verify request', summary: 'Verify a certification request (proof of possession).',
-    family: 'PKI_OPERATION', nav: 'requests', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('requestId')],
+    family: 'PKI_OPERATION', nav: 'requests', scope: 'realm', read: true, approval: 'NONE', fields: [F.id('requestId', { ref: 'request' })],
   },
 
   // ---- Issuance (PKI) -------------------------------------------------------
   {
     id: 'credential.inspect', title: 'Inspect credential', summary: 'Show one issued credential.',
     family: 'PKI_OPERATION', nav: 'issuance', scope: 'authority', read: true, approval: 'NONE',
-    fields: [F.id('credentialId')],
+    fields: [F.id('credentialId', { ref: 'credential' })],
   },
   {
     id: 'credential.issue', title: 'Issue credential', summary: 'Issue a credential from a request and profile.',
-    family: 'PKI_OPERATION', nav: 'issuance', scope: 'authority', authorityFrom: 'issuerCaId', read: false,
-    approval: 'ISSUANCE_SINGLE', fields: [F.id('issuerCaId', { ref: 'authority' }), F.id('requestId'), F.text('profileId')],
+    family: 'SIGNING_OPERATION', nav: 'issuance', scope: 'authority', authorityFrom: 'issuerCaId', read: false,
+    approval: 'NONE', fields: [F.id('issuerCaId', { ref: 'authority' }), F.id('requestId', { ref: 'request' }), F.text('profileId', { ref: 'profile' })],
   },
 
   // ---- Lifecycle (PKI) ------------------------------------------------------
   {
     id: 'credential.renew', title: 'Renew credential', summary: 'Renew an existing credential.',
-    family: 'PKI_OPERATION', nav: 'lifecycle', scope: 'authority', read: false, approval: 'NONE',
-    fields: [F.id('credentialId')],
+    family: 'SIGNING_OPERATION', nav: 'lifecycle', scope: 'authority', read: false, approval: 'NONE',
+    fields: [F.id('credentialId', { ref: 'credential' })],
   },
   {
     id: 'credential.replace', title: 'Replace credential', summary: 'Replace a credential with a new request and profile.',
-    family: 'PKI_OPERATION', nav: 'lifecycle', scope: 'authority', read: false, approval: 'NONE',
-    fields: [F.id('existingCredentialId'), F.id('requestId'), F.text('profileId')],
+    family: 'SIGNING_OPERATION', nav: 'lifecycle', scope: 'authority', read: false, approval: 'NONE',
+    fields: [F.id('existingCredentialId', { ref: 'credential' }), F.id('requestId', { ref: 'request' }), F.text('profileId', { ref: 'profile' })],
   },
   {
     id: 'credential.reissue', title: 'Reissue credential', summary: 'Reissue a credential (same key).',
-    family: 'PKI_OPERATION', nav: 'lifecycle', scope: 'authority', read: false, approval: 'HIGH_RISK',
-    fields: [F.id('credentialId')],
+    family: 'SIGNING_OPERATION', nav: 'lifecycle', scope: 'authority', read: false, approval: 'HIGH_RISK',
+    fields: [F.id('credentialId', { ref: 'credential' })],
   },
 
   // ---- Credential confirmation (PKI) ----------------------------------------
@@ -211,44 +241,44 @@ export const OPERATIONS: readonly OperationSpec[] = [
     id: 'credential.confirmation.pending.list', title: 'List pending confirmations',
     summary: 'List pending credential confirmations for an authority.',
     family: 'PKI_OPERATION', nav: 'confirmations', scope: 'authority', read: true, approval: 'NONE',
-    fields: [F.textOpt('profileId'), F.instant('cutoffInclusive'), F.textOpt('afterExclusive'), F.int('limit')],
+    fields: [F.textOpt('profileId', { ref: 'profile' }), F.instant('cutoffInclusive'), F.textOpt('afterExclusive'), F.int('limit')],
   },
   {
     id: 'credential.confirmation.challenge.issue', title: 'Issue confirmation challenge',
     summary: 'Issue a proof-of-possession challenge for a credential.',
     family: 'PKI_OPERATION', nav: 'confirmations', scope: 'authority', read: false, approval: 'NONE',
-    fields: [F.id('credentialId')],
+    fields: [F.id('credentialId', { ref: 'credential' })],
   },
   {
     id: 'credential.confirmation.proof.complete', title: 'Complete confirmation proof',
     summary: 'Complete a proof-of-possession challenge.',
     family: 'PKI_OPERATION', nav: 'confirmations', scope: 'authority', read: false, approval: 'NONE',
-    fields: [F.id('credentialId'), F.long('expectedLifecycleRevision'),
-      F.text('expectedLifecycleRecordCommitment'), F.text('expectedChallengeRecordCommitment'),
+    fields: [F.id('credentialId', { ref: 'credential' }), F.long('expectedLifecycleRevision', { readOnly: true }),
+      F.text('expectedLifecycleRecordCommitment', { readOnly: true }), F.text('expectedChallengeRecordCommitment', { readOnly: true }),
       F.text('response', { help: 'Canonical unpadded Base64url proof response.' })],
   },
   {
     id: 'credential.confirmation.pending.revoke', title: 'Revoke pending confirmation',
     summary: 'Revoke a pending credential confirmation.',
     family: 'PKI_OPERATION', nav: 'confirmations', scope: 'authority', read: false, approval: 'NONE',
-    fields: [F.id('credentialId'), F.textOpt('justification')],
+    fields: [F.id('credentialId', { ref: 'credential' }), F.textOpt('justification')],
   },
 
   // ---- Revocation (PKI) -----------------------------------------------------
   {
     id: 'credential.revoke', title: 'Revoke credential', summary: 'Revoke an issued credential.',
     family: 'PKI_OPERATION', nav: 'revocation', scope: 'authority', read: false, approval: 'NONE',
-    fields: [F.id('credentialId'), F.enum('reason', REVOCATION_REASON), F.textOpt('justification')],
+    fields: [F.id('credentialId', { ref: 'credential' }), F.enum('reason', REVOCATION_REASON), F.textOpt('justification')],
   },
   {
     id: 'revocation.inspect', title: 'Inspect revocation', summary: 'Show the revocation state of a credential.',
     family: 'PKI_OPERATION', nav: 'revocation', scope: 'authority', read: true, approval: 'NONE',
-    fields: [F.id('credentialId')],
+    fields: [F.id('credentialId', { ref: 'credential' })],
   },
   {
     id: 'revocation.history', title: 'Revocation history', summary: 'Read the revocation history of a credential.',
     family: 'PKI_OPERATION', nav: 'revocation', scope: 'authority', read: true, approval: 'NONE',
-    fields: [F.id('credentialId'), F.int('limit')],
+    fields: [F.id('credentialId', { ref: 'credential' }), F.int('limit')],
   },
   {
     id: 'revocation.snapshot', title: 'Snapshot revocations', summary: 'Take a realm-wide revocation snapshot.',
@@ -259,23 +289,23 @@ export const OPERATIONS: readonly OperationSpec[] = [
   {
     id: 'status.inspect', title: 'Inspect status object', summary: 'Show one status object (CRL/delta).',
     family: 'PKI_OPERATION', nav: 'status', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.id('statusObjectId')],
+    fields: [F.id('statusObjectId', { ref: 'status' })],
   },
   {
     id: 'inventory.status', title: 'List status objects', summary: 'List status objects for an issuer.',
     family: 'PKI_OPERATION', nav: 'status', scope: 'authority', authorityFrom: 'issuerCaId', read: true,
-    approval: 'NONE', fields: [F.id('issuerCaId', { ref: 'authority' }), F.int('limit')],
+    approval: 'NONE', fields: [F.id('issuerCaId', { ref: 'authority' }), F.int('limit'), F.textOpt('after', { hidden: true })],
   },
   {
     id: 'status.generate', title: 'Generate status object', summary: 'Generate a CRL or delta CRL.',
-    family: 'PKI_OPERATION', nav: 'status', scope: 'authority', authorityFrom: 'issuerCaId', read: false,
-    approval: 'NONE', fields: [F.id('issuerCaId', { ref: 'authority' }), F.enum('type', STATUS_OBJECT_TYPE), F.text('formatId')],
+    family: 'SIGNING_OPERATION', nav: 'status', scope: 'authority', authorityFrom: 'issuerCaId', read: false,
+    approval: 'NONE', fields: [F.id('issuerCaId', { ref: 'authority' }), F.enum('type', STATUS_OBJECT_TYPE), F.text('formatId', { ref: 'format' })],
   },
 
   // ---- Publication (PKI) ----------------------------------------------------
   {
     id: 'publication.list', title: 'List publications', summary: 'List publication records in the realm.',
-    family: 'PKI_OPERATION', nav: 'publication', scope: 'realm', read: true, approval: 'NONE', fields: [F.int('limit')],
+    family: 'PKI_OPERATION', nav: 'publication', scope: 'realm', read: true, approval: 'NONE', fields: [F.int('limit'), F.textOpt('after', { hidden: true })],
   },
   {
     id: 'publication.inspect', title: 'Inspect publication', summary: 'Show one publication record.',
@@ -285,8 +315,8 @@ export const OPERATIONS: readonly OperationSpec[] = [
   {
     id: 'publication.register', title: 'Register publication', summary: 'Register a publication of a credential or status object.',
     family: 'PKI_OPERATION', nav: 'publication', scope: 'authority', read: false, approval: 'NONE',
-    fields: [F.id('publicationId'), F.enum('sourceType', PUBLICATION_SOURCE_TYPE), F.id('sourceId'),
-      F.enum('targetType', PUBLICATION_TARGET_TYPE), F.text('targetId')],
+    fields: [F.id('publicationId'), F.enum('sourceType', PUBLICATION_SOURCE_TYPE), F.id('sourceId', { ref: 'sourceObject' }),
+      F.enum('targetType', PUBLICATION_TARGET_TYPE), F.text('targetId', { ref: 'publicationTarget' })],
   },
   {
     id: 'publication.process', title: 'Process publication', summary: 'Process a pending publication.',
@@ -312,7 +342,7 @@ export const OPERATIONS: readonly OperationSpec[] = [
   {
     id: 'algorithm.binding.list', title: 'List algorithm bindings', summary: 'List algorithm bindings.',
     family: 'PKI_OPERATION', nav: 'configuration', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.textOpt('origin'), F.textOpt('role'), F.int('limit')],
+    fields: [F.textOpt('origin', { ref: 'algorithmOrigin' }), F.textOpt('role', { ref: 'algorithmRole' }), F.int('limit'), F.textOpt('after', { hidden: true })],
   },
   {
     id: 'algorithm.binding.inspect', title: 'Inspect algorithm binding', summary: 'Show one algorithm binding.',
@@ -322,7 +352,7 @@ export const OPERATIONS: readonly OperationSpec[] = [
   {
     id: 'algorithm.binding.validate', title: 'Validate algorithm bindings', summary: 'Validate algorithm bindings.',
     family: 'PKI_OPERATION', nav: 'configuration', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.textOpt('bindingId', { ref: 'algorithmBinding' }), F.textOpt('expectedCommitment')],
+    fields: [F.textOpt('bindingId', { ref: 'algorithmBinding' }), F.textOpt('expectedCommitment', { readOnly: true })],
   },
 
   // ---- Principals (control) -------------------------------------------------
@@ -360,13 +390,13 @@ export const OPERATIONS: readonly OperationSpec[] = [
   {
     id: 'security.role-template.inspect', title: 'Inspect role template', summary: 'Show one role template version.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'access', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.text('templateId', { ref: 'roleTemplate' }), F.int('version')],
+    fields: [F.text('templateId', { ref: 'roleTemplate' }), F.int('version', { ref: 'templateVersion' })],
   },
   {
     id: 'security.role-assignment.create', title: 'Create role assignment', summary: 'Assign a role template to a principal.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'access', scope: 'realm', read: false, approval: 'HIGH_RISK',
-    fields: [F.text('assignmentId'), F.text('principalId', { ref: 'principal' }), F.text('templateId', { ref: 'roleTemplate' }), F.int('templateVersion'),
-      F.textOpt('profileId'), F.instantOpt('expiresAt')],
+    fields: [F.text('assignmentId'), F.text('principalId', { ref: 'principal' }), F.text('templateId', { ref: 'roleTemplate' }), F.int('templateVersion', { ref: 'templateVersion' }),
+      F.textOpt('profileId', { ref: 'profile' }), F.instantOpt('expiresAt')],
   },
   {
     id: 'security.role-assignment.inspect', title: 'Inspect role assignment', summary: 'Show one role assignment.',
@@ -388,7 +418,7 @@ export const OPERATIONS: readonly OperationSpec[] = [
     family: 'SERVER_CONTROL_OPERATION', nav: 'access', scope: 'realm', read: false, approval: 'HIGH_RISK',
     fields: [F.text('grantId'), F.text('principalId', { ref: 'principal' }), F.enum('effect', PERMISSION_EFFECT),
       F.enum('action', PERMISSION_ACTION), F.enum('resourceType', PERMISSION_RESOURCE_TYPE),
-      F.idOpt('issuerId'), F.textOpt('profileId'), F.textOpt('responderId'),
+      F.idOpt('issuerId', { ref: 'issuer' }), F.textOpt('profileId', { ref: 'profile' }), F.textOpt('responderId'),
       F.enum('relationship', PERMISSION_RELATIONSHIP), F.enum('dataView', PERMISSION_DATA_VIEW),
       F.enumSet('conditions', PERMISSION_CONDITION), F.instantOpt('expiresAt')],
   },
@@ -421,7 +451,7 @@ export const OPERATIONS: readonly OperationSpec[] = [
     family: 'SERVER_CONTROL_OPERATION', nav: 'approvals', scope: 'realm', read: false, approval: 'NONE',
     fields: [F.text('approvalId'), F.text('targetOperation', { help: 'Operation id being approved.' }),
       { name: 'targetArguments', type: 'json', required: true, help: 'JSON object of the target operation arguments.' },
-      F.textOpt('targetAuthorityId')],
+      F.textOpt('targetAuthorityId', { ref: 'authority' })],
   },
   {
     id: 'security.approval.inspect', title: 'Inspect approval', summary: 'Show one approval.',
@@ -432,7 +462,7 @@ export const OPERATIONS: readonly OperationSpec[] = [
     id: 'security.approval.list', title: 'List approvals', summary: 'List approvals, optionally filtered.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'approvals', scope: 'realm', read: true, approval: 'NONE',
     fields: [F.int('offset'), F.int('limit'), F.enumOpt('state', APPROVAL_STATE),
-      F.textOpt('requesterPrincipalId'), F.textOpt('targetOperationId')],
+      F.textOpt('requesterPrincipalId', { ref: 'principal' }), F.textOpt('targetOperationId')],
   },
   {
     id: 'security.approval.approve', title: 'Approve', summary: 'Approve a pending approval.',
@@ -483,50 +513,50 @@ export const OPERATIONS: readonly OperationSpec[] = [
   {
     id: 'security.disclosure.inspect', title: 'Inspect disclosure', summary: 'Show the disclosure policy of an object.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'disclosure', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.id('objectId')],
+    fields: [F.id('objectId', { ref: 'object' })],
   },
   {
     id: 'security.disclosure.set', title: 'Set disclosure', summary: 'Set the disclosure policy of an object.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'disclosure', scope: 'realm', read: false, approval: 'HIGH_RISK',
-    fields: [F.id('objectId'), F.enum('policy', DISCLOSURE_POLICY)],
+    fields: [F.id('objectId', { ref: 'object' }), F.enum('policy', DISCLOSURE_POLICY)],
   },
   {
     id: 'certificate.publication.enroll', title: 'Enroll credential publication', summary: 'Enroll a credential for publication.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'disclosure', scope: 'realm', read: false, approval: 'NONE',
-    fields: [F.id('credentialId'), F.textOpt('ownerPrincipalId')],
+    fields: [F.id('credentialId', { ref: 'credential' }), F.textOpt('ownerPrincipalId', { ref: 'principal' })],
   },
   {
     id: 'security.disclosure.capability.issue', title: 'Issue disclosure capability', summary: 'Issue a time-bounded disclosure capability.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'disclosure', scope: 'realm', read: false, approval: 'NONE',
-    fields: [F.id('objectId'), F.instant('expiresAt')],
+    fields: [F.id('objectId', { ref: 'object' }), F.instant('expiresAt')],
   },
   {
     id: 'security.disclosure.capability.revoke', title: 'Revoke disclosure capability', summary: 'Revoke a disclosure capability.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'disclosure', scope: 'realm', read: false, approval: 'NONE',
-    fields: [F.text('capabilityId')],
+    fields: [F.text('capabilityId', { ref: 'capability' })],
   },
 
   // ---- Audit (control) ------------------------------------------------------
   {
     id: 'security.audit-view.inspect-redacted', title: 'Inspect audit (redacted)', summary: 'Inspect an audit record (redacted view).',
     family: 'SERVER_CONTROL_OPERATION', nav: 'audit', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.id('objectId'), F.textOpt('reasonReference')],
+    fields: [F.id('objectId', { ref: 'object' }), F.textOpt('reasonReference')],
   },
   {
     id: 'security.audit-view.inspect-full', title: 'Inspect audit (full)', summary: 'Inspect an audit record (full metadata view).',
     family: 'SERVER_CONTROL_OPERATION', nav: 'audit', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.id('objectId'), F.textOpt('reasonReference')],
+    fields: [F.id('objectId', { ref: 'object' }), F.textOpt('reasonReference')],
   },
   {
     id: 'security.audit-view.inspect-pii', title: 'Inspect audit (PII)', summary: 'Inspect an audit record (PII view).',
     family: 'SERVER_CONTROL_OPERATION', nav: 'audit', scope: 'realm', read: true, approval: 'NONE',
-    fields: [F.id('objectId'), F.textOpt('reasonReference')],
+    fields: [F.id('objectId', { ref: 'object' }), F.textOpt('reasonReference')],
   },
   {
     id: 'security.audit.search', title: 'Search audit', summary: 'Search the audit trail.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'audit', scope: 'realm', read: true, approval: 'NONE',
     fields: [F.textOpt('category'), F.textOpt('action'), F.instantOpt('after'), F.instantOpt('before'),
-      F.idOpt('objectId'), F.textOpt('principalName'), F.int('limit')],
+      F.idOpt('objectId', { ref: 'object' }), F.textOpt('principalName'), F.int('limit')],
   },
   {
     id: 'security.audit.verify-integrity', title: 'Verify audit integrity', summary: 'Verify the audit chain integrity.',
@@ -550,14 +580,14 @@ export const OPERATIONS: readonly OperationSpec[] = [
     id: 'repository.alias.set', title: 'Set repository alias', summary: 'Set a repository alias target.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'repository', scope: 'authority', authorityFrom: 'authorityId',
     read: false, approval: 'HIGH_RISK',
-    fields: [F.id('authorityId', { ref: 'authority' }), F.enum('type', REPOSITORY_ALIAS_TYPE), F.id('targetObjectId'),
-      F.idOpt('issuerId'), F.textOpt('expectedCurrentCommitment')],
+    fields: [F.id('authorityId', { ref: 'authority' }), F.enum('type', REPOSITORY_ALIAS_TYPE), F.id('targetObjectId', { ref: 'aliasTarget' }),
+      F.idOpt('issuerId', { ref: 'issuer' }), F.textOpt('expectedCurrentCommitment', { readOnly: true })],
   },
   {
     id: 'repository.alias.remove', title: 'Remove repository alias', summary: 'Remove a repository alias.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'repository', scope: 'authority', authorityFrom: 'authorityId',
     read: false, approval: 'HIGH_RISK',
-    fields: [F.id('authorityId', { ref: 'authority' }), F.enum('type', REPOSITORY_ALIAS_TYPE), F.text('expectedCurrentCommitment')],
+    fields: [F.id('authorityId', { ref: 'authority' }), F.enum('type', REPOSITORY_ALIAS_TYPE), F.text('expectedCurrentCommitment', { readOnly: true })],
   },
 
   // ---- ACME administration (control) ----------------------------------------
@@ -565,10 +595,10 @@ export const OPERATIONS: readonly OperationSpec[] = [
     id: 'acme.directory.register', title: 'Register ACME directory', summary: 'Register an ACME directory.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'acme', scope: 'authority', authorityFrom: 'authorityId',
     read: false, approval: 'HIGH_RISK',
-    fields: [F.text('alias'), F.id('authorityId', { ref: 'authority' }), F.text('profileId'), F.stringSet('dnsNamespaces'),
-      F.long('maximumValidityMillis'), F.stringSet('publicKeyAlgorithms'), F.stringSet('x509BindingPolicies'),
-      F.enumSet('challengeTypes', ACME_CHALLENGE_TYPE), F.stringSet('challengeProviderIds'),
-      F.textOpt('eabProviderId'), F.bool('eabRequired')],
+    fields: [F.text('alias'), F.id('authorityId', { ref: 'authority' }), F.text('profileId', { ref: 'profile' }), F.stringSet('dnsNamespaces'),
+      F.long('maximumValidityMillis'), F.stringSet('publicKeyAlgorithms', { readOnly: true }), F.stringSet('x509BindingPolicies', { readOnly: true }),
+      F.enumSet('challengeTypes', ACME_CHALLENGE_TYPE), F.stringSet('challengeProviderIds', { ref: 'challengeProvider' }),
+      F.textOpt('eabProviderId', { ref: 'eabProvider' }), F.bool('eabRequired')],
   },
   {
     id: 'acme.directory.inspect', title: 'Inspect ACME directory', summary: 'Show one ACME directory.',
@@ -610,10 +640,10 @@ export const OPERATIONS: readonly OperationSpec[] = [
   {
     id: 'ocsp.responder.register', title: 'Register OCSP responder', summary: 'Register an OCSP responder.',
     family: 'SERVER_CONTROL_OPERATION', nav: 'ocsp', scope: 'realm', read: false, approval: 'HIGH_RISK',
-    fields: [F.text('responderId'), F.text('alias'), F.id('authorityId', { ref: 'authority' }), F.id('issuerId'),
-      F.enum('signingMode', OCSP_SIGNING_MODE), F.id('responderCredentialId'), F.text('signingKeyRef'),
-      F.id('chainPathId'), F.text('signatureAlgorithm'), F.textOpt('signatureBindingId'),
-      F.text('signatureBindingCommitment'), F.enum('responderIdForm', OCSP_RESPONDER_ID_FORM),
+    fields: [F.text('responderId'), F.text('alias'), F.id('authorityId', { ref: 'authority' }), F.id('issuerId', { ref: 'issuer' }),
+      F.enum('signingMode', OCSP_SIGNING_MODE), F.id('responderCredentialId', { ref: 'credential' }), F.text('signingKeyRef', { ref: 'key', allowNew: true }),
+      F.id('chainPathId', { ref: 'path' }), F.text('signatureAlgorithm', { ref: 'signatureAlgorithm' }), F.textOpt('signatureBindingId', { ref: 'algorithmBinding' }),
+      F.text('signatureBindingCommitment', { readOnly: true }), F.enum('responderIdForm', OCSP_RESPONDER_ID_FORM),
       F.long('responseValidityMillis'), F.enum('noncePolicy', OCSP_NONCE_POLICY), F.int('maximumNonceBytes'),
       F.enumSet('acceptedHashes', OCSP_CERT_ID_HASH), F.int('maximumRequestBytes'), F.int('maximumEntries'),
       F.long('cacheLifetimeMillis'), F.enum('requestAuthenticationMode', OCSP_REQUEST_AUTHENTICATION_MODE),

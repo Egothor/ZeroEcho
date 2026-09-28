@@ -46,6 +46,8 @@ package zeroecho.pki.api;
  * @param value non-empty key reference token
  */
 public record KeyRef(String value) {
+    private static final int UTF8_ASCII_MAX = 0x7f;
+    private static final int UTF8_TWO_BYTE_MAX = 0x7ff;
 
     /**
      * Creates a key reference.
@@ -57,5 +59,36 @@ public record KeyRef(String value) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("value must not be null/blank");
         }
+    }
+
+    /**
+     * Returns the exact byte length produced by UTF-8 encoding without allocating
+     * an encoded byte array. Malformed surrogate code units use the JDK encoder's
+     * one-byte replacement representation.
+     *
+     * @return exact UTF-8 byte length
+     */
+    public long utf8Length() {
+        long bytes = 0L;
+        int index = 0;
+        while (index < value.length()) {
+            char unit = value.charAt(index);
+            if (unit <= UTF8_ASCII_MAX) {
+                bytes++;
+            } else if (unit <= UTF8_TWO_BYTE_MAX) {
+                bytes += 2L;
+            } else if (Character.isHighSurrogate(unit)
+                    && index + 1 < value.length()
+                    && Character.isLowSurrogate(value.charAt(index + 1))) {
+                bytes += 4L;
+                index++;
+            } else if (Character.isSurrogate(unit)) {
+                bytes++;
+            } else {
+                bytes += 3L;
+            }
+            index++;
+        }
+        return bytes;
     }
 }

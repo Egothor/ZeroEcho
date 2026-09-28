@@ -1,204 +1,132 @@
-# ZeroEcho PKI CLI — overview and worked examples
+# PKI CLI worked examples
 
-> Seed material for the user/admin guide (Task 16). This directory documents the
-> single-process `zeroecho pki` command family and ships three runnable demos.
+These examples use the synchronous local CLI (mode c): every invocation opens
+and closes the shared PKI implementation without starting an HTTP listener or
+reactor. The same distribution also supports the remote mTLS CLI (mode b) for
+operations on the permanent backend used by the web frontend (mode a). See the
+[current CLI guide](../../pki-cli.md) for both configurations and remote receipts,
+and the [deployment guide](../../../deploy/README.md) for the server and web app.
 
-## 1. What it is
+## Run the demos
 
-The PKI CLI is a **single-process command-line utility** — an `openssl`-style
-tool that performs concrete PKI operations synchronously against a local store
-and signer. It is **not** a client for a remote PKI service; a network front-end
-is a separate, later concern. Everything one invocation needs (store, audit
-sink, signing keyring, publishers) is described in one configuration file.
-
-Each invocation runs one operation (or one plan), prints a machine-readable
-result to stdout, and exits with a stable code. When an operation depends on an
-**asynchronous** signer (e.g. a remote HSM/queue), the CLI waits a bounded time
-and then exits cleanly with a "pending" result so an operator can resume later —
-it never blocks indefinitely.
-
-## 2. Command surface
-
-```
-zeroecho pki <operation> --config <file> [--output human|json] [--pending-wait <s>] [args…]
-zeroecho pki run <plan-file> --config <file> [--output human|json] [--pending-wait <s>]
-zeroecho -K …            # keyring management (key generation, listing) — see §7
-```
-
-- `--config` — path to the session configuration (§4). Required.
-- `--output` — `human` (default) or `json`. Scripts should use `json`.
-- `--pending-wait <seconds>` — bounded wait (default **3**, range 0–3600) for an
-  asynchronously-signed operation to complete before a clean pending exit.
-
-Run `zeroecho pki --help` for the full operation list with arguments.
-
-## 3. Two ways to run a scenario
-
-| Mode | Command | When to use |
-|------|---------|-------------|
-| **Per-operation** | one `zeroecho pki <op>` per step | scripting incrementally, wiring into other tools, or when later steps need IDs discovered mid-run |
-| **Batch** | one `zeroecho pki run <plan.json>` | signing a whole **series** of certificates in a single operator run |
-
-A batch plan is a JSON document whose steps can reference earlier steps' outputs
-with `${<step-id>.<field>}` (e.g. `${inter.caId}`). Step ids are lowercase
-kebab-case. `failurePolicy` is `FAIL_FAST` (stop on first failure) or
-`CONTINUE`. See `plan-minimal.json` produced by `demo-minimal.sh`.
-
-If a scenario cannot be expressed as one batch (because a step's arguments are
-only known after inspecting the result of an earlier step), split it into
-several invocations — the per-operation model.
-
-## 4. Session configuration (version 2)
-
-```json
-{
-  "version": 2,
-  "store":  { "provider": "fs",     "properties": { "root": "<dir>" } },
-  "audit":  { "provider": "memory", "properties": { "size": "512" } },
-  "signing": {
-    "workflow":  { "provider": "zeroecho-lib", "properties": { "keyringPath": "<keyring>" } },
-    "framework": { "provider": "x509-bc", "properties": {} },
-    "signatureAlgorithm": "SHA256withRSA",
-    "signingTtlSeconds": 30,
-    "unlockEnvironmentVariable": "ZEROECHO_KEYRING_PASSWORD"
-  },
-  "publishers": [
-    { "provider": "filesystem", "properties": { "root": "<dir>", "targetId": "local" } }
-  ]
-}
-```
-
-- **store** — object store for CAs, requests, credentials, status objects.
-- **signing.workflow** — `zeroecho-lib` signs with keys from a local keyring
-  (`keyringPath`); the keyring is unlocked from `unlockEnvironmentVariable`.
-- **signing.framework** — `x509-bc` produces X.509 via BouncyCastle.
-- **publishers** — where status objects (CRLs) are published; referenced from
-  `publication.*` operations by `targetId`.
-
-## 5. Profiles (schemaVersion 5)
-
-Certificate policy lives in **profiles**, registered and activated before use:
-
-```
-zeroecho pki profile.register --config c.json --profile-file root-ca.json
-zeroecho pki profile.activate --config c.json --profile-id root-ca --profile-version 1
-```
-
-The demos install five practice-usable profiles: `root-ca`, `intermediate-ca`
-(CA profiles with key usages `keyCertSign,cRLSign` and path-length limits) and
-`server-tls`, `vpn-server`, `vpn-client` (end-entity profiles with the right
-EKUs — `serverAuth` for TLS/IPsec gateways, `clientAuth` for road-warriors — and
-SAN rules). They are self-contained JSON; adapt validity, algorithms, and SAN
-constraints to your policy.
-
-## 6. Operation catalog (by area)
-
-- **configuration / algorithm** — `configuration.validate`,
-  `algorithm.binding.list|inspect|validate`
-- **profiles** — `profile.validate|register|inspect|list|activate`
-- **authorities** — `ca.inspect|list|create|transition`,
-  `ca.intermediate.create` (new sub-CA), `ca.intermediate.issue`
-  (**cross-certification** — one root certifies another CA's key),
-  `ca.rollover`, `ca.rotate`
-- **issuer paths** — `issuer.generation.inspect`,
-  `issuer.path.inspect|list|register|select`
-- **requests** — `request.inspect|import|verify` (import a standard PKCS#10 CSR)
-- **credentials** — `credential.inspect|issue|renew|replace|reissue`
-- **revocation** — `credential.revoke`, `revocation.inspect|history|snapshot`
-- **status objects** — `status.inspect|generate` (CRL / delta CRL),
-  `inventory.status`
-- **publication** — `publication.inspect|list|register|process|retry|reconcile`
-
-The CLI **does not mint private keys**. CA keys are provisioned in a keyring up
-front (§7); subjects hold their own keys and submit CSRs (`request.import`).
-
-## 7. Keyring prerequisites
-
-CA signing keys live in a POSIX keyring managed by `zeroecho -K`:
-
-```
-zeroecho -K --generate --alg RSA --alias root \
-         --keystore <dir>/ca-keyring.zek --keystore-password-env ZEROECHO_KEYRING_PASSWORD
-```
-
-- The keyring's **parent directory must be mode 0700** and on a POSIX filesystem;
-  key files are 0600. (`chmod 700` the directory before generating.)
-- Operations reference a key as `zeroecho-lib:<alias>.prv` in `keyRef` /
-  `--key-ref` (e.g. `zeroecho-lib:root.prv`).
-- Non-interactive unlock uses `--keystore-password-env <VAR>` (and, for signing,
-  `signing.unlockEnvironmentVariable`).
-
-## 8. Exit codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | success |
-| 2 | invalid invocation |
-| 3 | configuration failure |
-| 4 | validation or policy rejection |
-| 5 | not found or conflict |
-| 6 | recovery required |
-| 7 | external outcome unknown (**pending** async signing — resume later) |
-| 8 | resource failure / overloaded |
-| 9 | internal failure |
-| 130 | cancelled |
-
-## 9. The demo scripts
-
-All three target a fictional org "Example s.r.o." Run any of them with a built
-app distribution on PATH (`ZE_HOME=<dir with bin/app>`), `openssl` available,
-and — for the per-operation and enterprise demos — `python3`.
-
-| Script | Model | Scenario |
-|--------|-------|----------|
-| `demo-minimal.sh` | one **batch** | two-tier CA; issue HTTPS (`web`), IPsec gateway (`gtw`), road-warrior client; revoke the client (theft → `KEY_COMPROMISE`); publish a CRL. Self-contained single file. |
-| `demo-per-operation.sh` | **per-operation** | identical scenario, one `zeroecho pki` process per step (openssl-style), threading IDs between calls. |
-| `demo-enterprise.sh` | **per-operation** | two roots + one issuing CA; **cross-certification** of the issuing CA under a second root; **six** leaf certificates (two HTTPS, one gateway, three road-warriors); two revocations (`KEY_COMPROMISE`, `SUPERSEDED`); credential reissue; CRL publish; inventory/audit views. |
-
-`demo-per-operation.sh` and `demo-enterprise.sh` share setup via `_common.sh`
-(keyring seeding, config, profiles, CSR generation, and the `run_op`/`field`
-helpers). `demo-minimal.sh` is intentionally standalone so it can be read top to
-bottom as a single artifact.
-
-```
-ZE_HOME=/path/to/app/build/install/app ./demo-enterprise.sh /tmp/ze-ent
-```
-
-SAN addresses use the RFC 5737 documentation range (`192.0.2.0/24`) and the
-RFC 2606 example domain (`example.com`); replace them for real deployments.
-
-### Inspecting the results
-
-Issued objects live in the store, not on disk. To hand the operator files they
-can examine, each demo **publishes** every CA certificate, leaf certificate, and
-the CRL to the filesystem publisher (a real `publication.*` operation) and then
-copies the bytes into a `certs/` directory under the work dir, as both DER
-(`.der`) and PEM (`.pem`):
-
-```
-<workdir>/certs/
-  root-ca.pem  issuing-ca.pem  web.pem  gtw.pem  road-warrior.pem  crl.pem   (+ .der)
-```
-
-Inspect them with ordinary `openssl`:
+Build the distribution from the repository root:
 
 ```sh
-openssl x509 -in <workdir>/certs/web.pem -noout -subject -issuer \
-        -ext subjectAltName,extendedKeyUsage
-openssl crl  -in <workdir>/certs/crl.pem -noout -text | head
-# verify the chain:
-openssl verify -CAfile <(cat <workdir>/certs/issuing-ca.pem <workdir>/certs/root-ca.pem) \
-        <workdir>/certs/web.pem
+./gradlew :app:installDist --offline
 ```
 
-(The filesystem publisher stores each object as `sha256(publicationId).bin`; the
-scripts recompute that name to copy the bytes out under a friendly filename.)
+All scripts require Bash, Python 3, OpenSSL and `sha256sum`. The generated launcher
+is `app/build/install/app/bin/app`; `zeroecho` in the general CLI guide denotes this
+same application. `ZE_HOME` can select another installed distribution.
 
-## 10. Security notes
+Set `ZEROECHO_KEYRING_PASSWORD` to a nonempty password using your secret-management
+mechanism, then run a script with a fresh, empty work directory:
 
-- Keep the keyring directory 0700 and its passphrase out of shell history —
-  supply it via an environment variable, not a flag.
-- The `memory` audit sink is for demos; production deployments should point
-  `audit` at a durable sink.
-- Profiles are policy: review key usages, EKUs, path-length and validity before
-  issuing against them in anger.
+```sh
+docs/examples/pki-cli/demo-minimal.sh /tmp/pki-batch-demo
+docs/examples/pki-cli/demo-per-operation.sh /tmp/pki-operation-demo
+docs/examples/pki-cli/demo-enterprise.sh /tmp/pki-enterprise-demo
+```
+
+If the directory is omitted, the script creates a temporary one and prints its
+path. It rejects a nonempty directory before generating keys. Files are private
+by default (`umask 077`); the work and keyring directories have mode 0700. The
+demos intentionally create unencrypted subject private keys for OpenSSL CSR
+creation. Keep the entire work directory private and dispose of these test keys
+when finished. No default keyring password is provided or written to configuration.
+
+| Script | Execution | Scenario |
+| --- | --- | --- |
+| `demo-minimal.sh` | Three sequential plans, then export commands | Root and issuing CA; HTTPS, VPN gateway and client certificates; client revocation for theft; CRL publication. |
+| `demo-per-operation.sh` | One operation per invocation | The same two-tier CA, three certificates, revocation and CRL. |
+| `demo-enterprise.sh` | One operation per invocation | Two roots; issuing CA cross-certified under the second root; six leaf certificates; two revocation reasons; reissue; CRL publication and inventory reads. |
+
+All three use `_common.sh` to provision the keyring, profiles, CSRs and local
+configuration. CA keys use the application's existing `-K` keyring management;
+subject keys and PKCS#10 requests use OpenSSL. SAN names and addresses are example
+identities (`example.com`, `192.0.2.0/24`). These are demonstration profiles, not a
+production certificate policy.
+
+## Configuration and execution
+
+Each generated `config.json` uses local schema version 1, `mode: "local"` and
+`operatorId: "demo-local-root"`. That identity is an explicit trusted local audit
+declaration. Invoking a signing command constitutes approval by the local root
+operator; profile, key, proof and validity checks still apply. The configuration
+uses the filesystem store, local `zeroecho-lib` signer, filesystem publisher and
+an in-memory audit sink. Production use requires an appropriate durable audit
+sink and reviewed profiles. Signing unlocks from the named environment variable;
+the password value is never embedded in the file.
+
+Only one writable process can own the store. Stop the backend before using a
+local CLI configuration against its store. Do not run these scripts concurrently
+against one directory. Use the remote CLI to administer a running backend.
+
+The minimal demo writes `plan-root.json`, `plan-intermediate.json` and
+`plan-issuance.json`. Plans use `failurePolicy: "FAIL_FAST"` and earlier-step
+references such as `${csr-web.requestId}` and `${rw.credentialId}`. The other
+supported failure policy is `CONTINUE_INDEPENDENT`. A completed signing operation
+returns `credentialId`. `credential.inspect` supplies the issuing authority's
+`authorityId`, which is also the subject CA for a self-signed root. For a new
+intermediate, the scripts select the sole `INTERMEDIATE` authority in their fresh
+store using `ca.list`; using its certificate's issuer would select the root.
+
+New CA certificate validity is rounded inward to whole seconds. The scripts
+inspect the certificate and wait at most five seconds for its actual `notBefore`
+before using that issuer. This is a read-only example-level wait between plans
+or commands, with no mutation resubmission. Local signing itself is synchronous;
+`--pending-wait` applies only to the remote CLI.
+
+## Results and recovery
+
+JSON receipts are retained in `out/`, including nonzero exits. The minimal demo
+also retains each full plan receipt. The scripts stop on failure and do not retry
+an operation automatically. Read the retained receipt and its `operationId`
+before deciding what to do next; do not rerun a whole script over the store.
+
+To inspect and explicitly finish a selected local signing operation, use the
+original configuration and retained ID:
+
+```sh
+app/build/install/app/bin/app pki signing.operation.inspect \
+  --config /tmp/pki-batch-demo/config.json --operation-id SIGNING_OPERATION_ID --output json
+app/build/install/app/bin/app pki signing.operation.complete \
+  --config /tmp/pki-batch-demo/config.json --operation-id SIGNING_OPERATION_ID --output json
+```
+
+Inspection never advances the operation. Its successful read does not mean the
+underlying operation succeeded: examine `output.state`. Completion advances only
+the selected ID. A persisted signature may be completed without signing again;
+an unrecoverable dispatch without a durable result is not silently repeated.
+Live leases and future retries return immediately. Ordinary reads and unrelated
+commands do not recover previous work.
+
+Publication runs synchronously through `publication.register` and
+`publication.process`. Filesystem publication failure is not successful export;
+inspect the publication and resolve its reported failure/reconciliation state
+before using explicit `publication.retry` or `publication.reconcile` as appropriate.
+Signing receipts likewise distinguish domain completion from durable signing
+alone. Exit codes and recovery flags are documented in the
+[Deployment and CLI contracts](../../pki-deployment-cli-contracts.md).
+
+## Inspect the artifacts
+
+The examples publish CA certificates, leaf certificates and CRLs through the PKI
+filesystem publisher, then copy them into `certs/` with readable names as DER and
+PEM. The publisher stores bytes as `sha256(publicationId).bin`.
+
+For the minimal and per-operation examples:
+
+```sh
+openssl x509 -in /tmp/pki-batch-demo/certs/web.pem -noout -subject -issuer \
+  -ext subjectAltName,extendedKeyUsage
+openssl crl -in /tmp/pki-batch-demo/certs/crl.pem -noout -text
+openssl verify -CAfile /tmp/pki-batch-demo/certs/root-ca.pem \
+  -untrusted /tmp/pki-batch-demo/certs/issuing-ca.pem /tmp/pki-batch-demo/certs/web.pem
+```
+
+Enterprise exports additionally include `root-a.pem`, `root-b.pem`,
+`issuing-ca-cross.pem` and `alice-reissued.pem`. Verify the alternate chain with
+Root B as the trust anchor and `issuing-ca-cross.pem` as the intermediate.
+Certificate export does not claim that an end-entity confirmation protocol has
+completed; these examples focus on local issuance, revocation and publication.

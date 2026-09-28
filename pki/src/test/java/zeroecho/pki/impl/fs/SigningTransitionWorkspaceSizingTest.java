@@ -123,10 +123,10 @@ final class SigningTransitionWorkspaceSizingTest {
         assertEquals(SigningTransitionWorkspaceSizing.AdmissionClass.ORDINARY,
                 purge.admissionClass());
         assertEquals(10, purge.maximumRecords());
-        assertEquals(30, purge.deletes());
+        assertEquals(31, purge.deletes());
         assertEquals(1, purge.replacements());
-        assertEquals(4_888L, purge.maximumNodes());
-        assertEquals(312_832L, purge.maximumBytes());
+        assertEquals(5_050L, purge.maximumNodes());
+        assertEquals(323_200L, purge.maximumBytes());
     }
 
     @Test

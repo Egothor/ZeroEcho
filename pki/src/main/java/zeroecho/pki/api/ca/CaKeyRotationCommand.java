@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.api.ca;
 
-import java.util.Optional;
-
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.attr.AttributeSet;
@@ -47,36 +45,65 @@ import zeroecho.pki.api.attr.AttributeSet;
  * Key rotation changes the underlying key material. Historical key references
  * and credentials must remain discoverable for audit and validation of
  * previously issued credentials.
+ * Profile selection comes from authoritative CA state. Construction validates
+ * structure only; it neither generates keys nor proves possession or authorizes
+ * rotation.
  * </p>
  *
- * @param caId       CA entity id
- * @param newKeyRef  optional new key reference; empty requests key generation
- *                   via runtime wiring
- * @param issuerCaId optional issuer CA id (required for intermediate rotation;
- *                   empty for root depending on policy)
- * @param attributes universal attributes (may be empty but not null)
  */
-public record CaKeyRotationCommand(PkiId caId, Optional<KeyRef> newKeyRef, Optional<PkiId> issuerCaId,
-        AttributeSet attributes) {
+public sealed interface CaKeyRotationCommand {
+    /** {@return CA entity identifier} */
+    PkiId caId();
+    /** {@return explicitly provisioned new managed key} */
+    KeyRef newKeyRef();
+    /** {@return immutable universal attributes} */
+    AttributeSet attributes();
 
     /**
-     * Creates a CA key rotation command.
-     *
-     * @throws IllegalArgumentException if inputs are invalid or optional containers
-     *                                  are null
+     * Root rotation with an explicitly provisioned new key. Execution must
+     * separately authorize rotation and verify a fresh self-signature against the
+     * same frozen canonical SubjectPublicKeyInfo of the new key used for the new
+     * credential. A retained proof or historical self-signature is not a substitute.
+     * @param caId root CA identifier, strict UTF-8 at most 4,096 bytes
+     * @param newKeyRef new managed key, strict UTF-8 at most 1,048,576 bytes
+     * @param attributes immutable universal attributes, possibly empty
      */
-    public CaKeyRotationCommand {
-        if (caId == null) {
-            throw new IllegalArgumentException("caId must not be null");
+    record Root(PkiId caId, KeyRef newKeyRef, AttributeSet attributes) implements CaKeyRotationCommand {
+        /**
+         * Validates local structure without resolving authority state.
+         * @throws IllegalArgumentException if any component is null or bounded text is invalid
+         */
+        public Root {
+            CaCommandInputs.identifier(caId);
+            CaCommandInputs.key(newKeyRef);
+            CaCommandInputs.required(attributes);
         }
-        if (newKeyRef == null) {
-            throw new IllegalArgumentException("newKeyRef must not be null");
+        /** {@return a diagnostic representation without command coordinates or attributes} */
+        @Override public String toString() { return "CaKeyRotationCommand.Root[redacted]"; }
+    }
+
+    /**
+     * Intermediate rotation with a new managed key. Execution must separately
+     * authorize rotation and complete a fresh internal proof for the target key
+     * within the same durable admission.
+     * @param caId intermediate CA identifier, strict UTF-8 at most 4,096 bytes
+     * @param newKeyRef new managed key, strict UTF-8 at most 1,048,576 bytes
+     * @param issuerCaId issuer CA identifier, strict UTF-8 at most 4,096 bytes
+     * @param attributes immutable universal attributes, possibly empty
+     */
+    record Intermediate(PkiId caId, KeyRef newKeyRef, PkiId issuerCaId,
+            AttributeSet attributes) implements CaKeyRotationCommand {
+        /**
+         * Validates local structure without resolving authority state.
+         * @throws IllegalArgumentException if any component is null, bounded text is invalid
+         */
+        public Intermediate {
+            CaCommandInputs.identifier(caId);
+            CaCommandInputs.key(newKeyRef);
+            CaCommandInputs.identifier(issuerCaId);
+                CaCommandInputs.required(attributes);
         }
-        if (issuerCaId == null) {
-            throw new IllegalArgumentException("issuerCaId must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
+        /** {@return a diagnostic representation without command coordinates or attributes} */
+        @Override public String toString() { return "CaKeyRotationCommand.Intermediate[redacted]"; }
     }
 }

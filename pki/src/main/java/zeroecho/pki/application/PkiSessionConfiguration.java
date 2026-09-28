@@ -34,24 +34,26 @@
 package zeroecho.pki.application;
 
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.Set;
 
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.spi.ProviderConfig;
 
 /**
- * Immutable, versioned configuration for one synchronous PKI backend session.
+ * Immutable configuration for one PKI backend session.
  *
- * <p>Provider values may be sensitive. Callers must not render or log this
- * object. Validation of provider identities and closed property sets occurs
- * before backend allocation.</p>
+ * <p>The project is pre-release. This type describes only the current format;
+ * it provides no compatibility constructors or migration interpretation.</p>
  *
- * @param version configuration schema version
+ * @param version exact configuration schema version
  * @param store store-provider configuration
  * @param audit audit-provider configuration
- * @param signing optional signing and X.509 service composition
+ * @param signing optional provider/domain configuration reserved for the reactive signing layer
  * @param publishers explicitly enabled publication destinations
  * @param bindingProviders explicitly activated X.509 binding providers
  */
@@ -59,37 +61,12 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         Optional<SigningConfiguration> signing, List<ProviderConfig> publishers,
         List<BindingProviderConfiguration> bindingProviders) {
 
-    /** Current configuration schema version. */
-    public static final int CURRENT_VERSION = 4;
+    /** Current and only accepted configuration schema version. */
+    public static final int CURRENT_VERSION = 6;
 
-    /**
-     * Creates a read-only-compatible version-one configuration.
-     *
-     * @param version schema version, from 1 through {@link #CURRENT_VERSION}
-     * @param store store-provider configuration
-     * @param audit audit-provider configuration
-     */
-    public PkiSessionConfiguration(int version, ProviderConfig store, ProviderConfig audit) {
-        this(version, store, audit, Optional.empty(), List.of(), List.of());
-    }
-
-    /**
-     * Creates a version-one or version-two configuration without custom bindings.
-     *
-     * @param version schema version, from 1 through {@link #CURRENT_VERSION}
-     * @param store store-provider configuration
-     * @param audit audit-provider configuration
-     * @param signing optional signing and X.509 service composition
-     * @param publishers explicitly enabled publication destinations
-     */
-    public PkiSessionConfiguration(int version, ProviderConfig store, ProviderConfig audit,
-            Optional<SigningConfiguration> signing, List<ProviderConfig> publishers) {
-        this(version, store, audit, signing, publishers, List.of());
-    }
-
-    /** Validates and snapshots the configuration. */
+    /** Validates and snapshots the current configuration. */
     public PkiSessionConfiguration {
-        if (version < 1 || version > CURRENT_VERSION) {
+        if (version != CURRENT_VERSION) {
             throw new IllegalArgumentException("Unsupported PKI session configuration version");
         }
         store = snapshot(Objects.requireNonNull(store, "store"));
@@ -98,12 +75,6 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
         publishers = Objects.requireNonNull(publishers, "publishers").stream()
                 .map(PkiSessionConfiguration::snapshot).toList();
         bindingProviders = List.copyOf(Objects.requireNonNull(bindingProviders, "bindingProviders"));
-        if (version == 1 && (signing.isPresent() || !publishers.isEmpty())) {
-            throw new IllegalArgumentException("Version-one configuration cannot enable optional capabilities");
-        }
-        if (version < 3 && !bindingProviders.isEmpty()) {
-            throw new IllegalArgumentException("Custom X.509 bindings require configuration version three");
-        }
         if (bindingProviders.stream().map(BindingProviderConfiguration::providerId).distinct().count()
                 != bindingProviders.size()) {
             throw new IllegalArgumentException("Duplicate X.509 binding-provider identity");
@@ -115,136 +86,27 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
     }
 
     /**
-     * Explicit signing and X.509 service-graph configuration.
+     * Provider, domain and explicit bounded runtime values for reactive signing.
      *
-     * @param workflow signature-workflow provider configuration
-     * @param framework credential-framework provider configuration
+     * @param provider signing-provider configuration
      * @param signatureAlgorithm canonical configured signing algorithm
-     * @param signingTtl positive synchronous signing deadline
-     * @param unlockEnvironmentVariable optional environment-variable reference used
-     *        only by the default process composition
-     * @param certificateSignatureBinding optional explicit certificate signature binding
-     * @param crlSignatureBinding optional explicit CRL signature binding
-     * @param subjectPublicKeyBinding optional explicit SPKI binding
-     * @param laneCount number of concurrently executing provider steps
-     * @param queueCapacity maximum ready steps retained outside the lanes
-     * @param gracefulDrain maximum natural-drain duration during close
-     * @param forcedCancellation maximum drain duration after cancellation
-     * @param signingServices additional named signing services
-     * @param caRouting signing-key-reference to service-identifier routing map
+     * @param signingTtl positive signing deadline
+     * @param unlockEnvironmentVariable optional environment-variable reference
+     * @param topology explicit bounded signing routing topology
+     * @param pureEdDsaMaximumTbsBytes optional operator-selected maximum raw
+     *        {@code TBSCertList} size for pure Ed25519 or Ed448; empty selects
+     *        the heap- and concurrency-aware default
      */
-    // The record components are the stable serialized configuration schema and cannot be grouped compatibly.
-    @SuppressWarnings("PMD.ExcessiveParameterList")
-    public record SigningConfiguration(ProviderConfig workflow, ProviderConfig framework,
+    public record SigningConfiguration(ProviderConfig provider,
             String signatureAlgorithm, Duration signingTtl, Optional<String> unlockEnvironmentVariable,
-            Optional<String> certificateSignatureBinding, Optional<String> crlSignatureBinding,
-            Optional<String> subjectPublicKeyBinding, int laneCount, int queueCapacity,
-            Duration gracefulDrain, Duration forcedCancellation,
-            List<SigningServiceConfiguration> signingServices, Map<String, String> caRouting) {
+            SigningTopology topology, OptionalLong pureEdDsaMaximumTbsBytes) {
 
-        /** Default number of concurrently executing signing steps. */
-        public static final int DEFAULT_LANE_COUNT = 16;
-        /** Default number of ready signing steps waiting for a lane. */
-        public static final int DEFAULT_QUEUE_CAPACITY = 64;
-        /** Default time allowed for cooperative signing drain. */
-        public static final Duration DEFAULT_GRACEFUL_DRAIN = Duration.ofSeconds(30);
-        /** Default time allowed after active signing steps are interrupted. */
-        public static final Duration DEFAULT_FORCED_CANCELLATION = Duration.ofSeconds(10);
-        /** Smallest supported lane count. */
-        public static final int MINIMUM_LANE_COUNT = 1;
-        /** Largest supported lane count. */
-        public static final int MAXIMUM_LANE_COUNT = 256;
-        /** Smallest supported ready-queue capacity. */
-        public static final int MINIMUM_QUEUE_CAPACITY = 0;
-        /** Largest supported ready-queue capacity. */
-        public static final int MAXIMUM_QUEUE_CAPACITY = 65_535;
-        /** Largest supported total admission population. */
-        public static final int MAXIMUM_ADMISSION_CAPACITY = 65_536;
-        /** Smallest supported lifecycle duration. */
-        public static final Duration MINIMUM_LIFECYCLE_DURATION = Duration.ofMillis(1);
-        /** Largest supported lifecycle duration. */
-        public static final Duration MAXIMUM_LIFECYCLE_DURATION = Duration.ofMinutes(10);
+        private static final long MAXIMUM_JCA_MESSAGE_BYTES = Integer.MAX_VALUE - 8L;
+        private static final long EDDSA_TRANSFER_BUFFER_BYTES = 16L * 1024L;
 
-        /**
-         * Creates standard-mode signing configuration with default execution bounds.
-         *
-         * @param workflow signature-workflow provider configuration
-         * @param framework credential-framework provider configuration
-         * @param signatureAlgorithm nonblank canonical signing algorithm
-         * @param signingTtl positive synchronous signing deadline
-         * @param unlockEnvironmentVariable optional environment-variable reference for key unlocking
-         */
-        public SigningConfiguration(ProviderConfig workflow, ProviderConfig framework,
-                String signatureAlgorithm, Duration signingTtl, Optional<String> unlockEnvironmentVariable) {
-            this(workflow, framework, signatureAlgorithm, signingTtl, unlockEnvironmentVariable,
-                    Optional.empty(), Optional.empty(), Optional.empty(), DEFAULT_LANE_COUNT,
-                    DEFAULT_QUEUE_CAPACITY, DEFAULT_GRACEFUL_DRAIN, DEFAULT_FORCED_CANCELLATION);
-        }
-
-        /**
-         * Creates a signing configuration with the default bounded execution
-         * runtime. This source-compatible constructor is retained for configurations
-         * created before schema version four.
-         *
-         * @param workflow signature-workflow provider configuration
-         * @param framework credential-framework provider configuration
-         * @param signatureAlgorithm nonblank canonical signing algorithm
-         * @param signingTtl positive synchronous signing deadline
-         * @param unlockEnvironmentVariable optional environment-variable reference for key unlocking
-         * @param certificateSignatureBinding optional explicit certificate-signature binding
-         * @param crlSignatureBinding optional explicit CRL-signature binding
-         * @param subjectPublicKeyBinding optional explicit subject-public-key binding
-         */
-        public SigningConfiguration(ProviderConfig workflow, ProviderConfig framework,
-                String signatureAlgorithm, Duration signingTtl, Optional<String> unlockEnvironmentVariable,
-                Optional<String> certificateSignatureBinding, Optional<String> crlSignatureBinding,
-                Optional<String> subjectPublicKeyBinding) {
-            this(workflow, framework, signatureAlgorithm, signingTtl, unlockEnvironmentVariable,
-                    certificateSignatureBinding, crlSignatureBinding, subjectPublicKeyBinding,
-                    DEFAULT_LANE_COUNT, DEFAULT_QUEUE_CAPACITY, DEFAULT_GRACEFUL_DRAIN,
-                    DEFAULT_FORCED_CANCELLATION);
-        }
-
-        /**
-         * Creates a single default-service signing configuration with no additional
-         * per-CA routed services. Retained for source compatibility with
-         * configurations created before per-CA signing routing.
-         *
-         * @param workflow signature-workflow provider configuration
-         * @param framework credential-framework provider configuration
-         * @param signatureAlgorithm nonblank canonical signing algorithm
-         * @param signingTtl positive synchronous signing deadline
-         * @param unlockEnvironmentVariable optional environment-variable reference for key unlocking
-         * @param certificateSignatureBinding optional explicit certificate-signature binding
-         * @param crlSignatureBinding optional explicit CRL-signature binding
-         * @param subjectPublicKeyBinding optional explicit subject-public-key binding
-         * @param laneCount number of concurrently executing provider steps
-         * @param queueCapacity maximum ready steps retained outside the lanes
-         * @param gracefulDrain maximum natural-drain duration during close
-         * @param forcedCancellation maximum drain duration after cancellation
-         */
-        public SigningConfiguration(ProviderConfig workflow, ProviderConfig framework,
-                String signatureAlgorithm, Duration signingTtl, Optional<String> unlockEnvironmentVariable,
-                Optional<String> certificateSignatureBinding, Optional<String> crlSignatureBinding,
-                Optional<String> subjectPublicKeyBinding, int laneCount, int queueCapacity,
-                Duration gracefulDrain, Duration forcedCancellation) {
-            this(workflow, framework, signatureAlgorithm, signingTtl, unlockEnvironmentVariable,
-                    certificateSignatureBinding, crlSignatureBinding, subjectPublicKeyBinding, laneCount, queueCapacity,
-                    gracefulDrain, forcedCancellation, List.of(), Map.of());
-        }
-
-        /**
-         * Validates and snapshots the signing configuration.
-         *
-         * <p>{@code signingServices} declares additional signing services (each
-         * identified by a stable {@code serviceId} that must equal its allocated
-         * workflow's id); {@code caRouting} maps a signing key-reference value to the
-         * id of the additional service that must handle it. Any key reference not
-         * mapped is handled by the default {@code workflow} service.</p>
-         */
+        /** Validates and snapshots provider/domain configuration. */
         public SigningConfiguration {
-            workflow = PkiSessionConfiguration.snapshot(Objects.requireNonNull(workflow, "workflow"));
-            framework = PkiSessionConfiguration.snapshot(Objects.requireNonNull(framework, "framework"));
+            provider = PkiSessionConfiguration.snapshot(Objects.requireNonNull(provider, "provider"));
             if (signatureAlgorithm == null || signatureAlgorithm.isBlank()) {
                 throw new IllegalArgumentException("Signing algorithm must not be blank");
             }
@@ -253,113 +115,251 @@ public record PkiSessionConfiguration(int version, ProviderConfig store, Provide
             }
             unlockEnvironmentVariable = Objects.requireNonNull(unlockEnvironmentVariable,
                     "unlockEnvironmentVariable");
-            certificateSignatureBinding = binding(certificateSignatureBinding, "certificateSignatureBinding");
-            crlSignatureBinding = binding(crlSignatureBinding, "crlSignatureBinding");
-            subjectPublicKeyBinding = binding(subjectPublicKeyBinding, "subjectPublicKeyBinding");
-            if (laneCount < MINIMUM_LANE_COUNT || laneCount > MAXIMUM_LANE_COUNT) {
-                throw new IllegalArgumentException("laneCount must be between 1 and 256");
-            }
-            if (queueCapacity < MINIMUM_QUEUE_CAPACITY || queueCapacity > MAXIMUM_QUEUE_CAPACITY) {
-                throw new IllegalArgumentException("queueCapacity must be between 0 and 65535");
-            }
-            int admissionCapacity;
-            try {
-                admissionCapacity = Math.addExact(laneCount, queueCapacity);
-            } catch (ArithmeticException overflow) {
-                throw new IllegalArgumentException("Signing admission capacity overflows", overflow);
-            }
-            if (admissionCapacity > MAXIMUM_ADMISSION_CAPACITY) {
-                throw new IllegalArgumentException("laneCount plus queueCapacity must not exceed 65536");
-            }
-            gracefulDrain = lifecycleDuration(gracefulDrain, "gracefulDrain");
-            forcedCancellation = lifecycleDuration(forcedCancellation, "forcedCancellation");
             unlockEnvironmentVariable.ifPresent(value -> {
                 if (!value.matches("[A-Z][A-Z0-9_]{0,127}")) {
                     throw new IllegalArgumentException("Unlock environment-variable reference is invalid");
                 }
             });
-            signingServices = List.copyOf(Objects.requireNonNull(signingServices, "signingServices"));
-            caRouting = Map.copyOf(Objects.requireNonNull(caRouting, "caRouting"));
-            java.util.Set<String> serviceIds = new java.util.HashSet<>();
-            for (SigningServiceConfiguration service : signingServices) {
-                if (!serviceIds.add(service.serviceId())) {
-                    throw new IllegalArgumentException("Duplicate signing service id: " + service.serviceId());
-                }
-            }
-            for (Map.Entry<String, String> route : caRouting.entrySet()) {
-                if (route.getKey().isBlank()) {
-                    throw new IllegalArgumentException("Signing routing key reference must not be blank");
-                }
-                if (!serviceIds.contains(route.getValue())) {
-                    throw new IllegalArgumentException("Signing routing references an unknown service id: "
-                            + route.getValue());
-                }
+            topology = Objects.requireNonNull(topology, "topology");
+            pureEdDsaMaximumTbsBytes = Objects.requireNonNull(pureEdDsaMaximumTbsBytes,
+                    "pureEdDsaMaximumTbsBytes");
+            if (pureEdDsaMaximumTbsBytes.isPresent()
+                    && (pureEdDsaMaximumTbsBytes.getAsLong() <= 0
+                            || pureEdDsaMaximumTbsBytes.getAsLong() > MAXIMUM_JCA_MESSAGE_BYTES)) {
+                throw new IllegalArgumentException("pureEdDsaMaximumTbsBytes is outside its finite bound");
             }
         }
 
         private static SigningConfiguration snapshot(SigningConfiguration source) {
-            return new SigningConfiguration(source.workflow, source.framework, source.signatureAlgorithm,
-                    source.signingTtl, source.unlockEnvironmentVariable,
-                    source.certificateSignatureBinding, source.crlSignatureBinding, source.subjectPublicKeyBinding,
-                    source.laneCount, source.queueCapacity, source.gracefulDrain, source.forcedCancellation,
-                    source.signingServices, source.caRouting);
+            return new SigningConfiguration(source.provider, source.signatureAlgorithm,
+                    source.signingTtl, source.unlockEnvironmentVariable, source.topology,
+                    source.pureEdDsaMaximumTbsBytes);
         }
 
         /**
-         * Returns the exact bounded admission population.
+         * Resolves the maximum raw pure-EdDSA {@code TBSCertList} size.
          *
-         * @return {@code laneCount + queueCapacity}
+         * <p>An explicit operator value is returned unchanged. Otherwise, half of
+         * the supplied maximum heap is treated as the aggregate budget for all
+         * signing lanes. The SunEC pure-EdDSA buffering model reserves three bytes
+         * per input byte plus one transfer buffer per lane. The result is also
+         * capped by the JCA array representation.</p>
+         *
+         * @param maximumHeapBytes positive maximum JVM heap in bytes
+         * @return positive inclusive message-size limit in bytes
+         * @throws IllegalArgumentException if the heap cannot provide a positive
+         *         derived limit
          */
-        public int admissionCapacity() {
-            return Math.addExact(laneCount, queueCapacity);
-        }
-
-        private static Duration lifecycleDuration(Duration value, String name) {
-            Duration exact = Objects.requireNonNull(value, name);
-            if (exact.compareTo(MINIMUM_LIFECYCLE_DURATION) < 0
-                    || exact.compareTo(MAXIMUM_LIFECYCLE_DURATION) > 0) {
-                throw new IllegalArgumentException(name + " must be between PT0.001S and PT10M");
+        public long resolvePureEdDsaMaximumTbsBytes(long maximumHeapBytes) {
+            if (pureEdDsaMaximumTbsBytes.isPresent()) {
+                return pureEdDsaMaximumTbsBytes.getAsLong();
             }
-            return exact;
-        }
-
-        private static Optional<String> binding(Optional<String> source, String name) {
-            return Objects.requireNonNull(source, name).map(value -> {
-                if (value.isBlank() || value.length() > 512) {
-                    throw new IllegalArgumentException(name + " is invalid");
-                }
-                return value;
-            });
+            if (maximumHeapBytes <= 0) {
+                throw new IllegalArgumentException("maximumHeapBytes must be positive");
+            }
+            long perLaneBudget = maximumHeapBytes / 2L / topology.totalLaneCount();
+            long available = perLaneBudget - EDDSA_TRANSFER_BUFFER_BYTES;
+            long derived = available / 3L;
+            if (derived <= 0) {
+                throw new IllegalArgumentException("Maximum heap is too small for pure EdDSA signing");
+            }
+            return Math.min(derived, MAXIMUM_JCA_MESSAGE_BYTES);
         }
     }
 
     /**
-     * One additional signing service that specific certification authorities route
-     * their signing to, alongside the default {@code workflow} service.
+     * Immutable P1c signing topology with disjoint exact-key groups and one
+     * mandatory catch-all lane pool.
      *
-     * @param serviceId stable service identity; must equal the allocated workflow's
-     *        {@code id()} so that per-record routing and namespaces line up
-     * @param workflow signature-workflow provider configuration for this service
+     * @param coordinator limits shared by the topology coordinator
+     * @param exactGroups disjoint exact-key routing groups; may be empty
+     * @param catchAll mandatory lane pool for keys not assigned to an exact group
      */
-    public record SigningServiceConfiguration(String serviceId, ProviderConfig workflow) {
+    public record SigningTopology(SigningCoordinatorLimits coordinator,
+            List<SigningKeyGroup> exactGroups, SigningLanePool catchAll) {
+        private static final int MAXIMUM_LANES = 256;
+        private static final int MAXIMUM_PREFETCH_ENTRIES = 4096;
+        private static final int MAXIMUM_EXACT_GROUPS = 255;
+        private static final int MAXIMUM_EXACT_KEYS = 4096;
 
-        /** Validates and snapshots the service configuration. */
-        public SigningServiceConfiguration {
-            if (serviceId == null || serviceId.isBlank()) {
-                throw new IllegalArgumentException("Signing service id must not be blank");
+        /** Validates aggregate bounds, routing uniqueness, and snapshots groups. */
+        public SigningTopology {
+            coordinator = Objects.requireNonNull(coordinator, "coordinator");
+            catchAll = Objects.requireNonNull(catchAll, "catchAll");
+            List<SigningKeyGroup> suppliedGroups =
+                    Objects.requireNonNull(exactGroups, "exactGroups");
+            if (suppliedGroups.size() > MAXIMUM_EXACT_GROUPS) {
+                throw new IllegalArgumentException(
+                        "Exact signing-key group count exceeds its finite bound");
             }
-            // The qualifier avoids resolving the record component accessor in this compact constructor.
-            workflow = PkiSessionConfiguration.snapshot(Objects.requireNonNull(workflow, "workflow")); // NOPMD
+            exactGroups = List.copyOf(suppliedGroups);
+
+            int totalLanes = catchAll.laneCount();
+            int totalPrefetch = catchAll.prefetchSize();
+            int totalExactKeys = 0;
+            Set<KeyRef> assignedKeys = new HashSet<>();
+            for (SigningKeyGroup group : exactGroups) {
+                SigningKeyGroup exactGroup = Objects.requireNonNull(group, "exact group");
+                totalLanes = addWithinBound(totalLanes, exactGroup.lanePool().laneCount(),
+                        MAXIMUM_LANES, "Total signing lane count exceeds its finite bound");
+                totalPrefetch = addWithinBound(totalPrefetch, exactGroup.lanePool().prefetchSize(),
+                        MAXIMUM_PREFETCH_ENTRIES,
+                        "Total signing prefetch count exceeds its finite bound");
+                totalExactKeys = addWithinBound(totalExactKeys, exactGroup.keyRefs().size(),
+                        MAXIMUM_EXACT_KEYS,
+                        "Total exact signing-key count exceeds its finite bound");
+                for (KeyRef keyRef : exactGroup.keyRefs()) {
+                    if (!assignedKeys.add(keyRef)) {
+                        throw new IllegalArgumentException(
+                                "A signing key is assigned to more than one exact route");
+                    }
+                }
+            }
+            if (coordinator.pageSize() > totalPrefetch) {
+                throw new IllegalArgumentException(
+                        "Signing page size exceeds aggregate prefetch capacity");
+            }
+        }
+
+        private static int addWithinBound(int current, int increment, int maximum,
+                String message) {
+            try {
+                int total = Math.addExact(current, increment);
+                if (total > maximum) {
+                    throw new IllegalArgumentException(message);
+                }
+                return total;
+            } catch (ArithmeticException exception) {
+                throw new IllegalArgumentException(message, exception);
+            }
+        }
+
+        /**
+         * Returns the maximum number of concurrent provider calls owned by this
+         * topology.
+         *
+         * @return positive aggregate lane count
+         */
+        public int totalLaneCount() {
+            int total = catchAll.laneCount();
+            for (SigningKeyGroup group : exactGroups) {
+                total += group.lanePool().laneCount();
+            }
+            return total;
         }
     }
 
     /**
-     * Explicit activation and namespace authorization for one installed binding
-     * provider.
+     * Shared finite coordinator and provider-call bounds for a P1c signing
+     * topology.
+     *
+     * @param pageSize durable due-work page size, from 1 through 4096
+     * @param claimLease positive claim lease, strictly longer than one provider call timeout
+     * @param providerCallTimeout positive finite provider-call timeout
+     * @param idlePollInterval finite idle polling interval of at least one millisecond
+     * @param closeTimeout positive finite close timeout
+     */
+    public record SigningCoordinatorLimits(int pageSize, Duration claimLease,
+            Duration providerCallTimeout, Duration idlePollInterval, Duration closeTimeout) {
+        private static final int MAXIMUM_PAGE_ENTRIES = 4096;
+        private static final Duration MINIMUM_IDLE_POLL_INTERVAL = Duration.ofMillis(1L);
+        private static final Duration MAXIMUM_DURATION = Duration.ofDays(1L);
+
+        /** Validates explicit finite coordinator and duration bounds. */
+        public SigningCoordinatorLimits {
+            if (pageSize < 1 || pageSize > MAXIMUM_PAGE_ENTRIES) {
+                throw new IllegalArgumentException("pageSize is outside its finite bound");
+            }
+            requireCoordinatorDuration(claimLease, "claimLease");
+            requireCoordinatorDuration(providerCallTimeout, "providerCallTimeout");
+            requireCoordinatorDuration(idlePollInterval, "idlePollInterval");
+            requireCoordinatorDuration(closeTimeout, "closeTimeout");
+            if (idlePollInterval.compareTo(MINIMUM_IDLE_POLL_INTERVAL) < 0) {
+                throw new IllegalArgumentException(
+                        "idlePollInterval must be at least one millisecond");
+            }
+            if (claimLease.compareTo(providerCallTimeout) <= 0) {
+                throw new IllegalArgumentException("claimLease must exceed providerCallTimeout");
+            }
+        }
+
+        private static void requireCoordinatorDuration(Duration value, String name) {
+            Objects.requireNonNull(value, name);
+            if (value.isZero() || value.isNegative() || value.compareTo(MAXIMUM_DURATION) > 0) {
+                throw new IllegalArgumentException(name + " is outside its finite bound");
+            }
+        }
+    }
+
+    /**
+     * One exact-key routing group and its dedicated lane pool.
+     *
+     * @param keyRefs nonempty immutable exact-key set expressed as a list
+     * @param lanePool dedicated bounded lane pool
+     */
+    public record SigningKeyGroup(List<KeyRef> keyRefs, SigningLanePool lanePool) {
+        private static final int MAXIMUM_KEYS = 4096;
+        private static final long MAXIMUM_KEY_REFERENCE_UTF8_BYTES = 1_048_576L; // NOPMD - LongVariable: descriptive byte-unit/projection name preserves its established contract.
+
+        /** Validates and snapshots one exact-key group without exposing key values. */
+        public SigningKeyGroup {
+            lanePool = Objects.requireNonNull(lanePool, "lanePool");
+            List<KeyRef> suppliedKeys = Objects.requireNonNull(keyRefs, "keyRefs");
+            int keyCount = suppliedKeys.size();
+            if (keyCount < 1 || keyCount > MAXIMUM_KEYS) {
+                throw new IllegalArgumentException(
+                        "Exact signing-key group size is outside its finite bound");
+            }
+            for (KeyRef keyRef : suppliedKeys) {
+                KeyRef exact = Objects.requireNonNull(keyRef, "keyRef");
+                if (exact.utf8Length() > MAXIMUM_KEY_REFERENCE_UTF8_BYTES) {
+                    throw new IllegalArgumentException(
+                            "Signing key reference exceeds its finite byte bound");
+                }
+            }
+            keyRefs = List.copyOf(suppliedKeys);
+            Set<KeyRef> uniqueKeys = new HashSet<>();
+            for (KeyRef keyRef : keyRefs) {
+                if (!uniqueKeys.add(Objects.requireNonNull(keyRef, "keyRef"))) {
+                    throw new IllegalArgumentException(
+                            "An exact signing-key group contains a duplicate key");
+                }
+            }
+        }
+
+        @Override
+        public String toString() {
+            return "SigningKeyGroup[keyRefs=<redacted>, lanePool=" + lanePool + ']';
+        }
+    }
+
+    /**
+     * Finite execution and prefetch capacity owned by one signing route.
+     *
+     * @param laneCount lane count, from 1 through 256
+     * @param prefetchSize prefetched identifier capacity, from 1 through 4096
+     */
+    public record SigningLanePool(int laneCount, int prefetchSize) {
+        private static final int MAXIMUM_LANES = 256;
+        private static final int MAXIMUM_PREFETCH_ENTRIES = 4096;
+
+        /** Validates explicit finite per-pool bounds. */
+        public SigningLanePool {
+            if (laneCount < 1 || laneCount > MAXIMUM_LANES) {
+                throw new IllegalArgumentException("laneCount is outside its finite bound");
+            }
+            if (prefetchSize < 1 || prefetchSize > MAXIMUM_PREFETCH_ENTRIES) {
+                throw new IllegalArgumentException("prefetchSize is outside its finite bound");
+            }
+        }
+    }
+
+    /**
+     * Activation and OID namespace authorization for an installed binding provider.
      *
      * @param providerId stable installed provider identity
      * @param authorizedOidRoots finite roots owned by the deployment
-     * @param expectedBindingSetVersion optional pinned provider binding-set version
+     * @param expectedBindingSetVersion optional pinned binding-set version
      */
     public record BindingProviderConfiguration(String providerId, List<String> authorizedOidRoots,
             Optional<String> expectedBindingSetVersion) {

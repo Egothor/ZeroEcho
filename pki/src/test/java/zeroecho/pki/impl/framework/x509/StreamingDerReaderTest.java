@@ -67,6 +67,40 @@ final class StreamingDerReaderTest {
     };
 
     @Test
+    void unsignedCertificateTbsSpansReferToOriginalDerAndRejectMalformedBounds() throws Exception {
+        byte[] tbs = java.util.HexFormat.of().parseHex("301a020101300406022a033000300030003009300406022a03030100");
+        StreamingDerReader reader = new StreamingDerReader();
+        StreamingDerReader.CertificateTbsLayout layout = reader.inspectUnsignedCertificateTbs(tbs, tbs.length);
+        assertEquals(tbs.length, layout.encodedLength());
+        assertEquals(5, layout.algorithmOffset());
+        assertEquals(6, layout.algorithmLength());
+        assertEquals(17, layout.subjectPublicKeyInfoOffset());
+        assertEquals(11, layout.subjectPublicKeyInfoLength());
+        assertEquals("300406022a03", java.util.HexFormat.of().formatHex(tbs,
+                layout.algorithmOffset(), layout.algorithmOffset() + layout.algorithmLength()));
+        assertEquals("3009300406022a03030100", java.util.HexFormat.of().formatHex(tbs,
+                layout.subjectPublicKeyInfoOffset(), layout.subjectPublicKeyInfoOffset() + layout.subjectPublicKeyInfoLength()));
+        for (int length = 0; length < tbs.length; length++) {
+            byte[] truncated = Arrays.copyOf(tbs, length);
+            assertThrows(IOException.class, () -> reader.inspectUnsignedCertificateTbs(truncated, tbs.length));
+        }
+        assertThrows(IOException.class, () -> reader.inspectUnsignedCertificateTbs(tbs, tbs.length - 1));
+        assertThrows(IOException.class, () -> reader.inspectUnsignedCertificateTbs(Arrays.copyOf(tbs, tbs.length + 1), tbs.length + 1));
+        for (int offset : new int[] {0, 5, 11, 13, 15, 17}) {
+            byte[] malformed = tbs.clone();
+            malformed[offset] = 0x31; // Canonical DER SET still fails the required certificate SEQUENCE tag.
+            assertThrows(IOException.class, () -> reader.inspectUnsignedCertificateTbs(malformed, malformed.length));
+        }
+        byte[] escapedSpki = tbs.clone();
+        escapedSpki[18] = 0x7f;
+        assertThrows(IOException.class, () -> reader.inspectUnsignedCertificateTbs(escapedSpki, escapedSpki.length));
+        assertThrows(IndexOutOfBoundsException.class, () -> new StreamingDerReader.CertificateTbsLayout(
+                28, Integer.MAX_VALUE, 6, 17, 11));
+        assertThrows(IndexOutOfBoundsException.class, () -> new StreamingDerReader.CertificateTbsLayout(
+                28, 5, 6, 17, Integer.MAX_VALUE));
+    }
+
+    @Test
     void validatesCanonicalCrlAndLocatesSignedFields() throws Exception {
         System.out.println("validatesCanonicalCrlAndLocatesSignedFields");
         StreamingDerReader reader = new StreamingDerReader();
@@ -281,6 +315,103 @@ final class StreamingDerReaderTest {
         assertEquals(1, content.closeCount());
         System.out.println("...emptyPrimitives=16384 sourcePasses=" + content.openCount());
         System.out.println("denseEmptyPrimitiveInputUsesOneStreamingPass...ok");
+    }
+
+    @Test
+    void crlSemanticsExtractsFullAndDeltaNumbersWithoutChangingLayout() throws Exception {
+        StreamingDerReader reader = new StreamingDerReader();
+        for (java.math.BigInteger number : new java.math.BigInteger[] {
+                java.math.BigInteger.ZERO, java.math.BigInteger.ONE.shiftLeft(159).subtract(java.math.BigInteger.ONE) }) {
+            byte[] encoded = semanticCrl(crlExtension(20, false, tlv(2, number.toByteArray())));
+            StreamingDerReader.CrlSemanticLayout semantic = reader.inspectCrlSemantics(
+                    new ImmutableByteContent(encoded), CancellationSignal.NONE);
+            assertEquals(number, semantic.crlNumber());
+            assertEquals(java.util.Optional.empty(), semantic.deltaIndicator());
+            assertEquals(reader.inspectSignedObject(new ImmutableByteContent(encoded), SignedObjectKind.CRL,
+                    CancellationSignal.NONE), semantic.layout());
+        }
+        byte[] delta = semanticCrl(crlExtension(20, false, integer(7)), crlExtension(27, true, integer(3)));
+        StreamingDerReader.CrlSemanticLayout semantic = reader.inspectCrlSemantics(
+                new ImmutableByteContent(delta), CancellationSignal.NONE);
+        assertEquals(java.math.BigInteger.valueOf(7), semantic.crlNumber());
+        assertEquals(java.util.Optional.of(java.math.BigInteger.valueOf(3)), semantic.deltaIndicator());
+    }
+
+    @Test
+    void crlSemanticsRejectsMissingDuplicateWrongCriticalityAndMalformedNumbers() {
+        StreamingDerReader reader = new StreamingDerReader();
+        byte[] number = crlExtension(20, false, integer(1));
+        byte[] delta = crlExtension(27, true, integer(0));
+        byte[][] invalid = {
+                CRL,
+                semanticCrl(delta),
+                semanticCrl(number, number),
+                semanticCrl(number, delta, delta),
+                semanticCrl(crlExtension(20, true, integer(1))),
+                semanticCrl(number, crlExtension(27, false, integer(0)))
+        };
+        for (byte[] encoded : invalid) {
+            assertThrows(IOException.class, () -> reader.inspectCrlSemantics(
+                    new ImmutableByteContent(encoded), CancellationSignal.NONE));
+        }
+        byte[][] malformed = {
+                new byte[0], tlv(4, new byte[] {1}), tlv(2, new byte[0]),
+                tlv(2, new byte[] {(byte) 0x80}), tlv(2, new byte[] {0, 1}),
+                new byte[] {2, (byte) 0x81, 1, 1}, new byte[] {2, 2, 1},
+                concatenate(integer(1), integer(2)),
+                tlv(2, java.math.BigInteger.ONE.shiftLeft(159).toByteArray()),
+                tlv(2, new byte[21])
+        };
+        for (byte[] payload : malformed) {
+            for (int oidSuffix : new int[] {20, 27}) {
+                byte[] encoded = oidSuffix == 20 ? semanticCrl(crlExtension(20, false, payload))
+                        : semanticCrl(number, crlExtension(27, true, payload));
+                assertThrows(IOException.class, () -> reader.inspectCrlSemantics(
+                        new ImmutableByteContent(encoded), CancellationSignal.NONE));
+            }
+        }
+        assertDoesNotThrow(() -> reader.inspectSignedObject(new ImmutableByteContent(CRL),
+                SignedObjectKind.CRL, CancellationSignal.NONE));
+    }
+
+    @Test
+    void crlSemanticsDoesNotCollectEntryExtensionsAndClosesOnCancellation() throws Exception {
+        StreamingDerReader reader = new StreamingDerReader();
+        byte[] entry = sequence(integer(1), utcTime("260101000000Z"),
+                sequence(crlExtension(20, false, integer(99)), crlExtension(27, true, integer(98))));
+        byte[] entryOnly = signedObject(sequence(integer(1), algorithm(), issuer(), utcTime("260101000000Z"),
+                sequence(entry)));
+        assertDoesNotThrow(() -> reader.inspectSignedObject(new ImmutableByteContent(entryOnly),
+                SignedObjectKind.CRL, CancellationSignal.NONE));
+        assertThrows(IOException.class, () -> reader.inspectCrlSemantics(
+                new ImmutableByteContent(entryOnly), CancellationSignal.NONE));
+        byte[] encoded = signedObject(sequence(integer(1), algorithm(), issuer(), utcTime("260101000000Z"),
+                sequence(entry), explicitExtensions(sequence(crlExtension(20, false, integer(7))))));
+        StreamingDerReader.CrlSemanticLayout semantic = reader.inspectCrlSemantics(
+                new ImmutableByteContent(encoded), CancellationSignal.NONE);
+        assertEquals(java.math.BigInteger.valueOf(7), semantic.crlNumber());
+        assertEquals(java.util.Optional.empty(), semantic.deltaIndicator());
+        for (int length = 0; length < encoded.length; length++) {
+            byte[] truncated = Arrays.copyOf(encoded, length);
+            assertThrows(IOException.class, () -> reader.inspectCrlSemantics(
+                    new ImmutableByteContent(truncated), CancellationSignal.NONE));
+        }
+        CountingContent content = new CountingContent(encoded);
+        AtomicInteger checks = new AtomicInteger();
+        assertThrows(java.io.InterruptedIOException.class,
+                () -> reader.inspectCrlSemantics(content, () -> checks.incrementAndGet() > 8));
+        assertEquals(content.openCount(), content.closeCount());
+    }
+
+    private static byte[] semanticCrl(byte[]... extensions) {
+        return signedObject(sequence(integer(1), algorithm(), issuer(), utcTime("260101000000Z"),
+                explicitExtensions(sequence(extensions))));
+    }
+
+    private static byte[] crlExtension(int oidSuffix, boolean critical, byte[] payload) {
+        byte[] identifier = tlv(6, new byte[] {0x55, 0x1d, (byte) oidSuffix});
+        return critical ? sequence(identifier, tlv(1, new byte[] {(byte) 0xff}), tlv(4, payload))
+                : sequence(identifier, tlv(4, payload));
     }
 
     private static byte[] repeatedIntegerSet(int count) {

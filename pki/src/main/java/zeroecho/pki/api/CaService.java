@@ -74,7 +74,7 @@ public interface CaService {
     /**
      * Creates a new root CA entity and issues its initial CA credential.
      *
-     * @param command create command defining subject/profile and optional key
+     * @param command create command defining subject/profile and mandatory managed key
      *                reference
      * @return created CA identifier
      * @throws IllegalArgumentException if {@code command} is invalid

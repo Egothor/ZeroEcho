@@ -50,8 +50,11 @@ import zeroecho.pki.api.attr.AttributeValue;
  * The pointer lives in credential metadata attributes, not in the signed
  * certificate bytes, so it never changes the content-addressed credential
  * identity or the signing path. Combined with permanent revocation of the
- * predecessor under {@link zeroecho.pki.api.revocation.RevocationReason#SUPERSEDED},
- * this yields a queryable, enterprise-grade certificate lineage.
+ * predecessor under {@link zeroecho.pki.api.revocation.RevocationReason#SUPERSEDED}
+ * (or preservation of its existing permanent reason), this records the durable
+ * lifecycle relationship. Renewal does not create supersession lineage or
+ * revoke its predecessor. The module derives lineage from the validated durable
+ * lifecycle command; caller-supplied execution evidence cannot supply it.
  * </p>
  */
 public final class CredentialLineage {
@@ -60,7 +63,7 @@ public final class CredentialLineage {
     public static final AttributeId SUPERSEDES_CREDENTIAL_ID =
             new AttributeId("urn:zeroecho:pki:supersedes-credential-id:v1");
 
-    /** Metadata attribute carrying the operator-declared supersession reason token. */
+    /** Metadata attribute carrying the trusted REPLACE_END_ENTITY or REISSUE_END_ENTITY discriminator. */
     public static final AttributeId SUPERSESSION_REASON =
             new AttributeId("urn:zeroecho:pki:supersession-reason:v1");
 

@@ -181,7 +181,7 @@ public final class HttpServerTestSupport {
         java.nio.file.Files.createDirectories(directory);
         ApprovalService.Policy approval = new ApprovalService.Policy("high-risk", 1, Set.of("approver"),
                 Set.of(), true, Duration.ofHours(1), true);
-        PkiSessionConfiguration session = new PkiSessionConfiguration(1,
+        PkiSessionConfiguration session = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("fs", Map.of("root", directory.resolve("pki-store").toString())),
                 new ProviderConfig("memory", Map.of("size", "128")), Optional.empty(), List.of(), List.of());
         ServerRealmConfiguration realm = new ServerRealmConfiguration(ServerTestSupport.REALM, "Production",

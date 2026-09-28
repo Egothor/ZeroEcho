@@ -59,7 +59,7 @@ import zeroecho.pki.api.publication.PublicationStatus;
 import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.publication.PublicationTargetType;
 import zeroecho.pki.application.PublicationExecutionEvidence;
-import zeroecho.pki.impl.core.async.DomainAttributeEncoding;
+import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataCursor;
@@ -68,7 +68,7 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
-/** Terminal co-commit and startup reconciliation of the publication-evidence log (Task 8a). */
+/** Terminal co-commit and startup reconciliation of the publication-evidence log. */
 final class FilesystemPublicationEvidenceReconciliationTest {
 
     private static final String STORE_DIRECTORY = "store";

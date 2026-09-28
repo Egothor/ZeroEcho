@@ -32,84 +32,81 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-/**
- * Entity reference sources.
- *
- * Maps a field's `ref` entity type to the list operation that enumerates
- * candidates, so reference fields become type-to-search pickers instead of
- * free-text identifier boxes. Only entities that have a realm-wide list
- * operation appear here; entities without one (credentials, requests, profiles,
- * issuer generations, status objects, chain paths) fall back to a free-entry
- * search field until the backend adds the corresponding list/search operation
- * (see docs/backend-gap-analysis.md, GAP-1 and the picker-support note).
- */
+import type { FieldValue } from '@/api/operations';
 
+export type SelectionContext = Readonly<Record<string, FieldValue>>;
 export interface RefSource {
-  /** List operation id that returns candidate records. */
   readonly operationId: string;
-  /** Arguments to pass to the list operation. */
-  readonly args: Record<string, unknown>;
-  /** Key under `result` holding the array of records. */
+  readonly args: Record<string, FieldValue>;
   readonly resultKey: string;
-  /** Field on each record that is the identifier to submit. */
   readonly idKey: string;
-  /** Fields on each record shown as a secondary label. */
   readonly labelKeys: readonly string[];
-  /** Human name of the entity (for placeholders). */
   readonly label: string;
+  readonly paging?: 'cursor' | 'offset';
+  readonly pagePath?: string;
+  readonly inputs?: Readonly<Record<string, string>>;
+  readonly filterBy?: Readonly<Record<string, string>>;
 }
+const page = (operationId: string, resultKey: string, idKey: string, label: string, labelKeys: string[], extra: Partial<RefSource> = {}): RefSource =>
+  ({ operationId, resultKey, idKey, label, labelKeys, args: { limit: 100 }, paging: 'cursor', ...extra });
+const control = (operationId: string, idKey: string, label: string, labelKeys: string[]): RefSource =>
+  page(operationId, 'value.items', idKey, label, labelKeys, { args: { offset: 0, limit: 100 }, paging: 'offset', pagePath: 'value' });
+const configured = (resultKey: string, idKey: string, label: string): RefSource =>
+  ({ operationId: 'configuration.choices', args: { limit: 100 }, resultKey: `value.${resultKey}`, idKey, label, labelKeys: ['displayName'] });
 
-export const REF_SOURCES: Record<string, RefSource> = {
-  authority: {
-    operationId: 'ca.list', args: { limit: 200 }, resultKey: 'authorities',
-    idKey: 'caId', labelKeys: ['subject', 'state'], label: 'authority',
-  },
-  publication: {
-    operationId: 'publication.list', args: { limit: 200 }, resultKey: 'publications',
-    idKey: 'publicationId', labelKeys: ['sourceType', 'state'], label: 'publication',
-  },
-  principal: {
-    operationId: 'security.principal.list', args: { offset: 0, limit: 200 }, resultKey: 'principals',
-    idKey: 'principalId', labelKeys: ['displayName', 'type'], label: 'principal',
-  },
-  grant: {
-    operationId: 'security.grant.list', args: { offset: 0, limit: 200 }, resultKey: 'grants',
-    idKey: 'grantId', labelKeys: ['principalId', 'action'], label: 'grant',
-  },
-  roleTemplate: {
-    operationId: 'security.role-template.list', args: {}, resultKey: 'roleTemplates',
-    idKey: 'templateId', labelKeys: ['version'], label: 'role template',
-  },
-  roleAssignment: {
-    operationId: 'security.role-assignment.list', args: { offset: 0, limit: 200 }, resultKey: 'roleAssignments',
-    idKey: 'assignmentId', labelKeys: ['principalId', 'templateId'], label: 'role assignment',
-  },
-  approval: {
-    operationId: 'security.approval.list', args: { offset: 0, limit: 200 }, resultKey: 'approvals',
-    idKey: 'approvalId', labelKeys: ['targetOperation', 'state'], label: 'approval',
-  },
-  breakGlass: {
-    operationId: 'security.break-glass.list', args: { offset: 0, limit: 200 }, resultKey: 'breakGlass',
-    idKey: 'breakGlassId', labelKeys: ['principalId', 'state'], label: 'break-glass grant',
-  },
-  acmeDirectory: {
-    operationId: 'acme.directory.list', args: { offset: 0, limit: 200 }, resultKey: 'acmeDirectories',
-    idKey: 'directoryId', labelKeys: ['alias', 'state'], label: 'ACME directory',
-  },
-  acmeAccount: {
-    operationId: 'acme.account.list', args: { offset: 0, limit: 200 }, resultKey: 'acmeAccounts',
-    idKey: 'accountId', labelKeys: ['contact', 'state'], label: 'ACME account',
-  },
-  ocspResponder: {
-    operationId: 'ocsp.responder.list', args: { offset: 0, limit: 200 }, resultKey: 'ocspResponders',
-    idKey: 'responderId', labelKeys: ['alias', 'state'], label: 'OCSP responder',
-  },
-  algorithmBinding: {
-    operationId: 'algorithm.binding.list', args: { limit: 200 }, resultKey: 'algorithmBindings',
-    idKey: 'bindingId', labelKeys: ['algorithm', 'role'], label: 'algorithm binding',
-  },
+/** Exact result paths mirror the signing-operation and selection API response contracts. */
+export const REF_SOURCES: Readonly<Record<string, RefSource>> = {
+  authority: page('ca.list', 'authorities', 'caId', 'authority', ['displayName', 'kind', 'state']),
+  profile: page('profile.list-all', 'profiles', 'profileId', 'certificate profile', ['displayName', 'certificateType', 'formatId']),
+  request: page('request.list', 'requests', 'requestId', 'certificate request', ['formatId', 'profileId']),
+  credential: page('credential.search', 'credentials', 'credentialId', 'certificate', ['profileId', 'status', 'notAfter'], { inputs: { __authorityId: '$authority' } }),
+  issuer: page('issuer.generation.list', 'generations', 'issuerId', 'issuer generation', ['state', 'profileId'], { inputs: { __authorityId: '$authority' } }),
+  status: page('inventory.status', 'statusObjects', 'statusObjectId', 'revocation list', ['type', 'thisUpdate'], { inputs: { issuerCaId: '$authority' } }),
+  parentIssuer: page('issuer.generation.list', 'generations', 'issuerId', 'parent issuer generation', ['state', 'profileId'], { inputs: { __authorityId: '__parentAuthorityId' } }),
+  parentPath: { operationId: 'issuer.path.list', args: {}, resultKey: 'paths', idKey: 'pathId', label: 'parent certificate chain', labelKeys: ['issuerId'], inputs: { issuerId: '__parentIssuerId' } },
+  path: { operationId: 'issuer.path.list', args: {}, resultKey: 'paths', idKey: 'pathId', label: 'certificate chain', labelKeys: ['issuerId'], inputs: { issuerId: '$issuer' } },
+  profileVersion: { operationId: 'profile.list', args: {}, resultKey: 'versions', idKey: 'profileVersion', label: 'profile version', labelKeys: ['displayName', 'certificateType'], inputs: { profileId: 'profileId', __authorityId: '$authority' } },
+  publication: page('publication.list', 'publications', 'publicationId', 'publication', ['sourceType', 'status']),
+  principal: control('security.principal.list', 'principalId', 'principal', ['displayName', 'type']),
+  grant: control('security.grant.list', 'grantId', 'permission grant', ['principalId', 'action', 'effect']),
+  roleTemplate: { operationId: 'security.role-template.list', args: {}, resultKey: 'value', idKey: 'templateId', label: 'role template', labelKeys: ['templateId', 'version'] },
+  templateVersion: { operationId: 'security.role-template.list', args: {}, resultKey: 'value', idKey: 'version', label: 'template version', labelKeys: ['templateId'], filterBy: { templateId: 'templateId' } },
+  roleAssignment: control('security.role-assignment.list', 'assignmentId', 'role assignment', ['principalId', 'templateId']),
+  approval: control('security.approval.list', 'approvalId', 'approval', ['operation', 'requesterId', 'state']),
+  breakGlass: control('security.break-glass.list', 'breakGlassId', 'break-glass grant', ['principalId', 'state']),
+  acmeDirectory: control('acme.directory.list', 'directoryId', 'ACME directory', ['alias', 'status', 'profileId']),
+  acmeAccount: control('acme.account.list', 'accountId', 'ACME account', ['directoryId', 'status', 'createdAt']),
+  ocspResponder: control('ocsp.responder.list', 'responderId', 'OCSP responder', ['alias', 'state']),
+  algorithmBinding: page('algorithm.binding.list', 'bindings', 'bindingId', 'algorithm binding', ['algorithmId', 'role', 'origin']),
+  algorithmOrigin: page('algorithm.binding.list', 'bindings', 'origin', 'algorithm origin', ['origin']),
+  algorithmRole: page('algorithm.binding.list', 'bindings', 'role', 'algorithm role', ['role']),
+  format: configured('formats', 'formatId', 'certificate format'),
+  key: { ...configured('keys.items', 'keyRef', 'signing key'), paging: 'cursor', pagePath: 'value.keys' },
+  signatureAlgorithm: configured('algorithms', 'algorithmId', 'signature algorithm'),
+  publicationTarget: { ...configured('publicationTargets', 'targetId', 'publication target'), filterBy: { targetType: 'targetType' } },
+  challengeProvider: configured('acmeChallengeProviders', 'providerId', 'challenge provider'),
+  eabProvider: configured('acmeEabProviders', 'providerId', 'external-account provider'),
+  capability: page('security.disclosure.capability.list', 'value.items', 'capabilityId', 'disclosure capability', ['objectId', 'expiresAt', 'revoked'], { inputs: { objectId: 'objectId' }, pagePath: 'value' }),
 };
 
-export function refSource(ref: string | undefined): RefSource | undefined {
+export function contextValue(context: SelectionContext, name: string): FieldValue {
+  if (name === '$authority') return context['__authorityId'] || context['authorityId'] || context['issuerCaId'] || context['caId'] || context['__selectionAuthorityId'];
+  if (name === '$issuer') return context['issuerId'] || context['__selectionIssuerId'];
+  return context[name];
+}
+
+export function refSource(ref: string | undefined, context: SelectionContext = {}): RefSource | undefined {
+  if (ref === 'sourceObject') ref = context['sourceType'] === 'STATUS_OBJECT' ? 'status' : 'credential';
+  if (ref === 'aliasTarget') ref = context['type'] === 'CURRENT_CHAIN' ? 'path' : 'status';
+  if (ref === 'object') ref = String(context['__objectKind'] || 'credential');
   return ref ? REF_SOURCES[ref] : undefined;
+}
+
+export function resultAt(value: unknown, path: string): unknown {
+  let current = value;
+  for (const part of path.split('.').filter(Boolean)) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
 }

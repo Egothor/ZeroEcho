@@ -71,6 +71,16 @@ public record EncodedObject(Encoding encoding, byte[] bytes) {
     }
 
     /**
+     * Returns the exact payload length without copying or exposing the payload.
+     * This operation takes O(1) time and allocates no additional memory.
+     *
+     * @return positive encoded payload length, in bytes
+     */
+    public int byteLength() {
+        return bytes.length;
+    }
+
+    /**
      * Returns a defensive copy of the encoded payload.
      *
      * @return newly allocated payload copy

@@ -33,1255 +33,888 @@
  ******************************************************************************/
 package zeroecho.pki.application;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 
 import zeroecho.pki.api.EncodedObject;
 import zeroecho.pki.api.FormatId;
-import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
-import zeroecho.pki.api.SubjectRef;
-import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.ca.CaState;
 import zeroecho.pki.api.confirmation.CredentialConfirmationProofSubmission;
+import zeroecho.pki.api.confirmation.CredentialConfirmationReviewCursor;
 import zeroecho.pki.api.publication.PublicationSourceType;
 import zeroecho.pki.api.publication.PublicationTarget;
 import zeroecho.pki.api.revocation.RevocationReason;
-import zeroecho.pki.api.status.StatusObjectType;
 
-/**
- * Closed set of typed synchronous PKI operations available to transports.
- *
- * <p>Names are stable external semantic identities. Implementations dispatch by
- * explicit type and never by reflection or Java class name.</p>
- */
-// This closed command model intentionally exposes one record per supported operation.
-@SuppressWarnings("PMD.ExcessivePublicCount")
+/** Closed set of synchronous non-signing PKI operations. */
 public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration, PkiOperation.ValidateProfile,
-        PkiOperation.ListAlgorithmBindings, PkiOperation.InspectAlgorithmBinding,
-        PkiOperation.ValidateAlgorithmBindings,
-        PkiOperation.RegisterProfile, PkiOperation.InspectProfile, PkiOperation.ListProfileVersions,
-        PkiOperation.ActivateProfile, PkiOperation.InspectAuthority, PkiOperation.ListAuthorities,
-        PkiOperation.CreateAuthority, PkiOperation.TransitionAuthority, PkiOperation.InspectRequest,
-        PkiOperation.ImportRequest, PkiOperation.VerifyRequest, PkiOperation.InspectCredential,
+        PkiOperation.ListProfiles, PkiOperation.ListRequests, PkiOperation.SearchCredentials,
+        PkiOperation.ListIssuerGenerations, PkiOperation.ListAlgorithmBindings, PkiOperation.InspectAlgorithmBinding,
+        PkiOperation.ValidateAlgorithmBindings, PkiOperation.RegisterProfile,
+        PkiOperation.InspectProfile, PkiOperation.ListProfileVersions, PkiOperation.ActivateProfile,
+        PkiOperation.InspectRequest, PkiOperation.ImportRequest, PkiOperation.VerifyRequest,
+        PkiOperation.InspectAuthority, PkiOperation.InspectCredential, PkiOperation.InspectIssuerGeneration,
+        PkiOperation.InspectIssuerChainPath, PkiOperation.InspectStatus,
+        PkiOperation.ListAuthorities, PkiOperation.ListStatus, PkiOperation.ListIssuerChainPaths,
+        PkiOperation.TransitionAuthority, PkiOperation.SelectIssuancePath, PkiOperation.RegisterIssuerChainPath,
         PkiOperation.ListPendingCredentialConfirmations, PkiOperation.IssueCredentialConfirmationChallenge,
         PkiOperation.CompleteCredentialConfirmationProof, PkiOperation.RevokePendingCredentialConfirmation,
-        PkiOperation.IssueCredential, PkiOperation.RenewCredential, PkiOperation.ReplaceCredential,
-        PkiOperation.ReissueCredential, PkiOperation.RolloverCaCertificate, PkiOperation.RotateCaKey,
-        PkiOperation.RevokeCredential,
-        PkiOperation.InspectRevocation, PkiOperation.ReadRevocationHistory, PkiOperation.SnapshotRevocations,
-        PkiOperation.InspectStatus, PkiOperation.ListStatus, PkiOperation.GenerateStatus,
-        PkiOperation.InspectPublication, PkiOperation.ListPublications, PkiOperation.RegisterPublication,
-        PkiOperation.ProcessPublication, PkiOperation.RetryPublication, PkiOperation.ReconcilePublication,
-        PkiOperation.CreateIntermediate, PkiOperation.IssueIntermediateCertificate,
-        PkiOperation.InspectIssuerGeneration, PkiOperation.InspectIssuerChainPath,
-        PkiOperation.ListIssuerChainPaths, PkiOperation.SelectIssuancePath,
-        PkiOperation.RegisterIssuerChainPath {
+        PkiOperation.RevokeCredential, PkiOperation.InspectRevocation,
+        PkiOperation.ReadRevocationHistory, PkiOperation.SnapshotRevocations,
+        PkiOperation.InspectPublication, PkiOperation.ListPublications,
+        PkiOperation.RegisterPublication, PkiOperation.ProcessPublication,
+        PkiOperation.RetryPublication, PkiOperation.ReconcilePublication {
 
-    /** Maximum finite entries returned by one presentation operation. */
+    /** Maximum allowed limit for capped presentation operations. */
     int MAXIMUM_RESULT_ENTRIES = 1_000;
 
-    /** Returns the stable validation message shared by profile operations. */
-    private static String profileIdRequiredMessage() {
-        return "profileId must not be blank";
-    }
-
-    /** Returns the stable authority-identifier argument name. */
-    private static String authorityIdParameter() {
-        return "caId";
-    }
-
-    /** Returns the stable issuer-authority argument name. */
-    private static String issuerAuthorityIdParameter() {
-        return "issuerCaId";
-    }
-
     /**
-     * Returns the stable semantic name used by transport dispatch and audit records.
+     * Returns the stable semantic operation name.
      *
      * @return stable semantic operation name
      */
     String name();
 
     /**
-     * Lists active X.509 algorithm bindings with optional finite filters.
+     * Lists logical profile identifiers in ascending identifier order without subject data.
+     *
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
+     */
+    record ListProfiles(int limit, Optional<String> after) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "profile.list-all";
+        /** Validates the page limit and exclusive cursor. */
+        public ListProfiles { requireLimit(limit); after = requireCursor(after); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Lists stored requests in ascending identifier order without subject or key material.
+     *
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
+     */
+    record ListRequests(int limit, Optional<String> after) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "request.list";
+        /** Validates the page limit and exclusive cursor. */
+        public ListRequests { requireLimit(limit); after = requireCursor(after); }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Lists credentials issued by one authoritative authority, ordered by identifier.
+     *
+     * @param authorityId exact authority identifier that scopes the query
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
+     */
+    record SearchCredentials(PkiId authorityId, int limit, Optional<String> after) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "credential.search";
+        /** Validates the scope, page limit and exclusive cursor. */
+        public SearchCredentials {
+            Objects.requireNonNull(authorityId, "authorityId");
+            requireLimit(limit); after = requireCursor(after);
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Lists all historical issuer generations of one authority, ordered by identifier.
+     *
+     * @param authorityId exact authority identifier that scopes the query
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
+     */
+    record ListIssuerGenerations(PkiId authorityId, int limit, Optional<String> after) implements PkiOperation {
+        /** Stable operation name. */ public static final String NAME = "issuer.generation.list";
+        /** Validates the scope, page limit and exclusive cursor. */
+        public ListIssuerGenerations {
+            Objects.requireNonNull(authorityId, "authorityId");
+            requireLimit(limit); after = requireCursor(after);
+        }
+        @Override public String name() { return NAME; }
+    }
+
+    private static Optional<String> requireCursor(Optional<String> after) {
+        Objects.requireNonNull(after, "after");
+        after.ifPresent(value -> {
+            if (value.isBlank() || value.length() > 1024 || value.chars().anyMatch(Character::isISOControl)) {
+                throw new IllegalArgumentException("after must be a bounded nonblank identifier");
+            }
+        });
+        return after;
+    }
+
+    /**
+     * Lists active X.509 algorithm bindings.
      *
      * @param origin optional nonblank binding-origin filter
      * @param role optional nonblank binding-role filter
-     * @param limit maximum number of entries to return, from 1 through {@link #MAXIMUM_RESULT_ENTRIES}
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
      */
-    record ListAlgorithmBindings(java.util.Optional<String> origin, java.util.Optional<String> role, int limit)
+    record ListAlgorithmBindings(Optional<String> origin, Optional<String> role, int limit, Optional<String> after)
             implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "algorithm.binding.list";
-
-        /** Validates immutable filters and the presentation limit. */
+        /** Stable name. */ public static final String NAME = "algorithm.binding.list";
+        /**
+         * Validates the bounded query.
+         *
+         * @param origin optional nonblank binding-origin filter
+         * @param role optional nonblank binding-role filter
+         * @param limit maximum number of returned entries, from 1 to 1000
+         */
+        public ListAlgorithmBindings(Optional<String> origin, Optional<String> role, int limit) {
+            this(origin, role, limit, Optional.empty());
+        }
+        /** Validates the bounded keyset query. */
         public ListAlgorithmBindings {
-            origin = Objects.requireNonNull(origin, "origin").map(ListAlgorithmBindings::requireText);
-            role = Objects.requireNonNull(role, "role").map(ListAlgorithmBindings::requireText);
+            after = requireCursor(after);
+            origin = requireOptionalText(origin, "origin");
+            role = requireOptionalText(role, "role");
             requireLimit(limit);
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-
-        private static String requireText(String value) {
-            if (value == null || value.isBlank()) {
-                throw new IllegalArgumentException("Binding filter must not be blank");
-            }
-            return value;
-        }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Inspects one active X.509 algorithm binding by stable identifier.
+     * Inspects one active X.509 algorithm binding.
      *
-     * @param bindingId nonblank stable algorithm-binding identifier
+     * @param bindingId exact binding identifier
      */
     record InspectAlgorithmBinding(String bindingId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "algorithm.binding.inspect";
-
-        /** Validates the stable identifier. */
-        public InspectAlgorithmBinding {
-            if (bindingId == null || bindingId.isBlank()) {
-                throw new IllegalArgumentException("bindingId must not be blank");
-            }
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "algorithm.binding.inspect";
+        /** Validates the identifier. */
+        public InspectAlgorithmBinding { requireText(bindingId, "bindingId"); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Validates the immutable active registry and optionally one exact binding.
+     * Validates the active binding registry and optionally one exact binding.
      *
-     * @param bindingId optional nonblank binding identifier to validate
-     * @param expectedCommitment expected binding commitment; present exactly when {@code bindingId} is present
+     * @param bindingId optional exact binding identifier; empty validates the complete registry
+     * @param expectedCommitment expected binding commitment, supplied together with the binding identifier
      */
-    record ValidateAlgorithmBindings(java.util.Optional<String> bindingId,
-            java.util.Optional<String> expectedCommitment) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "algorithm.binding.validate";
-
-        /** Validates paired optional fields. */
+    record ValidateAlgorithmBindings(Optional<String> bindingId, Optional<String> expectedCommitment)
+            implements PkiOperation {
+        /** Stable name. */ public static final String NAME = "algorithm.binding.validate";
+        /** Validates paired optional values. */
         public ValidateAlgorithmBindings {
             bindingId = Objects.requireNonNull(bindingId, "bindingId");
             expectedCommitment = Objects.requireNonNull(expectedCommitment, "expectedCommitment");
             if (bindingId.isPresent() != expectedCommitment.isPresent()) {
                 throw new IllegalArgumentException("Binding validation fields must be supplied together");
             }
-            bindingId.ifPresent(value -> {
-                if (value.isBlank()) {
-                    throw new IllegalArgumentException("bindingId must not be blank");
-                }
-            });
+            bindingId.ifPresent(value -> requireText(value, "bindingId"));
             expectedCommitment.ifPresent(value -> {
                 if (!value.matches("[0-9a-f]{64}|[^\\s]{1,512}")) {
                     throw new IllegalArgumentException("Binding commitment is invalid");
                 }
             });
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        @Override public String name() { return NAME; }
     }
 
-    /** Validates the already-open session configuration. */
+    /** Validates the opened session configuration. */
     record ValidateConfiguration() implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "configuration.validate";
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "configuration.validate";
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Validates one bounded certificate-profile JSON document without persisting it.
+     * Validates one profile document without storing it.
      *
-     * @param document bounded certificate-profile JSON bytes; the operation keeps a defensive copy
+     * @param document non-null encoded profile document, defensively copied
      */
     record ValidateProfile(byte[] document) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "profile.validate";
-
-        /** Defensively snapshots the document. */
-        public ValidateProfile {
-            document = Objects.requireNonNull(document, "document").clone();
-        }
-
-        /**
-         * Returns the profile document without exposing the operation's internal array.
-         *
-         * @return a defensive copy of the certificate-profile JSON bytes
-         */
-        @Override
-        public byte[] document() {
-            return document.clone();
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "profile.validate";
+        /** Defensively copies the document. */
+        public ValidateProfile { document = Objects.requireNonNull(document, "document").clone(); }
+        /** {@return a defensive document copy} */
+        @Override public byte[] document() { return document.clone(); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Imports one bounded validated certificate-profile document.
+     * Registers one profile document.
      *
-     * @param document bounded certificate-profile JSON bytes; the operation keeps a defensive copy
+     * @param document non-null encoded profile document, defensively copied
      */
     record RegisterProfile(byte[] document) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "profile.register";
-
-        /** Defensively snapshots the document. */
-        public RegisterProfile {
-            document = Objects.requireNonNull(document, "document").clone();
-        }
-
-        /**
-         * Returns the profile document without exposing the operation's internal array.
-         *
-         * @return a defensive copy of the certificate-profile JSON bytes
-         */
-        @Override
-        public byte[] document() {
-            return document.clone();
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "profile.register";
+        /** Defensively copies the document. */
+        public RegisterProfile { document = Objects.requireNonNull(document, "document").clone(); }
+        /** {@return a defensive document copy} */
+        @Override public byte[] document() { return document.clone(); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Reads one exact imported certificate-profile version.
+     * Inspects one exact profile version.
      *
-     * @param profileId nonblank stable certificate-profile identifier
+     * @param profileId nonblank logical profile identifier
      * @param profileVersion positive imported profile version
      */
     record InspectProfile(String profileId, long profileVersion) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "profile.inspect";
-
-        /** Validates the exact profile identity. */
+        /** Stable name. */ public static final String NAME = "profile.inspect";
+        /** Validates the identity. */
+        @SuppressWarnings("PMD.AvoidLiteralsInIfCondition")
         public InspectProfile {
-            if (profileId == null || profileId.isBlank() || profileVersion <= 0) {
-                throw new IllegalArgumentException("profile identity is invalid");
-            }
+            requireText(profileId, "profileId");
+            if (profileVersion < 1L) { throw new IllegalArgumentException("profileVersion must be positive"); }
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Lists the finite imported versions of one logical profile.
+     * Lists imported versions of one profile.
      *
-     * @param profileId nonblank stable certificate-profile identifier
+     * @param profileId nonblank logical profile identifier
      */
     record ListProfileVersions(String profileId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "profile.list";
-
-        /** Validates the logical profile identity. */
-        public ListProfileVersions {
-            if (profileId == null || profileId.isBlank()) {
-                throw new IllegalArgumentException(profileIdRequiredMessage());
-            }
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "profile.list";
+        /** Validates the identifier. */
+        public ListProfileVersions { requireText(profileId, "profileId"); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Activates one already imported certificate-profile version.
+     * Activates one imported profile version.
      *
-     * @param profileId nonblank stable certificate-profile identifier
+     * @param profileId nonblank logical profile identifier
      * @param profileVersion positive imported profile version
      */
     record ActivateProfile(String profileId, long profileVersion) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "profile.activate";
-
-        /** Validates the exact profile identity. */
+        /** Stable name. */ public static final String NAME = "profile.activate";
+        /** Validates the identity. */
+        @SuppressWarnings("PMD.AvoidLiteralsInIfCondition")
         public ActivateProfile {
-            if (profileId == null || profileId.isBlank() || profileVersion <= 0) {
-                throw new IllegalArgumentException("profile identity is invalid");
-            }
+            requireText(profileId, "profileId");
+            if (profileVersion < 1L) { throw new IllegalArgumentException("profileVersion must be positive"); }
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Reads safe metadata for one committed certificate authority.
+     * Inspects the metadata of one stored authority through an authoritative point lookup.
      *
-     * @param caId exact certificate-authority identifier
+     * <p>Successful execution returns {@code caId}, {@code kind}, {@code state}, {@code issuerGenerationCount},
+     * and {@code currentIssuanceIssuerId}.
+     * A missing object produces {@link PkiOperationFailure#NOT_FOUND} with code
+     * {@code OBJECT_NOT_FOUND}. The executor projects metadata without opening content,
+     * signing, or durable admission; the store retains its existing integrity checks.</p>
+     *
+     * @param caId exact non-null stored-object identifier
      */
     record InspectAuthority(PkiId caId) implements PkiOperation {
-        /** Stable operation name. */
+        /** Stable semantic operation name. */
         public static final String NAME = "ca.inspect";
 
-        /** Validates the authority identity. */
-        public InspectAuthority {
-            Objects.requireNonNull(caId, authorityIdParameter());
-        }
+        /**
+         * Creates an immutable point-inspection request.
+         *
+         * @param caId exact stored-object identifier
+         * @throws NullPointerException if {@code caId} is {@code null}
+         */
+        public InspectAuthority { Objects.requireNonNull(caId, "caId"); }
 
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Lists committed certificate authorities with a finite presentation limit.
+     * Inspects the metadata of one stored credential through an authoritative point lookup.
      *
-     * @param limit maximum number of entries to return, from 1 through {@link #MAXIMUM_RESULT_ENTRIES}
+     * <p>Successful execution returns {@code credentialId}, {@code formatId}, {@code authorityId}, {@code issuerId},
+     * {@code publicKeyId}, {@code profileId}, {@code profileVersion}, {@code status},
+     * {@code notBefore}, and {@code notAfter}.
+     * A missing object produces {@link PkiOperationFailure#NOT_FOUND} with code
+     * {@code OBJECT_NOT_FOUND}. The executor projects metadata without opening content,
+     * signing, or durable admission; the store retains its existing integrity checks.</p>
+     *
+     * <p>The status is persisted inventory metadata, not a current trust or revocation decision.</p>
+     *
+     * @param credentialId exact non-null stored-object identifier
      */
-    record ListAuthorities(int limit) implements PkiOperation {
-        /** Stable operation name. */
+    record InspectCredential(PkiId credentialId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "credential.inspect";
+
+        /**
+         * Creates an immutable point-inspection request.
+         *
+         * @param credentialId exact stored-object identifier
+         * @throws NullPointerException if {@code credentialId} is {@code null}
+         */
+        public InspectCredential { requireCredentialId(credentialId); }
+
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Inspects the metadata of one stored issuer generation through an authoritative point lookup.
+     *
+     * <p>Successful execution returns {@code issuerId}, {@code authorityId}, {@code credentialId}, {@code state},
+     * {@code profilePolicyCommitment}, and {@code x509BindingCommitment}.
+     * A missing object produces {@link PkiOperationFailure#NOT_FOUND} with code
+     * {@code OBJECT_NOT_FOUND}. The executor projects metadata without opening content,
+     * signing, or durable admission; the store retains its existing integrity checks.</p>
+     *
+     * @param issuerId exact non-null stored-object identifier
+     */
+    record InspectIssuerGeneration(PkiId issuerId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "issuer.generation.inspect";
+
+        /**
+         * Creates an immutable point-inspection request.
+         *
+         * @param issuerId exact stored-object identifier
+         * @throws NullPointerException if {@code issuerId} is {@code null}
+         */
+        public InspectIssuerGeneration { Objects.requireNonNull(issuerId, "issuerId"); }
+
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Inspects the metadata of one stored issuer chain path through an authoritative point lookup.
+     *
+     * <p>Successful execution returns {@code pathId}, {@code authorityId}, {@code issuerId}, {@code pathCommitment},
+     * {@code orderedCredentialIds} in leaf-to-anchor order, and {@code count}.
+     * A missing object produces {@link PkiOperationFailure#NOT_FOUND} with code
+     * {@code OBJECT_NOT_FOUND}. The executor projects metadata without opening content,
+     * signing, or durable admission; the store retains its existing integrity checks.</p>
+     *
+     * @param pathId exact non-null stored-object identifier
+     */
+    record InspectIssuerChainPath(PkiId pathId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "issuer.path.inspect";
+
+        /**
+         * Creates an immutable point-inspection request.
+         *
+         * @param pathId exact stored-object identifier
+         * @throws NullPointerException if {@code pathId} is {@code null}
+         */
+        public InspectIssuerChainPath { Objects.requireNonNull(pathId, "pathId"); }
+
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Inspects the metadata of one stored status object through an authoritative point lookup.
+     *
+     * <p>Successful execution returns {@code statusObjectId}, {@code issuerCaId}, {@code type}, {@code formatId},
+     * {@code thisUpdate}, optional {@code nextUpdate}, {@code contentLength},
+     * and {@code contentSha256}.
+     * A missing object produces {@link PkiOperationFailure#NOT_FOUND} with code
+     * {@code OBJECT_NOT_FOUND}. The executor projects metadata without opening content,
+     * signing, or durable admission; the store retains its existing integrity checks.</p>
+     *
+     * @param statusObjectId exact non-null stored-object identifier
+     */
+    record InspectStatus(PkiId statusObjectId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "status.inspect";
+
+        /**
+         * Creates an immutable point-inspection request.
+         *
+         * @param statusObjectId exact stored-object identifier
+         * @throws NullPointerException if {@code statusObjectId} is {@code null}
+         */
+        public InspectStatus { Objects.requireNonNull(statusObjectId, "statusObjectId"); }
+
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Lists the first authorities in authoritative store order.
+     *
+     * <p>The result contains {@code count}, {@code truncated}, and {@code authorities};
+     * each entry has the fields of {@link InspectAuthority}. The limit bounds only
+     * presentation: the store loads and validates its complete authority population
+     * before the prefix is selected. An empty population returns an empty list.</p>
+     *
+     * @param limit maximum returned authorities, from 1 through 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
+     */
+    record ListAuthorities(int limit, Optional<String> after) implements PkiOperation {
+        /** Stable semantic operation name. */
         public static final String NAME = "ca.list";
 
-        /** Validates the presentation limit. */
-        public ListAuthorities {
+        /**
+         * Creates an immutable authority-list request.
+         *
+         * @param limit maximum returned authorities
+         * @throws IllegalArgumentException if {@code limit} is outside 1 through 1000
+         */
+        public ListAuthorities(int limit) { this(limit, Optional.empty()); }
+        /** Validates the bounded keyset query. */
+        public ListAuthorities { requireLimit(limit); after = requireCursor(after); }
+
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Lists the first status objects for one issuer in authoritative store order.
+     *
+     * <p>The result contains {@code issuerCaId}, {@code count}, {@code truncated},
+     * and {@code statusObjects}; each entry has the fields of {@link InspectStatus}.
+     * An unknown issuer returns an empty list. The limit bounds only presentation:
+     * existing store validation reads status metadata and content across all issuers
+     * before filtering and selecting the requested prefix.</p>
+     *
+     * @param issuerCaId exact non-null issuer authority identifier
+     * @param limit maximum returned status objects, from 1 through 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
+     */
+    record ListStatus(PkiId issuerCaId, int limit, Optional<String> after) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "inventory.status";
+
+        /**
+         * Creates an immutable status-list request.
+         *
+         * @param issuerCaId exact issuer authority identifier
+         * @param limit maximum returned status objects
+         * @throws NullPointerException if {@code issuerCaId} is {@code null}
+         * @throws IllegalArgumentException if {@code limit} is outside 1 through 1000
+         */
+        public ListStatus(PkiId issuerCaId, int limit) { this(issuerCaId, limit, Optional.empty()); }
+        /** Validates the bounded keyset query. */
+        public ListStatus {
+            after = requireCursor(after);
+            Objects.requireNonNull(issuerCaId, "issuerCaId");
             requireLimit(limit);
         }
 
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Creates one root certificate authority using an existing managed key reference.
+     * Lists all chain paths for one issuer generation in authoritative store order.
      *
-     * @param formatId encoding format for the created or imported object
-     * @param subjectRef subject name for the new authority
-     * @param profileId nonblank stable certificate-profile identifier
-     * @param keyRef managed key reference used by the authority
+     * <p>The result contains {@code issuerId}, {@code count}, and {@code paths};
+     * each entry has the fields of {@link InspectIssuerChainPath}. An unknown issuer
+     * returns an empty list. This operation has no presentation cap or truncation
+     * field. Existing store validation examines all stored paths before filtering.</p>
+     *
+     * @param issuerId exact non-null issuer-generation identifier
      */
-    record CreateAuthority(FormatId formatId, SubjectRef subjectRef, String profileId, KeyRef keyRef)
-            implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "ca.create";
+    record ListIssuerChainPaths(PkiId issuerId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "issuer.path.list";
 
-        /** Validates the closed authority-creation input. */
-        public CreateAuthority {
-            Objects.requireNonNull(formatId, "formatId");
-            Objects.requireNonNull(subjectRef, "subjectRef");
-            Objects.requireNonNull(keyRef, "keyRef");
-            if (profileId == null || profileId.isBlank()) {
-                throw new IllegalArgumentException(profileIdRequiredMessage());
-            }
-        }
+        /**
+         * Creates an immutable issuer-path-list request.
+         *
+         * @param issuerId exact issuer-generation identifier
+         * @throws NullPointerException if {@code issuerId} is {@code null}
+         */
+        public ListIssuerChainPaths { Objects.requireNonNull(issuerId, "issuerId"); }
 
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Applies one explicit lifecycle transition to an existing authority.
+     * Changes one authority's operational state without changing its generation selection.
      *
-     * @param caId exact certificate-authority identifier
-     * @param state target authority lifecycle state
-     * @param reason nonblank auditable reason for the transition
+     * <p>Every {@link CaState} is supported. Requesting the current state performs
+     * no CA write. A different state uses one conditional replacement; a concurrent
+     * change produces {@link PkiOperationFailure#CONFLICT} without retry. Success
+     * returns the fields of {@link InspectAuthority} from a subsequent authoritative
+     * read, which may include a later concurrent change.</p>
+     *
+     * @param caId exact non-null authority identifier
+     * @param state requested non-null operational state
+     * @param reason nonblank administrative reason
      */
     record TransitionAuthority(PkiId caId, CaState state, String reason) implements PkiOperation {
-        /** Stable operation name. */
+        /** Stable semantic operation name. */
         public static final String NAME = "ca.transition";
 
-        /** Validates the lifecycle-transition input. */
+        /**
+         * Creates an immutable state-transition request.
+         *
+         * @param caId exact authority identifier
+         * @param state requested operational state
+         * @param reason nonblank administrative reason
+         * @throws NullPointerException if the identifier or state is null
+         * @throws IllegalArgumentException if the reason is null or blank
+         */
         public TransitionAuthority {
-            Objects.requireNonNull(caId, authorityIdParameter());
+            Objects.requireNonNull(caId, "caId");
             Objects.requireNonNull(state, "state");
-            if (reason == null || reason.isBlank()) {
-                throw new IllegalArgumentException("reason must not be blank");
-            }
+            requireText(reason, "reason");
         }
 
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Reads safe metadata for one stored certification request.
+     * Selects an active issuer generation and matching chain path owned by one authority.
      *
-     * @param requestId exact imported certification-request identifier
+     * <p>The CA need not be active. One conditional replacement preserves its state,
+     * memberships and immutable base while selecting the generation, path and the
+     * generation's signing key. Re-selecting the current coordinates still writes.
+     * A concurrent change produces {@link PkiOperationFailure#CONFLICT} without retry.
+     * Success returns exactly {@code caId}, {@code issuerId} and {@code pathId}.</p>
+     *
+     * @param caId exact non-null authority identifier
+     * @param issuerId exact non-null member issuer-generation identifier
+     * @param pathId exact non-null matching path identifier
+     * @param reason nonblank administrative reason
+     */
+    record SelectIssuancePath(PkiId caId, PkiId issuerId, PkiId pathId, String reason) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "issuer.path.select";
+
+        /**
+         * Creates an immutable issuance-selection request.
+         *
+         * @param caId exact authority identifier
+         * @param issuerId exact member generation identifier
+         * @param pathId exact matching path identifier
+         * @param reason nonblank administrative reason
+         * @throws NullPointerException if an identifier is null
+         * @throws IllegalArgumentException if the reason is null or blank
+         */
+        public SelectIssuancePath {
+            Objects.requireNonNull(caId, "caId");
+            Objects.requireNonNull(issuerId, "issuerId");
+            Objects.requireNonNull(pathId, "pathId");
+            requireText(reason, "reason");
+        }
+
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Registers a chain path by prepending a member generation's credential to a parent path.
+     *
+     * <p>The CA and generation need not be active. Existing store validation enforces
+     * certificate relationships and a maximum of 32 credentials. Registration never
+     * changes the CA head or selected path. Success returns the fields of
+     * {@link InspectIssuerChainPath}; duplicate immutable creation retains the store's
+     * rejection behavior.</p>
+     *
+     * @param caId exact non-null authority identifier
+     * @param issuerId exact non-null member generation identifier
+     * @param parentPathId exact non-null immutable parent-path identifier
+     */
+    record RegisterIssuerChainPath(PkiId caId, PkiId issuerId, PkiId parentPathId) implements PkiOperation {
+        /** Stable semantic operation name. */
+        public static final String NAME = "issuer.path.register";
+
+        /**
+         * Creates an immutable path-registration request.
+         *
+         * @param caId exact authority identifier
+         * @param issuerId exact member generation identifier
+         * @param parentPathId exact parent-path identifier
+         * @throws NullPointerException if an identifier is null
+         */
+        public RegisterIssuerChainPath {
+            Objects.requireNonNull(caId, "caId");
+            Objects.requireNonNull(issuerId, "issuerId");
+            Objects.requireNonNull(parentPathId, "parentPathId");
+        }
+
+        /** {@return the stable semantic name {@value #NAME}} */
+        @Override public String name() { return NAME; }
+    }
+
+    /**
+     * Inspects one stored certification request.
+     *
+     * @param requestId exact stored certification-request identifier
      */
     record InspectRequest(PkiId requestId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "request.inspect";
-
-        /** Validates the request identity. */
-        public InspectRequest {
-            Objects.requireNonNull(requestId, "requestId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "request.inspect";
+        /** Validates the identifier. */
+        public InspectRequest { Objects.requireNonNull(requestId, "requestId"); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Strictly parses and durably imports one certification request.
+     * Imports one certification request.
      *
-     * @param formatId encoding format for the created or imported object
+     * @param formatId credential framework format identifier
      * @param encoded encoded certification-request object
      */
     record ImportRequest(FormatId formatId, EncodedObject encoded) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "request.import";
-
-        /** Validates the finite request input. */
+        /** Stable name. */ public static final String NAME = "request.import";
+        /** Validates the object. */
         public ImportRequest {
             Objects.requireNonNull(formatId, "formatId");
             Objects.requireNonNull(encoded, "encoded");
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        @Override public String name() { return NAME; }
     }
 
     /**
      * Verifies proof of possession for one stored request.
      *
-     * @param requestId exact imported certification-request identifier
+     * @param requestId exact stored certification-request identifier
      */
     record VerifyRequest(PkiId requestId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "request.verify";
-
-        /** Validates the request identity. */
-        public VerifyRequest {
-            Objects.requireNonNull(requestId, "requestId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Reads safe metadata for one committed credential.
-     *
-     * @param credentialId exact committed credential identifier
-     */
-    record InspectCredential(PkiId credentialId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.inspect";
-
+        /** Stable name. */ public static final String NAME = "request.verify";
         /** Validates the identifier. */
-        public InspectCredential {
-            Objects.requireNonNull(credentialId, credentialIdArgumentName());
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        public VerifyRequest { Objects.requireNonNull(requestId, "requestId"); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Lists reduced pending credential-confirmation reviews in one authorized scope.
+     * Lists pending credential-confirmation reviews in one authorized scope.
      *
-     * @param authorityId exact authorized authority scope
-     * @param profileId optional nonblank profile filter
-     * @param cutoffInclusive latest challenge expiration included in the query
-     * @param afterExclusive optional keyset cursor after which results begin
-     * @param limit maximum number of entries to return, from 1 through {@link #MAXIMUM_RESULT_ENTRIES}
+     * @param authorityId exact authority identifier that scopes the query
+     * @param profileId optional nonblank profile identifier limiting the query
+     * @param cutoffInclusive inclusive UTC cutoff for pending confirmation deadlines
+     * @param afterExclusive optional exclusive confirmation-review cursor
+     * @param limit maximum number of returned entries, from 1 to 1000
      */
-    record ListPendingCredentialConfirmations(PkiId authorityId,
-            java.util.Optional<String> profileId, java.time.Instant cutoffInclusive,
-            java.util.Optional<zeroecho.pki.api.confirmation.CredentialConfirmationReviewCursor> afterExclusive,
-            int limit) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.confirmation.pending.list";
-
-        /** Validates the exact bounded keyset query. */
+    record ListPendingCredentialConfirmations(PkiId authorityId, Optional<String> profileId,
+            Instant cutoffInclusive, Optional<CredentialConfirmationReviewCursor> afterExclusive, int limit)
+            implements PkiOperation {
+        /** Stable name. */ public static final String NAME = "credential.confirmation.pending.list";
+        /** Validates the keyset query. */
         public ListPendingCredentialConfirmations {
             Objects.requireNonNull(authorityId, "authorityId");
-            requireScopeText(authorityId.value(), "authorityId");
+            requireBoundedText(authorityId.value(), "authorityId", 256);
             profileId = Objects.requireNonNull(profileId, "profileId");
-            profileId.ifPresent(value -> requireScopeText(value, "profileId"));
+            profileId.ifPresent(value -> requireBoundedText(value, "profileId", 256));
             Objects.requireNonNull(cutoffInclusive, "cutoffInclusive");
-            if (cutoffInclusive.getEpochSecond() < 0L
-                    || cutoffInclusive.getEpochSecond() > 253_402_300_799L) {
+            if (cutoffInclusive.getEpochSecond() < 0L || cutoffInclusive.getEpochSecond() > 253_402_300_799L) {
                 throw new IllegalArgumentException("cutoffInclusive is outside the supported UTC range");
             }
             afterExclusive = Objects.requireNonNull(afterExclusive, "afterExclusive");
             requireLimit(limit);
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-
-        private static void requireScopeText(String value, String name) {
-            Objects.requireNonNull(value, name);
-            byte[] encoded = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            if (value.isBlank() || encoded.length > 256
-                    || !value.equals(new String(encoded, java.nio.charset.StandardCharsets.UTF_8))) {
-                throw new IllegalArgumentException(name + " is not bounded strict UTF-8");
-            }
-        }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Issues or replays the current proof challenge for one pending credential confirmation.
+     * Issues or replays the proof challenge for one pending confirmation.
      *
-     * <p>The external operation accepts only the canonical credential identity. The
-     * executor loads the current lifecycle revision and record commitment from
-     * authoritative state; suite configuration, nonce, audience, lifetime, certificate
-     * material, and provider selection are never caller-controlled.</p>
-     *
-     * <p>After authorization, challenge construction uses {@code O(D + K + T)}
-     * CPU, bounded credential-content I/O, and a constant number of
-     * {@code O(log M)} metadata point operations, where {@code D} is certificate
-     * DER length (at most 1 MiB), {@code K} is public-key processing, {@code T} is
-     * suite presentation work (at most 2048 bytes before Base64url), and {@code M}
-     * is the metadata population. Per-request memory is bounded by those finite
-     * inputs and no request state is retained. Whole-request cost additionally
-     * includes the gateway's configured grant/role scans and audit/transport I/O.</p>
-     *
-     * @param credentialId exact committed credential identity
+     * @param credentialId exact stored credential identifier
      */
     record IssueCredentialConfirmationChallenge(PkiId credentialId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.confirmation.challenge.issue";
-
-        /** Validates the sole external argument. */
-        public IssueCredentialConfirmationChallenge {
-            Objects.requireNonNull(credentialId, credentialIdArgumentName());
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "credential.confirmation.challenge.issue";
+        /** Validates the identifier. */
+        public IssueCredentialConfirmationChallenge { requireCredentialId(credentialId); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Verifies and completes one credential confirmation using existing CAS coordinates.
+     * Completes one credential confirmation proof.
      *
-     * <p>The submission owns a bounded response defensively and redacts it from
-     * structural text. Realm, authority, profile, owner, suite, audience, nonce,
-     * certificate material, and provider selection are never caller inputs.</p>
-     *
-     * <p>After authorization, pending verification uses
-     * {@code O(D + T + R + V(K))} CPU and a constant number of {@code O(log M)}
-     * metadata point operations. Exact terminal replay uses {@code O(R + log M)}
-     * without provider invocation, DER loading, or proof verification. Bounds are
-     * {@code D <= 1 MiB}, {@code T <= 2 KiB}, and {@code R <= 16 KiB}. Whole-request
-     * cost additionally includes configured grant/role scans and audit/transport I/O.</p>
-     *
-     * @param submission exact proof CAS and bounded response
+     * @param submission non-null challenge response and proof submission
      */
     record CompleteCredentialConfirmationProof(CredentialConfirmationProofSubmission submission)
             implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.confirmation.proof.complete";
-
-        /** Validates the exact immutable submission. */
-        public CompleteCredentialConfirmationProof {
-            Objects.requireNonNull(submission, "submission");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "credential.confirmation.proof.complete";
+        /** Validates the submission. */
+        public CompleteCredentialConfirmationProof { Objects.requireNonNull(submission, "submission"); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Permanently revokes one still-pending non-public credential after its
-     * authoritative confirmation-review boundary.
+     * Permanently revokes one still-pending non-public credential.
      *
-     * <p>The executor re-evaluates eligibility from authoritative state under
-     * the credential lock. The permanent PKIX reason is always
-     * {@link RevocationReason#UNSPECIFIED}; callers cannot supply a reason,
-     * cutoff, lifecycle expectation, profile, owner, issuer, or responder.</p>
-     *
-     * @param credentialId exact committed credential identity
-     * @param operatorJustification optional operator justification or ticket, limited to 1024 characters
+     * @param credentialId exact stored credential identifier
+     * @param operatorJustification optional nonblank administrative justification, at most 1024 characters
      */
-    record RevokePendingCredentialConfirmation(PkiId credentialId,
-            java.util.Optional<String> operatorJustification) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.confirmation.pending.revoke";
-
-        /** Validates the exact bounded administrative inputs. */
-        public RevokePendingCredentialConfirmation {
-            Objects.requireNonNull(credentialId, credentialIdArgumentName());
-            operatorJustification = Objects.requireNonNull(operatorJustification, "operatorJustification")
-                    .map(value -> requireText(value, 1024, "operatorJustification"));
-        }
-
-        /**
-         * Creates a request without an operator justification.
-         *
-         * @param credentialId exact pending credential identifier
-         */
-        public RevokePendingCredentialConfirmation(PkiId credentialId) {
-            this(credentialId, java.util.Optional.empty());
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-
-        private static String requireText(String value, int maximumLength, String label) {
-            if (value.isBlank() || value.length() > maximumLength) {
-                throw new IllegalArgumentException(label + " is invalid");
-            }
-            return value;
-        }
-    }
-
-    /**
-     * Issues one end-entity credential from an already imported request.
-     *
-     * @param issuerCaId issuing certificate-authority identifier
-     * @param requestId exact imported certification-request identifier
-     * @param profileId nonblank stable certificate-profile identifier
-     */
-    record IssueCredential(PkiId issuerCaId, PkiId requestId, String profileId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.issue";
-
-        /** Validates the issuance input. */
-        public IssueCredential {
-            Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
-            Objects.requireNonNull(requestId, "requestId");
-            if (profileId == null || profileId.isBlank()) {
-                throw new IllegalArgumentException(profileIdRequiredMessage());
-            }
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Renews one end-entity credential, keeping its subject and key under a fresh validity.
-     *
-     * @param credentialId exact committed credential identifier
-     */
-    record RenewCredential(PkiId credentialId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.renew";
-
-        /** Validates the renewal input. */
-        public RenewCredential {
-            Objects.requireNonNull(credentialId, "credentialId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Replaces one end-entity credential from a new imported request and supersedes the predecessor.
-     *
-     * @param existingCredentialId exact credential that the replacement supersedes
-     * @param requestId exact imported certification-request identifier
-     * @param profileId nonblank stable certificate-profile identifier
-     */
-    record ReplaceCredential(PkiId existingCredentialId, PkiId requestId, String profileId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.replace";
-
-        /** Validates the replacement input. */
-        public ReplaceCredential {
-            Objects.requireNonNull(existingCredentialId, "existingCredentialId");
-            Objects.requireNonNull(requestId, "requestId");
-            if (profileId == null || profileId.isBlank()) {
-                throw new IllegalArgumentException(profileIdRequiredMessage());
-            }
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Reissues one end-entity credential from its stored issuance record and supersedes the predecessor.
-     *
-     * @param credentialId exact committed credential identifier
-     */
-    record ReissueCredential(PkiId credentialId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.reissue";
-
-        /** Validates the reissue input. */
-        public ReissueCredential {
-            Objects.requireNonNull(credentialId, "credentialId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Rolls over one CA credential, keeping the same key and advancing the current issuance generation.
-     *
-     * @param caId exact certificate-authority identifier
-     * @param issuerCaId optional issuing authority; empty selects the configured issuer
-     */
-    record RolloverCaCertificate(PkiId caId, java.util.Optional<PkiId> issuerCaId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "ca.rollover";
-
-        /** Validates the rollover input. */
-        public RolloverCaCertificate {
-            Objects.requireNonNull(caId, authorityIdParameter());
-            Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Rotates one CA key and issues a new corresponding generation, advancing the current issuance pointers.
-     *
-     * @param caId exact certificate-authority identifier
-     * @param newKeyRef optional managed replacement key; empty requests key generation
-     * @param issuerCaId optional issuing authority; empty selects the configured issuer
-     */
-    record RotateCaKey(PkiId caId, java.util.Optional<KeyRef> newKeyRef, java.util.Optional<PkiId> issuerCaId)
+    record RevokePendingCredentialConfirmation(PkiId credentialId, Optional<String> operatorJustification)
             implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "ca.rotate";
-
-        /** Validates the rotation input. */
-        public RotateCaKey {
-            Objects.requireNonNull(caId, authorityIdParameter());
-            Objects.requireNonNull(newKeyRef, "newKeyRef");
-            Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
+        /** Stable name. */ public static final String NAME = "credential.confirmation.pending.revoke";
+        /** Validates bounded administrative input. */
+        public RevokePendingCredentialConfirmation {
+            requireCredentialId(credentialId);
+            operatorJustification = boundedOptional(operatorJustification, "operatorJustification", 1_024);
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /**
+         * Creates a revocation without justification.
+         *
+         * @param credentialId exact stored credential identifier
+         */
+        public RevokePendingCredentialConfirmation(PkiId credentialId) { this(credentialId, Optional.empty()); }
+        @Override public String name() { return NAME; }
     }
 
     /**
      * Permanently revokes one committed credential.
      *
-     * @param credentialId exact credential identity
-     * @param reason standardized permanent revocation reason
-     * @param operatorJustification optional operator justification or ticket, limited to 1024 characters
+     * @param credentialId exact stored credential identifier
+     * @param reason permanent revocation reason; hold and remove-from-CRL are rejected
+     * @param operatorJustification optional nonblank administrative justification, at most 1024 characters
      */
-    record RevokeCredential(PkiId credentialId, RevocationReason reason,
-            java.util.Optional<String> operatorJustification) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "credential.revoke";
-
-        /** Validates permanent-revocation inputs. */
+    record RevokeCredential(PkiId credentialId, RevocationReason reason, Optional<String> operatorJustification)
+            implements PkiOperation {
+        /** Stable name. */ public static final String NAME = "credential.revoke";
+        /** Validates permanent revocation input. */
         public RevokeCredential {
-            Objects.requireNonNull(credentialId, credentialIdArgumentName());
+            requireCredentialId(credentialId);
             Objects.requireNonNull(reason, "reason");
-            operatorJustification = Objects.requireNonNull(operatorJustification, "operatorJustification")
-                    .map(value -> requireText(value, 1024, "operatorJustification"));
+            operatorJustification = boundedOptional(operatorJustification, "operatorJustification", 1_024);
             if (reason == RevocationReason.CERTIFICATE_HOLD || reason == RevocationReason.REMOVE_FROM_CRL) {
                 throw new IllegalArgumentException("reason must be permanent");
             }
         }
-
         /**
-         * Creates a revocation without an operator justification.
+         * Creates a revocation without justification.
          *
-         * @param credentialId exact credential identifier
-         * @param reason permanent revocation reason
+         * @param credentialId exact stored credential identifier
+         * @param reason permanent revocation reason; hold and remove-from-CRL are rejected
          */
         public RevokeCredential(PkiId credentialId, RevocationReason reason) {
-            this(credentialId, reason, java.util.Optional.empty());
+            this(credentialId, reason, Optional.empty());
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-
-        private static String requireText(String value, int maximumLength, String label) {
-            if (value.isBlank() || value.length() > maximumLength) {
-                throw new IllegalArgumentException(label + " is invalid");
-            }
-            return value;
-        }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Reads a bounded prefix from one closeable authoritative history cursor.
+     * Reads a bounded prefix of one revocation history.
      *
-     * @param credentialId exact committed credential identifier
-     * @param limit maximum number of entries to return, from 1 through {@link #MAXIMUM_RESULT_ENTRIES}
+     * @param credentialId exact stored credential identifier
+     * @param limit maximum number of returned entries, from 1 to 1000
      */
     record ReadRevocationHistory(PkiId credentialId, int limit) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "revocation.history";
-        /** Maximum finite result entries for one invocation. */
-        public static final int MAXIMUM_RESULT_ENTRIES = 1_000;
-
-        /** Validates the identifier and finite result limit. */
+        /** Stable name. */ public static final String NAME = "revocation.history";
+        /** Validates the bounded query. */
         public ReadRevocationHistory {
-            Objects.requireNonNull(credentialId, credentialIdArgumentName());
-            if (limit < 1 || limit > MAXIMUM_RESULT_ENTRIES) {
-                throw new IllegalArgumentException("limit must be between 1 and 1000");
-            }
+            requireCredentialId(credentialId);
+            requireLimit(limit);
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Reads the validated current revocation state for one credential.
+     * Inspects the current revocation state.
      *
-     * @param credentialId exact committed credential identifier
+     * @param credentialId exact stored credential identifier
      */
     record InspectRevocation(PkiId credentialId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "revocation.inspect";
-
-        /** Validates the credential identity. */
-        public InspectRevocation {
-            Objects.requireNonNull(credentialId, credentialIdArgumentName());
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "revocation.inspect";
+        /** Validates the identifier. */
+        public InspectRevocation { requireCredentialId(credentialId); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Reads a bounded page from one immutable current-revocation snapshot.
+     * Reads a bounded current-revocation snapshot.
      *
-     * @param limit maximum number of entries to return, from 1 through {@link #MAXIMUM_RESULT_ENTRIES}
+     * @param limit maximum number of returned entries, from 1 to 1000
      */
     record SnapshotRevocations(int limit) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "revocation.snapshot";
-
-        /** Validates the presentation limit. */
-        public SnapshotRevocations {
-            requireLimit(limit);
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "revocation.snapshot";
+        /** Validates the limit. */
+        public SnapshotRevocations { requireLimit(limit); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Reads safe metadata for one committed status object.
+     * Inspects one publication operation.
      *
-     * @param statusObjectId exact committed status-object identifier
-     */
-    record InspectStatus(PkiId statusObjectId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "status.inspect";
-
-        /** Validates the status-object identity. */
-        public InspectStatus {
-            Objects.requireNonNull(statusObjectId, "statusObjectId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Lists status objects for one issuer with a finite presentation limit.
-     *
-     * @param issuerCaId issuing certificate-authority identifier
-     * @param limit maximum number of entries to return, from 1 through {@link #MAXIMUM_RESULT_ENTRIES}
-     */
-    record ListStatus(PkiId issuerCaId, int limit) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "inventory.status";
-
-        /** Validates the issuer identity and presentation limit. */
-        public ListStatus {
-            Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
-            requireLimit(limit);
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Generates one signed status object from a stable revocation view.
-     *
-     * @param issuerCaId issuing certificate-authority identifier
-     * @param type kind of status object to generate
-     * @param formatId encoding format for the created or imported object
-     */
-    record GenerateStatus(PkiId issuerCaId, StatusObjectType type, FormatId formatId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "status.generate";
-
-        /** Validates the generation input. */
-        public GenerateStatus {
-            Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
-            Objects.requireNonNull(type, "type");
-            Objects.requireNonNull(formatId, "formatId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Reads safe durable state for one publication operation.
-     *
-     * @param publicationId exact publication-operation identifier
+     * @param publicationId exact publication operation identifier
      */
     record InspectPublication(PkiId publicationId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "publication.inspect";
-
+        /** Stable name. */ public static final String NAME = "publication.inspect";
         /** Validates the identifier. */
-        public InspectPublication {
-            Objects.requireNonNull(publicationId, "publicationId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        public InspectPublication { Objects.requireNonNull(publicationId, "publicationId"); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Lists publication records using a bounded-memory cursor and finite result page.
+     * Lists publication operations.
      *
-     * @param limit maximum number of entries to return, from 1 through {@link #MAXIMUM_RESULT_ENTRIES}
+     * @param limit maximum number of returned entries, from 1 to 1000
+     * @param after optional exclusive identifier cursor; empty starts the first page
      */
-    record ListPublications(int limit) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "publication.list";
-
-        /** Validates the presentation limit. */
-        public ListPublications {
-            requireLimit(limit);
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+    record ListPublications(int limit, Optional<String> after) implements PkiOperation {
+        /** Stable name. */ public static final String NAME = "publication.list";
+        /**
+         * Validates the limit.
+         *
+         * @param limit maximum number of returned entries, from 1 to 1000
+         */
+        public ListPublications(int limit) { this(limit, Optional.empty()); }
+        /** Validates the bounded keyset query. */
+        public ListPublications { requireLimit(limit); after = requireCursor(after); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Registers post-commit publication of one authoritative source object.
+     * Registers post-commit publication of one authoritative object.
      *
-     * @param publicationId exact publication-operation identifier
-     * @param sourceType authoritative kind of the published source object
-     * @param sourceId exact authoritative source-object identifier
-     * @param target validated publication destination
+     * @param publicationId exact publication operation identifier
+     * @param sourceType type of authoritative object to publish
+     * @param sourceId exact identifier of the authoritative source object
+     * @param target configured publication destination
      */
     record RegisterPublication(PkiId publicationId, PublicationSourceType sourceType, PkiId sourceId,
             PublicationTarget target) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "publication.register";
-
-        /** Validates the immutable publication registration fields. */
+        /** Stable name. */ public static final String NAME = "publication.register";
+        /** Validates the registration. */
         public RegisterPublication {
             Objects.requireNonNull(publicationId, "publicationId");
             Objects.requireNonNull(sourceType, "sourceType");
             Objects.requireNonNull(sourceId, "sourceId");
             Objects.requireNonNull(target, "target");
         }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Processes one explicitly selected pending publication operation.
+     * Processes one pending publication.
      *
-     * @param publicationId exact publication-operation identifier
+     * @param publicationId exact publication operation identifier
      */
     record ProcessPublication(PkiId publicationId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "publication.process";
-
-        /** Validates the publication identity. */
-        public ProcessPublication {
-            Objects.requireNonNull(publicationId, "publicationId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "publication.process";
+        /** Validates the identifier. */
+        public ProcessPublication { Objects.requireNonNull(publicationId, "publicationId"); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Explicitly retries one eligible publication operation.
+     * Retries one eligible publication.
      *
-     * @param publicationId exact publication-operation identifier
+     * @param publicationId exact publication operation identifier
      */
     record RetryPublication(PkiId publicationId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "publication.retry";
-
-        /** Validates the publication identity. */
-        public RetryPublication {
-            Objects.requireNonNull(publicationId, "publicationId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "publication.retry";
+        /** Validates the identifier. */
+        public RetryPublication { Objects.requireNonNull(publicationId, "publicationId"); }
+        @Override public String name() { return NAME; }
     }
 
     /**
-     * Reconciles one publication operation whose external outcome is unknown.
+     * Reconciles one publication with an unknown external outcome.
      *
-     * @param publicationId exact publication-operation identifier
+     * @param publicationId exact publication operation identifier
      */
     record ReconcilePublication(PkiId publicationId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "publication.reconcile";
-
-        /** Validates the publication identity. */
-        public ReconcilePublication {
-            Objects.requireNonNull(publicationId, "publicationId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+        /** Stable name. */ public static final String NAME = "publication.reconcile";
+        /** Validates the identifier. */
+        public ReconcilePublication { Objects.requireNonNull(publicationId, "publicationId"); }
+        @Override public String name() { return NAME; }
     }
 
-    /**
-     * Creates one intermediate certificate authority and its initial CA credential.
-     *
-     * @param formatId encoding format for the created or imported object
-     * @param issuerCaId issuing certificate-authority identifier
-     * @param subjectRef subject name for the new authority
-     * @param profileId nonblank stable certificate-profile identifier
-     * @param keyRef optional existing managed key; empty requests key generation
-     */
-    record CreateIntermediate(FormatId formatId, PkiId issuerCaId, SubjectRef subjectRef, String profileId,
-            java.util.Optional<KeyRef> keyRef) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "ca.intermediate.create";
-
-        /** Validates the closed intermediate-creation input. */
-        public CreateIntermediate {
-            Objects.requireNonNull(formatId, "formatId");
-            Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
-            Objects.requireNonNull(subjectRef, "subjectRef");
-            keyRef = Objects.requireNonNull(keyRef, "keyRef");
-            if (profileId == null || profileId.isBlank()) {
-                throw new IllegalArgumentException(profileIdRequiredMessage());
-            }
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Issues a new CA credential for an existing intermediate authority (cross-sign or renewal).
-     *
-     * @param formatId encoding format for the created or imported object
-     * @param issuerCaId issuing certificate-authority identifier
-     * @param subjectCaId subject intermediate-authority identifier
-     * @param profileId nonblank stable certificate-profile identifier
-     * @param requestedValidity optional requested validity constrained by the profile and issuer
-     */
-    record IssueIntermediateCertificate(FormatId formatId, PkiId issuerCaId, PkiId subjectCaId, String profileId,
-            java.util.Optional<Validity> requestedValidity) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "ca.intermediate.issue";
-
-        /** Validates the closed intermediate-issuance input. */
-        public IssueIntermediateCertificate {
-            Objects.requireNonNull(formatId, "formatId");
-            Objects.requireNonNull(issuerCaId, issuerAuthorityIdParameter());
-            Objects.requireNonNull(subjectCaId, "subjectCaId");
-            requestedValidity = Objects.requireNonNull(requestedValidity, "requestedValidity");
-            if (profileId == null || profileId.isBlank()) {
-                throw new IllegalArgumentException(profileIdRequiredMessage());
-            }
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Reads safe metadata for one concrete issuer generation.
-     *
-     * @param issuerId exact issuer-generation identifier
-     */
-    record InspectIssuerGeneration(PkiId issuerId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "issuer.generation.inspect";
-
-        /** Validates the issuer-generation identity. */
-        public InspectIssuerGeneration {
-            Objects.requireNonNull(issuerId, "issuerId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Reads one immutable explicit issuer chain path.
-     *
-     * @param pathId exact issuer-chain-path identifier
-     */
-    record InspectIssuerChainPath(PkiId pathId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "issuer.path.inspect";
-
-        /** Validates the chain-path identity. */
-        public InspectIssuerChainPath {
-            Objects.requireNonNull(pathId, "pathId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Lists all explicit chain paths for one issuer generation.
-     *
-     * @param issuerId exact issuer-generation identifier
-     */
-    record ListIssuerChainPaths(PkiId issuerId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "issuer.path.list";
-
-        /** Validates the issuer-generation identity. */
-        public ListIssuerChainPaths {
-            Objects.requireNonNull(issuerId, "issuerId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Atomically selects the issuer generation and path used for future issuance.
-     *
-     * @param caId exact certificate-authority identifier
-     * @param issuerId exact issuer-generation identifier
-     * @param pathId exact issuer-chain-path identifier
-     * @param reason nonblank auditable reason for the transition
-     */
-    record SelectIssuancePath(PkiId caId, PkiId issuerId, PkiId pathId, String reason) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "issuer.path.select";
-
-        /** Validates the closed path-selection input. */
-        public SelectIssuancePath {
-            Objects.requireNonNull(caId, authorityIdParameter());
-            Objects.requireNonNull(issuerId, "issuerId");
-            Objects.requireNonNull(pathId, "pathId");
-            if (reason == null || reason.isBlank()) {
-                throw new IllegalArgumentException("reason must not be blank");
-            }
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
-    }
-
-    /**
-     * Registers an additional explicit chain path for an existing issuer generation.
-     *
-     * @param caId exact certificate-authority identifier
-     * @param issuerId exact issuer-generation identifier
-     * @param parentPathId exact parent path to extend
-     */
-    record RegisterIssuerChainPath(PkiId caId, PkiId issuerId, PkiId parentPathId) implements PkiOperation {
-        /** Stable operation name. */
-        public static final String NAME = "issuer.path.register";
-
-        /** Validates the closed path-registration input. */
-        public RegisterIssuerChainPath {
-            Objects.requireNonNull(caId, authorityIdParameter());
-            Objects.requireNonNull(issuerId, "issuerId");
-            Objects.requireNonNull(parentPathId, "parentPathId");
-        }
-
-        @Override
-        public String name() {
-            return NAME;
-        }
+    private static void requireCredentialId(PkiId credentialId) {
+        Objects.requireNonNull(credentialId, "credentialId");
     }
 
     private static void requireLimit(int limit) {
@@ -1290,7 +923,32 @@ public sealed interface PkiOperation permits PkiOperation.ValidateConfiguration,
         }
     }
 
-    private static String credentialIdArgumentName() {
-        return "credentialId";
+    private static void requireText(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(name + " must not be blank");
+        }
+    }
+
+    private static Optional<String> requireOptionalText(Optional<String> value, String name) {
+        return Objects.requireNonNull(value, name).map(text -> {
+            requireText(text, name);
+            return text;
+        });
+    }
+
+    private static Optional<String> boundedOptional(Optional<String> value, String name, int maximumLength) {
+        return Objects.requireNonNull(value, name).map(text -> {
+            requireBoundedText(text, name, maximumLength);
+            return text;
+        });
+    }
+
+    private static void requireBoundedText(String value, String name, int maximumLength) {
+        Objects.requireNonNull(value, name);
+        byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
+        if (value.isBlank() || encoded.length > maximumLength
+                || !value.equals(new String(encoded, StandardCharsets.UTF_8))) {
+            throw new IllegalArgumentException(name + " is not bounded strict UTF-8");
+        }
     }
 }

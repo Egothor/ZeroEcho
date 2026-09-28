@@ -41,12 +41,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
-import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.application.PublicationExecutionEvidence;
-import zeroecho.pki.impl.core.async.DomainAttributeEncoding;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 
 /**
@@ -70,9 +68,7 @@ final class PublicationAuditProjection {
     }
 
     /* default */ static Optional<AuditEvent> toEvent(AuditEvidenceFeed.Entry entry) {
-        AttributeSet attributes = DomainAttributeEncoding.decode(
-                new String(entry.evidence(), StandardCharsets.UTF_8));
-        Optional<PublicationExecutionEvidence> evidence = PublicationExecutionEvidence.decode(attributes);
+        Optional<PublicationExecutionEvidence> evidence = PublicationExecutionEvidence.decode(entry.evidence());
         if (evidence.isEmpty()) {
             return Optional.empty();
         }

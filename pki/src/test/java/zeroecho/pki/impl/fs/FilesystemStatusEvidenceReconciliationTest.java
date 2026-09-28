@@ -56,7 +56,7 @@ import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.status.StatusObject;
 import zeroecho.pki.api.status.StatusObjectType;
 import zeroecho.pki.application.StatusGenerationEvidence;
-import zeroecho.pki.impl.core.async.DomainAttributeEncoding;
+import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataCursor;
@@ -65,7 +65,7 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
-/** Co-commit and startup reconciliation of the status-generation evidence log (Task 8a status slice). */
+/** Co-commit and startup reconciliation of the status-generation evidence log. */
 final class FilesystemStatusEvidenceReconciliationTest {
 
     private static final String STORE_DIRECTORY = "store";

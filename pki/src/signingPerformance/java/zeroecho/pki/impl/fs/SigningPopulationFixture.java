@@ -52,8 +52,7 @@ import zeroecho.pki.api.audit.Principal;
 import zeroecho.pki.api.audit.Purpose;
 import zeroecho.pki.api.content.DurableContentReference;
 import zeroecho.pki.api.orch.SigningSubmissionId;
-import zeroecho.pki.impl.core.async.PkiSigningBus;
-import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.SigningProvider;
 import zeroecho.pki.spi.store.ContentSink;
 import zeroecho.pki.spi.store.MetadataCommitResult;
 import zeroecho.pki.spi.store.MetadataKey;
@@ -74,8 +73,8 @@ public final class SigningPopulationFixture {
             new Purpose("SIGNING_PERFORMANCE_PRELOAD"), Optional.empty(), Optional.empty());
     private static final KeyRef KEY_REF = new KeyRef("benchmark:capacity-preload");
     private static final String ALGORITHM = "urn:zeroecho:algorithm:signature:rsa-pkcs1-sha256";
-    private static final SignatureWorkflow.ConfigurationCommitment CONFIGURATION =
-            new SignatureWorkflow.ConfigurationCommitment(new byte[32]);
+    private static final SigningProvider.ConfigurationCommitment CONFIGURATION =
+            new SigningProvider.ConfigurationCommitment(new byte[32]);
 
     private SigningPopulationFixture() {
     }
@@ -112,7 +111,8 @@ public final class SigningPopulationFixture {
             // Establishes the complete production store layout before direct ledger population.
             signingNamespace = initialized.signingNamespace();
         }
-        Path metadataRoot = new FsPaths(storeRoot).transactionalMetadataRoot();
+        FsPaths paths = new FsPaths(storeRoot);
+        Path metadataRoot = paths.transactionalMetadataRoot();
         MetadataStoreId storeId = new MetadataStoreId(signingNamespace);
         try (SegmentedTransactionalMetadataStore metadata =
                 SegmentedTransactionalMetadataStore.open(metadataRoot,
@@ -124,18 +124,15 @@ public final class SigningPopulationFixture {
             metadata.observeWatermark(exactCreatedAt.toEpochMilli());
             populateGeneric(metadata, genericRecords, progress);
         }
-        String sharedContentId = null;
         try (FilesystemPkiStore store = new FilesystemPkiStore(storeRoot, options, clock)) {
             if (activeRecords != 0L) {
-                DurableContentReference reference = sharedReference(store);
-                sharedContentId = reference.contentId();
-                populateActive(store, reference, exactCreatedAt, activeRecords, progress);
+                populateActive(store, exactCreatedAt, activeRecords, progress);
             } else {
                 progress.started("active", 0L);
                 progress.completed("active", 0L);
             }
         }
-        CountingRecovery recovery = new CountingRecovery(sharedContentId);
+        CountingRecovery recovery = new CountingRecovery();
         SigningLedgerRecovery.Configuration configuration = new SigningLedgerRecovery.Configuration(
                 8192, SigningManifestCodec.MAX_FILE_BYTES, SigningCheckpointCodec.MAX_ENTRIES,
                 SigningActiveWal.Configuration.defaults(options.signingMaximumGroupSize()));
@@ -145,8 +142,8 @@ public final class SigningPopulationFixture {
         }
         Observation observation = recovery.observation();
         long expectedCurrent = Math.addExact(Math.addExact(genericRecords,
-                Math.multiplyExact(activeRecords, 2L)), 1L);
-        Observation expected = new Observation(genericRecords, activeRecords, activeRecords,
+                Math.multiplyExact(activeRecords, 3L)), 1L);
+        Observation expected = new Observation(genericRecords, Math.multiplyExact(activeRecords, 2L), activeRecords,
                 1L, expectedCurrent, activeRecords, activeRecords);
         if (!expected.equals(observation)) {
             throw new IOException("Signing benchmark population observation is inconsistent");
@@ -157,8 +154,20 @@ public final class SigningPopulationFixture {
                         SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK,
                         SigningActiveWal.Configuration.defaults(options.signingMaximumGroupSize()),
                         options.signingResidentIndexBudgetBytes(),
-                        options.signingCompactionTransientBudgetBytes())) {
-            return new Artifact(observation,
+                        options.signingCompactionTransientBudgetBytes(),
+                        FilesystemStagedContentStore.readOnlyResolver(
+                                paths.stagedContentRoot(), signingNamespace))) {
+            RecoveryShape recoveryShape = RecoveryShape.from(
+                    reopened.recoveryProjectionStatistics());
+            RecoveryShape expectedShape = new RecoveryShape(activeRecords, activeRecords,
+                    activeRecords, 0L, activeRecords, activeRecords,
+                    recoveryShape.peakTrackedEnvelopeWorkspaceBytes(), 0L);
+            if (!expectedShape.equals(recoveryShape)
+                    || (activeRecords > 0L
+                            && recoveryShape.peakTrackedEnvelopeWorkspaceBytes() <= 0L)) {
+                throw new IOException("Signing benchmark recovery shape is inconsistent");
+            }
+            return new Artifact(observation, recoveryShape,
                     CapacityEvidence.from(reopened.capacityObservation()), jvmCapture.capture());
         }
     }
@@ -189,22 +198,20 @@ public final class SigningPopulationFixture {
         progress.completed("generic", records);
     }
 
-    private static void populateActive(FilesystemPkiStore store, DurableContentReference reference,
-            Instant createdAt, long records, PopulationProgress progress) throws IOException {
+    private static void populateActive(FilesystemPkiStore store, Instant createdAt,
+            long records, PopulationProgress progress) throws IOException {
         progress.started("active", records);
         ProgressMilestones milestones = new ProgressMilestones(records);
         String namespace = store.signingNamespace() + '.' + PRELOAD_PROVIDER;
         Instant deadline = createdAt.plus(Duration.ofDays(1));
         for (long sequence = 0L; sequence < records; sequence++) {
             PkiId submissionId = submissionId(namespace, createdAt, sequence);
-            PkiSigningBus.SignContinuation continuation = new PkiSigningBus.SignContinuation(
-                    ACCESS, ALGORITHM, reference, KEY_REF, Encoding.BINARY, Optional.of(submissionId));
-            SignWorkflowStore.Record intent = new SignWorkflowStore.Record(submissionId, namespace,
-                    continuation.semanticFingerprint(CONFIGURATION, namespace, deadline), CONFIGURATION,
-                    OWNER, createdAt, deadline, continuation.encode(), SignWorkflowStore.State.INTENT,
-                    0L, 0L, Optional.empty(), Optional.of("INTENT"), Optional.empty(), Optional.empty(),
-                    0, Optional.empty(), Optional.empty());
-            if (store.createSignIntent(intent) != SignWorkflowStore.CreateResult.CREATED) {
+            DurableContentReference reference = sharedReference(store);
+            SignWorkflowStore.AcceptanceCommand command = new SignWorkflowStore.AcceptanceCommand(
+                    submissionId, namespace, CONFIGURATION, ACCESS, KEY_REF, submissionId,
+                    ALGORITHM, Encoding.BINARY, createdAt, deadline, reference, Optional.empty(),
+                    SignWorkflowStore.Mode.NORMAL, java.util.Optional.empty());
+            if (store.acceptSign(command) != SignWorkflowStore.AcceptanceResult.ACCEPTED) {
                 throw new IOException("Signing benchmark active population conflicted");
             }
             milestones.report(progress, "active", sequence + 1L);
@@ -246,10 +253,27 @@ public final class SigningPopulationFixture {
             long watermarkRecords, long currentRecords, long dueRecords, long sharedContentOwners) {
     }
 
+    /** Exact constant-space counters for the split signing recovery shape. */
+    public record RecoveryShape(long envelopesVisited, long statesVisited,
+            long bindingsVisited, long outerRecordsVisited, long activeEntriesBuilt,
+            long statePointersRetained, long peakTrackedEnvelopeWorkspaceBytes,
+            long currentTrackedEnvelopeWorkspaceBytes) {
+        private static RecoveryShape from(
+                SigningLedgerStoreEngine.RecoveryProjectionStatistics statistics) {
+            return new RecoveryShape(statistics.envelopesVisited(), statistics.statesVisited(),
+                    statistics.bindingsVisited(), statistics.outerRecordsVisited(),
+                    statistics.activeEntriesBuilt(), statistics.statePointersRetained(),
+                    statistics.peakTrackedEnvelopeWorkspaceBytes(),
+                    statistics.currentTrackedEnvelopeWorkspaceBytes());
+        }
+    }
+
     /** Complete constant-space population and quiescent-capacity artifact. */
-    public record Artifact(Observation population, CapacityEvidence capacity, QuiescentJvm jvm) {
+    public record Artifact(Observation population, RecoveryShape recoveryShape,
+            CapacityEvidence capacity, QuiescentJvm jvm) {
         public Artifact {
             Objects.requireNonNull(population, "population");
+            Objects.requireNonNull(recoveryShape, "recoveryShape");
             Objects.requireNonNull(capacity, "capacity");
             Objects.requireNonNull(jvm, "jvm");
         }
@@ -286,9 +310,9 @@ public final class SigningPopulationFixture {
                     value.reclaimableGenerations(), value.generationCurrentReferences(),
                     value.generationSnapshotPins(), value.steadyReservedBytes(),
                     value.steadyHighWaterReservedBytes(), value.steadyMaximumBytes(),
-                    value.transientReservedBytes(), value.transientHighWaterReservedBytes(),
+                    value.transientReservedBytes(), value.transientHighWaterBytes(),
                     value.transientMaximumBytes(), value.combinedReservedBytes(),
-                    value.combinedHighWaterReservedBytes(), value.combinedMaximumBytes());
+                    value.combinedHighWaterBytes(), value.combinedMaximumBytes());
         }
     }
 
@@ -359,16 +383,11 @@ public final class SigningPopulationFixture {
     }
 
     private static final class CountingRecovery implements SigningLedgerRecovery.RecoverySink {
-        private final String expectedContentId;
         private Observation observation;
-
-        private CountingRecovery(String expectedContentId) {
-            this.expectedContentId = expectedContentId;
-        }
 
         @Override public Session begin(SigningManifestCodec.Manifest manifest) {
             Objects.requireNonNull(manifest, "manifest");
-            return new CountingSession(this, expectedContentId);
+            return new CountingSession(this);
         }
 
         private Observation observation() {
@@ -377,11 +396,11 @@ public final class SigningPopulationFixture {
             }
             return observation;
         }
+
     }
 
     private static final class CountingSession implements SigningLedgerRecovery.RecoverySink.Session {
         private final CountingRecovery owner;
-        private final String expectedContentId;
         private long generic;
         private long records;
         private long owners;
@@ -389,9 +408,8 @@ public final class SigningPopulationFixture {
         private long due;
         private long sharedOwners;
 
-        private CountingSession(CountingRecovery owner, String expectedContentId) {
+        private CountingSession(CountingRecovery owner) {
             this.owner = owner;
-            this.expectedContentId = expectedContentId;
         }
 
         @Override public void acceptCheckpoint(SigningCheckpointCodec.Header header,
@@ -431,26 +449,27 @@ public final class SigningPopulationFixture {
         private void classifyCurrent(MetadataKey key, byte[] content) throws IOException {
             switch (key.namespace()) {
                 case GENERIC_NAMESPACE -> generic++;
-                case SigningWorkProjection.RECORD_NAMESPACE -> {
-                    SignWorkflowStore.Record record = FsCodec.decode(FsCodec.SIGN_WORKFLOW_RECORD,
+                case "io.zeroecho.pki.signing-envelope" -> {
+                    Objects.requireNonNull(content, "content");
+                    records++;
+                }
+                case SigningWorkProjection.STATE_NAMESPACE -> {
+                    SignWorkflowStore.MutableState state = FsCodec.decode(FsCodec.SIGN_MUTABLE_STATE,
                             Objects.requireNonNull(content, "content"));
-                    if (record.state() != SignWorkflowStore.State.INTENT) {
+                    if (state.state() != SignWorkflowStore.State.INTENT) {
                         throw new IOException("Signing benchmark preload record is not active");
                     }
                     records++;
                     due++;
                 }
-                case SigningOwnerKey.NAMESPACE -> {
-                    SigningOwnerKey.Parsed parsed;
-                    try {
-                        parsed = SigningOwnerKey.parse(key);
-                    } catch (IllegalArgumentException malformed) {
-                        throw new IOException("Signing benchmark preload owner is invalid", malformed);
-                    }
+                case "io.zeroecho.pki.signing-candidate-binding" -> {
+                    FsCodec.decode(FsCodec.SIGN_CANDIDATE_BINDING,
+                            Objects.requireNonNull(content, "content"));
                     owners++;
-                    if (Objects.equals(expectedContentId, parsed.contentId())) {
-                        sharedOwners++;
-                    }
+                    sharedOwners++;
+                }
+                case "io.zeroecho.pki.domain-continuation" -> {
+                    Objects.requireNonNull(content, "content");
                 }
                 case WATERMARK_NAMESPACE -> {
                     if (!WATERMARK_KEY.equals(key.key())) {

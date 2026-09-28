@@ -70,7 +70,7 @@ final class PkiRemoteEnvelope {
      *
      * @param authorityId authority scope, absent for realm-wide operations
      * @param approvalId prior approval identifier, absent on the first submission
-     * @param deadline ISO-8601 duration bounding server-side execution, when set
+     * @param deadline ISO-8601 instant bounding server-side execution, when set
      * @param arguments typed operation arguments
      * @return canonical UTF-8 JSON request body
      */
@@ -80,7 +80,7 @@ final class PkiRemoteEnvelope {
         Objects.requireNonNull(approvalId, "approvalId");
         Objects.requireNonNull(deadline, "deadline");
         Objects.requireNonNull(arguments, "arguments");
-        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+        ByteArrayOutputStream encoded = new BoundedRequestOutput();
         try (JsonGenerator generator = JSON_FACTORY.createGenerator(ObjectWriteContext.empty(), encoded)) {
             generator.writeStartObject();
             generator.writeNumberProperty("version", PROTOCOL_VERSION);
@@ -97,37 +97,39 @@ final class PkiRemoteEnvelope {
     }
 
     /**
-     * Parses one response envelope leniently: only a well-formed JSON object is
-     * required; individual fields are optional so the caller can also consult the
-     * HTTP status.
+     * Parses a version-1 typed response envelope; the transport validates its
+     * status-specific fields against the HTTP response.
      *
      * @param body response body bytes
      * @return parsed response envelope
      * @throws IllegalArgumentException if the body is not a JSON object
      */
     /* default */ static ResponseEnvelope decodeResponse(byte[] body) {
-        PkiOperationValue root = PkiCliJson.parse(body);
+        PkiOperationValue root = PkiCliJson.parseResponse(body);
         if (!(root instanceof PkiOperationValue.ObjectValue object)) {
             throw new IllegalArgumentException("Response envelope is not a JSON object");
         }
+        requiredText(object, "requestId");
         Optional<Long> version = integerField(object, "version");
-        if (version.isPresent() && version.orElseThrow() != PROTOCOL_VERSION) {
-            throw new IllegalArgumentException("Unsupported remote protocol version: " + version.orElseThrow());
+        if (version.isEmpty() || version.orElseThrow() != PROTOCOL_VERSION) {
+            throw new IllegalArgumentException("Unsupported remote protocol version");
         }
         Optional<Failure> failure = objectField(object, "failure").map(PkiRemoteEnvelope::readFailure);
-        return new ResponseEnvelope(version, textField(object, "operation"),
-                textField(object, "status"), objectField(object, "result"), failure);
+        return new ResponseEnvelope(version, Optional.of(requiredText(object, "operation")),
+                Optional.of(requiredText(object, "status")), objectField(object, "result"), failure);
     }
 
     private static Failure readFailure(PkiOperationValue.ObjectValue object) {
-        return new Failure(textField(object, "classification").orElse("INTERNAL_FAILURE"),
-                textField(object, "code").orElse("REMOTE_FAILURE"), textField(object, "messageKey"),
+        return new Failure(requiredText(object, "classification"),
+                requiredText(object, "code"), textField(object, "messageKey"),
                 booleanField(object, "recoveryRequired"), booleanField(object, "reconciliationRequired"));
     }
 
     private static Optional<String> textField(PkiOperationValue.ObjectValue object, String name) {
         PkiOperationValue value = object.fields().get(name);
-        return value instanceof PkiOperationValue.Text text ? Optional.of(text.value()) : Optional.empty();
+        if (value == null) { return Optional.empty(); }
+        if (!(value instanceof PkiOperationValue.Text text)) { throw invalid(); }
+        return Optional.of(text.value());
     }
 
     private static Optional<Long> integerField(PkiOperationValue.ObjectValue object, String name) {
@@ -138,17 +140,57 @@ final class PkiRemoteEnvelope {
 
     private static boolean booleanField(PkiOperationValue.ObjectValue object, String name) {
         PkiOperationValue value = object.fields().get(name);
-        return value instanceof PkiOperationValue.BooleanValue bool && bool.value();
+        if (!(value instanceof PkiOperationValue.BooleanValue bool)) { throw invalid(); }
+        return bool.value();
     }
 
     private static Optional<PkiOperationValue.ObjectValue> objectField(PkiOperationValue.ObjectValue object,
             String name) {
         PkiOperationValue value = object.fields().get(name);
-        return value instanceof PkiOperationValue.ObjectValue nested ? Optional.of(nested) : Optional.empty();
+        if (value == null) { return Optional.empty(); }
+        if (!(value instanceof PkiOperationValue.ObjectValue nested)) { throw invalid(); }
+        return Optional.of(nested);
+    }
+
+    /** Signals a request exceeding the supported encoded envelope size. */
+    /* default */ static final class RequestTooLargeException extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+        /* default */ RequestTooLargeException() { super("Remote request exceeds the size limit"); }
+    }
+
+    /** Checks the request size before growing the in-memory encoding buffer. */
+    private static final class BoundedRequestOutput extends ByteArrayOutputStream {
+        private static final int MAXIMUM_BYTES = 16 * 1_048_576;
+
+        // Keep the size check and inherited buffer write atomic on the same monitor.
+        @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+        @Override
+        public synchronized void write(int value) {
+            if (count == MAXIMUM_BYTES) { throw new RequestTooLargeException(); }
+            super.write(value);
+        }
+
+        // Keep the size check and inherited buffer write atomic on the same monitor.
+        @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
+        @Override
+        public synchronized void write(byte[] bytes, int offset, int length) {
+            if (length > MAXIMUM_BYTES - count) { throw new RequestTooLargeException(); }
+            super.write(bytes, offset, length);
+        }
+    }
+
+    private static String requiredText(PkiOperationValue.ObjectValue object, String name) {
+        String value = textField(object, name).orElseThrow(PkiRemoteEnvelope::invalid);
+        if (value.isBlank()) { throw invalid(); }
+        return value;
+    }
+
+    private static IllegalArgumentException invalid() {
+        return new IllegalArgumentException("Invalid remote response envelope");
     }
 
     /**
-     * Parsed response envelope with lenient optional fields.
+     * Parsed version-1 response envelope.
      *
      * @param version protocol version, when present
      * @param operation stable operation identity, when present

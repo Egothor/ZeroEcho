@@ -593,34 +593,30 @@ content retirement while the signer can still read it. Restart converts a local
 `DISPATCHED` or `CANCELLING` record to durable `RECOVERY_INCOMPLETE` without
 re-running cryptography.
 
-Each fully opened realm owns exactly one signing-reconciliation worker. The
-worker starts immediately before the server becomes ready, runs one synchronous
-bounded pass at a time, and self-schedules the next pass only after the current
-pass returns. It has no queue of missed ticks and creates no active-active lease;
-the existing realm, provider, and filesystem ownership locks remain the
-single-active authority.
+The current signing ownership contract is defined by the
+[single-admission reactor architecture](pki-single-admission-reactor-architecture.md).
+The legacy signing reconciliation and workflow descriptions elsewhere in this
+section are superseded by that contract for the current server adapters.
 
-The same worker thread runs one revocation-audit projection phase after each
-signing-reconciliation phase. Each phase independently receives the configured
-`maximumRecords` and `maximumProviderCalls` limits, and failure in either phase
-does not suppress the other phase or later scheduling. Reconciliation scheduling
-therefore cannot be disabled while enterprise revocation projection is required;
-such a server configuration is rejected before startup. Revocations appended
-after a projection phase captures its feed head remain for a later pass, so
-signing progress and audit delivery may interleave without reordering the
-authoritative revocation log.
+Each fully opened realm owns one `AuditProjectionWorker`, started immediately
+before readiness. Its single daemon thread runs revocation-audit and evidence
+projections synchronously and self-schedules only after the current pass returns.
+It owns no signing session, provider dispatch, signing continuation, or signing
+advisory registration. Its retained scheduling state is O(1); existing projector
+costs and realm/store ownership remain unchanged.
 
-Scheduling is work-conserving without adding another thread or queue. One
-realm-scoped payload-free signal holds at most the worker's single lifecycle
-listener; administrative and ACME paths signal it only after a revocation reports
-`Completed`, and callback failure cannot alter that committed foreground outcome.
-Signals are coalesced, while the periodic idle interval remains the convergence
-fallback. An active signing continuation or an unblocked audit pass that did not
-reach its captured head schedules an immediate follow-up. A blocked audit pass is
-deferred until its reported eligibility time; a zero-delay signing backlog skips
-that not-yet-due audit work but continues to give both phases their independent
-bounded budgets once it is due. Clock or duration overflow falls back to the idle
-interval.
+The mandatory `auditProjection` policy independently gives revocation and each
+evidence-family projector the configured `maximumRecords` and `maximumSinkCalls`
+budgets. A projection failure cannot suppress the other phase or later passes.
+Revocations beyond a captured feed head remain for a later pass.
+
+The existing realm-scoped payload-free signal holds one lifecycle listener.
+Administrative and ACME revocation paths retain their wake behavior; signals
+coalesce and periodic polling provides convergence without a wake. Unblocked
+audit or evidence backlog schedules an immediate follow-up. Otherwise the next
+pass uses the earliest reported retry eligibility, bounded by the idle interval.
+Each projector enforces its persisted retry eligibility even when another family
+has immediate work. Clock failure falls back to the idle interval.
 
 Projection is at least once, not exactly once. The durable projection cursor
 advances only after the audit sink returns normally. A crash or uncertain state
@@ -632,13 +628,10 @@ sink calls, and around safe cursor commits. Cancellation observed after sink
 acknowledgement but before cursor commit preserves the old cursor and may replay
 the same stable event ID; it never skips that transition.
 
-The shared worker has three synchronous audit-sink call sites: the signing-pass
-aggregate before projection, each raw projector delivery, and the projection-pass
-aggregate after projection. Runtime failures are isolated, but any one of these
-calls can block the sole worker and delay projection, the next signing pass, and
-shutdown. Cooperative cancellation does not interrupt a currently blocking sink
-call. There is deliberately no second worker, timeout lane, queue, or
-audit-specific scheduler setting.
+The worker synchronously invokes projector deliveries and aggregate telemetry.
+Runtime failures are isolated, but a blocking sink can delay subsequent
+projections and shutdown. Cancellation is cooperative. No additional thread,
+queue, or timeout lane is introduced.
 
 Content-free `EXPIRED` records leave the due-work projection immediately and
 enter the horizon-retention projection directly, so idle passes do not rescan
@@ -681,13 +674,12 @@ copies it while replacing only the next pass's record, provider-call, deadline,
 timeout, and cancellation bounds. This prevents a partial cursor-only resume from
 silently discarding the cycle's frozen fairness boundaries.
 
-Shutdown first stops reconciliation admission and scheduling, then cooperatively
-cancels both phases and drains the active pass before closing the realm session,
-providers, or store. Projection observes cancellation only between its bounded
-feed, sink, and control-store operations. If a provider or any synchronous audit
-sink call ignores cancellation beyond the forced-shutdown period, the server
-reports `SIGNING_RECONCILIATION_SHUTDOWN_TIMEOUT` and leaves those dependencies
-open so close can be retried without use-after-close behavior.
+Audit shutdown first stops scheduling and unregisters the realm wake listener,
+then cancels and drains the active projection before closing realm dependencies.
+Projection observes cancellation between its bounded feed, sink, and
+control-store operations. A synchronous call that outlives forced shutdown
+reports `AUDIT_PROJECTION_SHUTDOWN_TIMEOUT` and leaves dependencies open for a
+retry after that call returns. Partial startup cleanup preserves the same rule.
 
 `SignatureWorkflow` implementations are trusted in-process components and every
 submit, status, verify, and cancel call now requires a `CallControl` carrying an

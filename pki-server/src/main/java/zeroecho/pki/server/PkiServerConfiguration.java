@@ -65,13 +65,13 @@ import zeroecho.pki.spi.confirmation.KeyPossessionProofResponse;
  * @param runtime process-local capability references
  * @param publicListener optional separately bounded public repository listener
  * @param acmeListener optional separately bounded ACME protocol listener
- * @param signingReconciliation bounded recovered-signing owner policy
+ * @param auditProjection bounded audit-projection scheduling policy
  */
 @SuppressWarnings("PMD")
 public record PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
         Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
         Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener,
-        SigningReconciliation signingReconciliation) {
+        AuditProjection auditProjection) {
 
     /** Current server configuration schema. */
     public static final int CURRENT_VERSION = 7;
@@ -87,11 +87,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
         Objects.requireNonNull(runtime, "runtime");
         publicListener = Objects.requireNonNull(publicListener, "publicListener");
         acmeListener = Objects.requireNonNull(acmeListener, "acmeListener");
-        Objects.requireNonNull(signingReconciliation, "signingReconciliation");
-        if (!signingReconciliation.enabled()) {
-            throw new IllegalArgumentException(
-                    "Revocation audit projection requires signing reconciliation scheduling");
-        }
+        Objects.requireNonNull(auditProjection, "auditProjection");
         if (!listener.clientCertificateRequired()) {
             throw new IllegalArgumentException("Administrative HTTPS requires client certificates");
         }
@@ -132,11 +128,11 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
             Optional<PublicListener> publicListener) {
         this(version, serverName, realm, listener, authentication, execution, runtime, publicListener,
-                Optional.empty(), SigningReconciliation.defaults());
+                Optional.empty(), AuditProjection.defaults());
     }
 
     /**
-     * Creates a configuration with default signing reconciliation.
+     * Creates a configuration with default audit projection.
      *
      * @param version configuration schema version
      * @param serverName nonblank server name
@@ -152,7 +148,7 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime,
             Optional<PublicListener> publicListener, Optional<AcmeListener> acmeListener) {
         this(version, serverName, realm, listener, authentication, execution, runtime, publicListener, acmeListener,
-                SigningReconciliation.defaults());
+                AuditProjection.defaults());
     }
 
     /**
@@ -169,41 +165,31 @@ public record PkiServerConfiguration(int version, String serverName, ServerRealm
     public PkiServerConfiguration(int version, String serverName, ServerRealmConfiguration realm,
             Listener listener, Authentication authentication, Execution execution, RuntimeCapabilities runtime) {
         this(version, serverName, realm, listener, authentication, execution, runtime, Optional.empty(),
-                Optional.empty(), SigningReconciliation.defaults());
+                Optional.empty(), AuditProjection.defaults());
     }
 
     /**
-     * Bounded recovered-signing reconciliation policy.
+     * Bounded audit-projection policy, independently applied to revocation and each evidence family.
      *
-     * @param enabled must be {@code true}; revocation audit projection shares this scheduler
-     * @param maximumRecords maximum records examined per pass
-     * @param maximumProviderCalls maximum provider calls per pass
-     * @param passTimeout positive complete-pass timeout
-     * @param providerCallTimeout positive per-call timeout no greater than the pass timeout
-     * @param idleInterval positive delay after each completed pass
+     * @param maximumRecords maximum records examined per projection pass, from 1 through 4096
+     * @param maximumSinkCalls maximum sink calls per projection pass, from 1 through the record bound
+     * @param idleInterval positive polling delay, at most five minutes
      */
-    public record SigningReconciliation(boolean enabled, int maximumRecords, int maximumProviderCalls,
-            Duration passTimeout, Duration providerCallTimeout, Duration idleInterval) {
-        /** Validates all reconciliation bounds. */
-        public SigningReconciliation {
-            bounded(maximumRecords, 1, 4096, "signing reconciliation record count");
-            bounded(maximumProviderCalls, 1, maximumRecords, "signing reconciliation provider call count");
-            positive(passTimeout, Duration.ofMinutes(5), "signing reconciliation pass timeout");
-            positive(providerCallTimeout, Duration.ofMinutes(5), "signing reconciliation provider call timeout");
-            positive(idleInterval, Duration.ofMinutes(5), "signing reconciliation idle interval");
-            if (providerCallTimeout.compareTo(passTimeout) > 0) {
-                throw new IllegalArgumentException("Signing reconciliation provider timeout exceeds pass timeout");
-            }
+    public record AuditProjection(int maximumRecords, int maximumSinkCalls, Duration idleInterval) {
+        /** Validates all projection bounds. */
+        public AuditProjection {
+            bounded(maximumRecords, 1, 4096, "audit projection record count");
+            bounded(maximumSinkCalls, 1, maximumRecords, "audit projection sink call count");
+            positive(idleInterval, Duration.ofMinutes(5), "audit projection idle interval");
         }
 
         /**
          * Returns the current production defaults.
          *
-         * @return current production defaults
+         * @return 256 records, 64 sink calls, and a two-second idle interval
          */
-        public static SigningReconciliation defaults() {
-            return new SigningReconciliation(true, 256, 64, Duration.ofSeconds(30), Duration.ofSeconds(10),
-                    Duration.ofSeconds(2));
+        public static AuditProjection defaults() {
+            return new AuditProjection(256, 64, Duration.ofSeconds(2));
         }
     }
 

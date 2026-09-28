@@ -70,6 +70,32 @@ final class FilesystemStagedContentStoreTest {
     private static final String FOREIGN_STORE_ID = "fedcba9876543210fedcba9876543210";
 
     @Test
+    void oneOpenSinkGateIsSharedAcrossCandidateLifecyclesAndReleasedByTerminalPaths(
+            @TempDir Path directory) throws Exception {
+        FilesystemStagedContentStore store = new FilesystemStagedContentStore(
+                directory, STORE_ID, 1, null);
+
+        ContentSink operation = store.beginContent(Encoding.BINARY,
+                DurableContentReference.Lifecycle.OPERATION);
+        IOException busy = assertThrows(IOException.class,
+                () -> store.beginContent(Encoding.BINARY,
+                        DurableContentReference.Lifecycle.PERSISTED));
+        assertTrue(busy.getMessage().contains("STAGED_CONTENT_PREPARATION_BUSY"));
+
+        operation.close();
+        try (ContentSink persisted = store.beginContent(Encoding.BINARY,
+                DurableContentReference.Lifecycle.PERSISTED)) {
+            persisted.outputStream().write(1);
+            persisted.complete();
+        }
+
+        try (ContentSink temporary = store.beginContent(Encoding.BINARY,
+                DurableContentReference.Lifecycle.TEMPORARY)) {
+            temporary.abort();
+        }
+    }
+
+    @Test
     void productionContentStreamReadsExactlyOnceAndValidatesAtEof(@TempDir Path directory) throws Exception {
         AtomicInteger opens = new AtomicInteger();
         AtomicLong bytesRead = new AtomicLong();
@@ -108,6 +134,53 @@ final class FilesystemStagedContentStoreTest {
     }
 
     @Test
+    void strictSealCrashMatrixNeverExposesPartialCandidate(@TempDir Path directory) throws Exception {
+        for (FilesystemStagedContentStore.SealFaultPoint point
+                : FilesystemStagedContentStore.SealFaultPoint.values()) {
+            Path faultRoot = Files.createDirectory(directory.resolve("payload-" + point));
+            FilesystemStagedContentStore store = new FilesystemStagedContentStore(faultRoot, STORE_ID);
+            try (ContentSink sink = store.beginContent(Encoding.BINARY,
+                    DurableContentReference.Lifecycle.OPERATION)) {
+                sink.outputStream().write(new byte[] { 1, 2, 3 });
+                FilesystemStagedContentStore.installSealFault(current -> {
+                    if (current == point) {
+                        throw new IOException("injected payload seal fault");
+                    }
+                });
+                assertThrows(IOException.class, sink::complete);
+            } finally {
+                FilesystemStagedContentStore.clearSealFault();
+            }
+            new FilesystemStagedContentStore(faultRoot, STORE_ID);
+            assertNoVisibleCandidate(faultRoot);
+        }
+
+        for (DurableMetadataFiles.FaultPoint point : List.of(
+                DurableMetadataFiles.FaultPoint.TEMP_CREATE,
+                DurableMetadataFiles.FaultPoint.WRITE,
+                DurableMetadataFiles.FaultPoint.FILE_FORCE,
+                DurableMetadataFiles.FaultPoint.MOVE,
+                DurableMetadataFiles.FaultPoint.DIRECTORY_FORCE_AFTER_MOVE)) {
+            Path faultRoot = Files.createDirectory(directory.resolve("metadata-" + point));
+            FilesystemStagedContentStore store = new FilesystemStagedContentStore(faultRoot, STORE_ID);
+            try (ContentSink sink = store.beginContent(Encoding.BINARY,
+                    DurableContentReference.Lifecycle.OPERATION)) {
+                sink.outputStream().write(new byte[] { 4, 5, 6 });
+                DurableMetadataFiles.installFault(current -> {
+                    if (current == point) {
+                        throw new IOException("injected metadata seal fault");
+                    }
+                });
+                assertThrows(IOException.class, sink::complete);
+            } finally {
+                DurableMetadataFiles.clearFault();
+            }
+            new FilesystemStagedContentStore(faultRoot, STORE_ID);
+            assertNoVisibleCandidate(faultRoot);
+        }
+    }
+
+    @Test
     void temporaryIndexClassifiesCommitForceFailureAndCleansPreMoveFailure(@TempDir Path directory) throws Exception {
         System.out.println("temporaryIndexClassifiesCommitForceFailureAndCleansPreMoveFailure");
         FilesystemStagedContentStore store = new FilesystemStagedContentStore(directory, STORE_ID);
@@ -138,6 +211,13 @@ final class FilesystemStagedContentStoreTest {
         System.out.println("temporaryIndexClassifiesCommitForceFailureAndCleansPreMoveFailure...ok");
     }
 
+    private static void assertNoVisibleCandidate(Path root) throws IOException {
+        try (java.util.stream.Stream<Path> files = Files.list(root)) {
+            assertTrue(files.noneMatch(path -> path.getFileName().toString().endsWith(".meta")),
+                    "a failed seal must publish no metadata-last candidate");
+        }
+    }
+
     @Test
     void ownerRecordRejectsContentIdentitySubstitution(@TempDir Path directory) throws Exception {
         System.out.println("ownerRecordRejectsContentIdentitySubstitution");
@@ -145,7 +225,8 @@ final class FilesystemStagedContentStoreTest {
         DurableContentReference reference = stage(store, DurableContentReference.Lifecycle.PERSISTED, "owned");
         DurableContentOwner owner = new DurableContentOwner(DurableContentOwner.Category.CREDENTIAL_RECORD,
                 "credential-owner");
-        assertTrue(store.retainContent(reference, owner));
+        assertThrows(IllegalArgumentException.class, () -> store.retainContent(reference, owner),
+                "credential ownership must use authoritative metadata");
         Path owners = directory.resolve(reference.contentId() + ".owners");
         try (DataOutputStream output = new DataOutputStream(Files.newOutputStream(owners))) {
             output.writeByte(2);

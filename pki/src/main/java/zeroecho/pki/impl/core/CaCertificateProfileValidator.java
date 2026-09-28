@@ -42,6 +42,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import javax.security.auth.x500.X500Principal;
 
 import zeroecho.pkix.Pkix;
 import zeroecho.pkix.RelativeDistinguishedName;
@@ -175,7 +176,28 @@ final class CaCertificateProfileValidator {
      */
     /* package */ static List<SubjectRdn> validateTrustedSubject(SubjectRef trustedSubject,
             CertificateProfileDefinition definition) {
-        List<SubjectRdn> existing = parseSubject(trustedSubject);
+        return validateTrustedSubject(parseSubject(trustedSubject), definition);
+    }
+
+    /*
+     * Reads an authoritative principal in DER order. Re-parsing its RFC2253 text
+     * through the requester-oriented renderer would reverse a multi-RDN name.
+     */
+    /* package */ static List<SubjectRdn> validateTrustedSubject(X500Principal trustedSubject,
+            CertificateProfileDefinition definition) {
+        byte[] encoded = trustedSubject.getEncoded();
+        if (encoded.length > MAXIMUM_SUBJECT_DER_BYTES) { throw reject("CA_SUBJECT_TOO_LARGE"); }
+        List<SubjectRdn> existing = new ArrayList<>();
+        try {
+            for (RelativeDistinguishedName rdn : Pkix.parseDistinguishedName(encoded)) {
+                existing.add(new SubjectRdn(SubjectRdnType.fromOid(rdn.attributeTypeOid()), rdn.value()));
+            }
+        } catch (IllegalArgumentException malformed) { throw reject("CA_SUBJECT_INVALID"); }
+        return validateTrustedSubject(existing, definition);
+    }
+
+    private static List<SubjectRdn> validateTrustedSubject(List<SubjectRdn> existing,
+            CertificateProfileDefinition definition) {
         Map<SubjectRdnType, SubjectRdnRule> rules = new EnumMap<>(SubjectRdnType.class);
         for (SubjectRdnRule rule : definition.subjectPolicy().rules()) {
             rules.put(rule.type(), rule);

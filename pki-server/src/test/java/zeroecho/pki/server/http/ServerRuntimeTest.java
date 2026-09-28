@@ -90,8 +90,14 @@ class ServerRuntimeTest {
             }
 
             ServerRuntime.Submitted<String> fullQueue = runtime.submit(cancellation -> "full");
+            AtomicBoolean rejectedInvoked = new AtomicBoolean();
             assertThrows(RejectedExecutionException.class,
-                    () -> runtime.submit(cancellation -> "rejected"));
+                    () -> runtime.submit(cancellation -> {
+                        rejectedInvoked.set(true);
+                        return "rejected";
+                    }));
+            assertFalse(rejectedInvoked.get(),
+                    "operation-queue rejection must occur before the task can create durable intent");
             assertEquals(2, runtime.trackedOperationFutures());
             assertEquals(2, runtime.trackedCancellationTokens());
             assertTrue(fullQueue.future().cancel(false));
@@ -191,7 +197,11 @@ class ServerRuntimeTest {
         CountDownLatch release = new CountDownLatch(1);
         try {
             assertTrue(runtime.tryAdmit());
-            assertEquals(false, runtime.tryAdmit());
+            AtomicBoolean rejectedIngressBodyInvoked = new AtomicBoolean();
+            assertFalse(runAfterIngressAdmission(runtime,
+                    () -> rejectedIngressBodyInvoked.set(true)));
+            assertFalse(rejectedIngressBodyInvoked.get(),
+                    "transport-permit rejection must occur before the request body can create durable intent");
             runtime.releaseAdmission();
             ServerRuntime.Submitted<String> first = runtime.submit(cancellation -> {
                 started.countDown();
@@ -202,7 +212,13 @@ class ServerRuntimeTest {
             ServerRuntime.Submitted<String> waiting = runtime.submit(cancellation -> "queued");
             assertEquals(1, runtime.activeOperations());
             assertEquals(1, runtime.operationQueueSize());
-            assertThrows(RejectedExecutionException.class, () -> runtime.submit(cancellation -> "rejected"));
+            AtomicBoolean rejectedOperationBodyInvoked = new AtomicBoolean();
+            assertThrows(RejectedExecutionException.class, () -> runtime.submit(cancellation -> {
+                rejectedOperationBodyInvoked.set(true);
+                return "rejected";
+            }));
+            assertFalse(rejectedOperationBodyInvoked.get(),
+                    "operation-queue rejection must occur before the task can create durable intent");
             release.countDown();
             assertTrue(first.future().get(2, TimeUnit.SECONDS).startsWith(ServerRuntime.OPERATION_PREFIX));
             assertEquals("queued", waiting.future().get(2, TimeUnit.SECONDS));
@@ -289,5 +305,17 @@ class ServerRuntimeTest {
         return new PkiServerConfiguration.Execution(1, 1, 1, 1, 1,
                 Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofMillis(100),
                 Duration.ofMillis(100));
+    }
+
+    private static boolean runAfterIngressAdmission(ServerRuntime runtime, Runnable task) {
+        if (!runtime.tryAdmit()) {
+            return false;
+        }
+        try {
+            task.run();
+            return true;
+        } finally {
+            runtime.releaseAdmission();
+        }
     }
 }

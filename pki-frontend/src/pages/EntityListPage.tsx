@@ -51,6 +51,9 @@ import { OperationField } from '@/components/operation/OperationField';
 import { operationSpec } from '@/api/operationCatalog';
 import { executeOperation, type FieldValue } from '@/api/operations';
 import type { FieldSpec } from '@/api/operationSchema';
+import { resultAt } from '@/api/entityRefs';
+import { displayLabel } from '@/api/labels';
+import { changeFormValue, selectionFields, selectionContextKey } from '@/api/formSelections';
 import { createOps, rowActionOps, type DomainListing } from '@/app/domainListings';
 
 function cell(value: unknown): string {
@@ -84,47 +87,55 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
 
   // Filter fields = the list operation's own inputs that are not pre-defaulted,
   // plus a synthetic authority picker when the list is authority-scoped.
-  const filterFields = useMemo<FieldSpec[]>(() => {
+  const baseFilterFields = useMemo<FieldSpec[]>(() => {
     if (!listSpec) return [];
     const defaulted = new Set(Object.keys(listing.args));
-    const params = listSpec.fields.filter((f) => !defaulted.has(f.name));
+    const params = listSpec.fields.filter((f) => !defaulted.has(f.name) && !f.hidden);
     const needsAuthority = listSpec.scope === 'authority' && !listSpec.authorityFrom;
     const authorityField: FieldSpec = { name: '__authorityId', type: 'pkiId', required: true, ref: 'authority', label: 'Authority' };
     return needsAuthority ? [authorityField, ...params] : params;
   }, [listSpec, listing.args]);
 
-  const requiredFilters = useMemo(() => filterFields.filter((f) => f.required), [filterFields]);
+  const [draft, setDraft] = useState<Record<string, FieldValue>>({});
+  const filterFields = [...(listSpec ? selectionFields(listSpec, draft) : []), ...baseFilterFields];
+  const requiredFilters = filterFields.filter((f) => f.required);
   const hasRequired = requiredFilters.length > 0;
 
-  const [draft, setDraft] = useState<Record<string, FieldValue>>({});
+  const [cursor, setCursor] = useState<string | number | undefined>();
   const [applied, setApplied] = useState<Record<string, FieldValue> | null>(hasRequired ? null : {});
 
   const rowActions = useMemo(() => rowActionOps(navId, listing), [navId, listing]);
   const creates = useMemo(() => createOps(listing), [listing]);
-  const queryKey = ['domainList', navId, listing.listOperationId, applied] as const;
+  const queryKey = ['domainList', navId, listing.listOperationId, applied, cursor] as const;
   const draftReady = requiredFilters.every((f) => notEmpty(draft[f.name]));
 
   const query = useQuery({
     queryKey,
     enabled: applied !== null && !!listSpec,
-    queryFn: async () => {
-      const outcome = await executeOperation(listSpec!, { ...listing.args, ...applied } as Record<string, never>);
+    queryFn: async ({ signal }) => {
+      const outcome = await executeOperation(listSpec!, { ...listing.args, ...applied, ...(typeof cursor === 'string' ? { after: cursor } : typeof cursor === 'number' ? { offset: cursor } : {}) } as Record<string, never>, { signal });
       if (outcome.kind !== 'succeeded') {
         throw new Error(outcome.envelope.failure?.messageKey ?? 'Listing is not available');
       }
-      return (outcome.envelope.result?.[listing.resultKey] as Record<string, unknown>[] | undefined) ?? [];
+      const result = outcome.envelope.result;
+      const rows = resultAt(result, listing.resultKey);
+      if (!Array.isArray(rows)) throw new Error('The server returned an invalid list.');
+      const page = (listing.resultKey.startsWith('value.') ? resultAt(result, 'value') : result) as Record<string, unknown> | undefined;
+      const next = page?.truncated === true ? page.nextCursor : page?.hasMore === true ? page.nextOffset : undefined;
+      if (next !== undefined && (typeof next !== 'number' && typeof next !== 'string' || next === cursor)) throw new Error('Invalid list continuation.');
+      return { rows: rows as Record<string, unknown>[], next: next as string | number | undefined };
     },
     retry: false,
   });
 
-  const rows = useMemo(() => query.data ?? [], [query.data]);
+  const rows = useMemo(() => query.data?.rows ?? [], [query.data]);
 
   const columns = useMemo<GridColDef[]>(() => {
     const keys = new Set<string>();
     rows.slice(0, 50).forEach((r) => Object.keys(r).forEach((k) => keys.add(k)));
     const dataColumns: GridColDef[] = Array.from(keys).map((k) => ({
       field: k,
-      headerName: k,
+      headerName: displayLabel(k),
       flex: 1,
       minWidth: 130,
       valueGetter: (_v, row) => cell((row as Record<string, unknown>)[k]),
@@ -157,13 +168,13 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
       });
     }
     return dataColumns;
-  }, [rows, rowActions, listing, applied]);
+  }, [rows, rowActions, applied]);
 
   // Index-based grid id: robust for composite-key entities (e.g. repository
   // aliases keyed by authorityId + type) where no single field is unique.
   const gridRows = useMemo(() => rows.map((r, i) => ({ ...r, id: i })), [rows]);
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey });
+  const refresh = () => { setCursor(undefined); return queryClient.invalidateQueries({ queryKey: queryKey.slice(0, 4) }); };
 
   if (!listSpec) return <Alert severity="error">Unknown list operation {listing.listOperationId}.</Alert>;
 
@@ -176,11 +187,11 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
           </Typography>
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'flex-end' }}>
             {filterFields.map((f) => (
-              <Box key={f.name} sx={{ minWidth: 220, flex: 1 }}>
-                <OperationField field={f} value={draft[f.name]} onChange={(v) => setDraft((d) => ({ ...d, [f.name]: v }))} />
+              <Box key={`${f.name}:${selectionContextKey(f, draft)}`} sx={{ minWidth: 220, flex: 1 }}>
+                <OperationField field={f} context={draft} value={draft[f.name]} onChange={(v) => setDraft((d) => changeFormValue(listSpec, d, f.name, v))} />
               </Box>
             ))}
-            <Button variant="contained" disabled={!draftReady} onClick={() => setApplied({ ...draft })} sx={{ flexShrink: 0 }}>
+            <Button variant="contained" disabled={!draftReady} onClick={() => { setCursor(undefined); setApplied({ ...draft }); }} sx={{ flexShrink: 0 }}>
               {applied === null ? 'Load' : 'Apply'}
             </Button>
           </Stack>
@@ -215,9 +226,7 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
         <Alert severity="info">Provide the required filter above and choose Load to list {listing.entity}s.</Alert>
       ) : query.isError ? (
         <>
-          <Alert severity="info" sx={{ mb: 2 }}>
-            A listing is not available to your identity here; showing the operations you can run.
-          </Alert>
+          <Alert severity="error" sx={{ mb: 2 }}>{query.error.message}</Alert>
           <OperationBrowser operations={rowActions.concat(creates)} />
         </>
       ) : (
@@ -240,6 +249,11 @@ function EntityTable({ navId, listing }: { readonly navId: string; readonly list
           )}
         </Paper>
       )}
+
+      {query.data && <Stack direction="row" spacing={1} sx={{ my: 1 }}>
+        <Button disabled={cursor === undefined || query.isFetching} onClick={() => setCursor(undefined)}>First results</Button>
+        <Button disabled={query.data.next === undefined || query.isFetching} onClick={() => setCursor(query.data?.next)}>Next results</Button>
+      </Stack>}
 
       <OperationDialog
         operationId={dialog?.operationId ?? null}

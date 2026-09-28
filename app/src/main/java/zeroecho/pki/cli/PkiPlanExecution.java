@@ -77,7 +77,7 @@ record PkiPlanExecution(List<StepResult> steps, Optional<PkiOperationFailure> pl
     /** One safe ordered step result. */
     /* default */ record StepResult(String id, String operation, StepStatus status,
             Optional<PkiOperationResult> output,
-            Optional<PkiOperationFailure> failure, Optional<String> code) {
+            Optional<PkiOperationFailure> failure, Optional<String> code, Optional<zeroecho.pki.api.PkiId> operationId) {
         StepResult {
             if (id == null || id.isBlank() || operation == null || operation.isBlank()) {
                 throw new IllegalArgumentException("step result identity is invalid");
@@ -86,6 +86,7 @@ record PkiPlanExecution(List<StepResult> steps, Optional<PkiOperationFailure> pl
             Objects.requireNonNull(output, "output");
             Objects.requireNonNull(failure, "failure");
             Objects.requireNonNull(code, "code");
+            Objects.requireNonNull(operationId, "operationId");
             boolean valid = switch (status) {
                 case SUCCEEDED -> output.isPresent() && failure.isEmpty() && code.isEmpty();
                 case FAILED -> output.isEmpty() && failure.isPresent() && code.isPresent();
@@ -94,6 +95,15 @@ record PkiPlanExecution(List<StepResult> steps, Optional<PkiOperationFailure> pl
             if (!valid) {
                 throw new IllegalArgumentException("step result state is inconsistent");
             }
+        }
+
+        /* default */ StepResult(String id, String operation, StepStatus status, Optional<PkiOperationResult> output,
+                Optional<PkiOperationFailure> failure, Optional<String> code) {
+            this(id, operation, status, output, failure, code, Optional.empty());
+        }
+
+        /* default */ StepResult withOperationId(zeroecho.pki.api.PkiId identity) {
+            return new StepResult(id, operation, status, output, failure, code, Optional.of(identity));
         }
 
         /* default */ static StepResult success(String id, String operation, PkiOperationResult result) {

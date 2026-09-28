@@ -33,8 +33,6 @@
  ******************************************************************************/
 package zeroecho.pki.api.ca;
 
-import java.util.Optional;
-
 import zeroecho.pki.api.FormatId;
 import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
@@ -44,42 +42,35 @@ import zeroecho.pki.api.attr.AttributeSet;
 /**
  * Command to create a new intermediate CA entity and issue its initial CA
  * credential.
+ * Execution requires separate authorization and performs a fresh internal subject-key
+ * proof under the same durable CA admission before signing the certificate.
+ * Construction only validates structure; it neither generates keys nor verifies
+ * possession, resolves retained evidence, or authorizes an operation.
  *
  * @param formatId   credential format id
- * @param issuerCaId issuer CA entity id
+ * @param issuerCaId issuer CA entity id, strict UTF-8 at most 4,096 bytes
  * @param subjectRef normalized subject reference for the intermediate
- * @param profileId  profile id governing issuance
- * @param keyRef     optional existing key reference; empty requests key
- *                   generation
+ * @param profileId  nonblank strict UTF-8 profile id, at most 256 bytes
+ * @param keyRef     managed subject key, strict UTF-8 at most 1,048,576 bytes
  * @param attributes universal attributes (may be empty but not null)
  */
 public record IntermediateCreateCommand(FormatId formatId, PkiId issuerCaId, SubjectRef subjectRef, String profileId,
-        Optional<KeyRef> keyRef, AttributeSet attributes) {
+        KeyRef keyRef, AttributeSet attributes) {
 
     /**
      * Creates an intermediate create command.
      *
-     * @throws IllegalArgumentException if inputs are invalid or optional container
-     *                                  is null
+     * @throws IllegalArgumentException if any component is null, bounded text is invalid
      */
     public IntermediateCreateCommand {
-        if (formatId == null) {
-            throw new IllegalArgumentException("formatId must not be null");
-        }
-        if (issuerCaId == null) {
-            throw new IllegalArgumentException("issuerCaId must not be null");
-        }
-        if (subjectRef == null) {
-            throw new IllegalArgumentException("subjectRef must not be null");
-        }
-        if (profileId == null || profileId.isBlank()) {
-            throw new IllegalArgumentException("profileId must not be null/blank");
-        }
-        if (keyRef == null) {
-            throw new IllegalArgumentException("keyRef must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
+        CaCommandInputs.required(formatId);
+        CaCommandInputs.identifier(issuerCaId);
+        CaCommandInputs.required(subjectRef);
+        CaCommandInputs.profile(profileId);
+        CaCommandInputs.key(keyRef);
+        CaCommandInputs.required(attributes);
     }
+
+    /** Returns a diagnostic representation without command coordinates or attributes. */
+    @Override public String toString() { return "IntermediateCreateCommand[redacted]"; }
 }

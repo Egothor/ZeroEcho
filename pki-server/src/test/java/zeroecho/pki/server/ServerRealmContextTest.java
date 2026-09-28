@@ -301,7 +301,7 @@ class ServerRealmContextTest {
     private ServerRealmConfiguration fileAuditConfiguration(Path auditDir) {
         ApprovalService.Policy approval = new ApprovalService.Policy("high-risk", 1, Set.of("approver"),
                 Set.of(), true, Duration.ofHours(1), true);
-        PkiSessionConfiguration pki = new PkiSessionConfiguration(1,
+        PkiSessionConfiguration pki = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("pki-store-audit").toString())),
                 new ProviderConfig("file", Map.of("root", auditDir.toString())), Optional.empty(),
                 List.of(), List.of());
@@ -334,7 +334,7 @@ class ServerRealmContextTest {
     private ServerRealmConfiguration configuration(AuthorityExposurePolicy exposure) {
         ApprovalService.Policy approval = new ApprovalService.Policy("high-risk", 1, Set.of("approver"),
                 Set.of(), true, Duration.ofHours(1), true);
-        PkiSessionConfiguration pki = new PkiSessionConfiguration(1,
+        PkiSessionConfiguration pki = new PkiSessionConfiguration(PkiSessionConfiguration.CURRENT_VERSION,
                 new ProviderConfig("fs", Map.of("root", temporaryDirectory.resolve("pki-store").toString())),
                 new ProviderConfig("memory", Map.of("size", "128")), Optional.empty(), List.of(), List.of());
         return new ServerRealmConfiguration(ServerTestSupport.REALM, "Production",

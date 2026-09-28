@@ -36,7 +36,7 @@ package zeroecho.pki.impl.framework.x509;
 import java.util.Objects;
 
 import zeroecho.pki.api.status.StatusObject;
-import zeroecho.pki.spi.crypto.SignatureWorkflow;
+import zeroecho.pki.spi.crypto.SigningProvider;
 
 /**
  * Non-forgeable live completion of one X.509 signed status-object operation.
@@ -50,11 +50,11 @@ import zeroecho.pki.spi.crypto.SignatureWorkflow;
  */
 public final class X509SignedObjectCompletion {
     private final StatusObject statusObject;
-    private final X509ExecutionPlan<SignatureWorkflow> signingPlan;
+    private final X509ExecutionPlan<SigningProvider> signingPlan;
     private final Object authorityToken;
 
     /* default */ X509SignedObjectCompletion(StatusObject statusObject,
-            X509ExecutionPlan<SignatureWorkflow> signingPlan, Object authorityToken) {
+            X509ExecutionPlan<SigningProvider> signingPlan, Object authorityToken) {
         this.statusObject = Objects.requireNonNull(statusObject, "statusObject");
         this.signingPlan = Objects.requireNonNull(signingPlan, "signingPlan");
         this.authorityToken = Objects.requireNonNull(authorityToken, "authorityToken");
@@ -69,7 +69,7 @@ public final class X509SignedObjectCompletion {
         return statusObject;
     }
 
-    /* default */ X509ExecutionPlan<SignatureWorkflow> signingPlan() {
+    /* default */ X509ExecutionPlan<SigningProvider> signingPlan() {
         return signingPlan;
     }
 

@@ -62,7 +62,15 @@ import zeroecho.pki.api.ProfileService;
 import zeroecho.pki.api.SubjectRef;
 import zeroecho.pki.api.CertificationRequestService;
 import zeroecho.pki.api.FormatId;
-import zeroecho.pki.api.IssuanceService;
+import zeroecho.pki.api.SemanticSigningService;
+import zeroecho.pki.api.issuance.RetainedIssuanceBinding;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityIssuanceRequest;
+import zeroecho.pki.api.issuance.CorrelatedIssuancePreparation;
+import zeroecho.pki.api.signing.SemanticSigningOperation;
+import zeroecho.pki.api.signing.PreparedSemanticSigningRequest;
+import zeroecho.pki.api.signing.SigningAcceptanceReceipt;
+import zeroecho.pki.api.signing.SigningAcceptanceResult;
+import zeroecho.pki.api.signing.SigningAcceptanceDisposition;
 import zeroecho.pki.api.ca.CaKind;
 import zeroecho.pki.api.ca.CaRecord;
 import zeroecho.pki.api.ca.CaState;
@@ -83,8 +91,6 @@ import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiSession;
-import zeroecho.pki.application.SigningIssuanceBinding;
-import zeroecho.pki.impl.core.async.PendingSigningOperation;
 import zeroecho.pki.server.AuthorityExposurePolicy;
 import zeroecho.pki.server.CredentialPublicationGate;
 import zeroecho.pki.server.DisclosureService;
@@ -97,6 +103,7 @@ import zeroecho.pki.spi.ProviderConfig;
 
 /** Restart recovery at the durable-ledger/order attachment boundary. */
 class AcmeContinuationRecoveryTest {
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path temporaryDirectory;
     private static final Instant NOW = Instant.parse("2026-08-20T10:00:00Z");
     private static final String DIRECTORY_ID = "directory:restart:r1";
     private static final String ORDER_ID = "order:restart";
@@ -145,10 +152,10 @@ class AcmeContinuationRecoveryTest {
         PkiSession session = mock(PkiSession.class);
         when(session.repository()).thenReturn(repository);
         when(session.profiles()).thenReturn(profiles);
-        when(session.issuanceSigningOperationId(any(SigningIssuanceBinding.class)))
-                .thenReturn(Optional.of(operationId));
-        when(session.issuanceSigningOperation(any(PkiId.class), any(SigningIssuanceBinding.class)))
-                .thenReturn(new PkiOperationOutcome.Pending("issuance", operationId));
+        SemanticSigningService signing = mock(SemanticSigningService.class);
+        when(session.semanticSigning()).thenReturn(Optional.of(signing));
+        when(signing.findIssuance(any(RetainedIssuanceBinding.class)))
+                .thenReturn(Optional.of(snapshot(operationId, authorityId, profile.profileId(), false)));
 
         ServerRealmContext realm = mock(ServerRealmContext.class);
         ServerRealmConfiguration configuration = mock(ServerRealmConfiguration.class);
@@ -193,11 +200,16 @@ class AcmeContinuationRecoveryTest {
         assertEquals(expected, AcmeService.issuanceCommitment(restarted, request));
     }
 
-    @Test
-    void repeatedFinalizeBeforeAttachmentProcessingAndRestartUsesOneIssuance() {
+    private enum Scenario { NORMAL, CANCEL_BEFORE_ACCEPT, MUTATE_CALLER_CSR, UNCERTAIN_ACCEPT }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(Scenario.class)
+    void repeatedFinalizeBeforeAttachmentProcessingAndRestartUsesOneIssuance(Scenario scenario) throws Exception {
+        try (zeroecho.pki.server.SemanticPreparationFixture custody =
+                zeroecho.pki.server.SemanticPreparationFixture.open(temporaryDirectory.resolve("custody"))) {
         PkiId authorityId = new PkiId("ca:restart");
         PkiId issuerId = new PkiId("issuer:restart");
-        PkiId operationId = new PkiId("signing:restart");
+        PkiId operationId = custody.prepared().receipt().operationId();
         IssuerChainPath path = IssuerChainPath.create(authorityId, issuerId,
                 List.of(new PkiId("x509:restart")));
         CertificateProfileRef profile = new CertificateProfileRef("leaf", 1, new byte[32]);
@@ -246,23 +258,56 @@ class AcmeContinuationRecoveryTest {
         when(parsed.requestId()).thenReturn(new PkiId("request:canonical-csr"));
         when(parsed.subjectAlternativeNames()).thenReturn(List.of(new SubjectAlternativeName.DnsName("example.test")));
         CertificationRequestService requests = mock(CertificationRequestService.class);
-        when(requests.parse(any())).thenReturn(parsed);
-        IssuanceService issuance = mock(IssuanceService.class);
-        when(issuance.issueEndEntity(any(), any())).thenThrow(new PendingSigningOperation(operationId));
+        byte[] callerCsr = { 1, 2, 3 };
+        when(requests.parse(any())).thenAnswer(invocation -> {
+            if (scenario == Scenario.MUTATE_CALLER_CSR) callerCsr[0] = 99;
+            return parsed;
+        });
+        SemanticSigningService signing = mock(SemanticSigningService.class);
+        java.util.concurrent.atomic.AtomicBoolean accepted = new java.util.concurrent.atomic.AtomicBoolean();
+        PreparedSemanticSigningRequest prepared = custody.prepared();
+        SigningAcceptanceReceipt receipt = prepared.receipt();
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        when(signing.issuanceBinding(any())).thenAnswer(invocation -> {
+            CorrelatedEndEntityIssuanceRequest request = invocation.getArgument(0);
+            return new RetainedIssuanceBinding(authorityId, ORDER_ID, profile, issuerId, path.pathId(),
+                    path.pathCommitment(),
+                    zeroecho.pki.impl.core.CorrelatedIssuanceIdentity.derive(request).effectiveCommitment());
+        });
+        when(signing.prepareCorrelatedEndEntity(any(), any(), any(), any())).thenAnswer(invocation -> {
+            CorrelatedEndEntityIssuanceRequest request = invocation.getArgument(1);
+            org.junit.jupiter.api.Assertions.assertArrayEquals(new byte[] { 1, 2, 3 }, request.request().csrDer());
+            if (scenario == Scenario.CANCEL_BEFORE_ACCEPT) cancelled.set(true);
+            return new CorrelatedIssuancePreparation.Prepared(prepared);
+        });
+        when(signing.accept(prepared)).thenAnswer(invocation -> {
+            accepted.set(true);
+            if (scenario == Scenario.UNCERTAIN_ACCEPT) throw new zeroecho.pki.api.PkiException("uncertain");
+            return new SigningAcceptanceResult(SigningAcceptanceDisposition.ACCEPTED, receipt);
+        });
+        when(signing.resolve(receipt)).thenReturn(zeroecho.pki.api.signing.SigningAcceptanceResolution.MATCHED);
         PkiSession session = mock(PkiSession.class);
         when(session.repository()).thenReturn(repository);
         when(session.profiles()).thenReturn(profiles);
         when(session.requests()).thenReturn(Optional.of(requests));
-        when(session.issuance()).thenReturn(Optional.of(issuance));
-        when(session.issuanceSigningOperationId(any(SigningIssuanceBinding.class)))
-                .thenAnswer(ignored -> stored.get().signingOperationId());
-        when(session.issuanceSigningOperation(any(PkiId.class), any(SigningIssuanceBinding.class)))
-                .thenReturn(new PkiOperationOutcome.Pending("issuance", operationId));
+        when(session.semanticSigning()).thenReturn(Optional.of(signing));
+        when(signing.findIssuance(any(RetainedIssuanceBinding.class)))
+                .thenAnswer(ignored -> accepted.get()
+                        ? Optional.of(snapshot(operationId, authorityId, profile.profileId(), false))
+                        : Optional.empty());
 
         ServerRealmContext realm = realm(control, session);
         AcmeService first = service(realm);
+        if (scenario == Scenario.CANCEL_BEFORE_ACCEPT) {
+            org.junit.jupiter.api.Assertions.assertThrows(zeroecho.pki.api.PkiException.class,
+                    () -> first.finalizeOrder(ACCOUNT_ID, account.commitment(), ORDER_ID, callerCsr, cancelled::get));
+            verify(signing, org.mockito.Mockito.never()).accept(any());
+            verify(signing).discard(prepared);
+            assertEquals(Optional.empty(), stored.get().signingOperationId());
+            return;
+        }
         AcmeState.Order processing = first.finalizeOrder(ACCOUNT_ID, account.commitment(), ORDER_ID,
-                new byte[] { 1, 2, 3 });
+                callerCsr, cancelled::get);
         AcmeState.Order repeated = first.finalizeOrder(ACCOUNT_ID, account.commitment(), ORDER_ID,
                 new byte[] { 1, 2, 3 });
         AcmeState.Order restarted = service(realm).finalizeOrder(ACCOUNT_ID, account.commitment(), ORDER_ID,
@@ -272,7 +317,10 @@ class AcmeContinuationRecoveryTest {
         assertEquals(processing.signingOperationId(), repeated.signingOperationId());
         assertEquals(processing.signingOperationId(), restarted.signingOperationId());
         assertEquals(processing.issuanceCommitment(), restarted.issuanceCommitment());
-        verify(issuance, times(1)).issueEndEntity(any(), any());
+        verify(signing, times(1)).prepareCorrelatedEndEntity(any(), any(), any(), any());
+        verify(signing, times(1)).accept(prepared);
+        verify(signing, org.mockito.Mockito.never()).discard(any());
+        }
     }
 
     @Test
@@ -280,7 +328,7 @@ class AcmeContinuationRecoveryTest {
         PkiId authorityId = new PkiId("ca:restart");
         PkiId issuerId = new PkiId("issuer:restart");
         PkiId operationId = new PkiId("signing:restart");
-        PkiId credentialId = new PkiId("credential:restart");
+        PkiId credentialId = snapshot(operationId, authorityId, "leaf", true).completedCredentialId().orElseThrow();
         IssuerChainPath path = IssuerChainPath.create(authorityId, issuerId,
                 List.of(new PkiId("x509:restart")));
         CertificateProfileRef profile = new CertificateProfileRef("leaf", 1, new byte[32]);
@@ -329,11 +377,10 @@ class AcmeContinuationRecoveryTest {
         PkiSession session = mock(PkiSession.class);
         when(session.repository()).thenReturn(repository);
         when(session.profiles()).thenReturn(profiles);
-        when(session.issuanceSigningOperationId(any(SigningIssuanceBinding.class)))
-                .thenReturn(Optional.of(operationId));
-        when(session.issuanceSigningOperation(any(PkiId.class), any(SigningIssuanceBinding.class)))
-                .thenReturn(new PkiOperationOutcome.Completed(new PkiOperationResult("issuance", Map.of(
-                        "credentialId", new PkiOperationValue.Text(credentialId.value())))));
+        SemanticSigningService signing = mock(SemanticSigningService.class);
+        when(session.semanticSigning()).thenReturn(Optional.of(signing));
+        when(signing.findIssuance(any(RetainedIssuanceBinding.class)))
+                .thenReturn(Optional.of(snapshot(operationId, authorityId, profile.profileId(), true)));
         CredentialPublicationGate publication = mock(CredentialPublicationGate.class);
         ServerRealmContext realm = realm(control, session);
         when(realm.credentialPublication()).thenReturn(publication);
@@ -367,6 +414,23 @@ class AcmeContinuationRecoveryTest {
         when(provider.challengeTypes()).thenReturn(Set.of(AcmeState.ChallengeType.HTTP_01));
         return new AcmeService(realm, Clock.fixed(NOW, ZoneOffset.UTC), new SecureRandom(),
                 Map.of("http", provider), Map.of("http", new ProviderConfig("http", Map.of())));
+    }
+
+    private static SemanticSigningOperation snapshot(PkiId id, PkiId authority, String profile, boolean completed) {
+        zeroecho.pki.api.signing.SemanticSigningScope scope = new zeroecho.pki.api.signing.SemanticSigningScope(
+                zeroecho.pki.api.signing.SemanticSigningKind.ISSUANCE, "ISSUE_END_ENTITY",
+                new zeroecho.pki.api.audit.AccessContext(new zeroecho.pki.api.audit.Principal("ACME_ACCOUNT", ACCOUNT_ID),
+                        new zeroecho.pki.api.audit.Purpose("ACME_FINALIZE"), Optional.empty(), Optional.empty()),
+                new KeyRef("key:restart"), Optional.of(authority), Optional.empty(), Optional.of(profile),
+                Optional.empty());
+        return new SemanticSigningOperation(new zeroecho.pki.api.orch.SigningSubmissionId(id, "test", NOW),
+                scope, completed ? zeroecho.pki.api.signing.SigningOperationState.SUCCEEDED
+                        : zeroecho.pki.api.signing.SigningOperationState.PENDING,
+                completed ? zeroecho.pki.api.signing.SemanticSigningState.COMPLETED
+                        : zeroecho.pki.api.signing.SemanticSigningState.SIGNING,
+                1, 1, NOW, NOW.plusSeconds(60), Optional.empty(),
+                completed ? Optional.of(new zeroecho.pki.api.EncodedObject(zeroecho.pki.api.Encoding.DER,
+                        new byte[] { 1, 2, 3 })) : Optional.empty());
     }
 
     private static AcmeState.Directory directory(PkiId authorityId, PkiId issuerId, IssuerChainPath path,

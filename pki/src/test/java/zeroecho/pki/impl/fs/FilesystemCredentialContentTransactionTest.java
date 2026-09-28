@@ -35,6 +35,7 @@ package zeroecho.pki.impl.fs;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -43,12 +44,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import zeroecho.pki.api.content.DurableContentOwner;
 import zeroecho.pki.api.credential.Credential;
+import zeroecho.core.io.CancellationSignal;
+import zeroecho.core.io.ImmutableByteContent;
+import zeroecho.core.io.RepeatableContent;
+import zeroecho.pki.spi.store.MetadataCommitResult;
+import zeroecho.pki.spi.store.MetadataSnapshot;
+import zeroecho.pki.spi.store.MetadataTransaction;
 
 /** Tests transactional credential ownership and restart reconciliation. */
 @SuppressWarnings("PMD.UnitTestContainsTooManyAsserts")
@@ -57,13 +65,19 @@ final class FilesystemCredentialContentTransactionTest {
     private static final String STORE_DIRECTORY = "store";
 
     @Test
-    void intentKeysDoNotCollapseSanitizedCredentialIds() {
-        System.out.println("intentKeysDoNotCollapseSanitizedCredentialIds");
-        String punctuation = CredentialContentTransaction.intentFileName(new zeroecho.pki.api.PkiId("credential:a"));
-        String underscore = CredentialContentTransaction.intentFileName(new zeroecho.pki.api.PkiId("credential_a"));
+    void nonX509ExactDuplicateStillRejects(@TempDir Path root) throws Exception {
+        try (FilesystemPkiStore store = open(root)) {
+            Credential credential = credential(store, "SERIAL-DUPLICATE");
+            store.putCredential(credential);
+            assertThrows(IllegalStateException.class, () -> store.putCredential(credential));
+        }
+    }
+
+    @Test
+    void metadataKeysDoNotCollapseSanitizedCredentialIds() {
+        zeroecho.pki.spi.store.MetadataKey punctuation = AuthorityMetadataCodec.credentialKey(new zeroecho.pki.api.PkiId("credential:a"));
+        zeroecho.pki.spi.store.MetadataKey underscore = AuthorityMetadataCodec.credentialKey(new zeroecho.pki.api.PkiId("credential_a"));
         assertFalse(punctuation.equals(underscore), "full credential identifiers must produce distinct keys");
-        assertTrue(punctuation.matches("[0-9a-f]{64}\\.intent"), "intent key must be fixed lowercase hex");
-        System.out.println("intentKeysDoNotCollapseSanitizedCredentialIds...ok");
     }
 
     @Test
@@ -101,14 +115,20 @@ final class FilesystemCredentialContentTransactionTest {
         try (FilesystemPkiStore store = open(root)) {
             credential = credential(store, "SERIAL-MISSING-OWNER");
             store.putCredential(credential);
-            DurableContentOwner exact = DurableContentOwner.credentialRecord(credential.credentialId());
-            store.stagedContent().retainContent(credential.content(), wrong);
-            store.stagedContent().releaseContent(credential.content(), exact);
+            byte[] wrongPayload = CredentialMetadataAuthority.encodeOwners(credential.content().contentId(), Set.of(wrong));
+            try (MetadataSnapshot snapshot = store.metadataStore().snapshot();
+                    MetadataSnapshot.Record record = snapshot.get(AuthorityMetadataCodec.ownerSetKey(credential.content().contentId())).orElseThrow();
+                    MetadataTransaction transaction = store.metadataStore().beginTransaction();
+                    RepeatableContent bytes = new ImmutableByteContent(wrongPayload)) {
+                transaction.replace(record.key(), record.recordRevision(), bytes, CancellationSignal.NONE);
+                assertEquals(MetadataCommitResult.Outcome.COMMITTED, transaction.commit().outcome());
+            }
             assertThrows(IllegalStateException.class, () -> store.getCredential(credential.credentialId()));
-            assertTrue(store.stagedContent().contentOwners(credential.content()).contains(wrong),
-                    "read validation must not remove an unrelated owner");
-            assertFalse(store.stagedContent().contentOwners(credential.content()).contains(exact),
-                    "read validation must not mint the missing exact owner");
+            try (MetadataSnapshot snapshot = store.metadataStore().snapshot();
+                    MetadataSnapshot.Record record = snapshot.get(AuthorityMetadataCodec.ownerSetKey(credential.content().contentId())).orElseThrow()) {
+                assertArrayEquals(wrongPayload, CredentialMetadataAuthority.read(record, 1024),
+                        "read validation must not repair committed owner evidence");
+            }
         }
 
         assertThrows(IllegalStateException.class, () -> open(root));
@@ -116,31 +136,34 @@ final class FilesystemCredentialContentTransactionTest {
     }
 
     @Test
-    void preparedOwnerWithoutPublishedRecordRollsBackOnRestart(@TempDir Path tempDir) throws Exception {
-        System.out.println("preparedOwnerWithoutPublishedRecordRollsBackOnRestart");
+    void uncommittedRecordAndOwnerAreAbsentOnRestart(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);
         Credential credential;
-        Path intentPath;
         try (FilesystemPkiStore store = open(root)) {
             credential = credential(store, "SERIAL-PREPARED");
-            DurableContentOwner owner = DurableContentOwner.credentialRecord(credential.credentialId());
-            assertTrue(store.stagedContent().retainContent(credential.content(), owner),
-                    "test setup must create the prepared owner");
-            intentPath = writePreparedIntent(root, credential);
+            try (FilesystemStagedContentStore.TransactionalReservation reservation = ((FilesystemStagedContentStore) store.stagedContent())
+                    .reserveTransactionalPublication(credential.content());
+                    MetadataSnapshot snapshot = store.metadataStore().snapshot();
+                    MetadataTransaction transaction = store.metadataStore().beginTransaction()) {
+                new CredentialMetadataAuthority(store.metadataStore(), store.stagedContent()).stageCreate(snapshot, transaction, credential);
+                assertTrue(store.getCredential(credential.credentialId()).isEmpty());
+                assertTrue(store.stagedContent().contentOwners(credential.content()).isEmpty());
+                assertThrows(IOException.class, () -> store.stagedContent().retireUnownedContent(credential.content()));
+            }
         }
 
         try (FilesystemPkiStore reopened = open(root)) {
             assertFalse(reopened.getCredential(credential.credentialId()).isPresent(),
                     "recovery must not publish a record");
-            assertFalse(Files.exists(intentPath), "rolled-back intent must be removed");
+            try (MetadataSnapshot snapshot = reopened.metadataStore().snapshot()) {
+                assertTrue(snapshot.get(AuthorityMetadataCodec.ownerSetKey(credential.content().contentId())).isEmpty());
+            }
             assertThrows(IOException.class, () -> reopened.stagedContent().openContent(credential.content()));
         }
-        System.out.println("preparedOwnerWithoutPublishedRecordRollsBackOnRestart...ok");
     }
 
     @Test
-    void intentWithoutOwnerOrPublishedRecordIsRemovedOnRestart(@TempDir Path tempDir) throws Exception {
-        System.out.println("intentWithoutOwnerOrPublishedRecordIsRemovedOnRestart");
+    void legacyIntentWithoutPublishedRecordRejectsWithoutReclamation(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);
         Credential credential;
         Path intentPath;
@@ -149,16 +172,13 @@ final class FilesystemCredentialContentTransactionTest {
             intentPath = writePreparedIntent(root, credential);
         }
 
-        try (FilesystemPkiStore reopened = open(root)) {
-            assertFalse(Files.exists(intentPath), "ownerless intent must be removed");
-            assertThrows(IOException.class, () -> reopened.stagedContent().openContent(credential.content()));
-        }
-        System.out.println("intentWithoutOwnerOrPublishedRecordIsRemovedOnRestart...ok");
+        assertThrows(IllegalStateException.class, () -> open(root));
+        assertTrue(Files.exists(intentPath), "unsupported legacy intent must not be removed");
+        assertTrue(Files.exists(root.resolve("staged-content").resolve(credential.content().contentId() + ".content")));
     }
 
     @Test
-    void publishedRecordWithPreparedIntentCompletesOnRestart(@TempDir Path tempDir) throws Exception {
-        System.out.println("publishedRecordWithPreparedIntentCompletesOnRestart");
+    void legacyIntentAlongsideCommittedMetadataRejectsWithoutRepair(@TempDir Path tempDir) throws Exception {
         Path root = tempDir.resolve(STORE_DIRECTORY);
         Credential credential;
         Path intentPath;
@@ -168,15 +188,9 @@ final class FilesystemCredentialContentTransactionTest {
             intentPath = writePreparedIntent(root, credential);
         }
 
-        try (FilesystemPkiStore reopened = open(root)) {
-            assertTrue(reopened.getCredential(credential.credentialId()).isPresent(),
-                    "published credential must remain readable");
-            assertFalse(Files.exists(intentPath), "completed intent must be removed");
-            assertTrue(reopened.stagedContent().contentOwners(credential.content())
-                    .contains(DurableContentOwner.credentialRecord(credential.credentialId())),
-                    "completed recovery must preserve the exact owner");
-        }
-        System.out.println("publishedRecordWithPreparedIntentCompletesOnRestart...ok");
+        assertThrows(IllegalStateException.class, () -> open(root));
+        assertTrue(Files.exists(intentPath), "unsupported mixed layout must not be repaired");
+        assertTrue(Files.exists(root.resolve("staged-content").resolve(credential.content().contentId() + ".content")));
     }
 
     @Test
@@ -209,12 +223,17 @@ final class FilesystemCredentialContentTransactionTest {
             Files.write(contentPath, corrupted, StandardOpenOption.TRUNCATE_EXISTING);
 
             assertThrows(IllegalStateException.class, () -> store.putCredential(credential));
-            assertFalse(Files.exists(new FsPaths(root).credentialPath(credential.credentialId())),
+            assertTrue(store.getCredential(credential.credentialId()).isEmpty(),
                     "corrupt content must not make the record visible");
             assertTrue(store.stagedContent().contentOwners(credential.content()).isEmpty(),
                     "corrupt content must not gain an owner");
             assertArrayEquals(corrupted, Files.readAllBytes(contentPath),
                     "failed validation must not rewrite the supplied content");
+            store.stagedContent().retireUnownedContent(credential.content());
+            assertFalse(Files.exists(contentPath), "precommit rejection must release its reservation");
+            Credential valid = credential(store, "SERIAL-AFTER-REJECTION");
+            store.putCredential(valid);
+            assertTrue(store.getCredential(valid.credentialId()).isPresent(), "known rejection must not fence the store");
         }
         System.out.println("corruptedContentIsRejectedBeforeOwnershipHandoff...ok");
     }

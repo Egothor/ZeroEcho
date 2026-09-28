@@ -54,6 +54,21 @@
  * integrations.
  * </p>
  *
+ * <p>CA command construction validates structural inputs only; it performs no
+ * I/O, key generation, authorization, evidence lookup or signature verification.
+ * Command PKI identifiers use nonblank strict UTF-8 bounded to 4,096 bytes,
+ * profiles to 256 bytes and managed key references to 1,048,576 bytes. Unpaired
+ * surrogates are rejected. Validation takes linear time in supplied bounded text
+ * and constant auxiliary space, apart from bounded signing-submission ID parsing.
+ * All command components and optional containers must be non-null.</p>
+ *
+ * <p>Intermediate operations and root import carry retained proof identifiers;
+ * their consumers must independently authorize the operation and require exact
+ * completed proof bindings. Root creation, rollover and key rotation instead
+ * require fresh self-signature verification against the same frozen canonical
+ * SubjectPublicKeyInfo used for the new credential. Proof identifiers are parsed
+ * syntactically at construction without consulting a clock or retained state.</p>
+ *
  * @since 1.0
  */
 package zeroecho.pki.api.ca;

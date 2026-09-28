@@ -39,30 +39,40 @@ import {
   Switch,
   TextField,
 } from '@mui/material';
+import type { SelectionContext } from '@/api/entityRefs';
+import { OPERATIONS } from '@/api/operationCatalog';
+import { displayLabel, filterChoices } from '@/api/labels';
 import type { FieldSpec } from '@/api/operationSchema';
 import type { FieldValue } from '@/api/operations';
 import { EntityAutocomplete } from '@/components/operation/EntityAutocomplete';
 
 interface Props {
   readonly field: FieldSpec;
+  readonly context?: SelectionContext;
   readonly value: FieldValue;
   readonly onChange: (value: FieldValue) => void;
   readonly disabled?: boolean;
 }
 
 function labelFor(field: FieldSpec): string {
-  const base = field.label ?? field.name;
+  const base = field.label ?? displayLabel(field.name);
   return field.required ? base : `${base} (optional)`;
 }
 
 /** Renders one operation argument as a typed MUI control. */
-export function OperationField({ field, value, onChange, disabled }: Props) {
+export function OperationField({ field, value, onChange, disabled, context }: Props) {
   const label = labelFor(field);
+
+  if (field.name === 'targetOperation' || field.name === 'targetOperationId') {
+    const options = OPERATIONS.filter((op) => field.name === 'targetOperationId' || (!op.read && op.id !== 'security.approval.request'));
+    return <Autocomplete size="small" options={options} getOptionLabel={(op) => `${op.title} · ${op.id}`} value={options.find((op) => op.id === value) ?? null} onChange={(_, op) => onChange(op?.id ?? '')} disabled={disabled} renderInput={(params) => <TextField {...params} label={label} />} />;
+  }
+  if (field.readOnly) return <TextField fullWidth size="small" label={label} value={Array.isArray(value) ? value.join(', ') : value ?? ''} slotProps={{ input: { readOnly: true } }} helperText={field.help ?? 'Supplied by the selected server record.'} />;
 
   // Reference to an existing entity: type-to-search picker.
   if (field.ref) {
     return (
-      <EntityAutocomplete field={field} value={(value as string) ?? ''} onChange={onChange} disabled={disabled} />
+      <EntityAutocomplete field={field} value={value} onChange={onChange} disabled={disabled} context={context} />
     );
   }
 
@@ -86,6 +96,8 @@ export function OperationField({ field, value, onChange, disabled }: Props) {
         <Autocomplete
           size="small"
           options={field.choices ?? []}
+          getOptionLabel={displayLabel}
+          filterOptions={(options, state) => filterChoices(options, state.inputValue)}
           value={(value as string) || null}
           onChange={(_, v) => onChange(v ?? '')}
           autoHighlight
@@ -107,6 +119,8 @@ export function OperationField({ field, value, onChange, disabled }: Props) {
           multiple
           size="small"
           options={field.choices ?? []}
+          getOptionLabel={displayLabel}
+          filterOptions={(options, state) => filterChoices(options, state.inputValue)}
           value={Array.isArray(value) ? value : []}
           onChange={(_, v) => onChange(v)}
           disabled={disabled}

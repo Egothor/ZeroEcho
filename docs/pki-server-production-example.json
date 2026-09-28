@@ -37,7 +37,7 @@
       "justificationRequired": true
     },
     "pkiSession": {
-      "version": 1,
+      "version": 6,
       "store": {"id": "fs", "properties": {"root": "state/pki"}},
       "audit": {"id": "file", "properties": {"root": "state/audit"}},
       "publishers": [],
@@ -79,7 +79,7 @@
     "gracefulShutdownMillis": 30000,
     "forcedShutdownMillis": 10000
   },
-  "signingReconciliation": {"enabled": true, "maxRecords": 256, "maxCalls": 64, "passTimeoutMillis": 30000, "providerCallTimeoutMillis": 10000, "idleIntervalMillis": 2000},
+  "auditProjection": {"maxRecords": 256, "maxSinkCalls": 64, "idleIntervalMillis": 2000},
   "publicListener": {"enabled": false},
   "acmeListener": {"enabled": false},
   "runtime": {}

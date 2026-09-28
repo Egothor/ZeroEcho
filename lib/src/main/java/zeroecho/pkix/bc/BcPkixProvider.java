@@ -369,23 +369,19 @@ public final class BcPkixProvider implements PkixProvider {
 
     @Override
     public byte[] assembleOcspResponse(byte[] tbsResponseData, byte[] signatureAlgorithmDer, byte[] signature) {
+        return assembleOcspResponse(tbsResponseData, signatureAlgorithmDer, signature, java.util.List.of());
+    }
+
+    @Override
+    public byte[] assembleOcspResponse(byte[] tbsResponseData, byte[] signatureAlgorithmDer, byte[] signature,
+            java.util.List<X509Certificate> chain) {
         byte[] encoded;
         try {
-            AlgorithmIdentifier algorithm =
-                    AlgorithmIdentifier.getInstance(
-                            ASN1Primitive.fromByteArray(signatureAlgorithmDer));
-            org.bouncycastle.asn1.ASN1Sequence tbs = org.bouncycastle.asn1.ASN1Sequence.getInstance(
+            AlgorithmIdentifier algorithm = AlgorithmIdentifier.getInstance(ASN1Primitive.fromByteArray(signatureAlgorithmDer));
+            org.bouncycastle.asn1.ocsp.ResponseData data = org.bouncycastle.asn1.ocsp.ResponseData.getInstance(
                     ASN1Primitive.fromByteArray(tbsResponseData));
-            byte[] basicResponse = new org.bouncycastle.asn1.DERSequence(new org.bouncycastle.asn1.ASN1Encodable[] {
-                    tbs, algorithm, new org.bouncycastle.asn1.DERBitString(signature) }).getEncoded();
-            org.bouncycastle.asn1.ASN1Encodable responseBytes = new org.bouncycastle.asn1.DERSequence(
-                    new org.bouncycastle.asn1.ASN1Encodable[] {
-                            new ASN1ObjectIdentifier("1.3.6.1.5.5.7.48.1.1"),
-                            new org.bouncycastle.asn1.DEROctetString(basicResponse) });
-            encoded = new org.bouncycastle.asn1.DERSequence(new org.bouncycastle.asn1.ASN1Encodable[] {
-                    new org.bouncycastle.asn1.ASN1Enumerated(0),
-                    new org.bouncycastle.asn1.DERTaggedObject(true, 0, responseBytes) }).getEncoded();
-        } catch (IOException | IllegalArgumentException | ClassCastException failure) {
+            encoded = BcOcspEncoding.assemble(data, algorithm, signature, BcOcspEncoding.certificates(chain));
+        } catch (IOException | java.security.cert.CertificateEncodingException | IllegalArgumentException | ClassCastException failure) {
             throw new IllegalArgumentException("Cannot assemble OCSP response", failure);
         }
         zeroecho.pkix.ocsp.OcspResponse parsed = parseOcspResponse(encoded);

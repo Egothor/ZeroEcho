@@ -14,3 +14,6 @@
 
 # Benchmark evidence output (RUN_ON_LARGE_MACHINE)
 reference-evidence*/
+
+# Host deployment smoke-test bytecode
+/deploy/__pycache__/

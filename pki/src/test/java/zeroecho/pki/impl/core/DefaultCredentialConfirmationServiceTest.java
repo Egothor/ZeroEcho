@@ -121,6 +121,8 @@ final class DefaultCredentialConfirmationServiceTest {
     private static final String AUDIENCE = "urn:uuid:123e4567-e89b-42d3-a456-426614174000";
     private static final Instant NOW = Instant.parse("2026-08-30T12:00:00Z");
     private static final Clock AUDIT_CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+    private static final KeyPair ISSUER_KEY = issuerKey();
+    private static final byte[] ISSUER_CERTIFICATE = issuerCertificate();
     private static final byte[] CERTIFICATE = certificate();
 
     @TempDir
@@ -272,13 +274,27 @@ final class DefaultCredentialConfirmationServiceTest {
             String suffix = "invalid-certificate-" + index++;
             try (FilesystemPkiStore store = open(suffix, new MutableClock(NOW))) {
                 PkiId credentialId = credentialId(encoded);
-                putCredential(store, suffix, credentialId, encoded);
+                assertThrows(IllegalStateException.class, () -> putCredential(store, suffix, credentialId, encoded));
+                assertTrue(store.getCredential(credentialId).isEmpty());
+                putCredential(store, suffix, credentialId, CERTIFICATE);
+                Credential valid = store.getCredential(credentialId).orElseThrow();
+                Credential corrupted = new Credential(valid.credentialId(), valid.formatId(), valid.issuerRef(),
+                        valid.subjectRef(), valid.validity(), valid.serialOrUniqueId(), valid.publicKeyId(),
+                        valid.profileBinding(), valid.status(), PkiTestRuntime.stageCredential(store, encoded), valid.attributes());
+                PkiStore corruptedRead = (PkiStore) Proxy.newProxyInstance(PkiStore.class.getClassLoader(),
+                        new Class<?>[] {PkiStore.class}, (proxy, method, arguments) -> {
+                            if (method.getName().equals("getCredential") && credentialId.equals(arguments[0])) {
+                                return Optional.of(corrupted);
+                            }
+                            try { return method.invoke(store, arguments); }
+                            catch (InvocationTargetException failure) { throw failure.getCause(); }
+                        });
                 CredentialConfirmationLifecycle lifecycle = store.initializeCredentialConfirmation(
                         new CredentialConfirmationInitialization(credentialId,
                                 ConfirmationDisclosurePolicy.AUTHENTICATED, "b".repeat(64), true,
                                 NOW.plus(Duration.ofDays(1L)), SUITE));
 
-                assertThrows(IllegalStateException.class, () -> service(store,
+                assertThrows(IllegalStateException.class, () -> service(corruptedRead,
                         new TestProvider(binding(8_192)),
                         Optional.of(policy(8_192, Duration.ofSeconds(30L))),
                         new CapturingRandom((byte) 1)).issueProofChallenge(request(lifecycle)));
@@ -289,7 +305,7 @@ final class DefaultCredentialConfirmationServiceTest {
 
     @Test
     void validEcCertificateReachesAcceptingProviderAndIssuesChallenge() throws Exception {
-        byte[] ecCertificate = certificate("EC", "SHA256withECDSA");
+        byte[] ecCertificate = certificate("EC");
         try (FilesystemPkiStore store = open("ec-credential", new MutableClock(NOW))) {
             PkiId credentialId = credentialId(ecCertificate);
             putCredential(store, "ec-credential", credentialId, ecCertificate);
@@ -737,14 +753,36 @@ final class DefaultCredentialConfirmationServiceTest {
 
     private static void putCredential(FilesystemPkiStore store, String suffix,
             PkiId credentialId, byte[] encoded) throws Exception {
+        IssuerRef issuer = putIssuer(store);
         DurableContentReference content = PkiTestRuntime.stageCredential(store, encoded);
         Credential credential = new Credential(credentialId, BcX509CredentialFramework.FORMAT_ID,
-                new IssuerRef(new PkiId("issuer-" + suffix)), new SubjectRef("CN=" + suffix),
+                issuer, new SubjectRef("CN=" + suffix),
                 new Validity(NOW.minus(Duration.ofDays(1L)), NOW.plus(Duration.ofDays(2L))),
-                "1", new PkiId("spki-" + suffix),
+                "2", new PkiId("spki-" + suffix),
                 new EndEntityProfileBinding(new CertificateProfileRef("profile-" + suffix, 1L, new byte[32])),
                 CredentialStatus.ISSUED, content, new SimpleAttributeSet());
         store.putCredential(credential);
+    }
+
+    private static IssuerRef putIssuer(FilesystemPkiStore store) throws Exception {
+        PkiId authority = new PkiId("ca:proof-issuer");
+        PkiId credentialId = credentialId(ISSUER_CERTIFICATE);
+        PkiId generationId = zeroecho.pki.api.ca.IssuerGeneration.idFor(authority, credentialId);
+        zeroecho.pki.api.ca.IssuerChainPath path = zeroecho.pki.api.ca.IssuerChainPath.create(authority,
+                generationId, List.of(credentialId));
+        IssuerRef reference = new IssuerRef(authority, generationId, path.pathId());
+        if (store.getCredential(credentialId).isEmpty()) {
+            store.putCredential(new Credential(credentialId, BcX509CredentialFramework.FORMAT_ID, reference,
+                    new SubjectRef("CN=Proof Issuer"), new Validity(NOW.minus(Duration.ofDays(2)), NOW.plus(Duration.ofDays(3))),
+                    "1", new PkiId("spki:proof-issuer"), new zeroecho.pki.api.credential.CaProfileBinding(
+                            new CertificateProfileRef("proof-root", 1, new byte[32])), CredentialStatus.ISSUED,
+                    PkiTestRuntime.stageCredential(store, ISSUER_CERTIFICATE), new SimpleAttributeSet()));
+            store.putIssuerGeneration(new zeroecho.pki.api.ca.IssuerGeneration(generationId, authority, credentialId,
+                    new zeroecho.pki.api.KeyRef("proof-issuer-key"), zeroecho.pki.api.ca.IssuerGenerationState.ACTIVE,
+                    "00".repeat(32), "00".repeat(32)));
+            store.putIssuerChainPath(path);
+        }
+        return reference;
     }
 
     private static PkiId credentialId(byte[] encoded) throws Exception {
@@ -780,10 +818,10 @@ final class DefaultCredentialConfirmationServiceTest {
     }
 
     private static byte[] certificate() {
-        return certificate("RSA", "SHA256withRSA");
+        return certificate("RSA");
     }
 
-    private static byte[] certificate(String keyAlgorithm, String signatureAlgorithm) {
+    private static byte[] certificate(String keyAlgorithm) {
         try {
             KeyPairGenerator generator = KeyPairGenerator.getInstance(keyAlgorithm);
             if ("RSA".equals(keyAlgorithm)) {
@@ -793,11 +831,35 @@ final class DefaultCredentialConfirmationServiceTest {
             }
             KeyPair keyPair = generator.generateKeyPair();
             X500Name name = new X500Name("CN=Proof Credential");
-            X509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(name,
-                    BigInteger.ONE, java.util.Date.from(NOW.minus(Duration.ofDays(1L))),
+            X509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(new X500Name("CN=Proof Issuer"),
+                    BigInteger.TWO, java.util.Date.from(NOW.minus(Duration.ofDays(1L))),
                     java.util.Date.from(NOW.plus(Duration.ofDays(2L))), name, keyPair.getPublic());
-            return builder.build(new JcaContentSignerBuilder(signatureAlgorithm)
-                    .build(keyPair.getPrivate())).getEncoded();
+            return builder.build(new JcaContentSignerBuilder("SHA256withRSA")
+                    .build(ISSUER_KEY.getPrivate())).getEncoded();
+        } catch (Exception failure) {
+            throw new ExceptionInInitializerError(failure);
+        }
+    }
+
+    private static KeyPair issuerKey() {
+        try {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+            generator.initialize(2048);
+            return generator.generateKeyPair();
+        } catch (java.security.GeneralSecurityException failure) {
+            throw new ExceptionInInitializerError(failure);
+        }
+    }
+
+    private static byte[] issuerCertificate() {
+        try {
+            X500Name name = new X500Name("CN=Proof Issuer");
+            X509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(name, BigInteger.ONE,
+                    java.util.Date.from(NOW.minus(Duration.ofDays(2))), java.util.Date.from(NOW.plus(Duration.ofDays(3))),
+                    name, ISSUER_KEY.getPublic());
+            builder.addExtension(org.bouncycastle.asn1.x509.Extension.basicConstraints, true,
+                    new org.bouncycastle.asn1.x509.BasicConstraints(true));
+            return builder.build(new JcaContentSignerBuilder("SHA256withRSA").build(ISSUER_KEY.getPrivate())).getEncoded();
         } catch (Exception failure) {
             throw new ExceptionInInitializerError(failure);
         }

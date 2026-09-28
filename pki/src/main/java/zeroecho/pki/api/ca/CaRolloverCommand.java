@@ -35,6 +35,7 @@ package zeroecho.pki.api.ca;
 
 import java.util.Optional;
 
+import zeroecho.pki.api.KeyRef;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.Validity;
 import zeroecho.pki.api.attr.AttributeSet;
@@ -43,38 +44,67 @@ import zeroecho.pki.api.attr.AttributeSet;
  * Command to roll over a CA credential while keeping the same key reference.
  *
  * <p>
- * Rollover issues a new CA credential for the CA entity without changing the
- * underlying key material. Historical credentials remain accessible for audit
- * and chain selection.
+ * Profile selection comes from authoritative CA state. Construction validates
+ * structural inputs only: it neither verifies possession nor authorizes rollover.
+ * Historical credentials remain accessible for audit and chain selection.
  * </p>
  *
- * @param caId              CA entity id
- * @param issuerCaId        optional issuer CA id (empty for self-issued root
- *                          rollover where applicable)
- * @param requestedValidity optional requested validity
- * @param attributes        universal attributes (may be empty but not null)
  */
-public record CaRolloverCommand(PkiId caId, Optional<PkiId> issuerCaId, Optional<Validity> requestedValidity,
-        AttributeSet attributes) {
+public sealed interface CaRolloverCommand {
+    /** {@return CA entity identifier} */
+    PkiId caId();
+    /** {@return optional requested validity; policy may override or deny it} */
+    Optional<Validity> requestedValidity();
+    /** {@return immutable universal attributes} */
+    AttributeSet attributes();
 
     /**
-     * Creates a CA rollover command.
-     *
-     * @throws IllegalArgumentException if inputs are invalid or optional containers
-     *                                  are null
+     * Root rollover using the authoritative current key. Execution must separately
+     * authorize rollover and verify a fresh self-signature against the same frozen
+     * canonical SubjectPublicKeyInfo used for the new credential. A retained proof
+     * or historical self-signature cannot replace that verification.
+     * @param caId root CA identifier, strict UTF-8 at most 4,096 bytes
+     * @param requestedValidity optional requested validity
+     * @param attributes immutable universal attributes, possibly empty
      */
-    public CaRolloverCommand {
-        if (caId == null) {
-            throw new IllegalArgumentException("caId must not be null");
+    record Root(PkiId caId, Optional<Validity> requestedValidity, AttributeSet attributes) implements CaRolloverCommand {
+        /**
+         * Validates local structure without resolving authority state.
+         * @throws IllegalArgumentException if a component is null or the CA identifier is invalid
+         */
+        public Root {
+            CaCommandInputs.identifier(caId);
+            CaCommandInputs.required(requestedValidity);
+            CaCommandInputs.required(attributes);
         }
-        if (issuerCaId == null) {
-            throw new IllegalArgumentException("issuerCaId must not be null");
+        /** {@return a diagnostic representation without command coordinates or attributes} */
+        @Override public String toString() { return "CaRolloverCommand.Root[redacted]"; }
+    }
+
+    /**
+     * Intermediate rollover with an expected current subject key. Execution must
+     * match the key and profile to authoritative CA state, authorize separately,
+     * and complete a fresh internal subject-key proof within the same durable admission.
+     * @param caId intermediate CA identifier, strict UTF-8 at most 4,096 bytes
+     * @param issuerCaId issuer CA identifier, strict UTF-8 at most 4,096 bytes
+     * @param keyRef expected current key, strict UTF-8 at most 1,048,576 bytes
+     * @param requestedValidity optional requested validity
+     * @param attributes immutable universal attributes, possibly empty
+     */
+    record Intermediate(PkiId caId, PkiId issuerCaId, KeyRef keyRef,
+            Optional<Validity> requestedValidity, AttributeSet attributes) implements CaRolloverCommand {
+        /**
+         * Validates local structure without resolving authority state.
+         * @throws IllegalArgumentException if any component is null, bounded text is invalid
+         */
+        public Intermediate {
+            CaCommandInputs.identifier(caId);
+            CaCommandInputs.identifier(issuerCaId);
+            CaCommandInputs.key(keyRef);
+                CaCommandInputs.required(requestedValidity);
+            CaCommandInputs.required(attributes);
         }
-        if (requestedValidity == null) {
-            throw new IllegalArgumentException("requestedValidity must not be null");
-        }
-        if (attributes == null) {
-            throw new IllegalArgumentException("attributes must not be null");
-        }
+        /** {@return a diagnostic representation without command coordinates or attributes} */
+        @Override public String toString() { return "CaRolloverCommand.Intermediate[redacted]"; }
     }
 }

@@ -63,6 +63,8 @@ import zeroecho.pki.spi.store.MetadataStoreException;
 import zeroecho.pki.spi.store.MetadataStoreId;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.MetadataTransactionId;
+import zeroecho.pki.spi.store.SignWorkflowStore;
+import zeroecho.pki.spi.store.StagedContentStore;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
 /** Package-private production adapter over the segmented signing ledger. */
@@ -73,7 +75,7 @@ import zeroecho.pki.spi.store.TransactionalMetadataStore;
         "PMD.ControlStatementBraces", "PMD.DataClass",
         "PMD.DoNotUseThreads",
         "PMD.UnusedNullCheckInEquals", "PMD.UseTryWithResources", "PMD.CouplingBetweenObjects" })
-final class SegmentedTransactionalMetadataStore implements TransactionalMetadataStore {
+final class SegmentedTransactionalMetadataStore implements TransactionalMetadataStore { // NOPMD - CyclomaticComplexity totals independent dispatch/codec branches; method-level checks remain enabled.
     private static final int MAXIMUM_ACTIVE_TRANSACTIONS = 256;
     private static final int PAGE_SIZE = 4096;
     private static final long MAXIMUM_RECORD_BYTES = SigningWalFrameCodec.MAX_PAYLOAD_BYTES;
@@ -136,9 +138,27 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 residentIndexBudgetBytes, compactionBudgetBytes));
     }
 
-    /* default */ static SegmentedTransactionalMetadataStore open(Path root,
+    /* default */ static SegmentedTransactionalMetadataStore create(Path root,
+            MetadataStoreId storeId, SigningActiveWal.Operations walOperations,
+            int maximumSigningWork, SigningActiveWal.Configuration activeWalConfiguration,
+            long residentIndexBudgetBytes, long compactionBudgetBytes,
+            StagedContentStore stagedContent) throws IOException {
+        return new SegmentedTransactionalMetadataStore(SigningLedgerStoreEngine.create(
+                root, storeId, walOperations, maximumSigningWork, activeWalConfiguration,
+                residentIndexBudgetBytes, compactionBudgetBytes,
+                Objects.requireNonNull(stagedContent, "stagedContent")));
+    }
+
+    /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  @SuppressWarnings({ "PMD.PreserveStackTrace" })
+                  static SegmentedTransactionalMetadataStore open(Path root,
             MetadataStoreId storeId) throws IOException {
-        return new SegmentedTransactionalMetadataStore(SigningLedgerStoreEngine.open(root, storeId));
+        try {
+            return new SegmentedTransactionalMetadataStore(
+                    SigningLedgerStoreEngine.open(root, storeId));
+        } catch (SigningLedgerStoreEngine.FormatUnsupportedException failure) {
+            throw new OpenIntegrityException();
+        }
     }
 
     /* default */ static SegmentedTransactionalMetadataStore open(Path root,
@@ -156,18 +176,52 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
                 FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES);
     }
 
-    /* default */ static SegmentedTransactionalMetadataStore open(Path root,
+    /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  @SuppressWarnings({ "PMD.PreserveStackTrace" })
+                  static SegmentedTransactionalMetadataStore open(Path root,
             MetadataStoreId storeId, int maximumSigningWork,
             SigningActiveWal.Configuration activeWalConfiguration,
             long residentIndexBudgetBytes, long compactionBudgetBytes) throws IOException {
-        return new SegmentedTransactionalMetadataStore(
-                SigningLedgerStoreEngine.open(root, storeId, maximumSigningWork,
-                        activeWalConfiguration, residentIndexBudgetBytes, compactionBudgetBytes));
+        try {
+            return new SegmentedTransactionalMetadataStore(
+                    SigningLedgerStoreEngine.open(root, storeId, maximumSigningWork,
+                            activeWalConfiguration, residentIndexBudgetBytes,
+                            compactionBudgetBytes));
+        } catch (SigningLedgerStoreEngine.FormatUnsupportedException failure) {
+            throw new OpenIntegrityException();
+        }
+    }
+
+    /* default */ // Untrusted input/provider diagnostics are deliberately excluded from the safe boundary exception.
+                  @SuppressWarnings({ "PMD.PreserveStackTrace" })
+                  static SegmentedTransactionalMetadataStore open(Path root,
+            MetadataStoreId storeId, int maximumSigningWork,
+            SigningActiveWal.Configuration activeWalConfiguration,
+            long residentIndexBudgetBytes, long compactionBudgetBytes,
+            StagedContentStore stagedContent) throws IOException {
+        try {
+            return new SegmentedTransactionalMetadataStore(
+                    SigningLedgerStoreEngine.open(root, storeId, maximumSigningWork,
+                            activeWalConfiguration, residentIndexBudgetBytes,
+                            compactionBudgetBytes,
+                            Objects.requireNonNull(stagedContent, "stagedContent")));
+        } catch (SigningLedgerStoreEngine.FormatUnsupportedException failure) {
+            throw new OpenIntegrityException();
+        }
     }
 
     /* default */ static SegmentedTransactionalMetadataStore open(Path root) throws IOException {
         Path namespace = Objects.requireNonNull(root, "root").getParent().resolve("SIGNING_NAMESPACE");
         return open(root, new MetadataStoreId(Files.readString(namespace).trim()));
+    }
+
+    /** Cause-free marker preserving malformed persistence across store layers. */
+    /* default */ static final class OpenIntegrityException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private OpenIntegrityException() {
+            super("Metadata ledger format unsupported: code=METADATA_FORMAT_UNSUPPORTED");
+        }
     }
 
     @Override public MetadataStoreId id() { requireOpen(); return engine.storeId(); }
@@ -273,20 +327,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         return engine.directCommitAtAdmission(Objects.requireNonNull(decision, "decision"));
     }
 
-    /* default */ SigningLedgerStoreEngine.SigningAdmission reserveSigningAdmission() {
+    /* default */ SigningLedgerStoreEngine.SigningAdmission reserveAcceptanceCapacity() {
         requireOpen();
-        return engine.reserveSigningAdmission();
-    }
-
-    /* default */ long headroomRestorationEpoch() {
-        requireOpen();
-        return engine.headroomRestorationEpoch();
-    }
-
-    /* default */ AutoCloseable registerHeadroomRestored(
-            AtomicLocalSigningLedgerParticipant.HeadroomListener listener) {
-        requireOpen();
-        return engine.registerHeadroomRestored(listener);
+        return engine.reserveAcceptanceCapacity();
     }
 
     /* default */ SigningActiveWal.Snapshot writerSnapshot() {
@@ -318,6 +361,12 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         return engine.recoveryStatistics();
     }
 
+    /* default */ SigningLedgerStoreEngine.RecoveryProjectionStatistics
+            recoveryProjectionStatistics() {
+        requireOpen();
+        return engine.recoveryProjectionStatistics();
+    }
+
     /* default */ long recoveredWatermark() { requireOpen(); return engine.recoveredWatermark(); }
 
     /* default */ List<String> selectSigningDue(java.time.Instant cutoff, int maximumResults)
@@ -329,25 +378,16 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             Optional<String> exclusiveCursor, Optional<String> inclusiveHighWatermark,
             int maximumResults) throws IOException {
         requireOpen();
-        SigningLedgerStoreEngine.DueSnapshot due = engine.pageDue(cutoff, exclusiveCursor,
+        SigningLedgerStoreEngine.DuePage due = engine.pageDue(cutoff, exclusiveCursor,
                 inclusiveHighWatermark, maximumResults);
-        boolean transferred = false;
-        try {
-            SnapshotImpl snapshot = new SnapshotImpl(due.snapshot());
-            snapshots.add(snapshot);
-            List<SigningDueCandidate> candidates = due.selection().records().stream()
-                    .map(record -> new SigningDueCandidate(record.operationId(), record.malformed()))
-                    .toList();
-            SigningDuePage page = new SigningDuePage(candidates,
-                    due.selection().highWatermark(), due.selection().endReached(), snapshot, due);
-            transferred = true;
-            return page;
-        } finally {
-            if (!transferred) due.close();
-        }
+        List<SigningDueCandidate> candidates = due.candidates().stream()
+                .map(record -> new SigningDueCandidate(record.operationId(),
+                        record.scheduling(), record.malformed()))
+                .toList();
+        return new SigningDuePage(candidates, due.highWatermark(), due.endReached());
     }
 
-    /* default */ SigningDuePage pageSigningOwners(Optional<String> exclusiveCursor,
+    /* default */ SigningOwnerPage pageSigningOwners(Optional<String> exclusiveCursor,
             int maximumResults) throws IOException {
         requireOpen();
         SigningLedgerStoreEngine.DueSnapshot owners = engine.pageOwners(
@@ -357,8 +397,9 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
             SnapshotImpl snapshot = new SnapshotImpl(owners.snapshot());
             snapshots.add(snapshot);
             List<SigningDueCandidate> candidates = owners.selection().records().stream()
-                    .map(record -> new SigningDueCandidate(record.operationId(), false)).toList();
-            SigningDuePage page = new SigningDuePage(candidates,
+                    .map(record -> new SigningDueCandidate(record.operationId(),
+                            record.scheduling(), false)).toList();
+            SigningOwnerPage page = new SigningOwnerPage(candidates,
                     owners.selection().highWatermark(), owners.selection().endReached(),
                     snapshot, owners);
             transferred = true;
@@ -398,6 +439,15 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         requireOpen();
         Objects.requireNonNull(targetRoot, "targetRoot");
         SigningLedgerSnapshotExporter.export(engine, targetRoot, excludedNamespaces);
+    }
+
+    /* default */ void exportSnapshotTo(MetadataSnapshot snapshot, Path targetRoot, Set<String> excludedNamespaces) throws IOException {
+        requireOpen();
+        if (!(snapshot instanceof SnapshotImpl exact) || !snapshots.contains(exact)) {
+            throw new IllegalArgumentException("Metadata snapshot is closed or foreign");
+        }
+        exact.requireSnapshotOpen();
+        SigningLedgerSnapshotExporter.export(engine, exact.snapshot, targetRoot, excludedNamespaces);
     }
 
     /** Copies one pinned logical revision into a fresh target, excluding rebuilt namespaces. */
@@ -454,36 +504,58 @@ final class SegmentedTransactionalMetadataStore implements TransactionalMetadata
         }
     }
 
-    /* default */ record SigningDueCandidate(String operationId, boolean malformed) { }
+    /* default */ record SigningDueCandidate(String operationId,
+            SignWorkflowStore.SchedulingCoordinates scheduling, boolean malformed) { }
 
-    /** Store-local bulk due page whose candidate reads share one pinned revision. */
-    /* default */ final class SigningDuePage implements AutoCloseable {
+    /** Store-local immutable lightweight due page. */
+    /* default */ record SigningDuePage(List<SigningDueCandidate> candidates,
+            Optional<String> highWatermark, boolean endReached) {
+        SigningDuePage {
+            candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
+            highWatermark = Objects.requireNonNull(highWatermark, "highWatermark");
+        }
+    }
+
+    /** Store-local owner page whose candidate reads share one pinned revision. */
+    /* default */ final class SigningOwnerPage implements AutoCloseable {
         private final List<SigningDueCandidate> candidates;
         private final Optional<String> highWatermark;
         private final boolean endReached;
         private final SnapshotImpl snapshot;
-        private final SigningLedgerStoreEngine.DueSnapshot due;
+        private final SigningLedgerStoreEngine.DueSnapshot owners;
         private final AtomicBoolean pageClosed = new AtomicBoolean();
-        private SigningDuePage(List<SigningDueCandidate> candidates,
+        private SigningOwnerPage(List<SigningDueCandidate> candidates,
                 Optional<String> highWatermark, boolean endReached, SnapshotImpl snapshot,
-                SigningLedgerStoreEngine.DueSnapshot due) {
-            this.candidates = candidates;
+                SigningLedgerStoreEngine.DueSnapshot owners) {
+            this.candidates = List.copyOf(candidates);
             this.highWatermark = highWatermark;
             this.endReached = endReached;
             this.snapshot = snapshot;
-            this.due = due;
+            this.owners = owners;
         }
-        /* default */ List<SigningDueCandidate> candidates() { requirePageOpen(); return candidates; }
-        /* default */ Optional<String> highWatermark() { requirePageOpen(); return highWatermark; }
-        /* default */ boolean endReached() { requirePageOpen(); return endReached; }
-        /* default */ MetadataSnapshot snapshot() { requirePageOpen(); return snapshot; }
+        /* default */ List<SigningDueCandidate> candidates() {
+            requirePageOpen();
+            return candidates;
+        }
+        /* default */ Optional<String> highWatermark() {
+            requirePageOpen();
+            return highWatermark;
+        }
+        /* default */ boolean endReached() {
+            requirePageOpen();
+            return endReached;
+        }
+        /* default */ MetadataSnapshot snapshot() {
+            requirePageOpen();
+            return snapshot;
+        }
         private void requirePageOpen() {
-            if (pageClosed.get()) throw new IllegalStateException("signing due page is closed");
+            if (pageClosed.get()) throw new IllegalStateException("signing owner page is closed");
         }
         @Override public void close() {
             if (pageClosed.compareAndSet(false, true)) {
                 snapshot.close();
-                due.close();
+                owners.close();
             }
         }
     }

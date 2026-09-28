@@ -69,7 +69,7 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransaction;
 import zeroecho.pki.spi.store.TransactionalMetadataStore;
 
-/** Startup reconciliation of the issuance-evidence log across the credential-commit crash window (Task 8a). */
+/** Startup reconciliation of the issuance-evidence log across the credential-commit crash window. */
 final class FilesystemIssuanceEvidenceReconciliationTest {
 
     private static final String STORE_DIRECTORY = "store";

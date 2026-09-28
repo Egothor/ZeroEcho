@@ -77,6 +77,133 @@ final class FilesystemRevocationTransitionFeedTest {
     @TempDir Path temporaryDirectory;
 
     @Test
+    void validatesGenesisHeadAndOlderPrefixesAndRejectsFalseCoordinates() throws Exception {
+        try (FilesystemRevocationAuthority authority = authority(temporaryDirectory.resolve("prefixes"), STORE_ID, true)) {
+            FilesystemRevocationLog.RecoveryTarget genesis = authority.head();
+            authority.requirePrefix(watermark(genesis), genesis.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+            append(authority, "credential:first", 1);
+            FilesystemRevocationLog.RecoveryTarget first = authority.head();
+            authority.requirePrefix(watermark(first), first.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+            append(authority, "credential:second", 2);
+            FilesystemRevocationLog.RecoveryTarget head = authority.head();
+            authority.requirePrefix(watermark(genesis), genesis.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+            authority.requirePrefix(watermark(first), first.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+            authority.requirePrefix(watermark(head), head.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(
+                    new RevocationTransitionFeed.HighWatermark(OTHER_STORE_ID, first.globalRevision(), first.globalCommitment().value()),
+                    first.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(
+                    new RevocationTransitionFeed.HighWatermark(OTHER_STORE_ID, 0,
+                            RevocationTransitionFrameCodec.initialCommitment(OTHER_STORE_ID).value()),
+                    genesis.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(
+                    new RevocationTransitionFeed.HighWatermark(STORE_ID, 0, "f".repeat(64)),
+                    genesis.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(watermark(genesis),
+                    genesis.boundary() + 1, zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(
+                    new RevocationTransitionFeed.HighWatermark(STORE_ID, head.globalRevision() + 1, head.globalCommitment().value()),
+                    head.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(watermark(first),
+                    head.boundary() + 1, zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(watermark(head),
+                    first.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(
+                    new RevocationTransitionFeed.HighWatermark(STORE_ID, head.globalRevision(), "f".repeat(64)),
+                    head.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IOException.class, () -> authority.requirePrefix(
+                    new RevocationTransitionFeed.HighWatermark(STORE_ID, first.globalRevision(), "f".repeat(64)),
+                    first.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(IOException.class, () -> authority.requirePrefix(watermark(first),
+                    first.boundary() + 1, zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(NullPointerException.class, () -> authority.requirePrefix(null, 0, zeroecho.core.io.CancellationSignal.NONE));
+            assertThrows(NullPointerException.class, () -> authority.requirePrefix(watermark(head), head.boundary(), null));
+        }
+    }
+
+    @Test
+    void prefixValidationReadsExactlyPreambleAndOneSuccessorWithoutScanningHistory() throws Exception {
+        Path root = temporaryDirectory.resolve("bounded-prefix");
+        FilesystemRevocationLog.RecoveryTarget prefix;
+        FilesystemRevocationLog.RecoveryTarget successor;
+        try (FilesystemRevocationAuthority authority = authority(root, STORE_ID, true)) {
+            for (int index = 0; index < 32; index++) append(authority, "credential:prefix-" + index, index + 1);
+            prefix = authority.head();
+            append(authority, "credential:large", 33, SimpleAttributeSet.builder()
+                    .put(new AttributeId("large"), new AttributeValue.BytesValue(new byte[LARGE_RECORD_BYTES])).build());
+            successor = authority.head();
+            append(authority, "credential:not-read", 34);
+        }
+        AtomicLong bytesRead = new AtomicLong();
+        List<CountingChannel> channels = new ArrayList<>();
+        FilesystemRevocationAuthority.FeedChannelFactory factory = path -> {
+            CountingChannel channel = new CountingChannel(FileChannel.open(path, StandardOpenOption.READ), bytesRead);
+            channels.add(channel);
+            return channel;
+        };
+        try (FilesystemRevocationAuthority authority = FilesystemRevocationAuthority.open(new FsPaths(root), STORE_ID,
+                credentialId -> { }, false, FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE, factory)) {
+            long scans = authority.revocationLogScanInvocationCount();
+            authority.requirePrefix(watermark(prefix), prefix.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+            assertEquals(RevocationTransitionFrameCodec.PREAMBLE_BYTES + successor.boundary() - prefix.boundary(), bytesRead.get());
+            assertEquals(1, channels.size());
+            assertFalse(channels.getFirst().isOpen());
+            bytesRead.set(0);
+            FilesystemRevocationLog.RecoveryTarget head = authority.head();
+            authority.requirePrefix(watermark(head), head.boundary(), zeroecho.core.io.CancellationSignal.NONE);
+            assertEquals(RevocationTransitionFrameCodec.PREAMBLE_BYTES, bytesRead.get());
+            assertFalse(channels.getLast().isOpen());
+            assertThrows(IOException.class, () -> authority.requirePrefix(
+                    new RevocationTransitionFeed.HighWatermark(STORE_ID, prefix.globalRevision(), "f".repeat(64)),
+                    prefix.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertFalse(channels.getLast().isOpen());
+            assertThrows(IllegalArgumentException.class, () -> authority.requirePrefix(
+                    new RevocationTransitionFeed.HighWatermark(OTHER_STORE_ID, prefix.globalRevision(), prefix.globalCommitment().value()),
+                    prefix.boundary(), zeroecho.core.io.CancellationSignal.NONE));
+            assertFalse(channels.getLast().isOpen());
+            assertEquals(scans, authority.revocationLogScanInvocationCount());
+        }
+    }
+
+    @Test
+    void prefixCancellationBeforeOpenAndAfterEofPreservesCheckedFailureAndClosesChannel() throws Exception {
+        for (boolean empty : List.of(true, false)) {
+            Path root = temporaryDirectory.resolve("prefix-cancel-" + empty);
+            try (FilesystemRevocationAuthority authority = authority(root, STORE_ID, true)) {
+                if (!empty) append(authority, "credential:head", 1);
+            }
+            List<CountingChannel> channels = new ArrayList<>();
+            IOException closeFailure = new IOException("controlled close failure");
+            FilesystemRevocationAuthority.FeedChannelFactory factory = path -> {
+                CountingChannel channel = new CountingChannel(FileChannel.open(path, StandardOpenOption.READ), new AtomicLong());
+                channel.closeFailure = closeFailure;
+                channels.add(channel);
+                return channel;
+            };
+            try (FilesystemRevocationAuthority authority = FilesystemRevocationAuthority.open(new FsPaths(root), STORE_ID,
+                    credentialId -> { }, false, FilesystemRevocationAuthority.IndexUpdateFaultInjector.NONE, factory)) {
+                FilesystemRevocationLog.RecoveryTarget head = authority.head();
+                assertThrows(InterruptedIOException.class, () -> authority.requirePrefix(watermark(head), head.boundary(), () -> true));
+                assertTrue(channels.isEmpty());
+                AtomicLong checks = new AtomicLong();
+                InterruptedIOException cancelled = assertThrows(InterruptedIOException.class,
+                        () -> authority.requirePrefix(watermark(head), head.boundary(), () -> checks.incrementAndGet() >= 2));
+                assertEquals(2, checks.get());
+                assertEquals(1, channels.size());
+                assertFalse(channels.getFirst().isOpen());
+                assertEquals(List.of(closeFailure), List.of(cancelled.getSuppressed()));
+                assertEquals(closeFailure, assertThrows(IOException.class, () -> authority.requirePrefix(
+                        watermark(head), head.boundary(), zeroecho.core.io.CancellationSignal.NONE)));
+                assertFalse(channels.getLast().isOpen());
+            }
+        }
+    }
+
+    private static RevocationTransitionFeed.HighWatermark watermark(FilesystemRevocationLog.RecoveryTarget head) {
+        return new RevocationTransitionFeed.HighWatermark(head.storeId(), head.globalRevision(), head.globalCommitment().value());
+    }
+
+    @Test
     void streamsGlobalAppendOrderWithCapturedHeadIsolation() throws Exception {
         try (FilesystemRevocationAuthority authority = authority(temporaryDirectory.resolve("ordered"), STORE_ID,
                 true)) {
@@ -302,6 +429,7 @@ final class FilesystemRevocationTransitionFeedTest {
     private static final class CountingChannel implements SeekableByteChannel {
         private final SeekableByteChannel delegate;
         private final AtomicLong bytesRead;
+        private IOException closeFailure;
 
         private CountingChannel(SeekableByteChannel delegate, AtomicLong bytesRead) {
             this.delegate = delegate;
@@ -325,7 +453,10 @@ final class FilesystemRevocationTransitionFeedTest {
             delegate.truncate(size); return this;
         }
         @Override public boolean isOpen() { return delegate.isOpen(); }
-        @Override public void close() throws IOException { delegate.close(); }
+        @Override public void close() throws IOException {
+            delegate.close();
+            if (closeFailure != null) throw closeFailure;
+        }
     }
 
     /** Observes only backing-array identity and never mutates caller buffers. */

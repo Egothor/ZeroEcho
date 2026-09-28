@@ -44,6 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -54,6 +55,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -65,6 +68,89 @@ import zeroecho.pki.spi.store.MetadataSnapshot;
 import zeroecho.pki.spi.store.MetadataTransactionId;
 
 final class SigningLedgerCoordinatorCapacityTest {
+
+    @Test
+    void usableSpaceProbeRunsOnlyOnMaintenanceCoordinator(@TempDir Path temporary)
+            throws Exception {
+        AtomicInteger observations = new AtomicInteger();
+        AtomicLong nanoTime = new AtomicLong(100L);
+        AtomicReference<String> observerThread = new AtomicReference<>();
+        CountDownLatch observed = new CountDownLatch(1);
+        SigningLedgerStoreEngine.installUsableSpaceObserver(
+                new SigningLedgerStoreEngine.UsableSpaceObserver() {
+                    @Override public void observe(Thread thread) {
+                        observations.incrementAndGet();
+                        observerThread.compareAndSet(null, thread.getName());
+                        observed.countDown();
+                    }
+
+                    @Override public long nanoTime() {
+                        return nanoTime.get();
+                    }
+        });
+        try {
+            Path root = Files.createDirectory(temporary.resolve("space-probe-thread"));
+            try (SigningLedgerStoreEngine engine = SigningLedgerStoreEngine.create(root, STORE_ID,
+                    null, SigningDueWorkIndex.FOUR_GIB_MAXIMUM_WORK, maintenanceConfiguration(),
+                    FsPkiStoreOptions.DEFAULT_RESIDENT_INDEX_BUDGET_BYTES,
+                    FsPkiStoreOptions.DEFAULT_TRANSIENT_INDEX_BUDGET_BYTES)) {
+                assertEquals(MetadataCommitResult.Outcome.COMMITTED,
+                        engine.directCommit(List.of(mutation("acceptance-path", 1))).outcome());
+                assertEquals(0, observations.get(),
+                        "admission and commit must perform no filesystem-space observation");
+
+                rejectForHeadroom(engine, "space-probe-trigger");
+                awaitActiveGeneration(engine, root, 2L);
+
+                assertTrue(observed.await(5L, TimeUnit.SECONDS));
+                assertEquals(1, observations.get());
+                assertEquals("zeroecho-metadata-maintenance-coordinator", observerThread.get());
+
+                assertEquals(MetadataCommitResult.Outcome.COMMITTED,
+                        engine.directCommit(List.of(mutation("space-fill-2", 1))).outcome());
+                rejectForHeadroom(engine, "space-probe-rate-limited");
+                awaitActiveGeneration(engine, root, 3L);
+                assertEquals(1, observations.get(),
+                        "a second maintenance pass in the interval must not query the filesystem");
+
+                nanoTime.addAndGet(Duration.ofMinutes(1L).toNanos());
+                assertEquals(MetadataCommitResult.Outcome.COMMITTED,
+                        engine.directCommit(List.of(mutation("space-fill-3", 1))).outcome());
+                rejectForHeadroom(engine, "space-probe-next-interval");
+                awaitActiveGeneration(engine, root, 4L);
+                assertEquals(2, observations.get());
+            }
+        } finally {
+            SigningLedgerStoreEngine.clearUsableSpaceObserver();
+        }
+    }
+
+    @Test
+    void softUsableSpaceObservationIsHystereticRateLimitedAndRedacted() {
+        SigningLedgerStoreEngine.SoftUsableSpaceObservation observation =
+                new SigningLedgerStoreEngine.SoftUsableSpaceObservation(10L);
+
+        assertTrue(observation.beginProbe(0L));
+        assertFalse(observation.beginProbe(9L));
+        assertTrue(observation.beginProbe(10L));
+        assertTrue(observation.observe(99L, 100L, 0L));
+        assertFalse(observation.observe(99L, 100L, 9L));
+        assertTrue(observation.observe(99L, 100L, 10L));
+        assertFalse(observation.observe(150L, 100L, 11L),
+                "the observation remains low until the two-times-threshold hysteresis boundary");
+        assertFalse(observation.observe(200L, 100L, 12L));
+        assertTrue(observation.observe(99L, 100L, 13L),
+                "restoration rearms an immediate warning on the next low observation");
+        assertFalse(observation.observe(Long.MAX_VALUE, Long.MAX_VALUE, 14L),
+                "the hysteresis computation must not overflow at the configured long bound");
+
+        String warning = SigningLedgerStoreEngine.usableSpaceWarning(99L, 100L);
+        assertEquals("Filesystem usable space is low: code=FILESYSTEM_USABLE_SPACE_LOW usable=99 "
+                + "threshold=100; recovery may require operator action", warning);
+        assertFalse(warning.contains("/") || warning.contains("\\")
+                || warning.contains("operation") || warning.contains("key"),
+                "the warning exposes only the approved numeric observation and stable code");
+    }
     private static final MetadataStoreId STORE_ID =
             new MetadataStoreId("1234567890abcdef1234567890abcdef");
 
@@ -346,65 +432,6 @@ final class SigningLedgerCoordinatorCapacityTest {
     }
 
     @Test
-    void protectedProgressReleaseWakesAcceptedWorkWithoutRestartingMaintenance(
-            @TempDir Path temporary) throws Exception {
-        Path root = Files.createDirectory(temporary.resolve("protected-release"));
-        CountDownLatch restored = new CountDownLatch(1);
-        AtomicReference<Long> restoredEpoch = new AtomicReference<>();
-        try (SigningLedgerStoreEngine engine = SigningLedgerStoreEngine.create(root, STORE_ID);
-                AutoCloseable ignored = engine.registerHeadroomRestored(
-                        new AtomicLocalSigningLedgerParticipant.HeadroomListener() {
-                            @Override
-                            public void restored(long epoch) {
-                                restoredEpoch.set(epoch);
-                                restored.countDown();
-                            }
-
-                            @Override
-                            public void recoveryRequired() {
-                                throw new AssertionError("store unexpectedly requires recovery");
-                            }
-                        })) {
-            SigningIndexCapacityBudget probeBudget = new SigningIndexCapacityBudget(1L);
-            SigningIndexCapacityBudget.CapacityExceededException exhausted = assertThrows(
-                    SigningIndexCapacityBudget.CapacityExceededException.class,
-                    () -> probeBudget.reserve(2L,
-                            SigningTransitionWorkspaceSizing.AdmissionClass
-                                    .PROTECTED_ACCEPTED_SIGNING));
-            long initialPasses = engine.maintenanceCoordinatorSnapshot().passes();
-            long initialEpoch = engine.headroomRestorationEpoch();
-
-            engine.signalProtectedProgressPressure(exhausted);
-            SigningLedgerStoreEngine.MaintenanceCoordinatorSnapshot yielded =
-                    awaitMaintenanceState(engine, initialPasses + 1L, false, null);
-            assertFalse(yielded.requested());
-
-            SigningLedgerStoreEngine.ConditionalCommitResult committed =
-                    engine.directCommitAtAdmission(
-                            new SigningLedgerStoreEngine.ConditionalDirectCommit(
-                                    List.of(mutation("protected-release-primary", 1)),
-                                    List.of(mutation("protected-release-fallback", 1)),
-                                    () -> false, () -> { }));
-            assertFalse(committed.primaryAdmitted());
-            assertEquals(MetadataCommitResult.Outcome.COMMITTED,
-                    committed.result().outcome());
-            assertTrue(restored.await(5L, TimeUnit.SECONDS));
-            assertEquals(initialEpoch + 1L, restoredEpoch.get());
-            // The fallback commit's post-publish signalMaintenance() briefly re-arms the
-            // coordinator to re-check WAL rotation; that wake performs no pass. Wait for
-            // the coordinator to quiesce at the unchanged pass count instead of sampling
-            // the transient request, which otherwise races the maintenance thread. A
-            // genuine maintenance restart would advance the pass count and time this out.
-            SigningLedgerStoreEngine.MaintenanceCoordinatorSnapshot afterRelease =
-                    awaitMaintenanceState(engine, yielded.passes(), false, null);
-            assertEquals(yielded.passes(), afterRelease.passes());
-            assertFalse(afterRelease.requested());
-            assertFalse(afterRelease.deferred());
-            assertNull(engine.firstRecoveryFailure());
-        }
-    }
-
-    @Test
     void persistentTransientDeferralIgnoresUnrelatedCommitsWithoutTopologyChurn(
             @TempDir Path temporary) throws Exception {
         Path root = Files.createDirectory(temporary.resolve("transient-deferral"));
@@ -543,8 +570,7 @@ final class SigningLedgerCoordinatorCapacityTest {
                             MetadataSnapshot.KeyRange.prefix("io.zeroecho.test", "")))),
                     captures.submit(() -> close(engine.selectCurrentRange(
                             MetadataSnapshot.KeyRange.prefix("io.zeroecho.test", "")))),
-                    captures.submit(() -> close(engine.pageDue(Instant.MAX,
-                            Optional.empty(), Optional.empty(), 1))),
+                    captures.submit(() -> selectDue(engine)),
                     captures.submit(() -> close(engine.pageOwners(Optional.empty(), 1))));
             AtomicBoolean interruptedStatus = new AtomicBoolean();
             AtomicReference<Throwable> interruptedFailure = new AtomicReference<>();
@@ -608,8 +634,15 @@ final class SigningLedgerCoordinatorCapacityTest {
             assertTrue(cutoverPaused.await(5L, TimeUnit.SECONDS));
 
             try {
+                SigningActiveWal.Snapshot beforeRejection = engine.writerSnapshot();
                 assertThrows(SigningActiveWal.OverloadedException.class,
-                        engine::reserveSigningAdmission);
+                        engine::reserveAcceptanceCapacity);
+                SigningActiveWal.Snapshot afterRejection = engine.writerSnapshot();
+                assertEquals(beforeRejection.outstandingRequests(),
+                        afterRejection.outstandingRequests(),
+                        "coordinator rejection must occur before WAL intent admission");
+                assertEquals(beforeRejection.rejected(), afterRejection.rejected(),
+                        "coordinator rejection must not be reclassified as WAL queue rejection");
                 assertNull(engine.firstRecoveryFailure());
             } finally {
                 releaseCutover.countDown();
@@ -643,6 +676,11 @@ final class SigningLedgerCoordinatorCapacityTest {
 
     private static boolean close(AutoCloseable closeable) throws Exception {
         closeable.close();
+        return true;
+    }
+
+    private static boolean selectDue(SigningLedgerStoreEngine engine) throws Exception {
+        engine.pageDue(Instant.MAX, Optional.empty(), Optional.empty(), 1);
         return true;
     }
 

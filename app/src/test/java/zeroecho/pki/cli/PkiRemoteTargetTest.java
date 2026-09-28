@@ -66,6 +66,17 @@ class PkiRemoteTargetTest {
         assertFalse(diagnostic.toString().contains(sentinel));
     }
 
+    @Test
+    void preservesExistingEnvironmentReferenceSpellingAndRejectsDanglingOptions() {
+        PkiRemoteTarget target = PkiRemoteTarget.parse("https://pki.example", "client.p12", "lowercase_env",
+                null, null, null, null);
+        assertEquals("lowercase_env", target.clientKeystorePasswordEnv().orElseThrow());
+        assertThrows(IllegalArgumentException.class, () -> PkiRemoteTarget.parse("https://pki.example", null,
+                "orphan", "client.pem", "client.key", null, null));
+        assertThrows(IllegalArgumentException.class, () -> PkiRemoteTarget.parse("https://pki.example", "client.p12",
+                null, null, null, null, "orphan"));
+    }
+
     private static void assertThrowableGraphDoesNotContain(Throwable failure, String sentinel) {
         Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         ArrayDeque<Throwable> pending = new ArrayDeque<>();

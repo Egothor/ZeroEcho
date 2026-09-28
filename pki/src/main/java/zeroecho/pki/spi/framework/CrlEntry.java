@@ -45,8 +45,8 @@ import zeroecho.pki.api.revocation.RevocationReason;
  * <p>
  * The serial number retains the full positive X.509 integer domain. The
  * transition time is authoritative runtime state and is not replaced by CRL
- * generation time. {@link RevocationReason#REMOVE_FROM_CRL} is excluded because
- * removal is represented by omission from the current CRL.
+ * generation time. {@link RevocationReason#REMOVE_FROM_CRL} represents a release
+ * in a delta CRL; a full CRL writer must reject that reason.
  * </p>
  *
  * @param serialNumber   positive certificate serial number
@@ -59,8 +59,7 @@ public record CrlEntry(BigInteger serialNumber, Instant transitionTime, Revocati
      * Validates one structured CRL entry.
      *
      * @throws IllegalArgumentException if the serial is non-positive, a value is
-     *                                  missing, or the reason is
-     *                                  {@code REMOVE_FROM_CRL}
+     *                                  missing
      */
     public CrlEntry {
         Objects.requireNonNull(serialNumber, "serialNumber");
@@ -68,9 +67,6 @@ public record CrlEntry(BigInteger serialNumber, Instant transitionTime, Revocati
         Objects.requireNonNull(reason, "reason");
         if (serialNumber.signum() <= 0) {
             throw new IllegalArgumentException("serialNumber must be positive");
-        }
-        if (reason == RevocationReason.REMOVE_FROM_CRL) {
-            throw new IllegalArgumentException("REMOVE_FROM_CRL is not an active CRL entry");
         }
     }
 }

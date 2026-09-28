@@ -43,7 +43,7 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 
 import zeroecho.core.io.CancellationSignal;
-import zeroecho.pki.application.PkiOperation;
+import zeroecho.pki.api.PkiId;
 import zeroecho.pki.application.PkiOperationFailure;
 import zeroecho.pki.application.PkiOperationOutcome;
 import zeroecho.pki.application.PkiOperationResult;
@@ -52,23 +52,10 @@ import zeroecho.pki.application.PkiOperationValue;
 /** Sequential shared executor used by direct commands and batch plans. */
 final class PkiPlanExecutor {
 
-    /** Default bounded wait for an asynchronously-signed operation to terminalize before a clean pending exit. */
-    /* default */ static final java.time.Duration DEFAULT_PENDING_WAIT = java.time.Duration.ofSeconds(3);
-    private static final long PENDING_POLL_MILLIS = 100L;
-
     private final PkiOperationRegistry registry;
-    private final java.time.Duration pendingWait;
 
     /* default */ PkiPlanExecutor(PkiOperationRegistry registry) {
-        this(registry, DEFAULT_PENDING_WAIT);
-    }
-
-    /* default */ PkiPlanExecutor(PkiOperationRegistry registry, java.time.Duration pendingWait) {
         this.registry = Objects.requireNonNull(registry, "registry");
-        this.pendingWait = Objects.requireNonNull(pendingWait, "pendingWait");
-        if (pendingWait.isNegative()) {
-            throw new IllegalArgumentException("pendingWait must not be negative");
-        }
     }
 
     /* default */ PkiPlanExecution execute(PkiPlan plan, PkiOperationTransport transport,
@@ -90,6 +77,15 @@ final class PkiPlanExecutor {
             if (cancellation.isCancelled()) {
                 PkiPlanExecution.StepResult result = PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
                         PkiOperationFailure.CANCELLED, "OPERATION_CANCELLED");
+                PkiOperationValue requested = step.arguments();
+                try {
+                    Resolution resolved = resolve(requested, successful, states);
+                    if (!resolved.dependencyUnavailable()) { requested = resolved.value(); }
+                } catch (IllegalArgumentException invalidReference) {
+                    // Cancellation remains authoritative when an earlier output field is unavailable.
+                    requested = step.arguments();
+                }
+                result = retainRequestedId(step.operation(), requested, result);
                 results.add(result);
                 states.put(step.id(), result.status());
                 cancelled = true;
@@ -127,64 +123,52 @@ final class PkiPlanExecutor {
         return new PkiPlanExecution(results);
     }
 
+    // This custody boundary must classify or clean up every provider/runtime failure while preserving the established outcome.
+    @SuppressWarnings({ "PMD.AvoidCatchingGenericException" })
     private PkiPlanExecution.StepResult executeStep(PkiPlan.Step step, PkiOperationValue value, PkiPlan plan,
             PkiOperationTransport transport, CancellationSignal cancellation) {
+        PkiPlanExecution.StepResult result;
         try {
-            PkiOperation operation = registry.bind(step.operation(), PkiCliConfiguration.object(value),
-                    plan.baseDirectory());
-            PkiOperationOutcome outcome = executeWithBoundedWait(operation, transport, cancellation);
-            if (outcome instanceof PkiOperationOutcome.Completed success) {
-                return PkiPlanExecution.StepResult.success(step.id(), step.operation(), success.result());
-            }
-            if (outcome instanceof PkiOperationOutcome.Pending) {
-                // Bounded wait elapsed with the (asynchronously/remotely signed) operation still pending.
-                // Exit cleanly on the distinct EXTERNAL_OUTCOME_UNKNOWN classification so the operator can
-                // resume the operation later; no partial result is fabricated.
-                return PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
-                        PkiOperationFailure.EXTERNAL_OUTCOME_UNKNOWN,
-                        "OPERATION_PENDING");
-            }
-            PkiOperationOutcome.Failed failure = (PkiOperationOutcome.Failed) outcome;
-            return PkiPlanExecution.StepResult.failure(step.id(), step.operation(), failure.classification(),
-                    failure.code());
+            PkiLocalCommand command = registry.bind(step.operation(), PkiCliConfiguration.object(value), plan.baseDirectory());
+            PkiLocalResult executed = transport.execute(command, cancellation);
+            PkiOperationOutcome outcome = executed.outcome();
+            result = switch (outcome) {
+                case PkiOperationOutcome.Completed success ->
+                    PkiPlanExecution.StepResult.success(step.id(), step.operation(), success.result());
+                case PkiOperationOutcome.Pending ignored ->
+                    PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
+                            PkiOperationFailure.EXTERNAL_OUTCOME_UNKNOWN, "OPERATION_PENDING");
+                case PkiOperationOutcome.Failed failure ->
+                    PkiPlanExecution.StepResult.failure(step.id(), step.operation(), failure.classification(), failure.code());
+            };
+            if (executed.operationId().isPresent()) { result = result.withOperationId(executed.operationId().orElseThrow()); }
         } catch (IllegalArgumentException failure) {
-            return PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
+            result = PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
                     PkiOperationFailure.VALIDATION_FAILURE, "OPERATION_ARGUMENTS_INVALID");
         } catch (IOException failure) {
-            return PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
+            result = PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
                     PkiOperationFailure.RESOURCE_FAILURE, "OPERATION_INPUT_FAILED");
-        } catch (RuntimeException failure) { // NOPMD - application boundary redacts unexpected provider details.
-            return PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
+        } catch (RuntimeException failure) {
+            result = PkiPlanExecution.StepResult.failure(step.id(), step.operation(),
                     PkiOperationFailure.INTERNAL_FAILURE, "INTERNAL_FAILURE");
         }
+        return retainRequestedId(step.operation(), value, result);
     }
 
-    // Executes one operation and, while it is Pending (an asynchronous/remote signing outcome), re-checks
-    // it by bounded re-execution until it terminalizes or the pending-wait deadline elapses. This realizes
-    // the openssl-like synchronous model over an asynchronous signer: wait briefly, then exit cleanly for
-    // operator resume. With the default local synchronous signer the first execution already terminalizes,
-    // so the loop body never runs; re-execution assumes the operation is idempotent (true for the read and
-    // status operations; for a remotely-signed issuance the operator drives resume rather than a long wait).
-    // Bounded synchronous CLI polling owns no worker thread and restores interruption before returning.
-    @SuppressWarnings("PMD.DoNotUseThreads")
-    private PkiOperationOutcome executeWithBoundedWait(PkiOperation operation, PkiOperationTransport transport,
-            CancellationSignal cancellation) {
-        PkiOperationOutcome outcome = transport.execute(operation, cancellation);
-        if (!(outcome instanceof PkiOperationOutcome.Pending) || pendingWait.isZero()) {
-            return outcome;
-        }
-        long deadlineNanos = System.nanoTime() + pendingWait.toNanos();
-        while (outcome instanceof PkiOperationOutcome.Pending && !cancellation.isCancelled()
-                && System.nanoTime() < deadlineNanos) {
+    private static PkiPlanExecution.StepResult retainRequestedId(String operation, PkiOperationValue arguments,
+            PkiPlanExecution.StepResult result) {
+        if (result.operationId().isEmpty()
+                && (PkiLocalCommand.INSPECT.equals(operation) || PkiLocalCommand.COMPLETE.equals(operation))
+                && arguments instanceof PkiOperationValue.ObjectValue object
+                && object.fields().get("operationId") instanceof PkiOperationValue.Text text
+                && !PkiPlanParser.REFERENCE.matcher(text.value()).matches()) {
             try {
-                Thread.sleep(PENDING_POLL_MILLIS);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                return outcome;
+                return result.withOperationId(new PkiId(text.value()));
+            } catch (IllegalArgumentException invalid) {
+                return result;
             }
-            outcome = transport.execute(operation, cancellation);
         }
-        return outcome;
+        return result;
     }
 
     private static Resolution resolve(PkiOperationValue value, Map<String, PkiOperationResult> successful,

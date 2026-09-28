@@ -673,6 +673,45 @@ public final class ServerControlStore implements AutoCloseable {
     }
 
     /**
+     * Selects capabilities for one already-authorized object in ascending capability-ID order.
+     * The namespace is scanned once; O(N log L) comparisons and O(L) retained rows, plus decoded record I/O.
+     * @param objectId exact object whose disclosure-read scope the gateway authorized
+     * @param after exclusive capability identifier
+     * @param limit maximum rows, 1 through 1001 including lookahead
+     * @param cancellation cooperative cancellation checked for each record
+     * @return immutable bounded page; no global count or namespace cursor
+     */
+    public synchronized List<DisclosureService.Capability> selectCapabilities(PkiId objectId,
+            Optional<String> after, int limit, CancellationSignal cancellation) {
+        requireOpen();
+        Objects.requireNonNull(objectId, "objectId");
+        Objects.requireNonNull(after, "after").ifPresent(value -> Permission.requireId(value, "capability cursor"));
+        Objects.requireNonNull(cancellation, "cancellation");
+        if (limit < 1 || limit > 1001) { throw new IllegalArgumentException("Capability selection limit is invalid"); }
+        Comparator<DisclosureService.Capability> order = Comparator.comparing(DisclosureService.Capability::capabilityId);
+        java.util.Queue<DisclosureService.Capability> selected = new java.util.PriorityQueue<>(limit, order.reversed());
+        try (MetadataSnapshot snapshot = metadata.snapshot();
+                MetadataCursor cursor = snapshot.scan(MetadataSnapshot.KeyRange.all(CAPABILITY), cancellation)) {
+            Optional<MetadataSnapshot.Record> next;
+            while ((next = cursor.next(cancellation)).isPresent()) {
+                try (MetadataSnapshot.Record record = next.orElseThrow()) {
+                    DisclosureService.Capability candidate = decode(record, KIND_CAPABILITY, ServerControlStore::readCapability);
+                    if (!record.key().equals(key(CAPABILITY, candidate.capabilityId()))) {
+                        throw new IllegalStateException("Capability metadata identity mismatch");
+                    }
+                    if (!candidate.objectId().equals(objectId)
+                            || after.isPresent() && candidate.capabilityId().compareTo(after.orElseThrow()) <= 0) { continue; }
+                    if (selected.size() < limit) { selected.add(candidate); }
+                    else if (order.compare(candidate, selected.element()) < 0) { selected.remove(); selected.add(candidate); }
+                }
+            }
+            return selected.stream().sorted(order).toList();
+        } catch (java.io.InterruptedIOException cancelled) {
+            throw new java.util.concurrent.CancellationException("Capability selection cancelled");
+        } catch (IOException failure) { throw new IllegalStateException("Capability selection failed"); }
+    }
+
+    /**
      * Lists capability commitments bound to one object.
      *
      * @param objectId exact protected object identifier

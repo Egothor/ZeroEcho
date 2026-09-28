@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.attr.AttributeSet;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 
-/** Closed round-trip of the system status-generation evidence vocabulary (Task 8a status slice). */
+/** Closed round-trip of the system status-generation evidence vocabulary. */
 class StatusGenerationEvidenceTest {
 
     @Test

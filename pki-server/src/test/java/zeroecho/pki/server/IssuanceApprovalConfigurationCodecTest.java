@@ -47,7 +47,7 @@ import org.junit.jupiter.api.Test;
 
 import zeroecho.pki.server.OperationSecurityDescriptors.ApprovalCategory;
 
-/** Verifies Task 7 config-file wiring of issuance-approval policies with tamper-evident B' commitment. */
+/** Verifies configuration-file wiring of issuance-approval policies with tamper-evident B' commitment. */
 class IssuanceApprovalConfigurationCodecTest {
     private static final Path PRODUCTION_EXAMPLE = Path.of("..", "docs", "pki-server-production-example.json");
 

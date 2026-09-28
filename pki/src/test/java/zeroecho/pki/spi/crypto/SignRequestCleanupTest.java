@@ -83,18 +83,18 @@ final class SignRequestCleanupTest {
     void fingerprintBindsExactCommitmentAndNotContentIdentifier() {
         AccessContext context = new AccessContext(new Principal("SYSTEM", "commitment"), new Purpose("SIGN"),
                 Optional.empty(), Optional.empty());
-        SignatureWorkflow.ContentCommitment first = SignatureWorkflow.ContentCommitment
+        SigningProvider.ContentCommitment first = SigningProvider.ContentCommitment
                 .sha256(new byte[] { 1, 2, 3 });
-        SignatureWorkflow.ContentCommitment second = SignatureWorkflow.ContentCommitment
+        SigningProvider.ContentCommitment second = SigningProvider.ContentCommitment
                 .sha256(new byte[] { 1, 2, 4 });
-        SignatureWorkflow.ConfigurationCommitment configuration = configurationCommitment(1);
-        String firstFingerprint = SignatureWorkflow.SignRequest.fingerprint(configuration, "store.provider", context,
+        SigningProvider.ConfigurationCommitment configuration = configurationCommitment(1);
+        String firstFingerprint = SigningProvider.SignRequest.fingerprint(configuration, "store.provider", context,
                 new KeyRef("provider:key"), "SHA256withRSA", first, Optional.of(Encoding.BINARY), Optional.empty());
-        String secondFingerprint = SignatureWorkflow.SignRequest.fingerprint(configuration, "store.provider", context,
+        String secondFingerprint = SigningProvider.SignRequest.fingerprint(configuration, "store.provider", context,
                 new KeyRef("provider:key"), "SHA256withRSA", second, Optional.of(Encoding.BINARY), Optional.empty());
         assertTrue(firstFingerprint.startsWith("signfp:v3:"));
         assertNotEquals(firstFingerprint, secondFingerprint);
-        assertNotEquals(firstFingerprint, SignatureWorkflow.SignRequest.fingerprint(configurationCommitment(2),
+        assertNotEquals(firstFingerprint, SigningProvider.SignRequest.fingerprint(configurationCommitment(2),
                 "store.provider", context, new KeyRef("provider:key"), "SHA256withRSA", first,
                 Optional.of(Encoding.BINARY), Optional.empty()));
     }
@@ -102,18 +102,18 @@ final class SignRequestCleanupTest {
     private static String fingerprint(MessageDigest digest, List<byte[]> cleared) {
         AccessContext context = new AccessContext(new Principal("SYSTEM", "cleanup"), new Purpose("SIGN"),
                 Optional.of(new PkiId("cleanup-operation")), Optional.empty());
-        return SignatureWorkflow.SignRequest.fingerprintWithDigest(configurationCommitment(1),
+        return SigningProvider.SignRequest.fingerprintWithDigest(configurationCommitment(1),
                 "cleanup.namespace", context,
                 new KeyRef("provider:key"), "SHA256withRSA",
-                SignatureWorkflow.ContentCommitment.sha256(new byte[] { 1, 2, 3, 4 }),
+                SigningProvider.ContentCommitment.sha256(new byte[] { 1, 2, 3, 4 }),
                 Optional.of(Encoding.BINARY),
                 Optional.of(Instant.parse("2026-08-01T00:00:00Z")), digest, cleared::add);
     }
 
-    private static SignatureWorkflow.ConfigurationCommitment configurationCommitment(int marker) {
-        byte[] bytes = new byte[SignatureWorkflow.ConfigurationCommitment.BYTE_LENGTH];
+    private static SigningProvider.ConfigurationCommitment configurationCommitment(int marker) {
+        byte[] bytes = new byte[SigningProvider.ConfigurationCommitment.BYTE_LENGTH];
         bytes[0] = (byte) marker;
-        return new SignatureWorkflow.ConfigurationCommitment(bytes);
+        return new SigningProvider.ConfigurationCommitment(bytes);
     }
 
     private static boolean isCleared(byte[] bytes) {

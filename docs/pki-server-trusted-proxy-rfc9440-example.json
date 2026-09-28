@@ -18,7 +18,7 @@
     "controlStoreId": "0123456789abcdef0123456789abcdef",
     "approvalPolicy": {"policyId":"high-risk","threshold":1,"eligibleApprovers":["bootstrap-approver"],"requiredRoleTemplateIds":[],"requesterSeparation":true,"lifetimeMillis":3600000,"justificationRequired":true},
     "pkiSession": {
-      "version": 1,
+      "version": 6,
       "store": {"id":"fs","properties":{"root":"state/pki"}},
       "audit": {"id":"file","properties":{"root":"state/audit"}},
       "publishers": [],
@@ -46,7 +46,7 @@
     "maximumForwardedChainBytes": 524288
   },
   "execution": {"transportWorkers":8,"transportQueueCapacity":64,"operationWorkers":4,"operationQueueCapacity":32,"maximumAdmittedRequests":96,"defaultDeadlineMillis":30000,"maximumDeadlineMillis":120000,"gracefulShutdownMillis":30000,"forcedShutdownMillis":10000},
-  "signingReconciliation": {"enabled":true,"maxRecords":256,"maxCalls":64,"passTimeoutMillis":30000,"providerCallTimeoutMillis":10000,"idleIntervalMillis":2000},
+  "auditProjection": {"maxRecords": 256, "maxSinkCalls": 64, "idleIntervalMillis": 2000},
   "publicListener": {
     "enabled":true,
     "address":"127.0.0.1",

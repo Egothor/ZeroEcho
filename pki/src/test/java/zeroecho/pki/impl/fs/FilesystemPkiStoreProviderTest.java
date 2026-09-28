@@ -31,12 +31,19 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
+
 package zeroecho.pki.impl.fs;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigInteger;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
@@ -45,24 +52,39 @@ import org.junit.jupiter.api.io.TempDir;
 import zeroecho.pki.spi.ProviderConfig;
 import zeroecho.pki.spi.store.PkiStore;
 
-/** Provider parsing of the operator opt-in signing-evidence-audit flag (Task 8a signing slice). */
 final class FilesystemPkiStoreProviderTest {
-
     @Test
-    void signingEvidenceAuditDefaultsToDisabled(@TempDir Path root) throws Exception {
+    void defaultsAndCanonicalValuesFlowThroughSharedAllocationOptions(@TempDir Path directory) throws Exception {
         FilesystemPkiStoreProvider provider = new FilesystemPkiStoreProvider();
-        try (PkiStore store = provider.allocate(
-                new ProviderConfig("fs", Map.of("root", root.resolve("a").toString())))) {
-            assertFalse(store.supportsSigningEvidenceFeed());
+        assertTrue(provider.supportedKeys().contains("initialCrlNumber"));
+        ProviderConfig defaults = new ProviderConfig("fs", Map.of("root", directory.resolve("default").toString()));
+        provider.validateConfig(defaults);
+        assertEquals(BigInteger.ONE, FilesystemPkiStoreProvider.options(defaults).initialCrlNumber());
+        for (String value : List.of("0", "1", "12345", BigInteger.ONE.shiftLeft(159).subtract(BigInteger.ONE).toString())) {
+            ProviderConfig config = config(directory.resolve(value), value);
+            provider.validateConfig(config);
+            assertEquals(new BigInteger(value), FilesystemPkiStoreProvider.options(config).initialCrlNumber());
+            try (PkiStore store = provider.allocate(config)) {
+                assertInstanceOf(FilesystemPkiStore.class, store);
+            }
         }
     }
 
     @Test
-    void signingEvidenceAuditEnabledByConfig(@TempDir Path root) throws Exception {
+    void validationAndAllocationRejectNoncanonicalOrOutOfRangeBeforeCreatingStore(@TempDir Path directory) {
         FilesystemPkiStoreProvider provider = new FilesystemPkiStoreProvider();
-        try (PkiStore store = provider.allocate(new ProviderConfig("fs",
-                Map.of("root", root.resolve("b").toString(), "signing-evidence-audit", "true")))) {
-            assertTrue(store.supportsSigningEvidenceFeed());
+        List<String> invalid = List.of("", "-1", "+1", "00", "01", " 1", "1 ", "1\n", "1.0", "1e2",
+                "١", "9".repeat(49), "1".repeat(10000), BigInteger.ONE.shiftLeft(159).toString());
+        for (int index = 0; index < invalid.size(); index++) {
+            Path root = directory.resolve("invalid-" + index);
+            ProviderConfig config = config(root, invalid.get(index));
+            assertThrows(IllegalArgumentException.class, () -> provider.validateConfig(config));
+            assertThrows(IllegalArgumentException.class, () -> provider.allocate(config));
+            assertFalse(Files.exists(root));
         }
+    }
+
+    private static ProviderConfig config(Path root, String value) {
+        return new ProviderConfig("fs", Map.of("root", root.toString(), "initialCrlNumber", value));
     }
 }

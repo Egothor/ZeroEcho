@@ -1,0 +1,134 @@
+/*******************************************************************************
+ * Copyright (C) 2026, Leo Galambos
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this software must
+ *    display the following acknowledgement:
+ *    This product includes software developed by the Egothor project.
+ *
+ * 4. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software without
+ *    specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
+
+package zeroecho.pki.impl.core;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Objects;
+
+import zeroecho.pki.api.Validity;
+import zeroecho.pki.api.PkiId;
+import zeroecho.pki.api.issuance.CorrelatedEndEntityIssuanceRequest;
+import zeroecho.pki.api.issuance.EndEntityIssuanceRequest;
+import zeroecho.pki.api.issuance.IssuanceIntent;
+import zeroecho.pki.api.profile.CertificateProfileRef;
+
+/**
+ * Pure identity derivation shared by issuance lookup and domain preparation.
+ * This internal immutable value grants no authority and owns no runtime resource.
+ *
+ * @param correlationId namespaced key depending only on authority and external issuance ID
+ * @param effectiveCommitment SHA-256 commitment to exact issuance semantics
+ */
+public record CorrelatedIssuanceIdentity(String correlationId, String effectiveCommitment) {
+    /**
+     * Hashes length-framed fields without constructing an aggregate command.
+     * CSR parsing, signature verification and mutable store selection are excluded.
+     * Local time is O(C + F) for CSR bytes C and frozen field bytes F. Hash state
+     * is constant; defensive CSR and individual UTF-8 field snapshots use O(C + F)
+     * transient memory under the public input bounds.
+     *
+     * @param correlated immutable bounded request
+     * @return deterministic key and exact effective commitment
+     * @throws NullPointerException if the request is null
+     */
+    public static CorrelatedIssuanceIdentity derive(CorrelatedEndEntityIssuanceRequest correlated) {
+        Objects.requireNonNull(correlated, "correlated");
+        EndEntityIssuanceRequest request = correlated.request();
+        IssuanceIntent intent = correlated.intent();
+        MessageDigest commitment = sha256();
+        field(commitment, "zeroecho:pki:issuance-effective-command:v1");
+        field(commitment, intent.issuanceId());
+        field(commitment, request.issuerCaId().value());
+        field(commitment, intent.commandCommitment());
+        CertificateProfileRef profile = intent.expectedProfile();
+        field(commitment, profile.profileId());
+        field(commitment, Long.toString(profile.profileVersion()));
+        field(commitment, profile.canonicalSha256());
+        field(commitment, intent.expectedIssuerId().value());
+        field(commitment, intent.expectedChainPathId().value());
+        field(commitment, intent.expectedChainPathCommitment());
+        field(commitment, sha256().digest(request.csrDer()));
+        field(commitment, request.validityOverride().isPresent() ? "present" : "absent");
+        if (request.validityOverride().isPresent()) {
+            Validity validity = request.validityOverride().orElseThrow();
+            field(commitment, validity.notBefore().toString());
+            field(commitment, validity.notAfter().toString());
+        }
+        return new CorrelatedIssuanceIdentity(correlationId(request.issuerCaId(), intent.issuanceId()),
+                HexFormat.of().formatHex(commitment.digest()));
+    }
+
+    /**
+     * Derives the existing correlation key from validated authority and external identity.
+     * Uses the same domain separation and length-framed UTF-8 bytes as request derivation.
+     * No CSR, store lookup or authorization is involved; work is linear in bounded text.
+     * @param authorityId validated issuing authority from a request or retained binding
+     * @param issuanceId validated stable external issuance identity
+     * @return canonical namespaced SHA-256 correlation key
+     * @throws NullPointerException if either coordinate is null
+     */
+    public static String correlationId(PkiId authorityId, String issuanceId) {
+        Objects.requireNonNull(authorityId, "authorityId");
+        Objects.requireNonNull(issuanceId, "issuanceId");
+        MessageDigest key = sha256();
+        field(key, "zeroecho:pki:issuance-correlation:v1");
+        field(key, authorityId.value());
+        field(key, issuanceId);
+        return "issuance." + HexFormat.of().formatHex(key.digest());
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+    }
+
+    private static void field(MessageDigest digest, String value) {
+        field(digest, value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void field(MessageDigest digest, byte[] value) {
+        digest.update((byte) (value.length >>> 24));
+        digest.update((byte) (value.length >>> 16));
+        digest.update((byte) (value.length >>> 8));
+        digest.update((byte) value.length);
+        digest.update(value);
+    }
+}

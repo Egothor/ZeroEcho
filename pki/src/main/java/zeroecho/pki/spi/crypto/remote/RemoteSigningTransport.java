@@ -37,11 +37,23 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.List;
+import java.util.HexFormat;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+
+import zeroecho.core.spec.AlgorithmIdentity;
+import zeroecho.core.alg.BootstrapAlgorithmIdentities;
+import zeroecho.pki.spi.crypto.SigningInputCapabilities;
+import zeroecho.pki.spi.crypto.SigningProvider;
 
 import zeroecho.core.io.CancellationSignal;
 
 /**
- * Technology-neutral wire seam between the PKI's remote signature-workflow
+ * Technology-neutral wire seam between the PKI's remote signing provider
  * provider and a remote signing service.
  *
  * <p>
@@ -69,9 +81,10 @@ import zeroecho.core.io.CancellationSignal;
  * awaiting the service's decision (including an external, typically human,
  * operator approval), {@code SIGNED} once a signature is produced, {@code DENIED}
  * if the signature is refused, and {@code CANCELLED} if the caller's cancellation
- * was honoured. Each status carries an optional non-secret {@code reason}
- * (justification) — typically populated for {@code SIGNED} and {@code DENIED}.
- * Deadline expiry is an orchestration-side overlay, not a remote state.
+ * was honoured. A wire response may carry an untrusted raw reason; the
+ * transport must discard it and expose no such field in
+ * {@link RemoteSigningStatus}. Deadline expiry is an orchestration-side overlay,
+ * not a remote state.
  * </p>
  *
  * <h2>Outcome semantics</h2>
@@ -117,10 +130,10 @@ public interface RemoteSigningTransport extends AutoCloseable {
      * @param fencingToken monotonic fencing token
      * @param reason non-secret cancellation reason
      * @param control per-call deadline and cancellation
-     * @return {@code true} if the cancellation was accepted (not necessarily terminal)
+     * @return the remote operation's current status, echoing the operation id
      * @throws RemoteSigningException if the cancellation outcome is uncertain
      */
-    boolean cancel(String operationId, long fencingToken, String reason, RemoteCallControl control);
+    RemoteSigningStatus cancel(String operationId, long fencingToken, String reason, RemoteCallControl control);
 
     /**
      * Resolves the canonical DER {@code SubjectPublicKeyInfo} for a key handle.
@@ -191,7 +204,11 @@ public interface RemoteSigningTransport extends AutoCloseable {
         /** The signature was refused by policy or an operator. */
         DENIED,
         /** The caller's cancellation was honoured. */
-        CANCELLED;
+        CANCELLED,
+        /** Remote service cannot currently determine whether the operation exists. */
+        UNKNOWN,
+        /** Remote service guarantees the operation outcome cannot be recovered. */
+        UNRECOVERABLE;
 
         /**
          * Indicates whether this state is terminal.
@@ -199,7 +216,7 @@ public interface RemoteSigningTransport extends AutoCloseable {
          * @return {@code true} unless {@link #QUEUED}
          */
         public boolean isTerminal() {
-            return this != QUEUED;
+            return this != QUEUED && this != UNKNOWN;
         }
     }
 
@@ -233,10 +250,95 @@ public interface RemoteSigningTransport extends AutoCloseable {
      * @param principalName audit principal name
      * @param purpose audit purpose
      * @param deadline optional request deadline
+     * @param protocolVersion exact input protocol version
+     * @param inputMode explicit original-message or prehashed-digest mode
+     * @param digestId canonical digest identity only for prehashed input; empty otherwise
+     * @param configurationCommitment expected client-effective configuration
      */
     record RemoteSignRequest(String submissionId, String namespace, String semanticFingerprint, long fencingToken,
             String keyHandle, String algorithmId, String contentSha256, long contentLength, byte[] content,
-            String principalType, String principalName, String purpose, Optional<Instant> deadline) {
+            String principalType, String principalName, String purpose, Optional<Instant> deadline,
+            int protocolVersion, SigningInputCapabilities.Mode inputMode, String digestId,
+            SigningProvider.ConfigurationCommitment configurationCommitment) {
+        /** Validates bounded wire structure and takes ownership of a copy. */
+        public RemoteSignRequest {
+            for (String value : List.of(submissionId, namespace, semanticFingerprint, keyHandle, algorithmId,
+                    contentSha256, principalType, principalName, purpose)) {
+                if (value.isBlank() || value.length() > 8192) {
+                    throw new IllegalArgumentException("Remote request field exceeds its finite bound");
+                }
+            }
+            Objects.requireNonNull(deadline, "deadline");
+            Objects.requireNonNull(inputMode, "inputMode");
+            Objects.requireNonNull(digestId, "digestId");
+            Objects.requireNonNull(configurationCommitment, "configurationCommitment");
+            Objects.requireNonNull(content, "content");
+            if (protocolVersion != SigningInputCapabilities.PROTOCOL_VERSION || fencingToken <= 0
+                    || contentLength < 0 || contentSha256.length() != 64
+                    || !HexFormat.of().formatHex(HexFormat.of().parseHex(contentSha256)).equals(contentSha256)
+                    || content.length > SigningInputCapabilities.REMOTE_RAW_LIMIT || digestId.length() > 8192
+                    || inputMode == SigningInputCapabilities.Mode.RAW_MESSAGE != digestId.isEmpty()) {
+                throw new IllegalArgumentException("Invalid remote signing input contract");
+            }
+            content = content.clone();
+        }
+
+        /** {@return a defensive copy of the raw message or prehash bytes} */
+        @Override public byte[] content() { return content.clone(); }
+
+        /**
+         * Validates against server-captured capabilities, never trusting the
+         * client's mode or semantic fingerprint. In digest mode original length
+         * and SHA-256 are assertions by the authenticated client, not proofs
+         * recomputed by the server.
+         * @param capabilities server's authoritative configuration snapshot
+         * @throws IllegalArgumentException on a configuration or input mismatch
+         */
+        public void validate(RemoteCapabilities capabilities) {
+            SigningInputCapabilities inputs = capabilities.effectiveInputs();
+            if (!capabilities.supportedAlgorithms().contains(algorithmId)
+                    || inputs.select(algorithmId, contentLength) != inputMode
+                    || !capabilities.effectiveCommitment().matches(configurationCommitment)) {
+                throw new IllegalArgumentException("Remote signing capability mismatch");
+            }
+            if (inputMode == SigningInputCapabilities.Mode.PREHASHED_DIGEST) {
+                AlgorithmIdentity digest = inputs.prehashedDigests().get(algorithmId);
+                if (!digest.canonicalForm().equals(digestId)
+                        || content.length != SigningInputCapabilities.digestLength(digest)) {
+                    throw new IllegalArgumentException("Remote prehashed input mismatch");
+                }
+            } else if (content.length != contentLength || !contentSha256.equals(HexFormat.of().formatHex(
+                    SigningInputCapabilities.newDigest(BootstrapAlgorithmIdentities.SHA256).digest(content)))) {
+                throw new IllegalArgumentException("Remote raw content commitment mismatch");
+            }
+        }
+
+        /**
+         * Computes a server-owned replay commitment over every wire coordinate
+         * and payload. No client-supplied fingerprint substitutes for this check.
+         * @return canonical lowercase SHA-256 wire fingerprint
+         */
+        public String wireFingerprint() {
+            MessageDigest digest = SigningInputCapabilities.newDigest(BootstrapAlgorithmIdentities.SHA256);
+            try (DataOutputStream output = new DataOutputStream(new DigestOutputStream(
+                    OutputStream.nullOutputStream(), digest))) {
+                output.writeUTF("zeroecho.remote-signing-wire");
+                output.writeInt(protocolVersion);
+                for (String value : List.of(submissionId, namespace, semanticFingerprint, keyHandle, algorithmId,
+                        contentSha256, principalType, principalName, purpose, digestId, inputMode.name(),
+                        deadline.map(Instant::toString).orElse(""))) {
+                    output.writeUTF(value);
+                }
+                output.write(configurationCommitment.bytes());
+                output.writeLong(fencingToken);
+                output.writeLong(contentLength);
+                output.writeInt(content.length);
+                output.write(content);
+            } catch (IOException impossible) {
+                throw new IllegalStateException("In-memory wire fingerprint failed", impossible);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        }
     }
 
     /**
@@ -245,12 +347,11 @@ public interface RemoteSigningTransport extends AutoCloseable {
      * @param operationId remote operation id
      * @param state remote lifecycle state
      * @param updatedAt server-observed update instant
-     * @param reason optional non-secret justification (typically for {@code SIGNED}/{@code DENIED})
      * @param signature signature bytes, present only on {@link RemoteSigningState#SIGNED}
      * @param signatureEncoding encoding name of the signature (for example {@code BINARY})
      */
     record RemoteSigningStatus(String operationId, RemoteSigningState state, Instant updatedAt,
-            Optional<String> reason, Optional<byte[]> signature, String signatureEncoding) {
+            Optional<byte[]> signature, String signatureEncoding) {
     }
 
     /**
@@ -258,8 +359,37 @@ public interface RemoteSigningTransport extends AutoCloseable {
      *
      * @param supportedAlgorithms advertised signature algorithm identities
      * @param configurationCommitment 32-byte remote configuration commitment
+     * @param protocolVersion exact explicit-input protocol version
+     * @param inputCapabilities finite server input capability snapshot
      */
-    record RemoteCapabilities(Set<String> supportedAlgorithms, byte[] configurationCommitment) {
+    record RemoteCapabilities(Set<String> supportedAlgorithms, byte[] configurationCommitment,
+            int protocolVersion, SigningInputCapabilities inputCapabilities) {
+        /** Validates and snapshots the advertised configuration. */
+        public RemoteCapabilities {
+            supportedAlgorithms = Set.copyOf(supportedAlgorithms);
+            configurationCommitment = new SigningProvider.ConfigurationCommitment(configurationCommitment).bytes();
+            Objects.requireNonNull(inputCapabilities, "inputCapabilities");
+            if (protocolVersion != SigningInputCapabilities.PROTOCOL_VERSION) {
+                throw new IllegalArgumentException("Unsupported remote signing protocol version");
+            }
+            inputCapabilities.commitment(new SigningProvider.ConfigurationCommitment(configurationCommitment),
+                    supportedAlgorithms);
+        }
+
+        /** {@return a defensive copy of the provider configuration commitment} */
+        @Override public byte[] configurationCommitment() { return configurationCommitment.clone(); }
+
+        /** {@return capabilities after applying the client's finite raw wire ceiling} */
+        public SigningInputCapabilities effectiveInputs() {
+            return new SigningInputCapabilities(Math.min(inputCapabilities.rawMessageMaximum(),
+                    SigningInputCapabilities.REMOTE_RAW_LIMIT), inputCapabilities.prehashedDigests());
+        }
+
+        /** {@return deterministic client-effective configuration commitment} */
+        public SigningProvider.ConfigurationCommitment effectiveCommitment() {
+            return effectiveInputs().commitment(new SigningProvider.ConfigurationCommitment(configurationCommitment),
+                    supportedAlgorithms);
+        }
     }
 
     /**

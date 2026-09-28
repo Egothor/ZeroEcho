@@ -41,8 +41,8 @@
 # one command, one synchronous operation, machine-readable JSON on stdout).
 # Output IDs are threaded between invocations by parsing steps[0].output.<field>.
 #
-# Contrast with demo-minimal.sh, which performs the identical scenario as ONE
-# `zeroecho pki run <plan>` batch. Use batch to sign a whole series in one run;
+# Contrast with demo-minimal.sh, which performs the identical scenario as sequential
+# `zeroecho pki run <plan>` batches. Use batch to sign a whole series in one run;
 # use per-operation when scripting incrementally or wiring into other tools.
 #
 # Usage:  ZE_HOME=<dir with bin/app> ./demo-per-operation.sh [workdir]
@@ -63,12 +63,14 @@ done
 echo "== build the two-tier CA =="
 run_op root ca.create \
   --format-id x509 --subject-ref "CN=Example Root CA" --profile-id root-ca --key-ref zeroecho-lib:root.prv
-ROOT_CA="$(field root caId)"; echo "  root CA        : ${ROOT_CA}"
+inspect_ca root
+ROOT_CA="$(field root-certificate authorityId)"; echo "  root CA        : ${ROOT_CA}"
 
 run_op inter ca.intermediate.create \
   --format-id x509 --issuer-ca-id "${ROOT_CA}" --subject-ref "CN=Example Issuing CA" \
   --profile-id intermediate-ca --key-ref zeroecho-lib:intermediate.prv
-INTER_CA="$(field inter caId)"; echo "  issuing CA     : ${INTER_CA}"
+inspect_ca inter
+INTER_CA="$(intermediate_ca)"; echo "  issuing CA     : ${INTER_CA}"
 
 # issue_leaf <label> <csr-name> <profile> -> echoes the credentialId
 issue_leaf() {
@@ -101,8 +103,8 @@ run_op pub-crl publication.register \
 run_op proc-crl publication.process --publication-id "$(field pub-crl publicationId)"
 
 echo "== export certificates + CRL to files (for openssl inspection) =="
-export_cert root-ca      "$(ca_cert_credential "${ROOT_CA}")"
-export_cert issuing-ca   "$(ca_cert_credential "${INTER_CA}")"
+export_cert root-ca      "$(field root credentialId)"
+export_cert issuing-ca   "$(field inter credentialId)"
 export_cert web          "$(field web credentialId)"
 export_cert gtw          "$(field gtw credentialId)"
 export_cert road-warrior "$(field rw credentialId)"

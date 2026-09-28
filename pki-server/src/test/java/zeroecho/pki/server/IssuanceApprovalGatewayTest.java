@@ -71,6 +71,7 @@ import zeroecho.pki.application.PkiOperationResult;
 import zeroecho.pki.application.PkiOperationValue;
 import zeroecho.pki.application.PkiRepository;
 import zeroecho.pki.application.PkiResourceScopeResolver;
+import zeroecho.pki.application.PkiSigningOperation;
 import zeroecho.pki.impl.fs.DurableTransactionalMetadataStore;
 import zeroecho.pki.spi.audit.AuditSink;
 
@@ -320,7 +321,7 @@ class IssuanceApprovalGatewayTest {
                     profileId -> IssuanceApprovalRequirement.THRESHOLD, ServerTestSupport.CLOCK, opened.audit());
 
             ServerControlOperation.RequestApproval requestApproval = new ServerControlOperation.RequestApproval(
-                    "approval-api", new AdministrativeOperation.Pki(issueOp()), issueResource());
+                    "approval-api", new AdministrativeOperation.Signing(issueOp()), issueResource());
             Permission.Resource approvalResource = new Permission.Resource(Permission.ResourceType.APPROVAL,
                     issueScope(), Optional.empty(), Optional.empty());
             ServerOperationGateway.Request create = new ServerOperationGateway.Request(ServerTestSupport.REALM,
@@ -350,8 +351,8 @@ class IssuanceApprovalGatewayTest {
                 Permission.Relationship.ANY, Permission.DataView.METADATA_REDACTED));
     }
 
-    private static PkiOperation.IssueCredential issueOp() {
-        return new PkiOperation.IssueCredential(ISSUER, REQUEST_ID, PROFILE);
+    private static PkiSigningOperation.IssueCredential issueOp() {
+        return new PkiSigningOperation.IssueCredential(ISSUER, REQUEST_ID, PROFILE);
     }
 
     private static Permission.Scope issueScope() {
@@ -365,7 +366,8 @@ class IssuanceApprovalGatewayTest {
     }
 
     private static ServerOperationGateway.Request issueRequest(Optional<String> approvalId) {
-        return new ServerOperationGateway.Request(ServerTestSupport.REALM, "officer", issueOp(), issueResource(),
+        return new ServerOperationGateway.Request(ServerTestSupport.REALM, "officer",
+                new AdministrativeOperation.Signing(issueOp()), issueResource(),
                 Permission.Relationship.ANY, Permission.Context.empty(), approvalId, "correlation-issue");
     }
 
@@ -409,7 +411,11 @@ class IssuanceApprovalGatewayTest {
                 new AuthorityExposurePolicy(AuthorityExposurePolicy.Mode.ALL_REALM_AUTHORITIES, Set.of(), true),
                 store, RoleTemplateCatalog.load(IssuanceApprovalGatewayTest.class.getClassLoader()),
                 authorization, approvals, breakGlass, disclosure, publication, auditorViews, Optional.empty(),
-                new OperationSecurityDescriptors(), executor, new EmptyScopeResolver(), policies, requirements,
+                new OperationSecurityDescriptors(), executor, (request, evidence, cancellation) -> {
+                    executor.calls.incrementAndGet();
+                    return new PkiOperationOutcome.Completed(new PkiOperationResult(request.operation().name(),
+                            Map.of("safe", new PkiOperationValue.BooleanValue(true))));
+                }, new EmptyScopeResolver(), policies, requirements,
                 clock, auditSink, () -> { });
     }
 

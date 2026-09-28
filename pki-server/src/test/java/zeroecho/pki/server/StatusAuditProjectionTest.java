@@ -46,11 +46,11 @@ import org.junit.jupiter.api.Test;
 import zeroecho.pki.api.PkiId;
 import zeroecho.pki.api.audit.AuditEvent;
 import zeroecho.pki.application.StatusGenerationEvidence;
-import zeroecho.pki.impl.core.async.DomainAttributeEncoding;
+import zeroecho.pki.impl.core.continuation.DomainAttributeEncoding;
 import zeroecho.pki.impl.core.attr.SimpleAttributeSet;
 import zeroecho.pki.spi.store.AuditEvidenceFeed;
 
-/** Maps status-evidence feed entries to payload-free audit events (Task 8a status adapter). */
+/** Maps status-evidence feed entries to payload-free audit events through the status adapter. */
 class StatusAuditProjectionTest {
     private static final Instant TIME = Instant.parse("2026-08-04T12:00:00Z");
 

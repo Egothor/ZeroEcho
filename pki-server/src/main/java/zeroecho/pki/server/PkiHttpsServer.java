@@ -82,7 +82,7 @@ public final class PkiHttpsServer implements AutoCloseable {
     private final Optional<PkiServerAuthenticator> publicAuthenticator;
     private final Optional<PublicRepositoryTransport> publicTransport;
     private final Optional<AcmeTransport> acmeTransport;
-    private final Optional<SigningReconciliationWorker> signingReconciliation;
+    private final Optional<AuditProjectionWorker> auditProjection;
     private final AtomicReference<State> state;
     private final RetryableCloseGate closeGate = new RetryableCloseGate();
     private final AtomicBoolean realmClosed = new AtomicBoolean();
@@ -94,7 +94,7 @@ public final class PkiHttpsServer implements AutoCloseable {
             Optional<PkiServerAuthenticator> publicAuthenticator,
             Optional<PublicRepositoryTransport> publicTransport,
             Optional<AcmeTransport> acmeTransport,
-            Optional<SigningReconciliationWorker> signingReconciliation,
+            Optional<AuditProjectionWorker> auditProjection,
             AtomicReference<State> state) {
         this.configuration = configuration;
         this.realm = realm;
@@ -103,7 +103,7 @@ public final class PkiHttpsServer implements AutoCloseable {
         this.publicAuthenticator = publicAuthenticator;
         this.publicTransport = publicTransport;
         this.acmeTransport = acmeTransport;
-        this.signingReconciliation = signingReconciliation;
+        this.auditProjection = auditProjection;
         this.state = state;
     }
 
@@ -135,7 +135,7 @@ public final class PkiHttpsServer implements AutoCloseable {
         PkiServerAuthenticator publicAuthenticator = null;
         PublicRepositoryTransport publicTransport = null;
         AcmeTransport acmeTransport = null;
-        SigningReconciliationWorker signingReconciliation = null;
+        AuditProjectionWorker auditProjection = null;
         try {
             SSLContext tls = PkiHttpsTransport.resolveTls(exact, loader);
             realm = ServerRealmContext.open(exact.realm(), runtimeDependencies, clock, random);
@@ -181,19 +181,19 @@ public final class PkiHttpsServer implements AutoCloseable {
                         () -> state.get() == State.READY && sharedRealm.state() == ServerRealmContext.State.OPEN,
                         sharedRealm::signalReconciliation);
             }
-            signingReconciliation = new SigningReconciliationWorker(realm, exact.signingReconciliation(),
+            auditProjection = new AuditProjectionWorker(realm, exact.auditProjection(),
                     exact.execution().forcedShutdown(), clock);
             realm.auditTransport("SERVER_READY", "system", Map.of("state", "READY"));
             PkiHttpsServer server = new PkiHttpsServer(exact, realm, authenticator, transport,
                     Optional.ofNullable(publicAuthenticator), Optional.ofNullable(publicTransport),
-                    Optional.ofNullable(acmeTransport), Optional.ofNullable(signingReconciliation), state);
-            if (signingReconciliation != null) {
-                signingReconciliation.start();
+                    Optional.ofNullable(acmeTransport), Optional.ofNullable(auditProjection), state);
+            if (auditProjection != null) {
+                auditProjection.start();
             }
             state.set(State.READY);
             return server;
         } catch (RuntimeException | Error primary) {
-            closePartial(signingReconciliation, acmeTransport, publicTransport, publicAuthenticator, transport, realm,
+            closePartial(auditProjection, acmeTransport, publicTransport, publicAuthenticator, transport, realm,
                     authenticator, state, primary);
             throw primary;
         }
@@ -282,7 +282,7 @@ public final class PkiHttpsServer implements AutoCloseable {
     private void quiesceForClose() {
         state.compareAndSet(State.READY, State.QUIESCING);
         state.compareAndSet(State.STARTING, State.QUIESCING);
-        signingReconciliation.ifPresent(SigningReconciliationWorker::stopScheduling);
+        auditProjection.ifPresent(AuditProjectionWorker::stopScheduling);
         transport.quiesce();
         publicTransport.ifPresent(PublicRepositoryTransport::quiesce);
         acmeTransport.ifPresent(AcmeTransport::quiesce);
@@ -320,8 +320,8 @@ public final class PkiHttpsServer implements AutoCloseable {
             primary = suppress(primary, failure);
         }
         try {
-            if (signingReconciliation.isPresent()) {
-                signingReconciliation.orElseThrow().awaitStopped();
+            if (auditProjection.isPresent()) {
+                auditProjection.orElseThrow().awaitStopped();
             }
         } catch (Throwable failure) {
             return preferFailure(failure, primary);
@@ -343,13 +343,13 @@ public final class PkiHttpsServer implements AutoCloseable {
         return primary;
     }
 
-    private static void closePartial(SigningReconciliationWorker signingReconciliation, AcmeTransport acmeTransport,
+    private static void closePartial(AuditProjectionWorker auditProjection, AcmeTransport acmeTransport,
             PublicRepositoryTransport publicTransport,
             PkiServerAuthenticator publicAuthenticator, PkiHttpsTransport transport, ServerRealmContext realm,
             PkiServerAuthenticator authenticator, AtomicReference<State> state, Throwable primary) {
-        if (signingReconciliation != null) {
+        if (auditProjection != null) {
             try {
-                signingReconciliation.close();
+                auditProjection.close();
             } catch (Throwable failure) {
                 if (primary != failure) primary.addSuppressed(failure);
                 close(acmeTransport, primary);

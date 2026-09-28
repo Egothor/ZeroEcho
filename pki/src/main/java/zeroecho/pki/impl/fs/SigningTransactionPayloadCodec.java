@@ -129,6 +129,15 @@ final class SigningTransactionPayloadCodec {
         return size;
     }
 
+    /** Exact framing budget for callers assembling bounded restore batches. */
+    /* default */ static int emptyCommitBytes() { return HEADER_BYTES + Long.BYTES; }
+
+    /* default */ static int encodedCreateBytes(MetadataKey key, int contentBytes) {
+        if (contentBytes < 0) { throw new IllegalArgumentException("Negative metadata payload length"); }
+        return Math.addExact(1 + Long.BYTES + 2 * Integer.BYTES,
+                Math.addExact(key.canonical().length(), contentBytes));
+    }
+
     /* default */ static long retainedMutationBytes(List<Mutation> mutations) {
         long result = 0L;
         for (Mutation mutation : Objects.requireNonNull(mutations, "mutations")) {
